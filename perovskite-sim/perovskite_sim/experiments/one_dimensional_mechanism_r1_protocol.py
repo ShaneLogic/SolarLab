@@ -334,13 +334,16 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
     }
     if evidence is not None and "physics_reconstruction" in evidence:
         reconstruction = evidence["physics_reconstruction"]
-        independent = reconstruction.get("independent_physics", {})
+        independent = reconstruction.get("independent_physics", {}) if isinstance(reconstruction, Mapping) else {}
+        if not isinstance(independent, Mapping):
+            independent = {}
         passed = (independent.get("schema") == "R1IndependentPhysicsRowV1"
                   and independent.get("passed") is True)
         checks["independent_physics"] = {
             "applicable": True, "passed": passed,
             "failure_reason": None if passed else "independent_physics_failed",
-            "reasons": list(independent.get("reasons", ["independent_physics_evidence_unavailable"])),
+            "reasons": (list(independent["reasons"]) if isinstance(independent.get("reasons"), (list, tuple))
+                        else ["independent_physics_evidence_unavailable"]),
             "source": "saved_state_independent_current_charge_and_inventory_assembly",
         }
     reasons = [check["failure_reason"] for check in checks.values() if check["failure_reason"]]

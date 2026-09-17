@@ -22,6 +22,10 @@ control, grid and operating bias come from the checked input record.
 keys and compact separators. NumPy arrays/scalars and dataclasses are encoded
 as their JSON values; complex scalars are `{real, imag}`. Computing a digest
 does not constitute verification or approval.
+Runtime integer refinement-level mapping keys are normalized to their JSON
+string keys. Boolean/float/other key types and collisions between a string
+and an integer key are rejected, so runtime and saved records share one
+unambiguous identity.
 
 `trusted_evidence` is a caller-held mapping of evidence IDs to those digests.
 It must originate outside the evidence being assessed: independently checked

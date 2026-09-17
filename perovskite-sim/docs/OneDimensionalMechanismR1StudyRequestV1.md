@@ -23,6 +23,14 @@ Every case has one attempt in a formal V3 plan. A retry is a new study with its
 own request and provenance; a later successful run cannot erase an earlier
 study. This protocol proves the provided case universe and saved content, not
 unobserved execution history or the authenticity of arbitrary source code.
+An interrupted attempt is retained even without a completion record. It cannot
+be continued as AttemptV2 in the same formal study. Present failed states must
+be reconstructed; removing their reconstruction context cannot turn them into
+an identity-only inspection. A separately validated observer-write failure may
+leave one final observed row unpersisted, or omit only the failure annotation
+added after the callback. All other prefix differences are rejected. These
+checks report saved and persisted extents separately and never certify the
+failed experiment or reconstruct its unobserved execution history.
 
 Record availability, comparison coverage, comparison success, verification
 completion and scientific qualification remain distinct. Coarse-grid diagnostic

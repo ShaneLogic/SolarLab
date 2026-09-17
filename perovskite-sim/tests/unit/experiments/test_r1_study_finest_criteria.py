@@ -49,7 +49,9 @@ def _failed_tail(runner, study, partial):
     path = study.output / "Long/N16/D/AttemptV1"
     path.mkdir(parents=True)
     failure = {"type": "R1RunError", "message": "recorded failure", "partial_result": partial}
-    runner.write_json(path / "RequestV1.json", {"intervals": 16})
+    partial["policy"] = runner.ready(runner.r1_policy(.1, time_substeps=(1, 2, 4)))
+    runner.write_json(path / "RequestV1.json", {"intervals": 16, "control": "D", "amplitude_V": .005,
+        "times_s": partial["times_s"], "nonlinear_factor": .1, "time_substeps": [1, 2, 4]})
     runner.write_json(path / "FailureV1.json", failure)
     runner.write_json(path / "CompletionV1.json", {
         "case": "Long/N16/D", "status": "failed", "scientific_checks_passed": False,
@@ -69,8 +71,8 @@ def _tail_payload():
 def test_failed_tail_without_equation_replay_cannot_reach_dc(runner, study, monkeypatch):
     _failed_tail(runner, study, _tail_payload())
     monkeypatch.setattr(runner, "solve_controlled_dc", lambda *a, **k: pytest.fail("unverified prefix reached DC"))
-    report = study.tail_record()
-    assert report["comparison_available"] is False
+    with pytest.raises(ValueError, match="present failed states require exact physical reconstruction"):
+        study.tail_record()
 
 
 def test_failed_tail_physics_rejection_propagates_before_dc(runner, study, monkeypatch):

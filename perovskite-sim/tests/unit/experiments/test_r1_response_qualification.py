@@ -69,6 +69,14 @@ def test_missing_budget_is_unknown_and_never_replaced_with_zero():
     assert result["status"] == "unapproved" and not result["qualified"]
 
 
+def test_runtime_integer_refinement_keys_match_saved_json_without_collisions():
+    assert evidence_digest({"charge": {1: 2., 2: 3.}}) == evidence_digest({"charge": {"1": 2., "2": 3.}})
+    with pytest.raises(ValueError, match="collide"):
+        evidence_digest({1: 2., "1": 3.})
+    with pytest.raises(ValueError, match="keys must"):
+        evidence_digest({True: 1.})
+
+
 @pytest.mark.parametrize("change,reason", [
     (lambda b: b.update(units="S/m2"), "units"),
     (lambda b: b.update(amplitude_V=.0025), "amplitude"),

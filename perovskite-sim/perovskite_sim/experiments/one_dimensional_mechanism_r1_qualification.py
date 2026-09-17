@@ -43,9 +43,15 @@ def _plain(value):
     if is_dataclass(value):
         return {field.name: _plain(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, Mapping):
-        if any(not isinstance(key, str) for key in value):
-            raise ValueError("evidence keys must be strings")
-        return {key: _plain(item) for key, item in value.items()}
+        # Runtime charge integrals use integer refinement levels; their JSON
+        # representation uses strings. Preserve one canonical identity while
+        # rejecting ambiguous containers such as {1: x, "1": y}.
+        if any(not isinstance(key, str) and type(key) is not int for key in value):
+            raise ValueError("evidence keys must be strings or integer refinement levels")
+        keys = [str(key) for key in value]
+        if len(set(keys)) != len(keys):
+            raise ValueError("evidence keys collide after JSON normalization")
+        return {str(key): _plain(item) for key, item in value.items()}
     if isinstance(value, np.ndarray):
         return _plain(value.tolist())
     if isinstance(value, np.generic):

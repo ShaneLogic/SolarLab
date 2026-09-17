@@ -461,12 +461,13 @@ class Study:
                 if not sealed:
                     raise ValueError("cannot verify an interrupted unsealed case: "+key)
                 if completion["status"] == "failed":
-                    self.audit_failed(key, prior, request)
-                    self.verified_cases[key] = (sha(prior/"ManifestV1.json"),
-                                               {"certified": False, "failure_record_checked": True})
+                    audit = self.audit_failed(key, prior, request)
+                    self.verified_cases[key] = (sha(prior/"ManifestV1.json"), audit)
                 self.rows.append({"case": key, "status": completion["status"],
                                   "scientific_checks_passed": completion.get("scientific_checks_passed"),
-                                  "independently_verified": True})
+                                  "independently_verified": self.verified_cases.get(key, (None, {}))[1].get("content_matches_recomputed") is True,
+                                  "failure_scope": (self.verified_cases[key][1].get("failure_scope")
+                                                    if completion["status"] == "failed" else None)})
                 return checked_read(prior, "ResultV1.json") if completion["status"] == "completed" else None
             if sealed and (completion["status"] == "completed" or not self.args.retry_failed):
                 self.rows.append({"case": key, "status": completion["status"], "resumed": True,
@@ -552,7 +553,18 @@ class Study:
         if completion.get("failure") != {k: v for k, v in failure.items() if k != "partial_result"}:
             raise ValueError("failed case reason differs from completion")
         partial = failure.get("partial_result")
-        if isinstance(partial, dict) and partial.get("physics_reconstruction") and partial.get("accepted_steps"):
+        persisted = directory/"AcceptedStepsV1.jsonl"
+        rows = [json.loads(line) for line in persisted.read_text().splitlines()] if persisted.is_file() else []
+        if partial is not None and not isinstance(partial, dict):
+            raise ValueError("failed scientific payload has no classified record schema")
+        if isinstance(partial, dict) and "accepted_steps" in partial and not isinstance(partial["accepted_steps"], list):
+            raise ValueError("failed accepted states must be a classified row list")
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import RESULT_ARRAY_FIELDS
+        contains_state = (bool(rows) or (isinstance(partial, dict) and (
+            bool(partial.get("accepted_steps")) or any(name in partial for name in RESULT_ARRAY_FIELDS))))
+        if contains_state:
+            if not isinstance(partial, dict) or not partial.get("physics_reconstruction"):
+                raise ValueError("present failed states require exact physical reconstruction evidence")
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import failure_scope_report
             if (partial.get("times_s") != ready(request.get("times_s"))
                     or partial.get("control_label") != request.get("control", "D")
@@ -562,14 +574,30 @@ class Study:
                 raise ValueError("failed step prefix differs from the planned request")
             audit = verify_r1_step_physics(self.stack, request["intervals"], self.binding,
                                           self.prepared(request["intervals"]), partial, allow_incomplete=True)
-            persisted = directory/"AcceptedStepsV1.jsonl"
-            rows = [json.loads(line) for line in persisted.read_text().splitlines()] if persisted.is_file() else None
-            if rows != partial["accepted_steps"]:
+            raw_rows = partial["accepted_steps"]
+            persistence = partial.get("persistence_failure")
+            matches = rows == raw_rows
+            if not matches and persistence:
+                # The verifier above has checked all copies and bound this
+                # failure to the final observed row. A durable prefix may be
+                # missing that one row, or only its post-callback annotation.
+                matches = (len(rows) == len(raw_rows)-1 and rows == raw_rows[:-1])
+                if len(rows) == len(raw_rows) and rows:
+                    last = {name: value for name, value in raw_rows[-1].items() if name != "persistence_failure"}
+                    matches = rows[:-1] == raw_rows[:-1] and rows[-1] == last
+            if not matches:
                 raise ValueError("failed saved rows differ from the raw persisted prefix")
             audit["failure_scope"] = failure_scope_report(partial, audit, persisted_rows=rows, failure=completion["failure"])
+            audit["failure_scope"]["last_observed_row_persisted"] = len(rows) == len(raw_rows)
+            audit["failure_scope"]["post_callback_persistence_annotation_replayed"] = False
             audit["certified"] = False
             return audit
         return {"certified": False, "content_matches_recomputed": None,
+                "failure_record_checked": True,
+                "failure_scope": {"saved_row_count": 0, "persisted_row_count": 0,
+                                  "failure_origin_status": "not_reconstructed_from_saved_prefix",
+                                  "original_execution_extent_verified": False,
+                                  "unverified_present_fields": sorted(partial) if isinstance(partial, dict) else []},
                 "reason": "no complete accepted state for physical replay; failed identity retained"}
 
     def prepared(self, intervals):

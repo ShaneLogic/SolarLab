@@ -38,7 +38,7 @@ LEGACY_SOURCE_ANCHORS = _ANCHORS
 # One registry owns snapshot coverage, pins, and exported names. New R1
 # declarations must be classified here before a controlled checkout can run.
 R1_DECLARATIONS = {
-    "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "1f7235a6f81abf867d9c59837f328a11aaaab2949973b88fb7922e39281f2bec"),
+    "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "9b85a07120f5bb7fee50849e0801ae2c6aa85d60b2801228a254ce71e48b537a"),
     "docs/OneDimensionalMechanismR1CurrentChecksV3.md": ("acceptance", "CurrentChecksV3.md", "819682ab6b942edadc52210d31cf4f7c52358179a725e2d1b87c8e9959d4ac8f"),
     "docs/OneDimensionalMechanismR1DynamicsV1.md": ("execution", "ExecutionContractV1.md", "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"),
     "docs/OneDimensionalMechanismR1AdmittanceV1.md": ("reference", "AdmittanceV1.md", "c8a9132ed3fceb839e30c1c0b4cd46ed3b62f4f3ee93226418624748df7424f1"),
@@ -49,7 +49,7 @@ R1_DECLARATIONS = {
     "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "db790c70b18ae6090f925051a46468f4d178dea534197ab3c7a95de0d8c25d67"),
     "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "f0f161d763d53c8a42a622379229dbb24688dc5164325980bb57384b716bbbdb"),
     "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "a56f3c22744b3f18dd5659f3b7883ac424b91f85b57c6b17cb359ecd62eba7bb"),
-    'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '33fe099847f135bf835286c60c3f8d85a5959f11affbd120fbc97548e60ef7e5'),
+    'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '50909f484fa38618d25cf6d7f51196a38926b1d3f2cec1d6a3cbe0f7c95e0fbc'),
 
     "docs/InterfaceDefectTransientIncrementContract.md": ("method", "IncrementContractV1.md", "d379bdc36255836e54fbb2a4f736ba3e8a2f6acb2d0fac16a6fd5e0baa048e30"),
     "docs/OneDimensionalMechanismR0ProtocolV1.md": ("historical", "R0ProtocolV1.md", "62c736f7d7512d20b7ddbdcf9fb276452014b7f98a287e669ff95e31be2e7726"),
