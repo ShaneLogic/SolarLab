@@ -321,6 +321,50 @@ def compare_responses(quantity, left, right):
     }
 
 
+def step_current_charge_responses(record, baseline_current_A_m2, *, expected_times_s=None):
+    """Construct all regular-current and impulse-inclusive charge samples.
+
+    This adapter does not establish provenance. Its caller must verify the
+    step and same-control zero-minus baseline. Every declared time and both
+    contacts are retained; no endpoint selection or implicit interpolation
+    participates in the construction.
+    """
+    times = _numeric_array(record["times_s"], "step times")
+    if (times.ndim != 1 or times.size < 2 or not np.all(np.isfinite(times))
+            or times[0] != 0 or np.any(np.diff(times) <= 0)):
+        raise ValueError("step times must include zero and increasing positive samples")
+    if expected_times_s is not None and not np.array_equal(times, expected_times_s):
+        raise ValueError("regular response does not cover the complete requested time axis")
+    baseline = _numeric_array(baseline_current_A_m2, "zero-minus contact baseline")
+    current = _numeric_array([item["report_contact_current_A_m2"]
+                              for item in record["regular_currents"]], "regular contact current")
+    if baseline.shape != (2,) or not np.all(np.isfinite(baseline)) or current.shape != (len(times), 2):
+        raise ValueError("regular current and physical contacts must align with exact output times")
+    finest = max(validate_time_substeps(record["policy"]["refinement_substeps"]))
+    rows = [row for row in record["accepted_steps"] if row["substeps"] == finest]
+    impulse = _real_scalar(record["initial_event"]["impulse_charge_C_m2"], "impulse charge")
+    charge = []
+    for time in times:
+        matching = [row for row in rows if row["time_s"] == time]
+        if len(matching) != 1:
+            raise ValueError("integrated charge requires exactly one finest row at each output time")
+        charge.append(impulse + matching[0]["regular_integrated_charge_C_m2"] - baseline[0]*time)
+    return (R1Response(current-baseline, {"time_s": times}, ("left_contact", "right_contact")),
+            R1Response(np.asarray(charge), {"time_s": times}))
+
+
+def compare_step_current_charge(left, right, left_baseline, right_baseline, *, expected_times_s=None):
+    """Apply the unchanged current/charge budgets to the complete time axes."""
+    a = step_current_charge_responses(left, left_baseline, expected_times_s=expected_times_s)
+    b = step_current_charge_responses(right, right_baseline, expected_times_s=expected_times_s)
+    current = compare_responses("regular_current_response", a[0], b[0])
+    charge = compare_responses("integrated_charge_response", a[1], b[1])
+    return {"scope": "regular_current_and_impulse_inclusive_charge_response_comparison",
+            "regular_current": current, "integrated_charge": charge,
+            "baseline_contact_current_A_m2": [left_baseline, right_baseline],
+            "within_compared_budgets": current["passed"] and charge["passed"]}
+
+
 def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitude_V,
                               coarse_current_error, fine_current_error):
     """Compare delta-j/a using measured numerical-error budgets in S/m2.
@@ -396,6 +440,7 @@ def compare_amplitude_halving(coarse, fine, *, coarse_amplitude_V, fine_amplitud
 __all__ = [
     "R1ConvergenceCase", "R1Response", "convergence_cases", "base_convergence_cases",
     "observation_times", "validate_time_substeps", "compare_responses", "compare_amplitude_halving",
+    "step_current_charge_responses", "compare_step_current_charge",
     "validate_single_axis_comparison",
     "BASE_INTERVALS", "ALLOWED_INTERVALS", "BASE_TIME_SUBSTEPS", "ALLOWED_TIME_SUBSTEPS",
     "BASE_NONLINEAR_FACTORS", "ALLOWED_NONLINEAR_FACTORS", "AMPLITUDES_V",

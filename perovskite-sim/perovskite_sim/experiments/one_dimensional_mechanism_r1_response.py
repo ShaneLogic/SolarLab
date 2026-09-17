@@ -381,6 +381,7 @@ def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control=
               "endpoints": [], "dc_states_certified": False,
               "absolute_current_error_bounds_A_m2": None, "linearity_certified": False,
               "full_transient_linearity_certified": False,
+              "qualification_level": "dc_endpoint_diagnostic", "budget_status": "unknown",
               "scope": "independent_dc_endpoint_diagnostic_without_current_error_budget_or_transient_linearity"}
     normalized = []
     for amplitude in amplitudes:
@@ -401,7 +402,10 @@ def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control=
         comparisons.append({"coarse_amplitude_V": coarse, "fine_amplitude_V": fine,
                             "absolute_difference_S_m2": difference, "one_percent_response_scale_S_m2": scale,
                             "difference_to_one_percent_scale_ratio": difference/scale if scale else None,
+                            "exceeds_one_percent_response_scale": bool(difference > scale),
+                            "status": "endpoint_exceeds_relative_scale" if difference > scale else "endpoint_within_relative_scale",
                             "absolute_numerical_error_budget_S_m2": None,
+                            "budget_status": "unknown",
                             "linearity_certified": False, "scope": "endpoint_difference_diagnostic_only"})
     record.update(normalized_endpoint_response_S_m2=np.asarray(normalized), adjacent_halving_diagnostics=comparisons,
                   dc_states_certified=baseline["certified"] and all(row["dc"]["certified"] for row in record["endpoints"]))
@@ -730,6 +734,7 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
         "derivative_component_difference_S_m2": component_difference,
         "derivative_component_limits_S_m2": component_limits,
         "frequency_window_complete": False, "double_domain_consistent": False,
+        "frequency_window_status": "unknown_until_same_state_turnover_evidence_is_verified",
         "missing_validation": ["frequency_window_coverage", "spatial_refinement",
                                "finite_amplitude_linearity", "time_window_and_early_interval",
                                "time_reconstruction_error_budget"],

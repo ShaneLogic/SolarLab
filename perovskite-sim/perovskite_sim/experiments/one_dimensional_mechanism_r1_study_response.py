@@ -14,6 +14,9 @@ import numpy as np
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import reconstruct_admittance
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import observation_times
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import (
+    assess_double_domain_prerequisites, assess_frequency_coverage, evidence_digest, qualification_scope,
+)
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import (
     _finite_scalar, _frequencies, _response_array, assess_small_signal_response,
     compare_reconstructed_response,
@@ -49,8 +52,8 @@ def _bands(frequency, eligible):
     return bands
 
 
-def frequency_window_report(ac):
-    """Report numeric bands and endpoint decades without asserting mode coverage.
+def frequency_window_report(ac, *, turnover_evidence=None, expected_scope=None, trusted_evidence=None):
+    """Report sampled diagnostics and independently evidenced mode coverage.
 
     Endpoint flatness is a response diagnostic, not proof that weak or hidden
     modes have been covered. The same-state physical turnover scales required
@@ -95,13 +98,35 @@ def frequency_window_report(ac):
         reasons.append("frequency_samples_outside_protocol_limits")
     if not np.all(numeric["numerically_eligible_frequency_points"]):
         reasons.append("one_or_more_frequency_points_failed_numeric_checks")
-    return _ready({"schema": "R1FrequencyWindowReportV1", "frequency_Hz": frequency,
+    coverage = assess_frequency_coverage(frequency, eligible, turnover_evidence=turnover_evidence,
+                                        expected_scope=expected_scope, trusted_evidence=trusted_evidence)
+    if expected_scope is not None:
+        try:
+            actual_scope = qualification_scope(ac, state_sha256=expected_scope["state_sha256"],
+                                               domain=expected_scope["domain"])
+            if actual_scope != expected_scope:
+                raise ValueError("AC identity differs from the requested turnover scope")
+            if turnover_evidence is not None and (not isinstance(turnover_evidence, Mapping)
+                                                  or turnover_evidence.get("ac_sha256") != evidence_digest(ac)):
+                raise ValueError("turnover evidence is not bound to the checked AC operating-state record")
+        except (KeyError, TypeError, ValueError) as exc:
+            coverage.update(status="invalid", qualified=False, device_qualified=False,
+                            frequency_window_complete=False, reasons=[str(exc)])
+    if turnover_evidence is not None:
+        reasons = [reason for reason in reasons if reason not in (
+            "same_state_turnover_scales_and_one_decade_margins_not_verified",
+            "protocol_decade_extensions_not_exhausted", "protocol_extension_limits_reached_without_turnover_coverage_evidence")]
+        reasons.extend(reason for reason in coverage["reasons"] if reason not in reasons)
+    return _ready({"schema": "R1FrequencyWindowReportV2", "frequency_Hz": frequency,
                    "numeric_checks_passed": numeric["certified"], "numeric_checks": numeric["checks"],
                    "numerically_eligible_frequency_points": eligible,
                    "valid_contiguous_bands": _bands(frequency, eligible), "endpoint_decades": diagnostics,
                    "protocol_limits_Hz": [1e-6, 1e10], "lower_extension_limit_reached": low_reached,
-                   "upper_extension_limit_reached": high_reached, "frequency_window_complete": False,
-                   "uncovered_reasons": reasons, "scope": "numeric_band_and_window_diagnostics_only"})
+                   "upper_extension_limit_reached": high_reached,
+                   "frequency_window_complete": coverage["frequency_window_complete"],
+                   "device_frequency_window_certified": coverage["device_qualified"],
+                   "qualification": coverage, "uncovered_reasons": reasons,
+                   "scope": "numeric_bands_and_externally_bound_turnover_coverage"})
 
 
 def _matching_identity(record, common, control):
@@ -115,6 +140,7 @@ def _matching_identity(record, common, control):
 
 
 def reconstruct_study_response(step, prepared, conductance, ac, *, errors=None, prerequisites=None,
+                               qualification_evidence=None, expected_scope=None, trusted_evidence=None,
                                quadrature_absolute_tolerance_F_m2=1e-12,
                                quadrature_relative_tolerance=1e-10):
     """Reconstruct the regular response using the saved independent DC ladder.
@@ -181,15 +207,43 @@ def reconstruct_study_response(step, prepared, conductance, ac, *, errors=None, 
                 "intervals": step["intervals"], "control": control, "source_sha256": step["source"]["sha256"],
                 "operating_voltage_V": operating_voltage, "step_amplitude_V": amplitude}
     conditions = dict(prerequisites or {})
+    application = {"step_sha256": evidence_digest(step), "ac_sha256": evidence_digest(ac),
+                   "conductance_sha256": evidence_digest(conductance), "step_amplitude_V": amplitude,
+                   "times_s": times.tolist(), "reconstruction_request_sha256": evidence_digest({
+                       "errors": errors, "quadrature_absolute_tolerance_F_m2": quadrature_absolute_tolerance_F_m2,
+                       "quadrature_relative_tolerance": quadrature_relative_tolerance})}
+    if expected_scope is not None:
+        for record in (step, ac):
+            if qualification_scope(record, state_sha256=expected_scope["state_sha256"],
+                                   domain=expected_scope["domain"]) != expected_scope:
+                raise ValueError("double-domain input differs from the requested qualification scope")
+        qualification = assess_double_domain_prerequisites(
+            qualification_evidence, expected_scope=expected_scope, frequency_Hz=ac["frequency_Hz"],
+            trusted_evidence=trusted_evidence, expected_application=application)
+        for key, mask in qualification["prerequisites"].items():
+            supplied = np.asarray(conditions.get(key, True))
+            if supplied.dtype.kind != "b" or supplied.shape not in ((), (len(ac["frequency_Hz"]),)):
+                raise ValueError("double-domain prerequisite must be boolean at each frequency: " + key)
+            conditions[key] = np.asarray(mask, dtype=bool) & supplied
+    else:
+        qualification = {"status": "unknown", "qualified": False, "device_qualified": False,
+                         "eligible_frequency_points": np.zeros(len(ac["frequency_Hz"]), dtype=bool),
+                         "reasons": ["externally_bound_qualification_scope_missing"], "application": application}
     conditions["input_trajectory_certified"] = bool(physical and full_window and dc_certified
-                                                   and conditions.get("input_trajectory_certified", False))
+                                                   and np.all(conditions.get("input_trajectory_certified", False)))
     comparison = compare_reconstructed_response(reconstruction, ac, reconstruction_identity=identity,
                                                  prerequisites=conditions)
+    eligible = (comparison["double_domain_consistent_frequency_points"]
+                & np.asarray(qualification["eligible_frequency_points"], dtype=bool))
+    comparison["double_domain_consistent_frequency_points"] = eligible
+    comparison["double_domain_consistent"] = bool(np.all(eligible))
     return _ready({"schema": "R1StudyReconstructedResponseV1", "published_identity": identity,
                    "input_trajectory_certified": physical, "full_time_window_covered": full_window,
                    "dc_inputs_certified": bool(dc_certified), "reconstruction": reconstruction,
                    "comparison": comparison, "double_domain_consistent": comparison["double_domain_consistent"],
-                   "scope": "verified_input_finite_window_reconstruction_with_conditional_error_budget"})
+                   "device_double_domain_consistent": bool(comparison["double_domain_consistent"] and qualification["device_qualified"]),
+                   "qualification": qualification,
+                   "scope": "verified_input_finite_window_reconstruction_with_bound_qualification_evidence"})
 
 
 __all__ = ["frequency_window_report", "reconstruct_study_response"]

@@ -140,6 +140,9 @@ full DC state, physical checks, actual voltage, preparation, reference and
 source. The published endpoint response is `(j_dc(a)-j_dc(0))/a` in S/m2.
 The six adjacent-halving diagnostics report differences and their ratios to
 the 1% response scale; those ratios are not linearity acceptance results.
+Each pair also reports `exceeds_one_percent_response_scale` and an explicit
+endpoint status. This keeps a measured scale exceedance visible while the
+independent error-budget status remains unknown.
 
 No independent absolute current-error budget is supplied by this endpoint
 study. Its error-budget fields remain `None`, and both `linearity_certified`
@@ -153,6 +156,26 @@ scientific field, including the normalized responses and diagnostic flags.
 It cannot accept a changed DC value, a relabeled amplitude or a different source
 by resealing the artifact. A failed solve retains the completed endpoint prefix
 and identifies the amplitude whose DC solve failed.
+
+## Response qualification layers
+
+`OneDimensionalMechanismR1QualificationV1.md` defines the separate endpoint,
+approved-budget, full-time linearity, turnover coverage and double-domain
+layers. Caller-held evidence digests bind the reviewed method and its exact
+initial state and application. A verified empirical estimate is not an
+approved absolute bound. A diagnostic default amplitude is never a qualified
+amplitude. Analytic-fixture qualifications do not authorize device results.
+
+Frequency reports can now certify a declared window when externally approved
+same-state turnover evidence satisfies the existing one-decade margins,
+four intervals per decade, protocol range and all numeric point checks.
+Missing evidence remains unknown rather than a successful window. Direct AC
+production alone still supplies no turnover certificate.
+
+Study reconstruction requires the independently bound prerequisite records
+defined by the qualification declaration. Caller-supplied booleans can
+restrict but cannot supply that authority. The lower-level phasor comparison
+remains a mathematical diagnostic on its caller's prerequisites.
 
 ## Verification
 

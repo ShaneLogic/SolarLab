@@ -147,3 +147,20 @@ must bind those verification reports to the exact source-anchored artifacts.
 This is a verdict for one comparison. It does not by itself establish complete
 time-window coverage, the full three-axis campaign, a resolved weak mechanism
 signal or the R1-2 stage exit.
+
+## Complete electrical response construction
+
+`step_current_charge_responses` constructs baseline-subtracted regular
+current at every declared output time and both physical contacts, and charge
+from the impulse plus the unique finest-level integrated charge at each
+time. A caller-fixed expected time axis rejects omitted interior samples.
+`compare_step_current_charge` applies the unchanged component budgets to
+those complete arrays. Backward-Euler averages cannot replace the regular
+current samples, and an equal final point cannot hide an earlier failure.
+
+Single-axis comparison validates that the declared input parameter changes.
+Equal responses after a genuine tolerance change indicate insensitivity in
+the tested scope; they are not a literal self-comparison and are not
+independent repetitions of a grid result determined by the same initial
+current. DC bulk and interface-limit reports are subreports of the same
+`dc_potential` required quantity.

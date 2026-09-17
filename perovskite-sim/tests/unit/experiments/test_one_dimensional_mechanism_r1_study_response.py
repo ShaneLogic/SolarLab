@@ -8,6 +8,9 @@ import pytest
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import R1AdmittanceErrors
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import observation_times
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import (
+    DOUBLE_DOMAIN_PREREQUISITES, evidence_digest, qualification_scope,
+)
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response import (
     frequency_window_report, reconstruct_study_response,
 )
@@ -42,6 +45,25 @@ def inputs(*, times=None):
                               interpolation_integral_F_m2=0., current_A_m2=0., baseline_current_A_m2=0.,
                               dc_conductance_S_m2=0., impulse_charge_C_m2=0.)
     return step, common, dc, ac, conditions, errors
+
+
+def qualified_reconstruction(step, common, dc, ac, *, errors, prerequisites=None, **kwargs):
+    """Caller-owned attestations for this analytic fixture, never device approval."""
+    scope = qualification_scope(ac, state_sha256="analytic-initial-state", domain="analytic_fixture")
+    application = {"step_sha256": evidence_digest(step), "ac_sha256": evidence_digest(ac),
+                   "conductance_sha256": evidence_digest(dc), "step_amplitude_V": step["amplitude_V"],
+                   "times_s": np.asarray(step["times_s"]).tolist(),
+                   "reconstruction_request_sha256": evidence_digest({"errors": errors,
+                       "quadrature_absolute_tolerance_F_m2": kwargs.get("quadrature_absolute_tolerance_F_m2", 1e-12),
+                       "quadrature_relative_tolerance": kwargs.get("quadrature_relative_tolerance", 1e-10)})}
+    evidence = {kind: {"schema": "R1QualificationEvidenceV1", "kind": kind, "evidence_id": kind,
+                       "scope": scope, "application": application, "frequency_Hz": ac["frequency_Hz"].tolist(),
+                       "eligible_frequency_points": [True]*len(ac["frequency_Hz"]), "qualified": True,
+                       "classification": "bounded", "review_status": "approved", "review_id": "analytic-proof"}
+                for kind in DOUBLE_DOMAIN_PREREQUISITES}
+    trust = {kind: evidence_digest(value) for kind, value in evidence.items()}
+    return reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=prerequisites,
+        expected_scope=scope, qualification_evidence=evidence, trusted_evidence=trust, **kwargs)
 
 
 def test_frequency_extension_limits_and_numeric_bands_do_not_prove_turnover_coverage():
@@ -81,12 +103,13 @@ def test_reconstruction_preserves_unknown_errors_and_conditional_acceptance():
     assert not unknown["double_domain_consistent"]
     assert "tail_omission" in unknown["reconstruction"]["unknown_error_sources"]
     assert all(item["representation"] == "inf" for item in unknown["reconstruction"]["total_error_estimate_S_m2"])
-    good = reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=conditions)
+    good = qualified_reconstruction(step, common, dc, ac, errors=errors, prerequisites=conditions)
     assert good["double_domain_consistent"]
+    assert not good["device_double_domain_consistent"]
     assert good["published_identity"]["step_amplitude_V"] == .005
     json.dumps(good, allow_nan=False)
     conditions["input_trajectory_certified"] = False
-    assert not reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=conditions)["double_domain_consistent"]
+    assert not qualified_reconstruction(step, common, dc, ac, errors=errors, prerequisites=conditions)["double_domain_consistent"]
 
 
 @pytest.mark.parametrize("which,key,value", [
@@ -103,19 +126,19 @@ def test_identity_is_read_from_saved_records_and_mismatches_are_rejected(which, 
 
 def test_failed_or_short_window_inputs_cannot_be_promoted_by_good_curves():
     step, common, dc, ac, conditions, errors = inputs(times=[0., 1e-9, 1e-4])
-    result = reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=conditions)
+    result = qualified_reconstruction(step, common, dc, ac, errors=errors, prerequisites=conditions)
     assert all(result["comparison"]["component_agreement"])
     assert not result["full_time_window_covered"]
     assert not result["double_domain_consistent"]
     step, common, dc, ac, conditions, errors = inputs()
     step["certificate"]["certified"] = False
-    assert not reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=conditions)["double_domain_consistent"]
+    assert not qualified_reconstruction(step, common, dc, ac, errors=errors, prerequisites=conditions)["double_domain_consistent"]
     step["certificate"]["certified"] = True
     dc["pairs"][0]["minus"]["certified"] = False
-    assert not reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=conditions)["double_domain_consistent"]
+    assert not qualified_reconstruction(step, common, dc, ac, errors=errors, prerequisites=conditions)["double_domain_consistent"]
     dc["conductance_S_m2"][-1] *= 1.001
     with pytest.raises(ValueError, match="published conductance"):
-        reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=conditions)
+        qualified_reconstruction(step, common, dc, ac, errors=errors, prerequisites=conditions)
 
 
 def test_step_operating_bias_is_read_from_the_saved_initial_event():
@@ -127,7 +150,7 @@ def test_step_operating_bias_is_read_from_the_saved_initial_event():
 
 def test_study_reconstruction_forwards_and_records_stricter_quadrature_tolerances():
     step, common, dc, ac, conditions, errors = inputs()
-    result = reconstruct_study_response(step, common, dc, ac, errors=errors, prerequisites=conditions,
+    result = qualified_reconstruction(step, common, dc, ac, errors=errors, prerequisites=conditions,
         quadrature_absolute_tolerance_F_m2=1e-14, quadrature_relative_tolerance=1e-12)
     assert result["reconstruction"]["quadrature_absolute_tolerance_F_m2"] == 1e-14
     assert result["reconstruction"]["quadrature_relative_tolerance"] == 1e-12
