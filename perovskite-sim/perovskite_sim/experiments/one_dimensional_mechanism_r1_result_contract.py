@@ -100,6 +100,13 @@ def verify_failure_metadata(record, *, failed, rows=None, same=None):
         if "physical_checks" in certificate and same is not None:
             same(certificate["physical_checks"], rows[index].get("physical_checks"), "terminal failure checks")
     persistence = record.get("persistence_failure")
+    nested = record.get("failure", {}).get("persistence_failure")
+    if nested is not None:
+        _closed(nested, PERSISTENCE_FIELDS, "nested persistence provenance")
+        if persistence is None:
+            raise ValueError("nested persistence failure lacks result provenance")
+        if same is not None:
+            same(nested, persistence, "failure persistence provenance")
     row_failures = [(index, row["persistence_failure"]) for index, row in enumerate(rows or [])
                     if "persistence_failure" in row]
     if row_failures and persistence is None:
