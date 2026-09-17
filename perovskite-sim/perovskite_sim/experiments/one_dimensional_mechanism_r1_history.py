@@ -109,12 +109,15 @@ def inspect_historical_evidence(output, *, expected_source_commit, producer_proj
             reports.append(report)
     if kind == "stage-one":
         reports = [r for r in reports if "result_checks" in r and "scientifically_accepted" in r]
-        completed = bool(reports and reports[-1].get("source_commit_anchor") == expected_source_commit)
+        completed = bool(reports and reports[-1].get("source_commit_anchor") == expected_source_commit
+                         and isinstance(reports[-1].get("result_checks"), dict))
+        reconstructed = bool(completed and reports[-1]["result_checks"].get("content_matches_recomputed") is True)
     else:
         reports = [r for r in reports if r.get("schema") == "R1PhysicsStudySummaryV2"]
         completed = bool(reports and reports[-1].get("requirements", {}).get("verification_completed_without_error")
                          and reports[-1].get("requirements", {}).get("all_recorded_cases_checked")
                          and not reports[-1].get("not_recomputed_in_this_invocation"))
+        reconstructed = completed
     if not completed:
         raise ValueError("historical source-bound reconstruction failed: " + result.stderr.strip()[-1000:])
     return {
@@ -123,7 +126,8 @@ def inspect_historical_evidence(output, *, expected_source_commit, producer_proj
         "verifier_source_commit": expected_source_commit,
         "profile": dict(HISTORICAL_PRODUCERS[expected_source_commit]),
         "manifest_sha256": expected_manifest_sha256, "root_manifest_unchanged": True,
-        "reconstruction_completed": True, "producer_exit_code": result.returncode,
+        "verification_completed_without_invocation_error": True,
+        "reconstruction_completed": reconstructed, "producer_exit_code": result.returncode,
         "producer_report": reports[-1],
         "scientifically_accepted": False, "eligible_for_v3_acceptance": False,
         "scope": "selected_historical_producer_contract; not_current_standard_approval_or_R1_2_qualification",

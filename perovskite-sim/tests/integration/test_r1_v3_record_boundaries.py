@@ -120,3 +120,18 @@ def test_clean_failed_prefix_does_not_claim_the_failure_origin_was_reproduced(bu
     assert not scope["complete_requested_schedule"]
     assert not scope["original_execution_extent_verified"]
     assert scope["failure_origin_status"] == "not_reconstructed_from_saved_prefix"
+
+
+def test_failure_label_cannot_claim_a_missing_physical_witness(bundle, runner):
+    result = fail_prefix(bundle, runner)
+    output, completion = bundle
+    failure = {"type": "PhysicalCheckFailure", "message": "gate witness erased",
+               "record_index": len(result["accepted_steps"]) - 1, "reasons": []}
+    result["failure"] = failure
+    result["certificate"].update(failed_record_index=failure["record_index"],
+                                  physical_checks=result["accepted_steps"][-1]["physical_checks"])
+    completion["failure"] = failure
+    runner.write_json(output / "FailureV1.json", failure)
+    runner._record_failure_result(output, result)
+    with pytest.raises(ValueError, match="no violating saved row"):
+        verify_result_records(output, completion)

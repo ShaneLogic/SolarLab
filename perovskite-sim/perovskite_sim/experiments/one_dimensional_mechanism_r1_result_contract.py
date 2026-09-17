@@ -83,6 +83,22 @@ def verify_failure_metadata(record, *, failed, rows=None, same=None):
             raise ValueError("passed result contains " + name)
     if "failure" in record:
         _closed(record["failure"], FAILURE_FIELDS, "failure provenance")
+        failure = record["failure"]
+        if failure.get("type") == "PhysicalCheckFailure":
+            index = failure.get("record_index")
+            if type(index) is not int or not rows or index != len(rows) - 1:
+                raise ValueError("recorded physical failure lacks its terminal saved witness")
+            if rows[index].get("physical_checks_passed") is not False or not rows[index].get("physical_failure_reasons"):
+                raise ValueError("recorded physical failure has no violating saved row")
+            if same is not None:
+                same(failure.get("reasons"), rows[index]["physical_failure_reasons"], "terminal failure reasons")
+    certificate = record.get("certificate", {})
+    if "failed_record_index" in certificate:
+        index = certificate["failed_record_index"]
+        if type(index) is not int or not rows or index != len(rows) - 1:
+            raise ValueError("failure certificate terminal row is absent from the saved prefix")
+        if "physical_checks" in certificate and same is not None:
+            same(certificate["physical_checks"], rows[index].get("physical_checks"), "terminal failure checks")
     persistence = record.get("persistence_failure")
     row_failures = [(index, row["persistence_failure"]) for index, row in enumerate(rows or [])
                     if "persistence_failure" in row]

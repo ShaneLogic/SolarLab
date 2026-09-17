@@ -57,7 +57,10 @@ def test_real_short_step_duplicate_representations_agree(saved_step):
     assert "storage_scale_m2_per_row" in scope["provenance_only"]
 
 
-def test_new_producer_cannot_replace_contact_inclusive_metric_with_internal_only_value(saved_step, runner):
+def test_producer_cannot_replace_metric_with_other_face_definition(saved_step, runner):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import (
+        _legacy_contact_closure_scope, _saved_face_current_spread,
+    )
     path, completion = saved_step
     result = read_json(path / "StepResultV1.json")
     finest = max(result["policy"]["refinement_substeps"])
@@ -68,9 +71,14 @@ def test_new_producer_cannot_replace_contact_inclusive_metric_with_internal_only
             currents = np.asarray(physical["internal_maxwell_A_m2"])
             spreads.append(float(np.ptp(currents)) / max(float(np.max(np.abs(currents))), 1e-20))
     internal_only = max(spreads)
-    assert internal_only < result["certificate"]["metrics"]["all_face_current_relative"]
-    assert internal_only < result["certificate"]["limits"]["all_face_current_relative"]
-    result["certificate"]["metrics"]["all_face_current_relative"] = internal_only
+    include_contacts = _legacy_contact_closure_scope(result, path)
+    contact_inclusive = max(_saved_face_current_spread(row, include_contacts=True)
+                            for row in result["accepted_steps"] if row["substeps"] == finest)
+    assert internal_only < contact_inclusive
+    assert result["certificate"]["metrics"]["all_face_current_relative"] == (
+        contact_inclusive if include_contacts else internal_only)
+    result["certificate"]["metrics"]["all_face_current_relative"] = (
+        internal_only if include_contacts else contact_inclusive)
     reseal_and_sync_all_representations(path, result, runner)
     with pytest.raises(ValueError, match="certificate face current spread"):
         verify_result_records(path, completion)
@@ -88,14 +96,17 @@ def test_initial_right_limit_and_old_sources_keep_internal_only_metric():
 
 def test_legacy_metric_scope_comes_from_bound_producer_bytes(tmp_path):
     import hashlib
+    import subprocess
     import zipfile
     from perovskite_sim.experiments import one_dimensional_mechanism_r1_dynamics as dynamics
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import _legacy_contact_closure_scope
     relative = "experiments/one_dimensional_mechanism_r1_dynamics.py"
     current = Path(dynamics.__file__).read_bytes()
     record = {"source": {"files": {relative: hashlib.sha256(current).hexdigest()}}}
-    assert _legacy_contact_closure_scope(record, tmp_path) is True
-    old = b"class ControlledPhysicalInterfaceIonSystem:\n    pass\n"
+    expected = getattr(dynamics, "CURRENT_METRIC_SEMANTICS", None) != "r1-v3-separate-internal-contact-interface"
+    assert _legacy_contact_closure_scope(record, tmp_path) is expected
+    old = subprocess.check_output(["git", "show", "04170c4efcbcaa023a63fcee1f30bb41cceee0f8:"
+        "perovskite-sim/perovskite_sim/" + relative], cwd=PROJECT)
     record["source"]["files"][relative] = hashlib.sha256(old).hexdigest()
     with pytest.raises(ValueError, match="requires its recorded producer source"):
         _legacy_contact_closure_scope(record, tmp_path)
@@ -104,6 +115,19 @@ def test_legacy_metric_scope_comes_from_bound_producer_bytes(tmp_path):
     assert _legacy_contact_closure_scope(record, tmp_path) is False
     record["source"]["files"][relative] = "0" * 64
     with pytest.raises(ValueError, match="producer differs from recorded source identity"):
+        _legacy_contact_closure_scope(record, tmp_path)
+
+
+def test_unknown_historical_source_cannot_self_declare_the_current_metric(tmp_path):
+    import hashlib
+    import zipfile
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import _legacy_contact_closure_scope
+    relative = "experiments/one_dimensional_mechanism_r1_dynamics.py"
+    unknown = b"CURRENT_METRIC_SEMANTICS = 'r1-v3-separate-internal-contact-interface'\n"
+    record = {"source": {"files": {relative: hashlib.sha256(unknown).hexdigest()}}}
+    with zipfile.ZipFile(tmp_path / "SourceV1.zip", "w") as archive:
+        archive.writestr("perovskite-sim/perovskite_sim/" + relative, unknown)
+    with pytest.raises(ValueError, match="unsupported recorded"):
         _legacy_contact_closure_scope(record, tmp_path)
 
 

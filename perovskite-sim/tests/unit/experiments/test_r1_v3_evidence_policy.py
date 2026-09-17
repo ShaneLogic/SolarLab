@@ -12,7 +12,7 @@ from tests.unit.experiments.test_one_dimensional_mechanism_r1_controlled import 
     repository, launch, commit, PROJECT,
 )
 from tests.unit.experiments.test_one_dimensional_mechanism_r1_evidence_revision_four import (
-    make_bundle, write, seal,
+    make_bundle, write, seal, canonical_seal,
 )
 
 
@@ -100,3 +100,26 @@ def test_attachment_byte_checks_do_not_attest_the_attachment_claims(tmp_path):
     assert scope["byte_consistency_file_count"] == 1
     assert scope["unclassified_attachments"] == [extra.name]
     assert not scope["unclassified_attachment_contents_verified"]
+
+
+def test_failed_prepare_existing_state_still_binds_its_source(repository, tmp_path):
+    output = make_bundle(repository, tmp_path / "failed-prepare")
+    completion = evidence.read_json(output / "CompletionV1.json")
+    failure = {"type": "PostPreparationFailure", "message": "after state write"}
+    completion.update(status="failed", failure=failure)
+    write(output / "CompletionV1.json", completion)
+    write(output / "FailureV1.json", failure)
+    seal(output)
+    arguments = dict(required_evidence_revision=4, expected_source_commit=repository[2],
+                     source_repository=repository[0])
+    valid, _ = evidence.inspect_legacy_evidence(output,
+        expected_manifest_sha256=evidence.sha256(output / "ManifestV1.json"), **arguments)
+    assert valid["status"] == "failed" and not valid["verification"]["scientifically_accepted"]
+    prepared = evidence.read_json(output / "PreparedStateV1.json")
+    prepared["source"]["source_commit"] = "0" * 40
+    prepared["source"] = canonical_seal(prepared["source"])
+    write(output / "PreparedStateV1.json", canonical_seal(prepared))
+    seal(output)
+    with pytest.raises(ValueError, match="prepared execution source differs"):
+        evidence.inspect_legacy_evidence(output,
+            expected_manifest_sha256=evidence.sha256(output / "ManifestV1.json"), **arguments)

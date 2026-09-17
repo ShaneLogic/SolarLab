@@ -34,8 +34,8 @@ def _array(value, label):
 def _legacy_contact_closure_scope(record, output):
     """Select the saved producer's definition, never whichever metric passes.
 
-    Older R1 sources inherited the internal-face metric. The current R1
-    override includes physical contacts for finite steps. Source anchoring is
+    Older R1 sources inherited the internal-face metric. The 392/815 sources
+    include physical contacts; V3 restores separately named statistics. Source anchoring is
     performed by the outer evidence verifier; here its module bytes must also
     match the result's recorded source identity before choosing that meaning.
     """
@@ -56,19 +56,23 @@ def _legacy_contact_closure_scope(record, output):
         if hashlib.sha256(producer).hexdigest() != claimed:
             raise ValueError("legacy current metric producer differs from recorded source identity")
 
-    def override(raw):
-        for node in ast.parse(raw).body:
-            if isinstance(node, ast.ClassDef) and node.name == "ControlledPhysicalInterfaceIonSystem":
-                return next((ast.dump(item, include_attributes=False) for item in node.body
-                             if isinstance(item, ast.FunctionDef) and item.name == "transient_current_metrics"), None)
-        raise ValueError("legacy current metric producer lacks the controlled R1 system")
-
-    observed = override(producer)
-    if observed is None:
-        return False
-    if observed != override(current):
-        raise ValueError("unsupported recorded R1 current-metric implementation")
-    return True
+    known = {
+        # Reviewed source blobs, not a value selected from the result labels.
+        # 04170c4 inherited internal faces; 3928259 and 815c2fe included contacts.
+        "94cafc0df08f19c0133d6df713c24b0a14e51fdbef5a577fd9596c0293d81992": False,
+        "3dcd8110420868be25c9d6d3afc0d59589381c7e1d46152dc790e66673759062": True,
+    }
+    identity = hashlib.sha256(producer).hexdigest()
+    if identity in known:
+        return known[identity]
+    if producer == current:
+        for node in ast.parse(current).body:
+            if (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                    and target.id == "CURRENT_METRIC_SEMANTICS" for target in node.targets)
+                    and isinstance(node.value, ast.Constant)
+                    and node.value.value == "r1-v3-separate-internal-contact-interface"):
+                return False
+    raise ValueError("unsupported recorded R1 current-metric implementation")
 
 
 def _saved_face_current_spread(row, *, include_contacts):
