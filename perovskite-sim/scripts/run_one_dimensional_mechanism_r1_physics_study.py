@@ -379,6 +379,8 @@ class Study:
         if not isinstance(result, dict):
             raise ValueError("study result must be a record")
         if key.startswith("Preparation/"):
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import verify_prepared_metadata
+            verify_prepared_metadata(result)
             prepared = R1PreparedState.from_dict(result)
             if result.get("source") != self.source or result.get("intervals") != request["intervals"]:
                 raise ValueError("preparation source/grid differs from the study")
@@ -402,6 +404,11 @@ class Study:
                                            binding=self.binding, prepared=self.prepared(request["intervals"]),
                                            request=request)
         if key.startswith("Zero/"):
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import verify_zero_metadata
+            def same(actual, expected, label):
+                if ready(actual) != ready(expected):
+                    raise ValueError(label + " differs from the requested zero-excitation contract")
+            verify_zero_metadata(result, same=same)
             p = self.prepared(request["intervals"])
             fresh = check_zero_excitation(self.stack, request["intervals"], self.binding, p,
                                           expected_prepared_sha256=p.sha256)
@@ -540,8 +547,22 @@ class Study:
             raise ValueError("failed case reason differs from completion")
         partial = failure.get("partial_result")
         if isinstance(partial, dict) and partial.get("physics_reconstruction") and partial.get("accepted_steps"):
-            return verify_r1_step_physics(self.stack, request["intervals"], self.binding,
-                                         self.prepared(request["intervals"]), partial, allow_incomplete=True)
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import failure_scope_report
+            if (partial.get("times_s") != ready(request.get("times_s"))
+                    or partial.get("control_label") != request.get("control", "D")
+                    or partial.get("amplitude_V") != request.get("amplitude_V", .005)
+                    or partial.get("policy") != ready(r1_policy(request["nonlinear_factor"],
+                                                               time_substeps=request["time_substeps"]))):
+                raise ValueError("failed step prefix differs from the planned request")
+            audit = verify_r1_step_physics(self.stack, request["intervals"], self.binding,
+                                          self.prepared(request["intervals"]), partial, allow_incomplete=True)
+            persisted = directory/"AcceptedStepsV1.jsonl"
+            rows = [json.loads(line) for line in persisted.read_text().splitlines()] if persisted.is_file() else None
+            if rows != partial["accepted_steps"]:
+                raise ValueError("failed saved rows differ from the raw persisted prefix")
+            audit["failure_scope"] = failure_scope_report(partial, audit, persisted_rows=rows, failure=completion["failure"])
+            audit["certified"] = False
+            return audit
         return {"certified": False, "content_matches_recomputed": None,
                 "reason": "no complete accepted state for physical replay; failed identity retained"}
 
