@@ -30,6 +30,43 @@ PINNED_PHYSICS_PROTOCOL_SHA256 = R1_DECLARATIONS[PHYSICS_PROTOCOL_RELATIVE_PATH]
 FROZEN_PHYSICS_DECLARATIONS = {path: declaration[2] for path, declaration in R1_DECLARATIONS.items()}
 
 
+def standard_binding_record(context=None, *, approved_standard_sha256=None):
+    """Separate candidate-pin consistency from a caller's standard approval.
+
+    The optional approval digest must come from the caller, never an output
+    bundle. Matching it is an identity check, not a signature or a new claim
+    that the current numerical result satisfies that standard.
+    """
+    context = context or require_r1_checkout()
+    declarations = {}
+    for relative, (role, exported, expected) in R1_DECLARATIONS.items():
+        actual = hashlib.sha256(context.read_bytes(relative)).hexdigest()
+        if actual != expected:
+            raise R1CheckoutError("R1 physics declaration differs from its pinned digest: " + relative)
+        declarations[relative] = {"role": role, "exported_name": exported, "sha256": actual}
+    standard = {
+        "schema": "R1CandidateStandardV1", "declarations": declarations,
+        "study_input_sha256": PINNED_STUDY_INPUT_SHA256,
+        "fixed_reference_sha256": PINNED_REFERENCE_BINDING_SHA256,
+    }
+    digest = hashlib.sha256(json.dumps(standard, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if approved_standard_sha256 is not None:
+        if (not isinstance(approved_standard_sha256, str) or len(approved_standard_sha256) != 64
+                or any(c not in "0123456789abcdef" for c in approved_standard_sha256)):
+            raise ValueError("external approved standard digest must be a SHA-256 value")
+        if approved_standard_sha256 != digest:
+            raise ValueError("candidate standard differs from the caller-approved standard")
+    return {
+        "schema": "R1StandardBindingV1", "candidate_standard": standard,
+        "candidate_standard_sha256": digest, "candidate_internal_consistency": True,
+        "approved_standard_sha256": approved_standard_sha256,
+        "matches_external_approval": approved_standard_sha256 is not None,
+        "source_commit": context.source_commit,
+        "scientific_qualification_asserted": False,
+        "scope": "candidate_identity_and_optional_caller_approval_match; not_independent_review_or_scientific_acceptance",
+    }
+
+
 def physics_protocol_identity():
     """Keep current authority and superseded declarations unambiguous."""
     context = require_r1_checkout()
@@ -128,4 +165,5 @@ def validate_r1_study_binding(binding, stack):
 
 
 __all__ = ["validate_r1_study_binding", "study_input_identity", "execution_contract_identity",
-           "operator_criterion_identity", "additional_failures_identity", "physics_protocol_identity"]
+           "operator_criterion_identity", "additional_failures_identity", "physics_protocol_identity",
+           "standard_binding_record"]

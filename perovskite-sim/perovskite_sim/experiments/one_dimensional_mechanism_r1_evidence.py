@@ -183,6 +183,47 @@ def _producer_evidence_revision(source_bytes):
     return max(revisions, default=None)
 
 
+def _verify_archived_source_identity(output, committed_source):
+    """Bind legacy source bytes to a caller's commit without executing them."""
+    source = read_json(output / "SourceManifestV1.json")
+    expected = {name: {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+                for name, raw in committed_source.items()}
+    if source != expected:
+        raise ValueError("source snapshot differs from the caller commit blobs")
+    try:
+        with zipfile.ZipFile(output / "SourceV1.zip") as archive:
+            if len(archive.namelist()) != len(expected) or set(archive.namelist()) != set(expected):
+                raise ValueError("source ZIP and trusted commit coverage differ")
+            for name, raw in committed_source.items():
+                if archive.read(name) != raw:
+                    raise ValueError("source ZIP differs from caller commit: " + name)
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        raise ValueError("invalid controlled source ZIP") from exc
+
+
+def evidence_file_scope(output):
+    """Byte-consistent extra attachments are not silently scientific certificates."""
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import R1_DECLARATIONS
+    known = {
+        "CompletionV1.json", "ManifestV1.json", "SourceManifestV1.json", "SourceV1.zip", "SourceChangesV1.patch",
+        "StudyInputV1.json", "ProtocolV1.json", "ReferenceBindingV1.json", "SourceFixtureV1.yaml",
+        "EnvironmentV1.json", "ExecutionSourceV1.json", "AdditionalFailuresV1.json", "AdditionalFailuresV2.json",
+        "PreparedStateV1.json", "PreparedStateV1.npz", "StepResultV1.json", "StepResultV1.npz",
+        "AcceptedStepsV1.json", "AcceptedStepsV1.npz", "ZeroExcitationV1.json", "ZeroExcitationV1.npz",
+        "FailureV1.json", "FailedResultV1.json", "FailedResultV1.npz", "FailureSerializationV1.json",
+        *(declaration[1] for declaration in R1_DECLARATIONS.values()),
+    }
+    entries = read_json(Path(output) / "ManifestV1.json")
+    # A consuming bundle includes one explicitly checked PreparationV1 parent.
+    unclassified = [name for name in entries
+                    if name not in known and not (name.startswith("PreparationV1/")
+                                                 and name.removeprefix("PreparationV1/") in known)]
+    return {"byte_consistency_file_count": len(entries),
+            "unclassified_attachments": sorted(unclassified),
+            "unclassified_attachment_contents_verified": False,
+            "scope": "file_bytes_and_classified_record_content_are_separate_checks"}
+
+
 def _verify_controlled_evidence(output, completion, *, expected_source_commit=None,
                                 committed_source=None, pin_contract=False):
     """Check the verifier-selected controlled format and optional source root."""
@@ -253,8 +294,9 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
                         or archive.getinfo(name).file_size != identity.get("bytes")
                         or hashlib.sha256(archive.read(name)).hexdigest() != identity.get("sha256")):
                     raise ValueError("source ZIP identity mismatch: " + name)
-            producer_revision = _producer_evidence_revision(archive.read(
-                "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py"))
+            producer_revision = (_producer_evidence_revision(committed_source[
+                "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py"])
+                if committed_source is not None else None)
             if producer_revision is not None and revision < producer_revision:
                 raise ValueError("bundle evidence revision downgrades its anchored producer format")
             input_name = "perovskite-sim/reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
@@ -388,9 +430,12 @@ def _source_anchor(expected_source_commit, source_repository):
         raise ValueError("caller source commit anchor is unavailable or invalid: " + str(exc)) from exc
 
 
-def _verify_prepared_record(output, execution):
+def _verify_prepared_record(output, execution, *, classify_current=True):
     """Bind the saved state to the accepted source, without rerunning its DC."""
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import verify_prepared_metadata
     prepared = read_json(output / "PreparedStateV1.json")
+    if classify_current:
+        verify_prepared_metadata(prepared)
     if not isinstance(prepared, dict) or prepared.get("schema") != "R1CommonStateV1":
         raise ValueError("invalid revision-four prepared-state record")
     payload = {key: value for key, value in prepared.items() if key != "sha256"}
@@ -441,8 +486,8 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
                               expected_prepared_manifest_sha256):
     """Check an externally pinned archived parent and the exact imported bytes."""
     protocol = read_json(output / "ProtocolV1.json")
-    prepared = _verify_prepared_record(output, execution)
     revision = completion["evidence_revision"]
+    prepared = _verify_prepared_record(output, execution, classify_current=revision >= 6)
     if revision >= 5:
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import verify_prepared_physics
         from perovskite_sim.models.config_loader import load_device_from_yaml
@@ -497,7 +542,7 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
 def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=None,
                       ledger_sha256=None, run_id=None, required_evidence_revision=6,
                       expected_source_commit=None, source_repository=None,
-                      expected_prepared_manifest_sha256=None):
+                      expected_prepared_manifest_sha256=None, approved_standard_sha256=None):
     output = Path(output).resolve(strict=True)
     expected, entry, ledger_source_commit = _verification_anchor(
         output, expected_manifest_sha256, ledger, ledger_sha256, run_id,
@@ -511,7 +556,7 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
         raise ValueError("unsupported externally required evidence revision")
     if completion.get("stage_scope") == "R1-rejected":
         raise ValueError("physical execution did not start; required scientific inputs and trajectory unavailable")
-    if required_evidence_revision >= 4:
+    if required_evidence_revision >= 4 or expected_source_commit is not None or ledger_source_commit is not None:
         if expected_source_commit is None:
             expected_source_commit = ledger_source_commit
         elif ledger_source_commit is not None and expected_source_commit != ledger_source_commit:
@@ -521,24 +566,39 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
             raise ValueError("ledger entry source commit disagrees with the external source anchor")
         source_commit, committed_source = _source_anchor(expected_source_commit, source_repository)
     else:
-        if expected_source_commit is not None or expected_prepared_manifest_sha256 is not None:
-            raise ValueError("legacy acceptance does not implement source or preparation anchors; select revision four")
         source_commit = committed_source = None
+    if required_evidence_revision < 4 and expected_prepared_manifest_sha256 is not None:
+        raise ValueError("legacy inspection before revision four does not verify preparation-chain anchors")
     # A failure is evidence too: it cannot bypass format, source or policy checks.
     if completion.get("evidence_revision", 1) != required_evidence_revision:
         raise ValueError("bundle evidence revision differs from the externally required revision")
-    if required_evidence_revision == 3:
-        _verify_controlled_evidence(output, completion)
+    producer_revision = None
+    if committed_source is not None:
+        producer_revision = _producer_evidence_revision(committed_source.get(
+            "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py", b""))
+        if producer_revision is not None and required_evidence_revision < producer_revision:
+            raise ValueError("bundle evidence revision downgrades its anchored producer format")
+    if required_evidence_revision < 4 and committed_source is not None:
+        _verify_archived_source_identity(output, committed_source)
+        if required_evidence_revision == 3:
+            _verify_controlled_evidence(output, completion, expected_source_commit=source_commit,
+                                        committed_source=committed_source)
     elif required_evidence_revision >= 4:
         execution = _verify_controlled_evidence(
             output, completion, expected_source_commit=source_commit,
             committed_source=committed_source, pin_contract=True,
         )
-        if completion["status"] == "passed" or completion["stage"] != "prepare":
+        if (completion["status"] == "passed" or completion["stage"] != "prepare"
+                or (output / "PreparedStateV1.json").exists()):
             _verify_preparation_chain(
                 output, completion, execution, source_repository=source_repository,
                 expected_prepared_manifest_sha256=expected_prepared_manifest_sha256,
             )
+        else:
+            protocol = read_json(output / "ProtocolV1.json")
+            if (protocol.get("preparation", "missing") is not None
+                    or (output / "PreparationV1").exists() or expected_prepared_manifest_sha256 is not None):
+                raise ValueError("failed prepare evidence must not claim an imported preparation chain")
         if required_evidence_revision >= 6:
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_execution_validation import verify_execution_parameters
             execution_parameters = verify_execution_parameters(output, completion)
@@ -548,6 +608,15 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
             if (required_evidence_revision >= 6 and completion["status"] == "passed"
                     and not result_checks.get("scientifically_accepted", False)):
                 raise ValueError("passed record lacks current physical acceptance")
+    standard = None
+    if required_evidence_revision >= 6:
+        from types import SimpleNamespace
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import standard_binding_record
+        selected = SimpleNamespace(source_commit=source_commit,
+            read_bytes=lambda relative: committed_source["perovskite-sim/" + str(relative)])
+        standard = standard_binding_record(selected, approved_standard_sha256=approved_standard_sha256)
+    elif approved_standard_sha256 is not None:
+        raise ValueError("historical inspection cannot assert current standard approval")
     if entry is not None:
         if ("required_evidence_revision" in entry
                 and entry["required_evidence_revision"] != required_evidence_revision):
@@ -566,7 +635,9 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
     limits = ["external anchors are not signatures or independent approval",
               "historical environment, timestamps and optimizer history are recorded provenance, not independently verified"]
     if required_evidence_revision < 4:
-        limits.append("legacy revision: no external source commit, pinned contract, or preparation-chain acceptance")
+        limits.append("legacy revision: no current pinned contract or preparation-chain acceptance")
+        if committed_source is None:
+            limits.append("no external source commit anchor; byte inspection only; no producer-format claim")
     if required_evidence_revision < 5:
         limits.append("legacy revision: preparation numerical claims, result records and operator decision are not recertified")
     else:
@@ -574,7 +645,7 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
         if completion["status"] == "passed" or completion["stage"] != "prepare":
             limits.append("saved preparation physics reevaluated")
         else:
-            limits.append("failed preparation has no accepted equilibrium certificate")
+            limits.append("failed preparation remains failed; only present preparation content reevaluated")
     if completion["status"] == "failed":
         limits.append("failed record remains failed; successful-evidence structure not certified")
     if required_evidence_revision < 6:
@@ -589,6 +660,10 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
                                         and result_checks and result_checks.get("scientifically_accepted")),
         "execution_parameters": execution_parameters,
         "source_commit_anchor": source_commit,
+        "source_identity_verified": committed_source is not None,
+        "producer_format_verified": producer_revision is not None,
+        "standard_binding": standard,
+        "file_scope": evidence_file_scope(output),
         "result_checks": result_checks,
         "limits": limits,
     }}, count
@@ -597,7 +672,7 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
 def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
                       ledger_sha256=None, run_id=None, required_evidence_revision=6,
                       expected_source_commit=None, source_repository=None,
-                      expected_prepared_manifest_sha256=None):
+                      expected_prepared_manifest_sha256=None, approved_standard_sha256=None):
     """Current physical acceptance; historical contracts cannot lower this gate."""
     if type(required_evidence_revision) is not int or required_evidence_revision != 6:
         raise ValueError("current physical acceptance requires evidence revision 6; use inspect_legacy_evidence for historical inspection")
@@ -605,7 +680,8 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
         ledger=ledger, ledger_sha256=ledger_sha256, run_id=run_id,
         required_evidence_revision=6, expected_source_commit=expected_source_commit,
         source_repository=source_repository,
-        expected_prepared_manifest_sha256=expected_prepared_manifest_sha256)
+        expected_prepared_manifest_sha256=expected_prepared_manifest_sha256,
+        approved_standard_sha256=approved_standard_sha256)
 
 
 def inspect_legacy_evidence(output, *, expected_manifest_sha256=None, ledger=None,

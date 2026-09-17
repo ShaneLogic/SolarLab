@@ -564,6 +564,7 @@ def _failed_sidecar(path, record):
 
 
 def _failed_preparation_physics(output, raw):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import verify_prepared_metadata
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
         _decode_dc, _make_system, _preparation_policy, _recomputed_dc_certificate,
         build_r1_material, equilibrium_checks, snapshot, json_data,
@@ -571,6 +572,7 @@ def _failed_preparation_physics(output, raw):
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
     from perovskite_sim.models.config_loader import load_device_from_yaml
 
+    verify_prepared_metadata(raw)
     stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
     binding = read_json(output / "ReferenceBindingV1.json")
     _same(raw.get("physical_stack"), json_data(stack), "failed preparation material stack")
@@ -593,11 +595,13 @@ def _failed_preparation_physics(output, raw):
 
 
 def _failed_zero_physics(output, record, prepared):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import verify_zero_metadata
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import r1_policy
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import equilibrium_checks, snapshot
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import build_initial_step
 
+    verify_zero_metadata(record, same=_same, failed=True)
     protocol = read_json(output / "ProtocolV1.json")
     policy = r1_policy(protocol["nonlinear_factor"], time_substeps=protocol["time_substeps"])
     _same(record.get("prepared_sha256"), prepared["sha256"], "failed zero preparation")
@@ -613,10 +617,50 @@ def _failed_zero_physics(output, record, prepared):
         _same(value.get("initial_event"), build_initial_step(system, state, 0.0, policy=policy).event,
               "failed zero initial event " + label)
 
+def failure_scope_report(record, reconstruction, *, persisted_rows=None, failure=None):
+    """Describe exactly the saved prefix checked, not the unwitnessed execution.
+
+    Call only after the row schedule and equations have been validated. A
+    shorter, internally consistent prefix does not establish why the original
+    computation stopped. It never promotes a failed experiment to acceptance.
+    """
+    rows = record.get("accepted_steps", [])
+    checked = reconstruction.get("checked_row_count", len(rows))
+    expected = reconstruction.get("expected_row_count")
+    violations = reconstruction.get("physical_limit_violations", [])
+    witnesses = [index for index, row in enumerate(rows)
+                 if row.get("physical_checks_passed") is False]
+    def endpoint(row):
+        return {key: row.get(key) for key in ("substeps", "time_s", "dt_s", "phase")}
+    return {
+        "schema": "R1FailureScopeV1",
+        "scientifically_accepted": False,
+        "saved_row_count": len(rows), "checked_row_count": checked,
+        "expected_row_count": expected,
+        "persisted_row_count": len(persisted_rows) if persisted_rows is not None else None,
+        "first_saved_row": endpoint(rows[0]) if rows else None,
+        "last_saved_row": endpoint(rows[-1]) if rows else None,
+        "saved_schedule_checked": bool(checked == len(rows) and rows),
+        "complete_requested_schedule": bool(expected is not None and checked == expected),
+        "saved_physical_failure_witness_rows": witnesses,
+        "recomputed_violation_count": len(violations),
+        "saved_physical_failure_demonstrated": bool(witnesses or violations),
+        "failure_origin_status": ("saved_physical_violations_reproduced"
+                                  if witnesses or violations else "not_reconstructed_from_saved_prefix"),
+        "original_execution_extent_verified": False,
+        "recorded_failure": failure if failure is not None else record.get("failure"),
+        "provenance_only": ["failure_type_and_message", "unpersisted_execution", "I/O_history"],
+        "scope": "present_saved_prefix_only; absence_of_a_saved_violation_does_not_refute_the_recorded_failure",
+    }
+
+
 def _verify_physical_result_records(output, completion):
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_physics_validation import verify_r1_step_physics
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import verify_prepared_physics
     from perovskite_sim.models.config_loader import load_device_from_yaml
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import (
+        verify_prepared_metadata, verify_zero_metadata,
+    )
 
     failed, stage = completion["status"] == "failed", completion["stage"]
     base_scope = {
@@ -636,6 +680,7 @@ def _verify_physical_result_records(output, completion):
             prepared = None
             if (output / "PreparedStateV1.json").exists():
                 prepared = read_json(output / "PreparedStateV1.json")
+                verify_prepared_metadata(prepared)
                 _failed_sidecar(output / "PreparedStateV1.npz", prepared)
                 verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
                                         read_json(output / "ReferenceBindingV1.json"))
@@ -661,16 +706,24 @@ def _verify_physical_result_records(output, completion):
                     raise ValueError("present failed scientific payload has no reconstructable physical schema")
             return {**base_scope, "content_matches_recomputed": True if checked else None,
                     "physical_limits_satisfied": False, "checked": checked,
+                    "failure_origin_reconstructed": False,
+                    "reconstruction_scope": "present_preparation_or_zero_equations_only; failure_history_not_replayed",
                     "unavailable": "failed experiment remains ineligible for scientific acceptance"}
         prepared = read_json(output / "PreparedStateV1.json")
+        verify_prepared_metadata(prepared)
         _failed_sidecar(output / "PreparedStateV1.npz", prepared)
         verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
                                 read_json(output / "ReferenceBindingV1.json"))
         if stage == "zero-check":
+            verify_zero_metadata(read_json(output / "ZeroExcitationV1.json"), same=_same)
             _verify_legacy_result_records(output, completion)
             _failed_sidecar(output / "ZeroExcitationV1.npz", read_json(output / "ZeroExcitationV1.json"))
         return {**base_scope, "scientifically_accepted": True,
                 "content_matches_recomputed": True, "physical_limits_satisfied": True,
+                "reconstruction_scope": "saved_preparation_and_zero_equations; declared_historical_metadata_not_replayed",
+                "provenance_only": base_scope["provenance_only"] + [
+                    "prepared.environment", "prepared.created_utc", "prepared.dc_state.certificate.optimizer_success",
+                    "prepared.dc_state.certificate.optimizer_nfev"],
                 "checked": ["saved_preparation_equations"] + (["zero_excitation_equations"] if stage == "zero-check" else [])}
     rows_path = output / "AcceptedStepsV1.json"
     rows = read_json(rows_path) if rows_path.exists() else []
@@ -705,6 +758,7 @@ def _verify_physical_result_records(output, completion):
     else:
         _same(record_rows, rows, "accepted step records")
     prepared = read_json(output / "PreparedStateV1.json")
+    verify_prepared_metadata(prepared)
     protocol = read_json(output / "ProtocolV1.json")
     for name in ("intervals", "amplitude_V", "times_s", "policy"):
         _same(record.get(name), protocol.get(name), "executed " + name)
@@ -738,6 +792,8 @@ def _verify_physical_result_records(output, completion):
     if not failed and not physics["certified"]:
         raise ValueError("passed result fails reconstructed physical gates")
     return {**base_scope, **physics, "scientifically_accepted": not failed and physics["certified"],
+            "failure_scope": (failure_scope_report(record, physics, persisted_rows=rows,
+                                                   failure=completion.get("failure")) if failed else None),
             "scope": base_scope["scope"], "reconstruction_scope": physics["scope"],
             "provenance_only": sorted(set(base_scope["provenance_only"]) | set(physics["provenance_only"])),
             "checked": ["state_to_transport_and_current", "charge_and_storage_equations",

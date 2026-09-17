@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import shutil
@@ -48,6 +49,9 @@ R1_DECLARATIONS = {
     "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "0e8b34b9805b896afa90c2f0e7a3f3e6b8b3a4a2c954576225c3adbe2f98a30b"),
     'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '33fe099847f135bf835286c60c3f8d85a5959f11affbd120fbc97548e60ef7e5'),
 
+    "docs/InterfaceDefectTransientIncrementContract.md": ("method", "IncrementContractV1.md", "d379bdc36255836e54fbb2a4f736ba3e8a2f6acb2d0fac16a6fd5e0baa048e30"),
+    "docs/OneDimensionalMechanismR0ProtocolV1.md": ("historical", "R0ProtocolV1.md", "62c736f7d7512d20b7ddbdcf9fb276452014b7f98a287e669ff95e31be2e7726"),
+    "docs/OneDimensionalMechanismR1EvidenceBoundariesV3.md": ("evidence", "EvidenceBoundariesV3.md", "c54b1bdabbaa912fada0a12de8a22617f9b8aa247b0fb5f926fa4010e3c8b12d"),
 }
 REQUIRED_SOURCE_ANCHORS = (
     *_ANCHORS,
@@ -90,7 +94,12 @@ class R1CheckoutContext:
             path = (self.root if path.parts[:1] == (PROJECT_RELATIVE_PATH,) else self.project) / path
         try:
             name = Path(os.path.abspath(path)).relative_to(self.root).as_posix()
+            relative = name.removeprefix(PROJECT_RELATIVE_PATH + "/")
+            if relative.startswith("docs/") and relative.endswith(".md") and relative not in R1_DECLARATIONS:
+                raise R1CheckoutError("R1 document read requires declaration classification: " + relative)
             return self._source_bytes[name]
+        except R1CheckoutError:
+            raise
         except (ValueError, KeyError) as exc:
             raise R1CheckoutError(f"path is absent from the frozen R1 source snapshot: {path}") from exc
 
@@ -127,6 +136,33 @@ class R1CheckoutContext:
 def current_execution_context():
     """The trusted startup path installs this object directly, not through env."""
     return _CURRENT_CONTEXT
+
+
+def declaration_coverage(source_bytes):
+    """Find R1 declarations without treating every imported library doc as a contract.
+
+    R1 entry points, R1 modules and the shared increment implementation are
+    the declared evidence readers. Literal document references in their code
+    or docstrings count, including subdirectories and non-R1 filenames.
+    Dynamic reads through the frozen context are checked again by read_bytes.
+    This is a contract-coverage rule, not a sandbox for arbitrary source code.
+    """
+    prefix = PROJECT_RELATIVE_PATH + "/"
+    declared = set()
+    for name, raw in source_bytes.items():
+        relative = name.removeprefix(prefix)
+        if relative.startswith("docs/") and Path(relative).name.startswith("OneDimensionalMechanismR1") and relative.endswith(".md"):
+            declared.add(relative)
+        reader = (
+            relative.startswith("scripts/run_one_dimensional_mechanism_r1")
+            or relative == "scripts/run_one_dimensional_mechanism_r0.py"
+            or (relative.startswith("perovskite_sim/experiments/")
+                and Path(relative).name.startswith("one_dimensional_mechanism_r1"))
+            or relative == "perovskite_sim/experiments/interface_defect_transient.py"
+        )
+        if reader and relative.endswith(".py"):
+            declared.update(re.findall(r"docs/[A-Za-z0-9_./-]+\.md", raw.decode("utf-8")))
+    return declared
 
 
 def _install_controlled_context(context, runtime):
@@ -320,10 +356,12 @@ def require_r1_checkout(*, project=None, runner=None, formal=False, source_commi
                            if name.startswith(prefix) and name.endswith(".py"))
     if not package_sources:
         raise R1CheckoutError("R1 checkout has no package source coverage")
-    declaration_paths = {path.relative_to(expected_project).as_posix()
-                         for path in (expected_project / "docs").glob("OneDimensionalMechanismR1*.md")}
-    declaration_paths.update(name[len(PROJECT_RELATIVE_PATH)+1:] for name in committed
-        if name.startswith(PROJECT_RELATIVE_PATH + "/docs/OneDimensionalMechanismR1") and name.endswith(".md"))
+    declaration_sources = dict(committed)
+    for path in [*package_sources, *(expected_project / name for name in REQUIRED_SOURCE_ANCHORS),
+                 *(expected_project / "docs").rglob("OneDimensionalMechanismR1*.md")]:
+        if path.is_file():
+            declaration_sources[path.relative_to(root).as_posix()] = path.read_bytes()
+    declaration_paths = declaration_coverage(declaration_sources)
     if declaration_paths != set(R1_DECLARATIONS):
         raise R1CheckoutError("R1 declaration registry coverage mismatch: " +
                               ", ".join(sorted(declaration_paths ^ set(R1_DECLARATIONS))))

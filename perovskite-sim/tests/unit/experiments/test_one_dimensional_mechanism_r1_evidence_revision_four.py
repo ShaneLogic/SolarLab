@@ -352,8 +352,11 @@ def test_legacy_selection_is_explicit_and_marked(prepared_bundle, source_reposit
     )
     assert accepted["verification"]["legacy"] is True
     assert "no external source commit" in " ".join(accepted["verification"]["limits"])
-    with pytest.raises(ValueError, match="legacy acceptance does not implement"):
-        accept(prepared_bundle, source_repository, required_evidence_revision=revision)
+    anchored, _ = accept(prepared_bundle, source_repository, required_evidence_revision=revision)
+    assert anchored["verification"]["source_identity_verified"] is True
+    assert anchored["verification"]["source_commit_anchor"] == source_repository[2]
+    assert anchored["verification"]["scientifically_accepted"] is False
+    assert anchored["verification"]["result_checks"] is None
 
 
 def make_ledger(output, repository, destination, *, top=True, entry=True):
