@@ -15,6 +15,9 @@ from perovskite_sim.physics.dynamic_storage import logit_occupancy_increment
 from perovskite_sim.physics.physical_control_volume import physical_contact_displacement
 
 
+CURRENT_METRIC_SEMANTICS = "r1-v3-separate-internal-contact-interface"
+
+
 @dataclass(frozen=True, slots=True)
 class R1DynamicsControls:
     """Select rate equations while retaining original species and charge."""
@@ -102,7 +105,12 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
                                  for k in range(self.interface_count)])
         return reference * np.exp(increments)
 
-    def transient_current_metrics(self, state, previous, dt):
+    def solver_current_metrics(self, state, previous, dt):
+        """Keep contact-aware stopping separate from published internal spread.
+
+        This is a solver consistency condition, not independent evidence. The
+        separate state reconstruction supplies the physical acceptance checks.
+        """
         metrics = super().transient_current_metrics(state, previous, dt)
         storage = self.storage_increment(state, previous)
         delta_rho = self._increment_charge_density(storage)

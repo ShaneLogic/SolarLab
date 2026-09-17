@@ -15,6 +15,7 @@ import numpy as np
 from perovskite_sim.experiments.interface_defect_transient import _jacobian_error
 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import physical_step_record
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_independent_physics import independent_physics_row
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
     R1PreparedState, _make_system, _preparation_policy, canonical, json_data,
     snapshot, verify_prepared_physics,
@@ -132,6 +133,8 @@ def capture_r1_physics_row(scaling_system, working, state, previous, voltage, dt
                 working, state.coordinate, voltage, previous, dt, storage_scale,
                 poisson_scale, local_scale, jacobian, policy.jacobian_check_step,
             )
+    result["independent_physics"] = independent_physics_row(
+        working, state, previous, dt, reported=result)
     return json_data(result)
 
 
@@ -241,6 +244,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     consumed = 0
     all_recomputed_rows = []
     any_physical_failure = False
+    independent_physics_passed = True
     limit_violations = []
     for count in policy.refinement_substeps:
         previous, state_outputs, observations = None, [], []
@@ -278,6 +282,11 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
             _same(row["state"], snapshot(working, state), f"accepted state {consumed}")
             diagnostic = capture_r1_physics_row(initial.system, working, state, local_previous,
                 amplitude, dt, policy, check_jacobian=local_index == 1)
+            independent = diagnostic["independent_physics"]
+            independent_physics_passed &= independent["passed"]
+            if not independent["passed"]:
+                limit_violations.append({"row":consumed, "substeps":count,
+                    "independent_physics_reasons":independent["reasons"]})
             _same(saved, diagnostic, f"state equations {consumed}")
             _same(row["scaled_nonlinear_residual"], diagnostic["scaled_nonlinear_residual"], "nonlinear residual")
             physical = _physical(initial.system, working, state, local_previous, dt, policy, initial)
@@ -434,6 +443,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         "schema": SCHEMA, "scope": SCOPE, "certified": successful,
         "evidence_matches_equations": True, "content_matches_recomputed": True,
         "physical_limits_satisfied": bool(limits_satisfied),
+        "independent_physics_passed": bool(independent_physics_passed),
         "physical_limit_violations": limit_violations, "complete": complete,
         "checked_row_count": consumed, "expected_row_count": expected_count,
         "checked_result_fields": [key for key in RESULT_ARRAY_FIELDS if key in record],

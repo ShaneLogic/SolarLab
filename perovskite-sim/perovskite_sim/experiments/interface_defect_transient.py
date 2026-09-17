@@ -1753,6 +1753,10 @@ class _InterfaceTransientSystem:
             interface_error,
         )
 
+    def solver_current_metrics(self, state, previous, dt):
+        """Numerical stopping diagnostics; not an independent physical audit."""
+        return self.transient_current_metrics(state, previous, dt)
+
     def eliminated_operator_error(
         self,
         state: _DeviceState,
@@ -1951,7 +1955,7 @@ def _solve_step(
         norm = float(np.max(np.abs(residual)))
         maximum_nnz = max(maximum_nnz, int(jacobian.nnz))
         charge_error = system.charge_balance_metrics(state, previous, dt)[1]
-        _, _, _, _, face_error, interface_error = system.transient_current_metrics(
+        _, _, _, _, face_error, interface_error = system.solver_current_metrics(
             state,
             previous,
             dt,
@@ -2037,7 +2041,7 @@ def _solve_step(
                 _,
                 candidate_face_error,
                 candidate_interface_error,
-            ) = system.transient_current_metrics(candidate_state, previous, dt)
+            ) = system.solver_current_metrics(candidate_state, previous, dt)
             residual_improved = candidate_norm < norm * (1.0 - 1.0e-4 * damping)
             candidate_closure_error = max(
                 candidate_charge_error / solver_charge_limit,
