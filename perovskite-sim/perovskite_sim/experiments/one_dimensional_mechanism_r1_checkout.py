@@ -46,6 +46,8 @@ R1_DECLARATIONS = {
     "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "ab74fc3ff56fdcb764a20697b14b0c6afc2973cb2031232b462b8d7202b7ca98"),
     "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "d61d0385985d07f306af6f0d013a97e29c2eb20c232e6a4bb3a2a8f343e1422f"),
     "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "0e8b34b9805b896afa90c2f0e7a3f3e6b8b3a4a2c954576225c3adbe2f98a30b"),
+    'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '33fe099847f135bf835286c60c3f8d85a5959f11affbd120fbc97548e60ef7e5'),
+
 }
 REQUIRED_SOURCE_ANCHORS = (
     *_ANCHORS,

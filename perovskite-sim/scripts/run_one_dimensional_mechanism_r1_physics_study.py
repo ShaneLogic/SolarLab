@@ -57,10 +57,19 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response impo
     frequency_window_report, reconstruct_study_response,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import R1AdmittanceErrors
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_request import (
+    build_execution_plan, load_execution_plan, inventory_coverage, load_qualification_inputs,
+)
 
 
 SECTIONS = ("prepare", "zero", "short", "matrix", "long", "dc", "amplitude-dc", "ac", "amplitude", "compare", "windows", "reconstruct")
 FREQUENCIES = np.r_[0., np.logspace(-3, 8, 45)]
+
+
+def expanded_sections(values):
+    selected = set(SECTIONS) if "all" in values else {
+        part for section in values for part in (("dc", "ac") if section == "dc-ac" else (section,))}
+    return tuple(section for section in SECTIONS if section in selected)
 
 
 class CaseBudgetExhausted(RuntimeError):
@@ -146,6 +155,7 @@ class Study:
         self.frequencies = (np.r_[0., np.logspace(-6, 10, 65)]
                             if getattr(args, "extended_frequency", False) else FREQUENCIES)
         self.controls = tuple(getattr(args, "matrix_controls", ("D",)))
+        self.amplitudes = tuple(getattr(args, "amplitudes", None) or AMPLITUDES_V)
         self.verified_cases = {}
         self.input_dependencies = {}
         self.source = execution_source()
@@ -160,22 +170,59 @@ class Study:
         self.rows, self.attempted = [], 0
         self.preparations = {}
         self.dc_baselines = {}
+        self.qualification_inputs = load_qualification_inputs(
+            getattr(args, "qualification_file", None), getattr(args, "qualification_sha256", None),
+            result_directory=self.output)
         request = {
-            "schema": "R1PhysicsStudyRequestV2", "run_class": self.run_class,
+            "schema": "R1PhysicsStudyRequestV3", "run_class": self.run_class,
             "source": self.source, "runner_sha256": sha(Path(__file__)),
             "fixture_sha256": hashlib.sha256(fixture_raw).hexdigest(),
             "reference_sha256": hashlib.sha256(reference_raw).hexdigest(),
             "short_times_s": DEFAULT_TIMES_S, "full_times_s": observation_times(),
             "frequency_Hz": self.frequencies,
             "amplitude_ladder_V": list(AMPLITUDES_V),
+            "transient_amplitudes_V": list(self.amplitudes),
             "grids": self.grids, "matrix_controls": self.controls,
             "window": self.window, "times_s": self.times,
+            "window_amplitude_V": getattr(args, "window_amplitude", .005),
+            "linearity_case": getattr(args, "linearity_case", None),
+            "qualification_inputs_sha256": getattr(args, "qualification_sha256", None),
             "window_extensions": {"first_time_s": args.first_time_s, "last_time_s": args.last_time_s,
                                    "extended_last_time_s": min(args.last_time_s*10, 1e5),
                                    "earlier_first_time_s": max(args.first_time_s/10, 1e-12)},
             "scope": "single_frozen_study_settings_not_independent_R1_2_acceptance",
             "matrix_scope": "base_27_plus_declared_extensions_and_control_axis_crosses",
         }
+        self.request = ready(request)
+        if getattr(args, "plan_only", False):
+            self.plan = self.make_plan(expanded_sections(args.section))
+            plan_file = args.plan_file.resolve()
+            if plan_file.is_relative_to(self.output):
+                raise ValueError("pre-execution plan must be written outside the not-yet-created result directory")
+            plan_file.parent.mkdir(parents=True, exist_ok=True)
+            if plan_file.exists() and plan_file.read_bytes() != raw_json(self.plan):
+                raise ValueError("plan path already holds a different request; choose a new version")
+            if not plan_file.exists():
+                write_json(plan_file, self.plan)
+            self.plan_sha256 = sha(plan_file)
+            return
+        supplied_plan = getattr(args, "plan_file", None)
+        if self.run_class == "formal" and supplied_plan is None:
+            raise ValueError("formal study requires a pre-execution plan and external study request digest")
+        if supplied_plan is not None:
+            self.plan = load_execution_plan(supplied_plan, getattr(args, "request_sha256", None))
+            if self.plan["study_settings"] != self.request:
+                raise ValueError("source, standard or study settings differ from the externally anchored request")
+            expected_plan = self.make_plan(self.plan["sections"], self.plan["selection"])
+            if self.plan != expected_plan:
+                raise ValueError("external study plan differs from source-defined case requests")
+            self.plan_sha256 = sha(supplied_plan)
+        else:
+            self.plan = self.make_plan(expanded_sections(args.section))
+            self.plan_sha256 = None
+        self.planned_cases = self.plan["cases"]
+        if self.run_class == "formal" and getattr(args, "retry_failed", False):
+            raise ValueError("formal retries require a new versioned study request; preserve the failed study")
         if self.output.exists():
             if not args.resume and not self.verifying:
                 raise ValueError("output exists; use --resume to verify and extend it")
@@ -187,9 +234,18 @@ class Study:
             existing = json.loads((self.output/"StudyRequestV1.json").read_text())
             if existing != ready(request):
                 raise ValueError("resume source, runner, inputs or fixed study request changed")
+            if checked_read(self.output, "StudyPlanV1.json") != self.plan:
+                raise ValueError("archived study plan differs from externally anchored request")
+            existing_inventory = checked_read(self.output, "CaseInventoryV2.json")
+            inventory_coverage(self.plan, existing_inventory, {})
+            if checked_read(self.output, "QualificationInputsV1.json") != self.qualification_inputs:
+                raise ValueError("archived qualification inputs differ from caller-held inputs")
         else:
             self.output.mkdir(parents=True)
             write_json(self.output/"StudyRequestV1.json", request)
+            write_json(self.output/"StudyPlanV1.json", self.plan)
+            write_json(self.output/"CaseInventoryV2.json", self.planned_cases)
+            write_json(self.output/"QualificationInputsV1.json", self.qualification_inputs)
             write_json(self.output/"EnvironmentV1.json", {
                 "python": sys.version, "numpy": np.__version__, "platform": platform.platform(),
                 "threads": {key: os.environ[key] for key in THREAD_VARIABLES},
@@ -199,16 +255,63 @@ class Study:
             for path in (args.fixture, args.reference):
                 if self.context.read_bytes(path) != path.read_bytes():
                     raise ValueError("study input differs from controlled snapshot: "+str(path))
-        self.request = ready(request)
         self.original_inventory = (json.loads((self.output/"CaseInventoryV2.json").read_text())
                                    if (self.output/"CaseInventoryV2.json").is_file() else {})
+
+    def make_plan(self, sections, selection=None):
+        """Enumerate the real runner's requests without executing operations."""
+        if tuple(sections) != expanded_sections(sections):
+            raise ValueError("plan sections must use the source-defined ordered section set")
+        selection = selection or {"case_filter": self.args.case_filter,
+                                  "cases": sorted(getattr(self.args, "case", None) or [])}
+        if set(selection) != {"case_filter", "cases"}:
+            raise ValueError("invalid study plan selection")
+        collector = Study.__new__(Study)
+        collector.__dict__.update(self.__dict__)
+        records = {}
+        exact = set(selection["cases"])
+        def selected(key):
+            return (not exact or key in exact) and (not selection["case_filter"] or selection["case_filter"] in key)
+        def capture(key, request, operation, *, dependency=False):
+            if not dependency and not selected(key):
+                return None
+            request = ready(dict(request))
+            if all(field in request for field in ("intervals", "control", "time_substeps", "nonlinear_factor", "times_s")):
+                request.setdefault("amplitude_V", .005)
+            if key in records and records[key] != request:
+                raise ValueError("case has conflicting pre-execution requests: " + key)
+            records[key] = request
+            if not key.startswith("Preparation/"):
+                for field in ("intervals", "grid", "left", "right"):
+                    if field in request:
+                        prepare(request[field])
+                for field in ("left_case", "right_case"):
+                    if field in request:
+                        grid = next(int(part[1:]) for part in request[field].split("/") if part.startswith("N"))
+                        prepare(grid)
+            return None
+        def prepare(n):
+            capture(f"Preparation/N{n}", {"intervals": n, "scope": "common_D_equilibrium"}, None, dependency=True)
+        collector.case, collector.prepared, collector.selected = capture, prepare, selected
+        collector.qualified_amplitude = lambda: (self.request["window_amplitude_V"], self.request["linearity_case"])
+        collector.run(tuple(sections))
+        if exact - set(records):
+            raise ValueError("selected cases are not defined in the requested sections: " + ", ".join(sorted(exact-set(records))))
+        return build_execution_plan(self.request, sections, selection, records)
 
     def source_unchanged(self):
         if execution_source() != self.source:
             raise RuntimeError("source changed during the study; start a new evidence directory")
+        if load_qualification_inputs(getattr(self.args, "qualification_file", None),
+                getattr(self.args, "qualification_sha256", None), result_directory=self.output) != self.qualification_inputs:
+            raise RuntimeError("qualification inputs changed during the study")
 
     def selected(self, key):
-        return bool(getattr(self, "verifying", False)) or not self.args.case_filter or self.args.case_filter in key
+        if hasattr(self, "planned_cases") and key not in self.planned_cases:
+            return False
+        exact = getattr(self.args, "case", None)
+        return bool(getattr(self, "verifying", False)) or (
+            (not exact or key in exact) and (not self.args.case_filter or self.args.case_filter in key))
 
     def latest(self, key):
         directory = self.output/key
@@ -315,11 +418,15 @@ class Study:
 
     def case(self, key, request, operation, *, dependency=False):
         request = ready(dict(request))
+        if hasattr(self, "planned_cases") and key not in self.planned_cases:
+            return None
         if (getattr(self, "verifying", False) and key not in getattr(self, "original_inventory", {})
                 and self.latest(key) is None):
             return None
         if all(field in request for field in ("intervals", "control", "time_substeps", "nonlinear_factor", "times_s")):
             request.setdefault("amplitude_V", .005)
+        if hasattr(self, "planned_cases") and request != self.planned_cases[key]:
+            raise ValueError("runtime case request differs from pre-execution plan: " + key)
         if not hasattr(self, "expected_cases"):
             self.expected_cases = {}
         if not hasattr(self, "operations"):
@@ -542,7 +649,7 @@ class Study:
                               expected_prepared_sha256=self.prepared(n).sha256), self.frequencies))
         if "amplitude" in sections:
             previous = None
-            for amplitude in AMPLITUDES_V:
+            for amplitude in getattr(self, "amplitudes", AMPLITUDES_V):
                 for item in self.amplitude_cases(amplitude):
                     self.case(self.amplitude_key(item), {**dataclasses.asdict(item), "times_s": self.times,
                               "scope": self.window+"_amplitude_independent_axis_case"},
@@ -552,8 +659,6 @@ class Study:
                     result = self.case(f"Linearity/A{previous}ToA{amplitude}", {"kind": "amplitude_linearity", "coarse_amplitude_V": previous,
                               "fine_amplitude_V": amplitude, "scope": self.window+"_normalized_current_and_refinement_error"},
                               lambda directory, a=previous, b=amplitude: self.amplitude_record(a, b))
-                    if result is not None and result.get("linearity_certified") is True:
-                        break
                 previous = amplitude
         if "compare" in sections:
             for control in "ABCD":
@@ -591,7 +696,7 @@ class Study:
                 self.case(f"Frequency/N{grid}", {"kind": "frequency_coverage", "grid": grid,
                           "scope": "numerically_valid_bands_and_uncovered_turnovers"},
                           lambda directory, grid=grid: self.compare_available([f"AC/N{grid}/D"],
-                              lambda: frequency_window_report(self.saved(f"AC/N{grid}/D", require_scientific=False)),
+                              lambda: self.frequency_record(grid),
                               require_scientific=False))
             self.case(f"DoubleDomain/N{n}/D", {"kind": "double_domain", "grid": n,
                       "scope": "derived_double_domain_eligibility_with_explicit_unknown_errors"},
@@ -603,10 +708,17 @@ class Study:
         def reconstruct():
             step, ac, dc = (self.saved(key) for key in keys)
             prepared = self.prepared(n)
+            scope = self.response_scope(step, n)
+            external = self.qualification_inputs["double_domain_evidence"].get(f"DoubleDomain/N{n}/D", {})
+            if set(external) - {"errors", "prerequisites"}:
+                raise ValueError("unknown externally supplied double-domain fields")
+            qualification_args = {"expected_scope": scope,
+                "qualification_evidence": external.get("prerequisites"),
+                "trusted_evidence": self.qualification_inputs["trusted_evidence"]}
             prerequisites = {"input_trajectory_certified": self.verified_cases[keys[0]][1].get("certified") is True,
                 "ac_content_verified": self.verified_cases[keys[1]][1].get("content_matches_recomputed") is True,
                 "finite_amplitude_linearity": False,
-                "frequency_window_coverage": frequency_window_report(ac)["frequency_window_complete"]}
+                "frequency_window_coverage": self.frequency_record(n)["device_frequency_window_certified"]}
             error_fields, uncertainty = {}, {}
             if linearity_key is not None and self.window == "full":
                 linearity = self.saved(linearity_key)
@@ -632,11 +744,16 @@ class Study:
                     adjacent_dc = self.saved(f"DC/N{neighbor.intervals}/D")["conductance"]
                     error_fields["dc_conductance_S_m2"] = (dc["conductance"]["finest_pair_absolute_difference_S_m2"]
                         + abs(dc["conductance"]["conductance_S_m2"][-1]-adjacent_dc["conductance_S_m2"][-1]))
-            errors = R1AdmittanceErrors(**error_fields)
+            # Refinement differences above remain estimates. Only separately
+            # reviewed inputs can supply reconstruction bounds, and their
+            # precise values are included in the qualification application.
+            approved_error_fields = external.get("errors", {})
+            errors = R1AdmittanceErrors(**approved_error_fields)
             reference = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors,
-                                                   prerequisites=prerequisites)
+                                                   prerequisites=prerequisites, **qualification_args)
             tight = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors,
-                prerequisites=prerequisites, quadrature_absolute_tolerance_F_m2=1e-13, quadrature_relative_tolerance=1e-11)
+                prerequisites=prerequisites, quadrature_absolute_tolerance_F_m2=1e-13, quadrature_relative_tolerance=1e-11,
+                **qualification_args)
             comparisons = {"stricter_integration": self.reconstruction_comparison(reference, tight)}
             prerequisites["stricter_integration"] = comparisons["stricter_integration"]["passed"]
             for label, gate in (("Extended", "window_extension"), ("Earlier", "earlier_start")):
@@ -660,12 +777,15 @@ class Study:
             tail_report = compare_transient_tail(target, initial_state=prepared.to_dict()["state"], tail_state=tail,
                 tail_regular_current_A_m2=step["regular_currents"][-1]["report_contact_current_A_m2"][0], time_s=row["time_s"])
             prerequisites["tail_dc_agreement"] = tail_report["all_observables_agree"]
-            result = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors, prerequisites=prerequisites)
+            result = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors,
+                                                prerequisites=prerequisites, **qualification_args)
             return {**result, "linearity_case": linearity_key, "prerequisite_evidence": comparisons,
                     "tail_dc_evidence": tail_report, "current_uncertainty_evidence": uncertainty,
                     "provided_error_estimates": ready(error_fields),
+                    "error_estimate_classification": "estimate_only",
+                    "externally_supplied_error_bounds": ready(approved_error_fields),
                     "unestablished_error_budgets": [name for name in R1AdmittanceErrors.__dataclass_fields__
-                                                     if name not in error_fields]}
+                                                     if name not in approved_error_fields]}
         return self.compare_available(keys, reconstruct)
 
     @staticmethod
@@ -677,6 +797,24 @@ class Study:
         return compare_responses("admittance", response(left), response(right))
 
     def qualified_amplitude(self):
+        # The chosen diagnostic amplitude is fixed before any computation.
+        # Eligibility is evaluated separately; it cannot change the case universe.
+        if hasattr(self, "plan") or getattr(self.args, "plan_only", False):
+            amplitude = getattr(self.args, "window_amplitude", .005)
+            key = getattr(self.args, "linearity_case", None)
+            if key is not None:
+                report = self.saved(key)
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import (
+                    evidence_digest, select_response_amplitude,
+                )
+                qualification = report.get("qualification", {})
+                prepared = self.prepared(self.grids[-1]).to_dict()
+                scope = self.response_scope(prepared, self.grids[-1])
+                selection = select_response_amplitude([qualification], expected_scope=scope,
+                    verified_report_digests=[evidence_digest(qualification)], diagnostic_amplitude_V=amplitude)
+                if selection["device_qualified"] is not True or selection["qualified_amplitude_V"] != amplitude:
+                    raise ValueError("requested window amplitude lacks the specified verified linearity evidence")
+            return amplitude, key
         candidates = []
         for directory in sorted((self.output/"Linearity").glob("*/AttemptV*")):
             if not (directory/"CompletionV1.json").is_file():
@@ -751,13 +889,44 @@ class Study:
             b, error_b, audit_b = self.amplitude_error(fine)
             report = compare_amplitude_halving(a, b, coarse_amplitude_V=coarse, fine_amplitude_V=fine,
                                                coarse_current_error=error_a, fine_current_error=error_b)
-            qualified = audit_a["axes_passed"] and audit_b["axes_passed"]
-            return {"schema": "R1AmplitudeLinearityV2", "comparison": report,
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import (
+                assess_transient_linearity, evidence_digest,
+            )
+            centers = [next(c for c in self.amplitude_cases(amplitude)
+                            if c.intervals == self.grids[-1] and c.time_substeps == (4, 8, 16)
+                            and c.nonlinear_factor == .01) for amplitude in (coarse, fine)]
+            center_keys = [self.amplitude_key(c) for c in centers]
+            steps = [self.saved(key) for key in center_keys]
+            scope = self.response_scope(steps[0], self.grids[-1])
+            trusted = dict(self.qualification_inputs["trusted_evidence"])
+            trusted.update({"verified_step:"+key: evidence_digest(step) for key, step in zip(center_keys, steps)})
+            baseline = self.zero_dc(self.grids[-1], "D").evidence["current_A_m2"][[0, -1]]
+            qualification = assess_transient_linearity(*steps, coarse_baseline_A_m2=baseline,
+                fine_baseline_A_m2=baseline, expected_scope=scope, expected_times_s=self.times,
+                coarse_budget=self.qualification_inputs["current_budgets"].get(center_keys[0]),
+                fine_budget=self.qualification_inputs["current_budgets"].get(center_keys[1]), trusted_evidence=trusted)
+            qualified = (audit_a["axes_passed"] and audit_b["axes_passed"]
+                         and qualification["device_qualified"] is True)
+            return {"schema": "R1AmplitudeLinearityV3", "comparison": report,
+                    "coarse_amplitude_V": coarse, "fine_amplitude_V": fine,
                     "coarse_error_evidence": audit_a, "fine_error_evidence": audit_b,
-                    "linearity_certified": qualified and report["passed"],
-                    "within_compared_budgets": qualified and report["passed"],
-                    "scope": self.window+"_window_two_amplitude_response_with_independent_refinement_estimates"}
+                    "qualification": qualification, "linearity_certified": qualified,
+                    "within_compared_budgets": qualified,
+                    "empirical_comparison_classification": "estimate_only",
+                    "scope": self.window+"_window_two_amplitude_diagnostics_and_externally_bound_qualification"}
         return self.compare_available(keys, compare)
+
+    def response_scope(self, record, intervals):
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import evidence_digest, qualification_scope
+        prepared = self.prepared(intervals).to_dict()
+        return qualification_scope(record, state_sha256=evidence_digest(prepared["state"]), domain="device")
+
+    def frequency_record(self, intervals):
+        key = f"AC/N{intervals}/D"
+        ac = self.saved(key, require_scientific=False)
+        return frequency_window_report(ac, expected_scope=self.response_scope(ac, intervals),
+            turnover_evidence=self.qualification_inputs["turnover_evidence"].get(key),
+            trusted_evidence=self.qualification_inputs["trusted_evidence"])
 
     def short_comparison(self, left, right, control):
         keys = (f"Short/N{left}/{control}", f"Short/N{right}/{control}")
@@ -935,6 +1104,8 @@ class Study:
                 raise ValueError("frozen case inventory request changed: "+key)
             inventory[key] = value
         missing = sorted(set(inventory)-set(active))
+        if hasattr(self, "plan"):
+            missing = inventory_coverage(self.plan, inventory, active)
         unknown = [key for key, row in active.items() if row["completion"].get("scientific_checks_passed") is None]
         unchecked = []
         if getattr(self, "run_class", "development") == "formal":
@@ -951,6 +1122,11 @@ class Study:
                           for axis in ("intervals", "time_substeps", "nonlinear_factor")}
         finest_passed = expected_pairs <= pair_coverage and all(
             row["completion"].get("scientific_checks_passed") is True for row in required_pairs)
+        if hasattr(self, "plan"):
+            planned_finest = set(self.plan["required_finest_cases"])
+            finest_passed = bool(planned_finest) and all(
+                key in active and active[key]["completion"].get("scientific_checks_passed") is True
+                for key in planned_finest)
         requirements = {
             "formal_source_execution": getattr(self, "run_class", "development") == "formal",
             "all_recorded_cases_checked": not unchecked,
@@ -967,6 +1143,13 @@ class Study:
             "window_and_double_domain": any(row["conditions"].get("kind") == "double_domain"
                 and row["completion"].get("scientific_checks_passed") is True for row in active.values()),
         }
+        if hasattr(self, "plan"):
+            requirements["external_case_set_verified"] = self.plan_sha256 is not None
+            requirements["all_four_control_axes_available"] = {
+                (control, axis) for control in "ABCD"
+                for axis in ("intervals", "time_substeps", "nonlinear_factor")} <= pair_coverage
+            requirements["full_window_base_27_available"] = requirements.pop("full_window_base_27")
+            requirements["three_axes_recorded"] = requirements.pop("three_independent_axis_comparisons")
         summary = {"schema": "R1PhysicsStudySummaryV2", "started_utc": self.started,
                    "finished_utc": datetime.now(timezone.utc).isoformat(), "argv": sys.argv,
                    "cases": self.rows, "attempted_cases": self.attempted,
@@ -979,6 +1162,14 @@ class Study:
                    "missing_for_R1_2_exit": [k for k, v in requirements.items() if not v],
                    "independent_acceptance": "not_asserted",
                    "scope": "numerical_study_criteria_do_not_replace_independent_review"}
+        if hasattr(self, "plan"):
+            summary.update(planned_case_count=len(self.planned_cases),
+                           study_request_sha256=self.plan_sha256,
+                           diagnostic_failed_case_count=len(failures),
+                           comparison_axes_recorded=sorted({row["conditions"].get("axis") for row in active.values()
+                               if row["case"].startswith("MatrixCompare/")}),
+                           availability_does_not_imply_convergence=True,
+                           verification_does_not_imply_scientific_acceptance=True)
         code = 1 if failures or local_fail else 2 if missing or unavailable or unknown or unchecked else 0
         summary["exit_code"] = code
         if getattr(self, "verifying", False):
@@ -1090,16 +1281,27 @@ def main(argv=None):
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--retry-failed", action="store_true", help="preserve prior failure and create a new attempt")
     parser.add_argument("--case-filter", default="", help="substring of case key; required preparations run as dependencies")
+    parser.add_argument("--case", action="append", help="exact planned case key; repeat for a bounded set")
     parser.add_argument("--max-cases", type=int, help="maximum newly started cases in this invocation")
     parser.add_argument("--formal", action="store_true", help="require the controlled source launcher")
     parser.add_argument("--verify", action="store_true", help="recompute archived evidence without writing it")
     parser.add_argument("--manifest-sha256", help="external root manifest anchor for formal resume/verify")
+    parser.add_argument("--plan-only", action="store_true", help="write exact case requests without solving or creating results")
+    parser.add_argument("--plan-file", type=Path, help="caller-held pre-execution request file")
+    parser.add_argument("--request-sha256", help="independently retained pre-execution request SHA256")
+    parser.add_argument("--qualification-file", type=Path, help="caller-held independently reviewed response evidence")
+    parser.add_argument("--qualification-sha256", help="independently retained qualification input SHA256")
     parser.add_argument("--grids", type=int, nargs="+", default=(16, 32, 64), choices=(16, 32, 64, 128, 256))
     parser.add_argument("--matrix-controls", nargs="+", default=("D",), choices=tuple("ABCD"))
     parser.add_argument("--window", choices=("functional", "full"), default="functional")
     parser.add_argument("--first-time-s", type=float, default=1e-9)
     parser.add_argument("--last-time-s", type=float, default=1e2)
     parser.add_argument("--extended-frequency", action="store_true", help="include protocol limit band 1e-6..1e10 Hz")
+    parser.add_argument("--amplitudes", type=float, nargs="+", choices=AMPLITUDES_V,
+                        help="preselected subset of the prescribed transient amplitude ladder")
+    parser.add_argument("--window-amplitude", type=float, choices=AMPLITUDES_V, default=.005,
+                        help="fixed diagnostic window amplitude; does not assert linearity")
+    parser.add_argument("--linearity-case", help="explicit verified linearity case for the chosen window amplitude")
     args = parser.parse_args(argv)
     if args.max_cases is not None and args.max_cases <= 0:
         parser.error("--max-cases must be positive")
@@ -1109,11 +1311,19 @@ def main(argv=None):
         parser.error("--grids must be distinct and increasing")
     if args.verify and args.retry_failed:
         parser.error("verification cannot retry or modify recorded computations")
+    if args.plan_only and (args.plan_file is None or args.verify or args.resume):
+        parser.error("--plan-only requires --plan-file and cannot resume or verify")
+    if args.amplitudes and (len(set(args.amplitudes)) != len(args.amplitudes)
+                           or args.amplitudes != sorted(args.amplitudes, reverse=True)):
+        parser.error("--amplitudes must be distinct and decreasing")
     study = None
     try:
         study = Study(args)
-        sections = SECTIONS if "all" in args.section else [part for section in args.section
-                                                          for part in (("dc", "ac") if section == "dc-ac" else (section,))]
+        if args.plan_only:
+            print("STUDY_REQUEST_SHA256", study.plan_sha256, flush=True)
+            print(json.dumps({"planned_case_count": len(study.plan["cases"]), "physical_cases_executed": 0}))
+            return 0
+        sections = expanded_sections(args.section)
         if args.verify:
             # --section must never hide a different archived result from an
             # otherwise successful scientific verification.

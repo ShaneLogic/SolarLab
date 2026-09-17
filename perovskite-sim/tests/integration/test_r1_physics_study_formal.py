@@ -84,14 +84,23 @@ def formal_study(tmp_path_factory):
     project, revision = frozen_project(checkout)
     dependencies = Path(np.__file__).resolve().parent.parent
     launcher = project / "scripts/run_one_dimensional_mechanism_r1_controlled.py"
+    plan_file = base / "PreExecutionRequestV1.json"
+    request_anchor = []
 
     def launch(output, *extra):
-        return subprocess.run([
+        command = [
             sys.executable, "-I", "-S", str(launcher), "--project", str(project),
             "--source-commit", revision, "--dependency-path", str(dependencies),
             "--runner", "physics-study", "--", "--formal", "--output-dir", str(output),
-            "--grids", "16", *extra,
-        ], env=ENV, cwd=checkout, capture_output=True, text=True, timeout=180)
+            "--grids", "16", *extra]
+        if not request_anchor:
+            planned = subprocess.run(command + ["--plan-only", "--plan-file", str(plan_file)],
+                                     env=ENV, cwd=checkout, capture_output=True, text=True, timeout=60)
+            assert planned.returncode == 0, planned.stdout + planned.stderr
+            assert not output.exists(), "planning must not produce a physical result"
+            request_anchor.append(digest(plan_file))
+        return subprocess.run(command + ["--plan-file", str(plan_file), "--request-sha256", request_anchor[0]],
+                              env=ENV, cwd=checkout, capture_output=True, text=True, timeout=180)
 
     output = base / "evidence"
     result = launch(output, "--section", "prepare", "--section", "dc-ac")
@@ -100,7 +109,8 @@ def formal_study(tmp_path_factory):
     assert read(output / "StudySummaryV1.json")["active_case_count"] == 6
     assert not read(output / "StudySummaryV1.json")["study_exit_passed"]
     return SimpleNamespace(output=output, project=project, revision=revision, launch=launch,
-                           anchor=digest(output / "ManifestV1.json"))
+                           anchor=digest(output / "ManifestV1.json"),
+                           plan_file=plan_file, request_anchor=request_anchor[0])
 
 
 def verify(study, output, anchor=None):
@@ -164,6 +174,45 @@ def test_false_saved_verdict_cannot_replace_recomputed_science(formal_study, tmp
     result = verify(formal_study, output)
     assert result.returncode == 1
     assert "scientific verdict differs from recomputed" in result.stderr
+
+
+def test_case_erasure_and_coordinated_reseal_cannot_redefine_original_request(formal_study, tmp_path):
+    """Keep the caller's request fixed while giving every result hash to the attacker."""
+    output = tmp_path / "erased"
+    shutil.copytree(formal_study.output, output)
+    key = "AC/N16/D"
+    shutil.rmtree(output / key)
+    inventory = read(output / "CaseInventoryV2.json")
+    del inventory[key]
+    write(output / "CaseInventoryV2.json", inventory)
+    plan = read(output / "StudyPlanV1.json")
+    del plan["cases"][key]
+    write(output / "StudyPlanV1.json", plan)
+    summary = read(output / "StudySummaryV1.json")
+    summary["cases"] = [r for r in summary["cases"] if r["case"] != key]
+    summary["active_case_count"] -= 1
+    write(output / "StudySummaryV1.json", summary)
+    write(output / "FailureIndexV1.json", {"schema": "R1PhysicsStudyFailureIndexV1", "cases": []})
+    for invocation in (output / "Invocations").glob("*.json"):
+        write(invocation, summary)
+    reseal(output)
+    result = verify(formal_study, output)
+    assert result.returncode == 1
+    assert "externally anchored request" in result.stderr
+
+
+def test_inventory_erasure_is_detected_even_if_archived_plan_is_kept(formal_study, tmp_path):
+    output = tmp_path / "erased-inventory"
+    shutil.copytree(formal_study.output, output)
+    key = "AC/N16/D"
+    shutil.rmtree(output / key)
+    inventory = read(output / "CaseInventoryV2.json")
+    del inventory[key]
+    write(output / "CaseInventoryV2.json", inventory)
+    reseal(output)
+    result = verify(formal_study, output)
+    assert result.returncode == 1
+    assert "externally anchored study request" in result.stderr
 
 
 @pytest.mark.parametrize("state,exit_code", [("failed", 1), ("missing", 2)])
