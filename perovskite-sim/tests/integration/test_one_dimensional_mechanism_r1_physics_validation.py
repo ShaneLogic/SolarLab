@@ -285,4 +285,6 @@ def test_reconstruction_failure_preserves_observed_state_and_coordinates(cases, 
     assert last["physics_reconstruction"]["available"] is False
     assert np.all(np.isfinite(last["physics_reconstruction"]["coordinate"]))
     assert last["state"]["n_m3"]
-    assert result["certificate"]["reasons"] == ["physics_reconstruction_failed"]
+    assert sorted(result["certificate"]["reasons"]) == [
+        "independent_physics_failed", "physics_reconstruction_failed",
+    ]

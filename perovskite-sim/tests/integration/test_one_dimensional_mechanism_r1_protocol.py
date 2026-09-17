@@ -59,7 +59,7 @@ def test_controlled_step_retains_common_state_and_separates_impulse(shared, cont
             np.testing.assert_array_equal(row["state"]["occupancy"], original["occupancy"])
             np.testing.assert_array_equal(row["state"]["capture_m2_s"], 0.0)
     assert result["accepted_state_arrays"]["positive_m3"].shape[0] == len(observed)
-    assert result["version"] == "r1-1-controls-and-initial-charge-v4"
+    assert result["version"] == "r1-1-controls-and-initial-charge-v5-independent-physics"
     trap_summary = result["certificate"]["trap_storage"]
     assert trap_summary["checked_finite_step_count"] == 28
     assert sum(trap_summary["branch_counts"]["all"].values()) == 28
