@@ -78,3 +78,21 @@ R1-2 exit additionally needs independent spatial/time/nonlinear convergence,
 small-amplitude checks, target-bias DC and tail agreement, direct AC and
 transient reconstruction over a quantified valid frequency range. None is
 implied by this per-case validation protocol.
+
+## V3 implementation qualification
+
+Current V3 production with physics evidence uses protocol version
+`r1-1-controls-and-initial-charge-v5-independent-physics`. The original
+internal-face metric, contact/internal closure and interface closure are
+recorded separately as defined in `OneDimensionalMechanismR1CurrentChecksV3.md`.
+Every independent reconstructed row must pass before integration continues;
+the complete failed row is preserved before the run stops. Verification
+also requires every row and every refinement level, including non-finest
+levels, to pass. This does not add a new physical tolerance.
+
+The exact pre-execution scope follows `OneDimensionalMechanismR1StudyRequestV1.md`.
+Response eligibility follows `OneDimensionalMechanismR1QualificationV1.md`.
+Candidate declaration pins express internal consistency; caller-approved
+standard identity and independently reviewed response budgets remain separate.
+Old 392/815 producers retain their actual metric semantics and contracts via
+the limited trusted historical inspection route; they are not V3-qualified.

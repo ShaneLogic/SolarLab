@@ -26,7 +26,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import (
 
 
 SCOPE = "research_r1_1_common_state_controlled_ideal_step"
-VERSION = "r1-1-controls-and-initial-charge-v4"
+VERSION = "r1-1-controls-and-initial-charge-v5-independent-physics"
 DEFAULT_TIMES_S = (0.0, 1e-9, 1e-8, 1e-6, 1e-4)
 _TRAP_STORAGE_FAILURE_REASON = "trap_storage_balance_exceeds_budget"
 _PERSISTENCE_FAILURE_REASON = "accepted_step_persistence_failed"
@@ -332,6 +332,17 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
         "failure_reason": _NONFINITE_EVIDENCE_REASON if uncovered else None,
         "scope": "all_numeric_leaves_in_row_and_initial_event",
     }
+    if evidence is not None and "physics_reconstruction" in evidence:
+        reconstruction = evidence["physics_reconstruction"]
+        independent = reconstruction.get("independent_physics", {})
+        passed = (independent.get("schema") == "R1IndependentPhysicsRowV1"
+                  and independent.get("passed") is True)
+        checks["independent_physics"] = {
+            "applicable": True, "passed": passed,
+            "failure_reason": None if passed else "independent_physics_failed",
+            "reasons": list(independent.get("reasons", ["independent_physics_evidence_unavailable"])),
+            "source": "saved_state_independent_current_charge_and_inventory_assembly",
+        }
     reasons = [check["failure_reason"] for check in checks.values() if check["failure_reason"]]
     return {"checks": checks, "passed": not reasons and not paths, "reasons": reasons,
             "nonfinite_numeric_paths": paths}

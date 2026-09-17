@@ -14,7 +14,7 @@ import numpy as np
 
 from perovskite_sim.experiments.interface_defect_transient import _jacobian_error
 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import physical_step_record
-from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls, CURRENT_METRIC_SEMANTICS
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_independent_physics import independent_physics_row
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
     R1PreparedState, _make_system, _preparation_policy, canonical, json_data,
@@ -48,6 +48,7 @@ def reconstruction_context(system, state, prepared_sha256, reference_sha256):
     """Record the starting reference representation, including exact QF values."""
     return json_data({
         "schema": SCHEMA, "scope": SCOPE,
+        "current_metric_semantics": CURRENT_METRIC_SEMANTICS,
         "prepared_sha256": prepared_sha256, "reference_sha256": reference_sha256,
         "coordinate_representation": "dimensionless_local_increments_rebased_after_each_accepted_step",
         "dimension": system.dimension,

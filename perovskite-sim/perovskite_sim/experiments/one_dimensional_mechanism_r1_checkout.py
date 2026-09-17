@@ -38,15 +38,17 @@ LEGACY_SOURCE_ANCHORS = _ANCHORS
 # One registry owns snapshot coverage, pins, and exported names. New R1
 # declarations must be classified here before a controlled checkout can run.
 R1_DECLARATIONS = {
+    "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "1f7235a6f81abf867d9c59837f328a11aaaab2949973b88fb7922e39281f2bec"),
+    "docs/OneDimensionalMechanismR1CurrentChecksV3.md": ("acceptance", "CurrentChecksV3.md", "819682ab6b942edadc52210d31cf4f7c52358179a725e2d1b87c8e9959d4ac8f"),
     "docs/OneDimensionalMechanismR1DynamicsV1.md": ("execution", "ExecutionContractV1.md", "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"),
     "docs/OneDimensionalMechanismR1AdmittanceV1.md": ("reference", "AdmittanceV1.md", "c8a9132ed3fceb839e30c1c0b4cd46ed3b62f4f3ee93226418624748df7424f1"),
     "docs/OneDimensionalMechanismR1GeometryV1.md": ("reference", "GeometryV1.md", "a00221bb11e111465e6164151351f0fe9c70c753d8d4958a6cbf1a22d743e6ee"),
     "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md": ("superseded", "OperatorCriterionDecisionV1.md", "5593dfb1cf96893261932d5167d48ea104baf42425494feb9677c7e34d3c577b"),
     "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md": ("superseded", "OperatorCriterionDecisionV2.md", "659acb61ad5c457626300bf980b7b2208d67779a2691fbdb14d628dc6aec96e6"),
     "docs/OneDimensionalMechanismR1EvidenceV5.md": ("historical", "EvidenceV5.md", "f4855d46ef1861d54daa8959e1d047bd31b764d72dc6b25c1b38505452264a1f"),
-    "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "ab74fc3ff56fdcb764a20697b14b0c6afc2973cb2031232b462b8d7202b7ca98"),
-    "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "d61d0385985d07f306af6f0d013a97e29c2eb20c232e6a4bb3a2a8f343e1422f"),
-    "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "0e8b34b9805b896afa90c2f0e7a3f3e6b8b3a4a2c954576225c3adbe2f98a30b"),
+    "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "db790c70b18ae6090f925051a46468f4d178dea534197ab3c7a95de0d8c25d67"),
+    "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "f0f161d763d53c8a42a622379229dbb24688dc5164325980bb57384b716bbbdb"),
+    "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "a56f3c22744b3f18dd5659f3b7883ac424b91f85b57c6b17cb359ecd62eba7bb"),
     'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '33fe099847f135bf835286c60c3f8d85a5959f11affbd120fbc97548e60ef7e5'),
 
     "docs/InterfaceDefectTransientIncrementContract.md": ("method", "IncrementContractV1.md", "d379bdc36255836e54fbb2a4f736ba3e8a2f6acb2d0fac16a6fd5e0baa048e30"),

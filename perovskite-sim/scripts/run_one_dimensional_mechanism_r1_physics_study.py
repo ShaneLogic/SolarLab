@@ -142,6 +142,9 @@ class Study:
     def __init__(self, args):
         self.args, self.output = args, args.output_dir.resolve()
         self.context = require_r1_checkout(project=PROJECT)
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import standard_binding_record
+        self.standard = standard_binding_record(self.context,
+            approved_standard_sha256=getattr(args, "approved_standard_sha256", None))
         self.run_class = self.context.run_class
         if getattr(args, "formal", False) and self.run_class != "formal":
             raise ValueError("formal study requires the trusted controlled launcher")
@@ -187,6 +190,7 @@ class Study:
             "window_amplitude_V": getattr(args, "window_amplitude", .005),
             "linearity_case": getattr(args, "linearity_case", None),
             "qualification_inputs_sha256": getattr(args, "qualification_sha256", None),
+            "standard_binding": self.standard,
             "window_extensions": {"first_time_s": args.first_time_s, "last_time_s": args.last_time_s,
                                    "extended_last_time_s": min(args.last_time_s*10, 1e5),
                                    "earlier_first_time_s": max(args.first_time_s/10, 1e-12)},
@@ -472,6 +476,8 @@ class Study:
             if not sealed:
                 self.rows.append({"case": key, "status": "interrupted_attempt_preserved",
                                   "directory": str(prior.relative_to(self.output))})
+                if getattr(self, "run_class", "development") == "formal":
+                    return None
         if getattr(self, "verifying", False):
             self.rows.append({"case": key, "status": "not_run", "scientific_checks_passed": None})
             return None
@@ -1095,6 +1101,20 @@ class Study:
 
     def finish(self):
         failures, unavailable, active, historical = [], [], {}, []
+        interrupted = []
+        for attempt_dir in sorted(self.output.rglob("AttemptV*")):
+            if not attempt_dir.is_dir():
+                continue
+            key = attempt_dir.parent.relative_to(self.output).as_posix()
+            if getattr(self, "run_class", "development") == "formal" and hasattr(self, "plan"):
+                if key not in self.planned_cases or attempt_dir.name != "AttemptV1":
+                    raise ValueError("formal study contains an unplanned case or repeated attempt: " + str(attempt_dir))
+            if not (attempt_dir/"CompletionV1.json").is_file():
+                item = {"case": key, "directory": str(attempt_dir.relative_to(self.output)),
+                        "status": "interrupted", "scientific_checks_passed": False,
+                        "failure": "attempt has no completed result; original extent unknown"}
+                interrupted.append(item)
+                failures.append(item)
         for completion_file in sorted(self.output.rglob("CompletionV1.json")):
             case_dir = completion_file.parent
             if not (case_dir/"ManifestV1.json").is_file():
@@ -1166,6 +1186,7 @@ class Study:
         }
         if hasattr(self, "plan"):
             requirements["external_case_set_verified"] = self.plan_sha256 is not None
+            requirements["caller_approved_standard_bound"] = getattr(self, "standard", {}).get("matches_external_approval") is True
             requirements["all_four_control_axes_available"] = {
                 (control, axis) for control in "ABCD"
                 for axis in ("intervals", "time_substeps", "nonlinear_factor")} <= pair_coverage
@@ -1185,6 +1206,7 @@ class Study:
                    "scope": "numerical_study_criteria_do_not_replace_independent_review"}
         if hasattr(self, "plan"):
             summary.update(planned_case_count=len(self.planned_cases),
+                           interrupted_attempts=interrupted,
                            study_request_sha256=self.plan_sha256,
                            diagnostic_failed_case_count=len(failures),
                            comparison_axes_recorded=sorted({row["conditions"].get("axis") for row in active.values()
@@ -1237,7 +1259,7 @@ def scientific_checks(result):
         return None
     if result.get("comparison_available") is False:
         return None
-    if result.get("schema") == "R1FrequencyWindowReportV1":
+    if result.get("schema") in ("R1FrequencyWindowReportV1", "R1FrequencyWindowReportV2"):
         return bool(result["numeric_checks_passed"])
     if result.get("schema") == "R1DCEndpointAmplitudeStudyV1":
         return (result.get("dc_states_certified") is True and result.get("linearity_certified") is False
@@ -1268,29 +1290,8 @@ def compare_step_current_charge(left, right, left_baseline, right_baseline):
     Charge includes the impulse and subtracts baseline current times time.
     The individual backward-Euler averages are not relabeled regular current.
     """
-    responses = []
-    for record, baseline in ((left, left_baseline), (right, right_baseline)):
-        times = np.asarray(record["times_s"], dtype=float)
-        baseline = np.asarray(baseline, dtype=float)
-        current = np.asarray([item["report_contact_current_A_m2"] for item in record["regular_currents"]])
-        if current.shape != (len(times), 2) or baseline.shape != (2,):
-            raise ValueError("regular current and physical contacts must align with exact output times")
-        finest = max(record["policy"]["refinement_substeps"])
-        rows = [row for row in record["accepted_steps"] if row["substeps"] == finest]
-        charge = []
-        for t in times:
-            matching = [row for row in rows if row["time_s"] == t]
-            if len(matching) != 1:
-                raise ValueError("integrated charge requires exactly one finest row at each output time")
-            charge.append(record["initial_event"]["impulse_charge_C_m2"]+matching[0]["regular_integrated_charge_C_m2"]-baseline[0]*t)
-        responses.append((R1Response(current-baseline, {"time_s": times}, ("left_contact", "right_contact")),
-                          R1Response(np.asarray(charge), {"time_s": times})))
-    current_report = compare_responses("regular_current_response", responses[0][0], responses[1][0])
-    charge_report = compare_responses("integrated_charge_response", responses[0][1], responses[1][1])
-    return {"scope": "regular_current_and_impulse_inclusive_charge_response_comparison",
-            "regular_current": current_report, "integrated_charge": charge_report,
-            "baseline_contact_current_A_m2": [left_baseline, right_baseline],
-            "within_compared_budgets": current_report["passed"] and charge_report["passed"]}
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import compare_step_current_charge as compare
+    return compare(left, right, left_baseline, right_baseline)
 
 
 def main(argv=None):
@@ -1312,6 +1313,7 @@ def main(argv=None):
     parser.add_argument("--request-sha256", help="independently retained pre-execution request SHA256")
     parser.add_argument("--qualification-file", type=Path, help="caller-held independently reviewed response evidence")
     parser.add_argument("--qualification-sha256", help="independently retained qualification input SHA256")
+    parser.add_argument("--approved-standard-sha256", help="optional caller-held approved standard digest; candidate pins alone are not approval")
     parser.add_argument("--grids", type=int, nargs="+", default=(16, 32, 64), choices=(16, 32, 64, 128, 256))
     parser.add_argument("--matrix-controls", nargs="+", default=("D",), choices=tuple("ABCD"))
     parser.add_argument("--window", choices=("functional", "full"), default="functional")
