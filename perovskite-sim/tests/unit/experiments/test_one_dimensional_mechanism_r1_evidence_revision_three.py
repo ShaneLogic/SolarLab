@@ -26,6 +26,10 @@ def controlled_bundle(runner, repository, tmp_path):
     fixture = "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
     (project / fixture).write_bytes((PROJECT / fixture).read_bytes())
     repository = root, project, commit(root)
+    # This selection is retained by the caller, outside the mutable bundle.
+    runner.write_json(tmp_path / "SelectedSourceV1.json", {
+        "source_repository": str(root), "expected_source_commit": repository[2],
+    })
     output = tmp_path / "controlled_bundle"
     result = launch(repository, "--output", str(output))
     assert result.returncode == 0, result.stderr
@@ -37,8 +41,11 @@ def controlled_bundle(runner, repository, tmp_path):
     (output / "SourceFixtureV1.yaml").write_bytes((project / fixture).read_bytes())
     binding = approved_r1_binding()
     runner.write_json(output / "ReferenceBindingV1.json", binding)
+    execution = runner.read_json(output / "ExecutionSourceV1.json")
     runner.write_json(output / "ProtocolV1.json", {
         "stage_scope": "R1-1", "stage": "prepare",
+        "source_commit": repository[2],
+        "source_content_sha256": execution["source_content_sha256"], "run_class": "formal",
         "input_sha256": runner.sha256(output / "StudyInputV1.json"),
         "contract_sha256": runner.sha256(output / "ExecutionContractV1.md"),
         "reference_file_sha256": runner.sha256(output / "ReferenceBindingV1.json"),
@@ -53,15 +60,19 @@ def controlled_bundle(runner, repository, tmp_path):
     return output
 
 
-def accept(runner, output):
+def accept(runner, output, *, source_bound=True):
+    selected = runner.read_json(output.parent / "SelectedSourceV1.json") if source_bound else {}
     return runner.inspect_legacy_evidence(
         output, expected_manifest_sha256=runner.sha256(output / "ManifestV1.json"),
-        required_evidence_revision=3,
+        required_evidence_revision=3, **selected,
     )
 
 
 def test_controlled_revision_three_matches_external_anchor(runner, controlled_bundle):
-    assert accept(runner, controlled_bundle)[0]["status"] == "passed"
+    result = accept(runner, controlled_bundle)[0]
+    assert result["status"] == "passed"
+    assert result["verification"]["source_identity_verified"]
+    assert not result["verification"]["scientifically_accepted"]
 
 
 @pytest.mark.parametrize("revision", [None, 1, 2])
@@ -83,6 +94,7 @@ def test_bundle_cannot_choose_its_own_weaker_evidence_contract(runner, controlle
                                       "cached_loader", "wrong_reference", "payload_forgery", "changed_fixture"])
 def test_resealed_structure_cannot_satisfy_strict_source_contract(runner, controlled_bundle, mutation):
     output = controlled_bundle
+    assert accept(runner, output)[0]["verification"]["source_identity_verified"]
     if mutation == "empty_zip":
         with zipfile.ZipFile(output / "SourceV1.zip", "w"):
             pass
@@ -114,6 +126,11 @@ def test_resealed_structure_cannot_satisfy_strict_source_contract(runner, contro
     runner.manifest(output)
     with pytest.raises(ValueError, match="source|controlled|reference"):
         accept(runner, output)
+    inspected = accept(runner, output, source_bound=False)[0]["verification"]
+    assert not inspected["source_identity_verified"]
+    assert not inspected["producer_format_verified"]
+    assert not inspected["scientifically_accepted"]
+    assert inspected["result_checks"] is None
 
 
 def test_direct_computation_requires_explicit_development(runner, tmp_path, monkeypatch):
