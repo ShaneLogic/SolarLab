@@ -434,7 +434,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         _same(actual_failure_certificate, expected_failure_certificate, "failed physical certificate")
         _same(record["failure"].get("reasons"), last["physical_failure_reasons"], "failed physical reasons")
         _same(record["failure"].get("record_index"), len(rows)-1, "failed physical row")
-    limits_satisfied = not any_physical_failure and not limit_violations
+    limits_satisfied = independent_physics_passed and not any_physical_failure and not limit_violations
     if certificate is not None:
         limits_satisfied = limits_satisfied and certificate["certified"]
     successful = bool(has_complete_result and certificate is not None and certificate["certified"]
