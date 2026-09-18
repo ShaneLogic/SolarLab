@@ -556,6 +556,14 @@ class Study:
             "historical_observation": historical,
         }
         write_json(directory/"CompletionV1.json", completion)
+        if failure is not None:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_witness import build_failure_witness
+            persisted = directory/"AcceptedStepsV1.jsonl"
+            rows = [json.loads(line) for line in persisted.read_text().splitlines()] if persisted.is_file() else []
+            write_json(directory/"FailureWitnessV1.json", build_failure_witness(
+                source_commit=getattr(self, "source", {}).get("source_commit"),
+                protocol=self.failure_protocol(request), failure=ready(failure),
+                result=ready(failure.get("partial_result")), persisted_rows=rows))
         seal(directory)
         if not hasattr(self, "produced_cases"):
             self.produced_cases = {}
@@ -565,6 +573,12 @@ class Study:
                           "directory": str(directory.relative_to(self.output))})
         print(status.upper(), key, f"{completion['duration_s']:.3f}s", flush=True)
         return result
+
+    @staticmethod
+    def failure_protocol(request):
+        policy = (ready(r1_policy(request["nonlinear_factor"], time_substeps=request["time_substeps"]))
+                  if "nonlinear_factor" in request and "time_substeps" in request else None)
+        return {"stage": "physics-study", **request, "policy": policy}
 
     def audit_failed(self, key, directory, request):
         failure = checked_read(directory, "FailureV1.json")
@@ -576,6 +590,14 @@ class Study:
         partial = failure.get("partial_result")
         persisted = directory/"AcceptedStepsV1.jsonl"
         rows = [json.loads(line) for line in persisted.read_text().splitlines()] if persisted.is_file() else []
+        witness_check = None
+        if (directory/"FailureWitnessV1.json").exists():
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_witness import verify_failure_witness
+            witness_check = verify_failure_witness(checked_read(directory, "FailureWitnessV1.json"),
+                source_commit=getattr(self, "source", {}).get("source_commit"),
+                protocol=self.failure_protocol(request), failure=failure, result=partial, persisted_rows=rows)
+        elif getattr(self, "request", {}).get("schema") == "R1PhysicsStudyRequestV4":
+            raise ValueError("V4 failed study case lacks its saved termination witness")
         if partial is not None and not isinstance(partial, dict):
             raise ValueError("failed scientific payload has no classified record schema")
         if isinstance(partial, dict) and "accepted_steps" in partial and not isinstance(partial["accepted_steps"], list):
@@ -611,11 +633,23 @@ class Study:
             audit["failure_scope"] = failure_scope_report(partial, audit, persisted_rows=rows, failure=completion["failure"])
             audit["failure_scope"]["last_observed_row_persisted"] = len(rows) == len(raw_rows)
             audit["failure_scope"]["post_callback_persistence_annotation_replayed"] = False
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_reconstruction import rebuild_failure_witness
+            terminal = rebuild_failure_witness(self.stack, request["intervals"], self.binding,
+                                              self.prepared(request["intervals"]), partial)
+            audit["terminal_state_reconstruction"] = terminal
+            audit["failure_scope"]["failure_witness"] = witness_check
+            if terminal["available"]:
+                audit["failure_scope"]["terminal_state_physics_verified"] = terminal["terminal_state_physics_recomputed"]
+                audit["failure_scope"]["terminal_state_physics_passed"] = terminal["terminal_state_physics_passed"]
+            audit["saved_prefix_physical_limits_satisfied"] = audit["physical_limits_satisfied"]
+            audit["physical_limits_satisfied"] = False
             audit["certified"] = False
             return audit
         return {"certified": False, "content_matches_recomputed": None,
+                "physical_limits_satisfied": False, "saved_prefix_physical_limits_satisfied": None,
                 "failure_record_checked": True,
                 "failure_scope": {"saved_row_count": 0, "persisted_row_count": 0,
+                                  "failure_witness": witness_check,
                                   "failure_origin_status": "not_reconstructed_from_saved_prefix",
                                   "original_execution_extent_verified": False,
                                   "unverified_present_fields": sorted(partial) if isinstance(partial, dict) else []},
@@ -1313,6 +1347,10 @@ class Study:
         self.last_summary = summary
         if getattr(self, "verifying", False):
             published = checked_read(self.output, "StudySummaryV1.json")
+            if hasattr(self, "context"):
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_evidence import verify_source_reads
+                verify_source_reads(self.output, checked_read(self.output, "ExecutionSourceV1.json"),
+                                    checked_read(self.output, "SourceManifestV1.json"))
             if hasattr(self, "plan"):
                 if published.get("study_request_sha256") != self.plan_sha256:
                     raise ValueError("published summary study_request_sha256 differs from external request")

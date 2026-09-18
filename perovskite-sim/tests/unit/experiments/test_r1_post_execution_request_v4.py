@@ -6,6 +6,7 @@ import pytest
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification_workflow import (
     analysis_request, analysis_cases, load_analysis_request, verify_collection_receipt,
+    read_only_derivation, require_collection_phase,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_request import canonical_bytes
 
@@ -41,6 +42,18 @@ def test_analysis_selection_never_starts_a_physical_case():
                           "Frequency/N16", "Frequency/N32", "DoubleDomain/N32/D"}
     with pytest.raises(ValueError, match="not in the frozen"):
         analysis_cases([16], [.01, .005], ["reconstruct"], ["Matrix/N16/T1/F1p0"])
+
+
+def test_derived_phase_rejects_real_preparation_and_dc_entry_points_before_solving():
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import prepare_common_state
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import solve_controlled_dc
+    with read_only_derivation() as attempts:
+        with pytest.raises(RuntimeError, match="prepare_common_state"):
+            prepare_common_state(None, 16, None)
+        with pytest.raises(RuntimeError, match="solve_controlled_dc"):
+            solve_controlled_dc(None, 16, None, None)
+    assert attempts == ["prepare_common_state", "solve_controlled_dc"]
+    require_collection_phase("allowed_after_context_exit")
 
 
 def test_complete_verification_receipt_preserves_physical_failures_and_missing_cases():
