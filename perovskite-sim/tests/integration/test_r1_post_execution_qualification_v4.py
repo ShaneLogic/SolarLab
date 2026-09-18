@@ -55,6 +55,16 @@ def test_real_cli_can_review_completed_collection_without_repreparing_or_mutatin
         "--verify-analysis", "--analysis-manifest-sha256", digest(output/"ManifestV1.json"))
     assert replay.returncode == 2, replay.stdout + replay.stderr
     assert file_identities(study.output) == before
+    receipt = read(output/"VerificationReceiptV1.json")
+    receipt["diagnostic_failure_count"] += 1
+    write(output/"VerificationReceiptV1.json", receipt)
+    reseal(output)
+    altered_receipt = study.launch(study.output, *common, "--analysis-request-sha256", digest(plan),
+        "--verify-analysis", "--analysis-manifest-sha256", digest(output/"ManifestV1.json"))
+    assert altered_receipt.returncode == 1 and "verification receipt differs" in altered_receipt.stderr
+    absent = tmp_path/"AbsentCollection"
+    rejected = study.launch(absent, *common, "--analysis-plan-only")
+    assert rejected.returncode == 1 and not absent.exists()
     changed = read(approval)
     changed["trusted_evidence"]["unreviewed"] = "f"*64
     write(approval, changed)
@@ -74,3 +84,21 @@ def test_request_digest_claims_are_verified_even_after_a_coordinated_reseal(form
     result = verify(formal_study, output)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "study_request_sha256" in result.stderr
+
+
+def test_coordinated_root_source_claims_cannot_replace_the_selected_commit(formal_study, tmp_path):
+    output = tmp_path/"ChangedSourceClaim"
+    shutil.copytree(formal_study.output, output)
+    for name in ("ExecutionSourceV1.json", "SourceReadsV1.json"):
+        value = read(output/name)
+        value["source_commit"] = "f"*40
+        write(output/name, value)
+    reseal(output)
+    result = verify(formal_study, output)
+    assert result.returncode == 1 and "caller-selected frozen source" in result.stderr
+
+
+def test_verifying_an_absent_collection_never_creates_it(formal_study, tmp_path):
+    absent = tmp_path/"Absent"
+    result = verify(formal_study, absent, anchor="f"*64)
+    assert result.returncode == 1 and not absent.exists()

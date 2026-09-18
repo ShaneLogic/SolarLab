@@ -317,6 +317,11 @@ def _measurement_consistency(coarse, fine, coarse_budget, fine_budget, budget_re
     if comparison["passed"] is not True:
         concerns.append("measured_linearity_"+comparison["status"])
     result["concerns"] = concerns
+    if not measured_evidence["coarse_axes_passed"] or not measured_evidence["fine_axes_passed"]:
+        # Section 10.2 axis acceptance is a fixed numerical requirement.
+        # Reviewing a stronger uncertainty estimate does not waive it.
+        result["status"] = "measured_convergence_failed"
+        return result
     if not concerns:
         result.update(qualified=True, status="consistent_with_measured_evidence")
         return result

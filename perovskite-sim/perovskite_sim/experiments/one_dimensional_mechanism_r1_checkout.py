@@ -40,8 +40,8 @@ LEGACY_SOURCE_ANCHORS = _ANCHORS
 # declarations must be classified here before a controlled checkout can run.
 R1_DECLARATIONS = {
     PHYSICAL_STANDARD_RELATIVE_PATH: ("acceptance_machine", "PhysicalStandardV1.json", "c918c3c3a4205e6e7cfc507f788ce0e308378a317f6ada6d3bb3862272d9d739"),
-    "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "9b85a07120f5bb7fee50849e0801ae2c6aa85d60b2801228a254ce71e48b537a"),
-    "docs/OneDimensionalMechanismR1CurrentChecksV3.md": ("acceptance", "CurrentChecksV3.md", "819682ab6b942edadc52210d31cf4f7c52358179a725e2d1b87c8e9959d4ac8f"),
+    "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "33a57053266f5efdb949177a3a175aa26f2d6bd65d9d54c768469d087946f218"),
+    "docs/OneDimensionalMechanismR1CurrentChecksV3.md": ("acceptance", "CurrentChecksV3.md", "5c51a874b2ca68e46c7431154481a733ed97086d2a666b41e03bc7a6a14c3cb6"),
     "docs/OneDimensionalMechanismR1DynamicsV1.md": ("execution", "ExecutionContractV1.md", "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"),
     "docs/OneDimensionalMechanismR1AdmittanceV1.md": ("reference", "AdmittanceV1.md", "c8a9132ed3fceb839e30c1c0b4cd46ed3b62f4f3ee93226418624748df7424f1"),
     "docs/OneDimensionalMechanismR1GeometryV1.md": ("reference", "GeometryV1.md", "a00221bb11e111465e6164151351f0fe9c70c753d8d4958a6cbf1a22d743e6ee"),
@@ -51,7 +51,7 @@ R1_DECLARATIONS = {
     "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "db790c70b18ae6090f925051a46468f4d178dea534197ab3c7a95de0d8c25d67"),
     "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "f0f161d763d53c8a42a622379229dbb24688dc5164325980bb57384b716bbbdb"),
     "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "a56f3c22744b3f18dd5659f3b7883ac424b91f85b57c6b17cb359ecd62eba7bb"),
-    'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '50909f484fa38618d25cf6d7f51196a38926b1d3f2cec1d6a3cbe0f7c95e0fbc'),
+    'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '912c9a6c26b2ae31555838c4365b52cd0c8e8b8325c8cbbe1ed665aa7fae2e6a'),
 
     "docs/InterfaceDefectTransientIncrementContract.md": ("method", "IncrementContractV1.md", "d379bdc36255836e54fbb2a4f736ba3e8a2f6acb2d0fac16a6fd5e0baa048e30"),
     "docs/OneDimensionalMechanismR0ProtocolV1.md": ("historical", "R0ProtocolV1.md", "62c736f7d7512d20b7ddbdcf9fb276452014b7f98a287e669ff95e31be2e7726"),

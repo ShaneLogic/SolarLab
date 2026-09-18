@@ -139,6 +139,43 @@ def checked_read(directory, filename):
     return json.loads((directory/filename).read_text())
 
 
+def verify_study_source(directory, context, *, require_read_receipt):
+    """Check provenance claims against the selected source, not one another."""
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_evidence import (
+        _verify_archived_source_identity, verify_source_reads,
+    )
+    selected = context.to_dict()
+    execution = checked_read(directory, "ExecutionSourceV1.json")
+    provenance = {"repository_root", "dirty", "runtime"}
+    if (set(execution) != set(selected) or any(execution[key] != selected[key]
+            for key in selected if key not in provenance)):
+        raise ValueError("study execution source differs from the caller-selected frozen source")
+    if (not isinstance(execution["repository_root"], str)
+            or not isinstance(execution["dirty"], dict)
+            or any(type(value) is not bool for value in execution["dirty"].values())):
+        raise ValueError("study source advisory metadata is invalid")
+    runtime, expected_runtime = execution.get("runtime"), selected.get("runtime")
+    if not isinstance(runtime, dict) or not isinstance(expected_runtime, dict):
+        raise ValueError("study verification requires controlled runtime provenance")
+    path_fields = {"launcher", "python_executable", "dependency_paths"}
+    if set(runtime) != set(expected_runtime) or any(runtime[key] != expected_runtime[key]
+                                                  for key in runtime if key not in path_fields):
+        raise ValueError("recorded study runtime differs from controlled verification")
+    if (any(not isinstance(runtime[name], str) or not Path(runtime[name]).is_absolute()
+            for name in ("launcher", "python_executable"))
+            or not isinstance(runtime["dependency_paths"], list)
+            or any(not isinstance(path, str) or not Path(path).is_absolute()
+                   for path in runtime["dependency_paths"])):
+        raise ValueError("invalid recorded runtime paths")
+    _verify_archived_source_identity(Path(directory), context._source_bytes)
+    if (Path(directory)/"SourceChangesV1.patch").read_bytes() != context._source_changes:
+        raise ValueError("source changes differ from the selected frozen execution")
+    if require_read_receipt:
+        verify_source_reads(directory, execution, checked_read(directory, "SourceManifestV1.json"))
+    return {"caller_source_and_all_archived_bytes_verified": True,
+            "provenance_only": ["repository_root", "dirty", "runtime_paths"]}
+
+
 class Study:
     def __init__(self, args):
         self.args, self.output = args, args.output_dir.resolve()
@@ -150,6 +187,8 @@ class Study:
         if getattr(args, "formal", False) and self.run_class != "formal":
             raise ValueError("formal study requires the trusted controlled launcher")
         self.verifying = getattr(args, "verify", False)
+        if self.verifying and not self.output.is_dir():
+            raise ValueError("verification requires an existing sealed collection")
         if self.verifying and self.run_class != "formal":
             raise ValueError("scientific study verification requires controlled source execution")
         self.grids = tuple(getattr(args, "grids", (16, 32, 64)))
@@ -239,6 +278,8 @@ class Study:
                 if not anchor or sha(self.output/"ManifestV1.json") != anchor:
                     raise ValueError("formal resume/verify requires the external study manifest digest")
                 checked_read(self.output, "StudyRequestV1.json")
+                if self.verifying:
+                    verify_study_source(self.output, self.context, require_read_receipt=True)
             existing = json.loads((self.output/"StudyRequestV1.json").read_text())
             if existing != ready(request):
                 raise ValueError("resume source, runner, inputs or fixed study request changed")
@@ -1348,9 +1389,7 @@ class Study:
         if getattr(self, "verifying", False):
             published = checked_read(self.output, "StudySummaryV1.json")
             if hasattr(self, "context"):
-                from perovskite_sim.experiments.one_dimensional_mechanism_r1_evidence import verify_source_reads
-                verify_source_reads(self.output, checked_read(self.output, "ExecutionSourceV1.json"),
-                                    checked_read(self.output, "SourceManifestV1.json"))
+                verify_study_source(self.output, self.context, require_read_receipt=True)
             if hasattr(self, "plan"):
                 if published.get("study_request_sha256") != self.plan_sha256:
                     raise ValueError("published summary study_request_sha256 differs from external request")
@@ -1648,8 +1687,11 @@ def run_post_execution_analysis(args):
     if args.verify_analysis:
         if checked_read(destination, "AnalysisResultV1.json") != result:
             raise ValueError("saved qualification differs from recomputed analysis")
+        if checked_read(destination, "VerificationReceiptV1.json") != receipt:
+            raise ValueError("saved verification receipt differs from the collection verification")
         if checked_read(destination, "QualificationInputsV1.json") != approval:
             raise ValueError("saved approval differs from the externally selected inputs")
+        verify_study_source(destination, collection.context, require_read_receipt=False)
     else:
         destination.mkdir(parents=True)
         write_json(destination/"AnalysisRequestV1.json", request)

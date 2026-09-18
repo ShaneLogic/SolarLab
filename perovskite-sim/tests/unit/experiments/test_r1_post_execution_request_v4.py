@@ -38,7 +38,7 @@ def test_resealed_analysis_cannot_replace_any_caller_frozen_input(tmp_path, fiel
 
 def test_analysis_selection_never_starts_a_physical_case():
     cases = analysis_cases([16, 32], [.01, .005, .0025], ["amplitude", "reconstruct"])
-    assert set(cases) == {"Linearity/A0.01ToA0.005", "Linearity/A0.005ToA0.0025",
+    assert set(cases) == {"Linearity/A0.005ToA0.0025",
                           "Frequency/N16", "Frequency/N32", "DoubleDomain/N32/D"}
     with pytest.raises(ValueError, match="not in the frozen"):
         analysis_cases([16], [.01, .005], ["reconstruct"], ["Matrix/N16/T1/F1p0"])

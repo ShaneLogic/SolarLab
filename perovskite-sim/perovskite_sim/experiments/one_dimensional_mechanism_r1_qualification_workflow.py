@@ -96,7 +96,9 @@ def analysis_cases(grids, amplitudes, sections, selected=()):
     """Enumerate analysis independently of whether a result will pass."""
     cases = {}
     if "amplitude" in sections:
-        for coarse, fine in zip(amplitudes[:-1], amplitudes[1:]):
+        # Larger pairs remain collection diagnostics, not required positive
+        # qualifications under the finest-two-amplitude rule.
+        for coarse, fine in zip(amplitudes[-2:-1], amplitudes[-1:]):
             cases[f"Linearity/A{coarse}ToA{fine}"] = {
                 "kind": "amplitude_linearity", "coarse_amplitude_V": coarse, "fine_amplitude_V": fine}
     if "reconstruct" in sections:

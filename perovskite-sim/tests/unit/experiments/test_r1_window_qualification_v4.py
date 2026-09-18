@@ -197,6 +197,25 @@ def test_selector_cannot_relabel_a_short_fixture_or_select_the_largest_ladder_le
         assert not result["qualified"]
 
 
+def test_reviewed_uncertainty_cannot_waive_an_actual_failed_numerical_axis():
+    records, responses, kwargs = linearity_case()
+    kwargs["measured_evidence"]["coarse_axes_passed"] = False
+    result = assess_transient_linearity(*records, **kwargs)
+    consistency = result["measured_consistency"]
+    assert result["comparison"]["passed"]
+    assert result["status"] == "measured_convergence_failed"
+    evidence = {"schema": "R1NumericalEvidenceReconciliationV1", "evidence_id": "cannot-waive-axis",
+        "scope": kwargs["expected_scope"], "measured_evidence_sha256": consistency["measured_evidence_sha256"],
+        "budget_evidence_sha256": [evidence_digest(kwargs[key]) for key in ("coarse_budget", "fine_budget")],
+        "response_sha256": [evidence_digest(response) for response in responses],
+        "resolved_concerns": consistency["concerns"], "decision": "supersedes_empirical_estimate",
+        "method": "synthetic bound", "explanation": "attempt to waive the numerical axis",
+        "source_evidence": ["synthetic"], "review_status": "approved", "review_id": "test-review"}
+    kwargs["reconciliation_evidence"] = evidence
+    kwargs["trusted_evidence"][evidence["evidence_id"]] = evidence_digest(evidence)
+    assert not assess_transient_linearity(*records, **kwargs)["qualified"]
+
+
 def reconstruction_case(*, last=100., first=1e-9):
     step_record, common, dc, ac, conditions, errors = reconstruction_inputs(
         times=observation_times(first_time_s=first, last_time_s=last))
