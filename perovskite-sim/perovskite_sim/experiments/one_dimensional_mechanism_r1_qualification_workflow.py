@@ -8,9 +8,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from .one_dimensional_mechanism_r1_study_request import canonical_bytes
+
+_DERIVATION_OPERATIONS = ContextVar("r1_derivation_operations", default=None)
+
+
+@contextmanager
+def read_only_derivation():
+    """Make accidental preparation/DC production fail inside derived analysis."""
+    attempts = []
+    token = _DERIVATION_OPERATIONS.set(attempts)
+    try:
+        yield attempts
+    finally:
+        _DERIVATION_OPERATIONS.reset(token)
+
+
+def require_collection_phase(operation):
+    attempts = _DERIVATION_OPERATIONS.get()
+    if attempts is not None:
+        attempts.append(operation)
+        raise RuntimeError("post-execution analysis cannot create a new physical solution: " + operation)
 
 
 def require_digest(value, label):
@@ -23,7 +46,8 @@ def require_digest(value, label):
 def analysis_request(*, collection_manifest_sha256, calculation_request_sha256,
                      qualification_sha256, candidate_standard_sha256,
                      approved_standard_sha256, source, window_spec, cases,
-                     amplitude_ladder_V, window_amplitude_V, linearity_case):
+                     amplitude_ladder_V, window_amplitude_V, linearity_case,
+                     required_frequency_Hz=()):
     for label, value in (("collection manifest", collection_manifest_sha256),
                          ("calculation request", calculation_request_sha256),
                          ("qualification inputs", qualification_sha256),
@@ -37,6 +61,11 @@ def analysis_request(*, collection_manifest_sha256, calculation_request_sha256,
     if window_spec is not None:
         from .one_dimensional_mechanism_r1_window import validate_window_spec
         window_spec = validate_window_spec(window_spec)
+    frequencies = list(required_frequency_Hz)
+    if (any(type(x) not in (int, float) or not math.isfinite(x) or x < 0 for x in frequencies)
+            or any(b <= a for a, b in zip(frequencies, frequencies[1:]))
+            or (any(key.startswith("DoubleDomain/") for key in cases) and not frequencies)):
+        raise ValueError("double-domain analysis requires a frozen increasing frequency intersection")
     return json.loads(canonical_bytes({
         "schema": "R1PostExecutionQualificationRequestV1",
         "collection_manifest_sha256": collection_manifest_sha256,
@@ -46,6 +75,7 @@ def analysis_request(*, collection_manifest_sha256, calculation_request_sha256,
         "approved_standard_sha256": approved_standard_sha256,
         "source": source, "window_spec": window_spec, "cases": dict(sorted(cases.items())),
         "amplitude_ladder_V": list(amplitude_ladder_V),
+        "required_frequency_Hz": frequencies,
         "window_amplitude_V": window_amplitude_V, "linearity_case": linearity_case,
         "scope": "post_execution_derived_analysis_no_new_physical_solutions",
     }))

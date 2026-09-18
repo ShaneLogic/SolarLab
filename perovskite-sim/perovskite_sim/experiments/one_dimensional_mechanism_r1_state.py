@@ -400,6 +400,8 @@ def physical_preparation_identity(prepared):
 
 def prepare_common_state(stack, intervals, binding, *, policy=None):
     """Prepare D once. A-D import copies of this state without another DC solve."""
+    from .one_dimensional_mechanism_r1_qualification_workflow import require_collection_phase
+    require_collection_phase("prepare_common_state")
     policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)
     policy = _preparation_policy(policy)
     validate_r1_study_binding(binding, stack)

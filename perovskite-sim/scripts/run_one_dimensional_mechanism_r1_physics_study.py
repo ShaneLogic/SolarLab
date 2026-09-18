@@ -858,7 +858,11 @@ class Study:
             prerequisites["tail_dc_agreement"] = tail_report["all_observables_agree"]
             result = reconstruct_study_response(step, prepared, dc["conductance"], ac, errors=errors,
                                                 prerequisites=prerequisites, **qualification_args)
-            return {**result, "linearity_case": linearity_key, "prerequisite_evidence": comparisons,
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import device_response_gate
+            stage_gate = device_response_gate(result, expected_scope=scope, window_spec=self.window_spec,
+                required_frequency_Hz=getattr(self, "required_frequency_Hz", self.frequencies))
+            return {**result, "device_stage_gate": stage_gate,
+                    "linearity_case": linearity_key, "prerequisite_evidence": comparisons,
                     "tail_dc_evidence": tail_report, "current_uncertainty_evidence": uncertainty,
                     "provided_error_estimates": ready(error_fields),
                     "error_estimate_classification": "estimate_only",
@@ -1016,7 +1020,9 @@ class Study:
                 verified_record_digests={"coarse_step": evidence_digest(steps[0]), "fine_step": evidence_digest(steps[1])},
                 measured_evidence={"coarse_current_error": error_a, "fine_current_error": error_b,
                     "coarse_axes_passed": audit_a["axes_passed"], "fine_axes_passed": audit_b["axes_passed"],
-                    "comparison": report})
+                    "comparison": report},
+                reconciliation_evidence=self.qualification_inputs.get("numerical_reconciliations", {}).get(
+                    f"Linearity/A{coarse}ToA{fine}"))
             qualified = (audit_a["axes_passed"] and audit_b["axes_passed"]
                          and qualification["device_qualified"] is True)
             return {"schema": "R1AmplitudeLinearityV3", "comparison": report,
@@ -1366,7 +1372,7 @@ def scientific_checks(result):
     if result.get("schema") == "R1ControlledDCResponseV1":
         return result.get("certified") is True
     if "double_domain_consistent" in result and "reconstruction" in result:
-        return bool(result["double_domain_consistent"])
+        return result.get("device_stage_gate", {}).get("device_qualified") is True
     for key in ("certificate", "preparation_checks"):
         if key in result:
             return bool(result[key]["certified"])
@@ -1407,6 +1413,7 @@ class QualificationStudy(Study):
         self.args.qualification_sha256 = args.qualification_sha256
         self.qualification_analysis = True
         self.analysis_request, self.verification_receipt = request, receipt
+        self.required_frequency_Hz = request["required_frequency_Hz"]
         self.qualification_inputs = load_qualification_inputs(args.qualification_file,
             args.qualification_sha256, result_directory=self.output)
         self.derived_results, self.derived_rows, self.derived_dependencies = {}, {}, {}
@@ -1504,7 +1511,7 @@ class QualificationStudy(Study):
                 qualifies = (result.get("linearity_certified") is True
                              and result.get("qualification", {}).get("device_qualified") is True)
             else:
-                qualifies = result.get("device_double_domain_consistent") is True
+                qualifies = result.get("device_stage_gate", {}).get("device_qualified") is True
             qualifications[key] = qualifies
         requirements = dict(self.verification_receipt["requirements"])
         requirements["caller_approved_standard_bound"] = True
@@ -1532,6 +1539,7 @@ class QualificationStudy(Study):
 def run_post_execution_analysis(args):
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification_workflow import (
         analysis_cases, analysis_request, load_analysis_request, verify_collection_receipt, require_digest,
+        read_only_derivation,
     )
     collection_args = copy.copy(args)
     collection_args.verify = True
@@ -1542,6 +1550,8 @@ def run_post_execution_analysis(args):
     destination = args.analysis_dir.resolve()
     if destination.is_relative_to(collection.output) or collection.output.is_relative_to(destination):
         raise ValueError("analysis and numerical collection must have separate directories")
+    if args.qualification_file.resolve().is_relative_to(destination):
+        raise ValueError("reviewed qualification inputs must be retained outside the analysis output")
     sections = tuple(name for name in ("amplitude", "reconstruct")
                      if name in (args.analysis_section or ("amplitude", "reconstruct")))
     cases = analysis_cases(collection.grids, collection.amplitudes, sections, args.analysis_case or ())
@@ -1552,7 +1562,10 @@ def run_post_execution_analysis(args):
         approved_standard_sha256=args.analysis_approved_standard_sha256,
         source=collection.source, window_spec=collection.window_spec, cases=cases,
         amplitude_ladder_V=collection.amplitudes, window_amplitude_V=collection.args.window_amplitude,
-        linearity_case=args.analysis_linearity_case)
+        linearity_case=args.analysis_linearity_case,
+        required_frequency_Hz=args.analysis_frequencies or collection.frequencies.tolist())
+    if not np.all(np.isin(request["required_frequency_Hz"], collection.frequencies)):
+        raise ValueError("analysis frequency intersection contains uncollected frequencies")
     # Validate the approval file now, before recording a request referencing it.
     approval = load_qualification_inputs(args.qualification_file, args.qualification_sha256,
                                         result_directory=collection.output)
@@ -1582,8 +1595,10 @@ def run_post_execution_analysis(args):
     receipt["collection_manifest_sha256"] = args.manifest_sha256
     receipt["verifier_source"] = collection.source
     analysis = QualificationStudy(collection, args, request, receipt)
-    analysis.run(sections)
+    with read_only_derivation() as production_attempts:
+        analysis.run(sections)
     result = ready(analysis.result_record())
+    result["forbidden_physical_production_attempts"] = production_attempts
     # Recheck both immutable input anchors after all derived operations.
     if sha(collection.output/"ManifestV1.json") != args.manifest_sha256:
         raise ValueError("numerical collection changed during qualification")
@@ -1640,6 +1655,7 @@ def main(argv=None):
     parser.add_argument("--analysis-section", action="append", choices=("amplitude", "reconstruct"))
     parser.add_argument("--analysis-case", action="append")
     parser.add_argument("--analysis-linearity-case")
+    parser.add_argument("--analysis-frequencies", type=float, nargs="+", help="explicit required intersection of collected frequencies")
     parser.add_argument("--verify-analysis", action="store_true")
     parser.add_argument("--analysis-manifest-sha256")
     parser.add_argument("--approved-standard-sha256", help="optional caller-held approved standard digest; candidate pins alone are not approval")

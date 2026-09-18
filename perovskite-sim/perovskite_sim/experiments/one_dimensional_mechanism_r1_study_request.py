@@ -105,8 +105,10 @@ def load_qualification_inputs(path, expected_sha256, *, result_directory):
         raise ValueError("external qualification input digest mismatch")
     value = json.loads(raw)
     fields = {"schema", "current_budgets", "turnover_evidence", "double_domain_evidence", "trusted_evidence"}
+    if isinstance(value, dict) and value.get("schema") == "R1StudyQualificationInputsV2":
+        fields.add("numerical_reconciliations")
     if (not isinstance(value, dict) or set(value) != fields
-            or value["schema"] != "R1StudyQualificationInputsV1"
+            or value["schema"] not in ("R1StudyQualificationInputsV1", "R1StudyQualificationInputsV2")
             or any(not isinstance(value[name], dict) for name in fields - {"schema"})):
         raise ValueError("invalid external qualification input schema")
     for name, digest in value["trusted_evidence"].items():

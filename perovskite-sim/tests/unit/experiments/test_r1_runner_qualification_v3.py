@@ -18,6 +18,7 @@ import perovskite_sim
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import R1AdmittanceErrors
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import observation_times, step_current_charge_responses
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import evidence_digest
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_window import build_window_spec
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response import reconstruct_study_response
 from tests.unit.experiments.test_r1_response_qualification import pole_record
 from tests.unit.experiments.test_one_dimensional_mechanism_r1_study_response import inputs as reconstruction_inputs
@@ -60,6 +61,8 @@ def amplitude_study(runner, tmp_path):
     study = runner.Study.__new__(runner.Study)
     study.args = SimpleNamespace(window_amplitude=.005, linearity_case=None, plan_only=False)
     study.grids, study.window, study.times = (16, 32, 64), "full", observation_times()
+    study.window_spec = build_window_spec(study.times)
+    study.amplitudes = (.01, .005, .0025)
     study.plan, study.output = {}, tmp_path
     study.qualification_inputs = {"current_budgets": {}, "turnover_evidence": {},
                                  "double_domain_evidence": {}, "trusted_evidence": {}}
@@ -179,6 +182,7 @@ def test_planned_diagnostic_amplitude_does_not_scan_and_replace_itself(amplitude
 
 def test_qualified_amplitude_requires_the_exact_requested_amplitude_and_initial_state(amplitude_study):
     study, records, prepared, _ = amplitude_study
+    study.qualification_analysis = True
     for key in center_keys(study):
         install_budget(study, records, key)
     report = study.amplitude_record()
@@ -272,6 +276,8 @@ def test_actual_reconstruction_runner_does_not_certify_unreviewed_external_error
     prepared = SimpleNamespace(sha256=common["sha256"], to_dict=lambda: common)
     study = runner.Study.__new__(runner.Study)
     study.stack, study.binding, study.window = None, None, "full"
+    study.window_spec = build_window_spec(step["times_s"])
+    study.frequencies = np.asarray(ac["frequency_Hz"])
     study.qualified_amplitude = lambda: (.005, None)
     study.prepared = lambda n: prepared
     records = {"Window/Base/N16/A0.005": step, "AC/N16/D": ac,
@@ -282,7 +288,8 @@ def test_actual_reconstruction_runner_does_not_certify_unreviewed_external_error
                                       else {"comparison_available": False})
     study.qualification_inputs = {"current_budgets": {}, "turnover_evidence": {}, "trusted_evidence": {},
                                  "double_domain_evidence": {"DoubleDomain/N16/D": {"errors": asdict(errors)}}}
-    monkeypatch.setattr(runner, "solve_controlled_dc", lambda *a, **k: SimpleNamespace())
+    study.target_dc = lambda *a, **k: SimpleNamespace()
+    monkeypatch.setattr(runner, "solve_controlled_dc", lambda *a, **k: pytest.fail("derived analysis started a DC solve"))
     monkeypatch.setattr(runner, "compare_transient_tail", lambda *a, **k: {"all_observables_agree": True})
     result = study.reconstruction_record(16)
     assert result["qualification"]["missing_prerequisites"]

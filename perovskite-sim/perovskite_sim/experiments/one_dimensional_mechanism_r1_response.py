@@ -256,6 +256,8 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
     This function never calls a full-D biased solver for A-C. A converged
     nonlinear solve is distinct from numerical accuracy of a tiny DC current.
     """
+    from .one_dimensional_mechanism_r1_qualification_workflow import require_collection_phase
+    require_collection_phase("solve_controlled_dc")
     voltage = _finite_scalar(voltage_V, "voltage_V")
     policy = policy or r1_policy()
     controls = R1DynamicsControls.from_label(control)
