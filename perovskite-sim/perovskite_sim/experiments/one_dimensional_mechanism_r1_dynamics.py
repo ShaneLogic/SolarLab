@@ -127,6 +127,21 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         spread = float(np.ptp(all_total)) / max(float(np.max(np.abs(all_total))), 1e-20)
         return (*metrics[:4], spread, metrics[5])
 
+    def failure_evidence(self, state, previous, voltage, dt, residual, storage_scale,
+                         poisson_scale, local_scale, diagnostics):
+        """Retain the actual failed Newton iterate without changing its verdict."""
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import snapshot, json_data
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_independent_physics import independent_physics_row
+        return json_data({"schema": "R1NewtonFailureWitnessV1", "terminal_state_available": True,
+            "scope": "failed_iterate_not_accepted_step_or_complete_newton_history",
+            "voltage_V": float(voltage), "dt_s": float(dt),
+            "coordinate": state.coordinate, "previous_coordinate": previous.coordinate,
+            "previous_state": snapshot(self, previous), "attempted_state": snapshot(self, state),
+            "scaled_residual_vector": residual, "storage_scale": storage_scale,
+            "poisson_scale": poisson_scale, "local_scale": local_scale,
+            "diagnostics": diagnostics,
+            "independent_physics": independent_physics_row(self, state, previous, dt)})
+
     def _ion_jacobians(self, phi, positive, negative):
         if self.controls.nu_I:
             return super()._ion_jacobians(phi, positive, negative)

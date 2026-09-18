@@ -1942,6 +1942,22 @@ def _solve_step(
         policy.maximum_two_sided_interface_total_current_relative_error,
         _DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR,
     )
+    def failure(message):
+        error = InterfaceDefectTransientError(message)
+        collector = getattr(system, "failure_evidence", None)
+        if collector is not None:
+            try:
+                error.result = collector(state, previous, voltage, dt, residual,
+                    storage_scale, poisson_scale, local_scale,
+                    {"iteration": iteration, "scaled_nonlinear_residual": norm,
+                     "charge_balance_relative": charge_error, "solver_current_spread_relative": face_error,
+                     "interface_current_spread_relative": interface_error,
+                     "linear_backward_error": linear_backward_error})
+            except Exception as exc:
+                error.result = {"schema": "R1NewtonFailureWitnessV1", "terminal_state_available": False,
+                    "witness_collection_error": {"type": type(exc).__name__, "message": str(exc)}}
+        return error
+    linear_backward_error = None
     for iteration in range(1, policy.maximum_newton_iterations + 1):
         residual, jacobian, state = system.residual_and_jacobian(
             trial,
@@ -1987,16 +2003,17 @@ def _solve_step(
                 maximum_nnz,
                 nonmonotone_step_count,
             )
+        linear_backward_error = None
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
             try:
                 step = np.asarray(spsolve(jacobian, -residual), dtype=float)
             except (MatrixRankWarning, RuntimeError, ValueError) as exc:
-                raise InterfaceDefectTransientError(
+                raise failure(
                     f"analytic sparse Newton solve failed: {exc}"
                 ) from exc
         if step.shape != trial.shape or not np.all(np.isfinite(step)):
-            raise InterfaceDefectTransientError(
+            raise failure(
                 "analytic sparse Newton solve returned a non-finite step"
             )
         linear_residual = np.asarray(jacobian @ step + residual, dtype=float)
@@ -2092,7 +2109,7 @@ def _solve_step(
                         trial = full_candidate
                         nonmonotone_step_count += 1
                         continue
-            raise InterfaceDefectTransientError(
+            raise failure(
                 "analytic sparse Newton line search stalled at iteration "
                 f"{iteration} with residual {norm:.6g}, charge closure "
                 f"{charge_error:.6g}, all-face current closure "
@@ -2100,7 +2117,7 @@ def _solve_step(
                 f"{interface_error:.6g}, linear backward error "
                 f"{linear_backward_error:.6g}"
             )
-    raise InterfaceDefectTransientError(
+    raise failure(
         "analytic sparse Newton exceeded "
         f"{policy.maximum_newton_iterations} iterations with residual {norm:.6g}, "
         f"charge closure {charge_error:.6g}, all-face current closure "
@@ -2213,8 +2230,8 @@ def _integrate_trace(
             step_system, step_previous = system.rebase(previous)
             if hasattr(step_system, "set_voltage_lift"):
                 step_system.set_voltage_lift(target_voltage, step_previous)
-            state, count, residual, jacobian_error, nnz, nonmonotone_count = (
-                _solve_step(
+            try:
+                state, count, residual, jacobian_error, nnz, nonmonotone_count = _solve_step(
                     step_system,
                     np.zeros(system.dimension),
                     step_previous,
@@ -2224,7 +2241,13 @@ def _integrate_trace(
                     check_jacobian=(point == 1 and local_step == 0),
                     scaling_system=system,
                 )
-            )
+            except InterfaceDefectTransientError as exc:
+                witness = getattr(exc, "result", None)
+                if isinstance(witness, dict) and witness.get("schema") == "R1NewtonFailureWitnessV1":
+                    witness.update({"time_s": float(times[point - 1] + (local_step + 1) * dt),
+                                    "previous_time_s": float(times[point - 1] + local_step * dt),
+                                    "substeps": int(substeps)})
+                raise
             point_iterations += count
             nonmonotone_step_count += nonmonotone_count
             coordinate = coordinate + state.coordinate

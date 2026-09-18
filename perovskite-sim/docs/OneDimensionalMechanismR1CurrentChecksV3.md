@@ -1,6 +1,7 @@
 # R1 independent current assembly V1 — V3 declaration
 
-This document records the V3 implementation contract. It does not amend the
+This document records the finite-step contract introduced in V3 and the V4
+regular-current and failed-iterate coverage. It does not amend the
 frozen physical limits or independently approve a scientific result.
 
 `CURRENT_METRIC_SEMANTICS = r1-v3-separate-internal-contact-interface` identifies
@@ -75,7 +76,8 @@ remains strictly below 0.999. No clipping or new physical error floor is added.
 
 Fresh carrier/ion currents must also match the state and applicable published
 current arrays exactly under the anchored implementation. This checks wrong
-solver and publisher currents even when they are mutually consistent. These
+solver and publisher arrays even when they are mutually consistent, provided
+the shared constitutive implementation remains the trusted one. These
 are content/implementation checks, not new physical tolerances. Metadata
 classification and provenance remain separate responsibilities.
 
@@ -90,3 +92,55 @@ independent failure through physical_limits_satisfied.
 The same conservation constraint is counted once. Agreement with its solver
 stopping analogue is not a second independent measurement, a trajectory error
 bound, a linearity budget, or R1-2 acceptance.
+
+## Separate assessments and regular right limits
+
+Every independent report separates `content_consistent` and
+`conservation_compliant`. `reference_accuracy_qualified` remains null with
+`not_assessed_shared_constitutive_laws`; neither an agreeing reconstruction
+nor a small conservation residual supplies a solution-error estimate.
+The actual finite-step constants, dimensionless units and phase applicability
+are exported for comparison with the machine-readable approved standard.
+Original limits, normalization floors, original inventory and the strict
+0.999 site ceiling remain unchanged.
+
+`one_dimensional_mechanism_r1_independent_regular.py` reconstructs the fixed-
+voltage regular current, including a nonzero-step 0+, from physical state.
+It independently assembles carrier and ion continuity and sheet capture,
+then solves differentiated Gauss law by integration with both potential
+derivative boundaries fixed at zero. Physical half contact volumes and the
+two sides of each charged interface are retained. It uses no stored rate,
+stored current, solver derivative helper or solver Poisson factorization.
+Its shared laws are the same listed constitutive primitives plus bulk
+recombination; this is not a second complete device solver.
+
+The result is saved under `regular_current.independent_physics` (and each
+output `regular_currents` entry). Nonzero excitation uses the original
+2e-6 relative current and 1e-10 charge gates. True zero excitation uses the
+original absolute DC continuity/current and normalized residual gates;
+relative-current checks remain explicitly inapplicable. Original algebraic
+and differentiated-Poisson checks also remain in the production path.
+
+The integrated-Gauss reconstruction and the production tridiagonal solve
+can round differently. Their current-array content comparison reports its
+machine-arithmetic allowance: 32 times node count times binary64 epsilon,
+with the maximum conduction/displacement component as the absolute scale.
+This allowance applies only to assembly content comparison; it does not
+alter physical conservation limits, weak-signal normalization or response
+error budgets. Exact content comparison remains in the finite-step assembly.
+
+## Failed Newton state evidence
+
+On a supported R1 Newton failure the original error retains an actual
+`R1NewtonFailureWitnessV1`: previous and attempted physical state, exact
+coordinate, independently recomputable residual scales and residual vector,
+time, subdivision and independently assembled physical checks. A failure
+to collect this witness is explicitly recorded and never replaces the
+original failure. The generic successful solver equations and 100/40/2 caps
+are unchanged.
+
+`rebuild_failure_witness` replays the saved accepted prefix without time
+integration, independently obtains the original scales and re-evaluates the
+attempted coordinate. Recomputed terminal physics and passed terminal
+physics are separate booleans. Iteration count, historical line search and
+linear-solve backward error remain provenance, not reconstructed claims.

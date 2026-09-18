@@ -369,6 +369,12 @@ def regular_current_at_state(system, state, *, policy, require_relative_closure=
     arrays = (phi_dot, total, interface_total, contact_total, state.rate)
     if any(not np.all(np.isfinite(v)) for v in arrays) or any(not np.isfinite(v) or v > limit for v, limit in gates):
         _fail("R1-1 regular current failed its original conservation gates", evidence)
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_independent_regular import independent_regular_current
+    independent = independent_regular_current(system, state, policy=policy,
+        require_relative_closure=require_relative_closure, reported=evidence)
+    evidence["independent_physics"] = independent
+    if not independent["passed"]:
+        _fail("R1-1 regular current failed independent reconstruction: " + ", ".join(independent["reasons"]), evidence)
     return CurrentAtState(
         (displacement, total, interface_conduction, interface_displacement, face_error, interface_error),
         evidence,

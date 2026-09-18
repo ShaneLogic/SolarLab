@@ -41,6 +41,13 @@ METRIC_APPLICABILITY = {
     "charge_balance_normalized": "finite_step",
     "inventory_relative_drift": "all_saved_rows",
 }
+METRIC_UNITS = {
+    "internal_face_current_spread_relative": "1",
+    "contact_internal_current_spread_relative": "1",
+    "interface_current_spread_relative": "1",
+    "charge_balance_normalized": "1",
+    "inventory_relative_drift": "1",
+}
 FINITE_STEP_METRICS = frozenset(name for name, scope in METRIC_APPLICABILITY.items()
                               if scope == "finite_step")
 ASSESSMENT_FIELDS = frozenset({"content_consistent", "conservation_compliant",
@@ -90,6 +97,17 @@ def _difference(forward, backward, drive):
     return result
 
 
+def _interface_balance(system, state, index):
+    geometry, physics, bulk = _material_two_sided_interface_problem(
+        system.material, system.stack, state.n, state.p, state.phi, index,
+        cross_transmission=system.dark_reference.interface_transmission)
+    local = state.local[index]
+    return fixed_occupancy_carrier_tangent_from_density(
+        local.state_m3, geometry, physics, bulk, state.occupancy[index],
+        InterfaceTracePotentials(*local.trace_potential),
+        capture_multiplier=system.controls.nu_t).balance
+
+
 def _currents(system, state):
     mat, vt = system.material, system.thermal_voltage
     spacing = np.diff(system.grid)
@@ -109,16 +127,9 @@ def _currents(system, state):
     ionic = Q*ion_flux
     interface = np.empty((system.interface_count, 2))
     for index, face in enumerate(system.interface_faces):
-        geometry, physics, bulk = _material_two_sided_interface_problem(
-            mat, system.stack, state.n, state.p, state.phi, index,
-            cross_transmission=system.dark_reference.interface_transmission)
         # The fixed-occupancy carrier law depends on the supplied trace
         # potential; never consume state.local[index].tangent or its fluxes.
-        local = state.local[index]
-        balance = fixed_occupancy_carrier_tangent_from_density(
-            local.state_m3, geometry, physics, bulk, state.occupancy[index],
-            InterfaceTracePotentials(*local.trace_potential),
-            capture_multiplier=system.controls.nu_t).balance
+        balance = _interface_balance(system, state, index)
         flux = balance.bulk_flux_m2_s
         electron[face], hole[face] = -Q*flux[0], Q*flux[1]
         interface[index] = Q*np.array([-flux[0]+flux[1], flux[2]-flux[3]])+ionic[face]
@@ -174,6 +185,13 @@ def _assessment(checks):
     return {"content_consistent": passed(content), "conservation_compliant": passed(conservation),
             "reference_accuracy_qualified": None,
             "reference_accuracy_status": "not_assessed_shared_constitutive_laws"}
+
+
+def _metric_checks(metrics, finite):
+    return {name: {"applicable": finite or METRIC_APPLICABILITY[name] == "all_saved_rows",
+                   "passed": bool(np.isfinite(value) and value <= METRIC_LIMITS[name])
+                   if finite or METRIC_APPLICABILITY[name] == "all_saved_rows" else None}
+            for name, value in metrics.items()}
 
 
 def independent_physics_row(system, state, previous, dt, *, reported=None):
@@ -239,10 +257,7 @@ def independent_physics_row(system, state, previous, dt, *, reported=None):
         "contact_internal_current_spread_relative":_spread(np.r_[internal,contact]),
         "interface_current_spread_relative":max((_spread(pair) for pair in interface),default=0.),
         "charge_balance_normalized":charge_absolute/charge_scale,"inventory_relative_drift":drift}
-    checks = {name:{"applicable":finite or METRIC_APPLICABILITY[name] == "all_saved_rows",
-                    "passed":bool(np.isfinite(value) and value<=METRIC_LIMITS[name])
-                              if finite or METRIC_APPLICABILITY[name] == "all_saved_rows" else None}
-              for name,value in metrics.items()}
+    checks = _metric_checks(metrics, finite)
     checks["physical_geometry_matches"]={"applicable":True,"passed":bool(np.array_equal(widths,system.widths))}
     checks["finite_positive_populations"]={"applicable":True,"passed":bool(
         all(np.all(np.isfinite(value)) for value in (state.n,state.p,state.positive,state.phi,state.occupancy))
