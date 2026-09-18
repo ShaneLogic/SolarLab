@@ -106,7 +106,9 @@ def formal_study(tmp_path_factory):
     result = launch(output, "--section", "prepare", "--section", "dc-ac")
     assert result.returncode == 0, result.stdout + result.stderr
     assert read(output / "StudyRequestV1.json")["run_class"] == "formal"
-    assert read(output / "StudySummaryV1.json")["active_case_count"] == 6
+    assert read(output / "StudySummaryV1.json")["active_case_count"] == 10
+    for control in "ABCD":
+        assert (output / f"DCBaseline/N16/{control}/AttemptV1/ResultV1.json").is_file()
     assert not read(output / "StudySummaryV1.json")["study_exit_passed"]
     return SimpleNamespace(output=output, project=project, revision=revision, launch=launch,
                            anchor=digest(output / "ManifestV1.json"),

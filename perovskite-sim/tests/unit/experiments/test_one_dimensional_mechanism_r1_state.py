@@ -55,6 +55,32 @@ def _restore(case, prepared=None, *, label="D"):
     )
 
 
+def test_physical_identity_preserves_run_identity_but_ignores_only_provenance(common_state):
+    import copy
+    original = common_state[2].to_dict()
+    changed = copy.deepcopy(original)
+    changed["created_utc"] = "2030-01-01T00:00:00+00:00"
+    assert common.physical_preparation_identity(original) == common.physical_preparation_identity(changed)
+    assert common.digest(original) != common.digest(changed)
+    changed["state"]["phi_V"][1] += 1e-6
+    assert common.physical_preparation_identity(original) != common.physical_preparation_identity(changed)
+
+
+def test_saved_dc_restore_checks_physics_without_running_a_new_dc_solve(common_state_16, monkeypatch):
+    import copy
+    from perovskite_sim.experiments import one_dimensional_mechanism_r1_response as response
+    stack, binding, prepared = common_state_16
+    dc = response.solve_controlled_dc(stack, 16, binding, prepared)
+    record = common.json_data(dc.evidence)
+    monkeypatch.setattr(response, "solve_controlled_dc", lambda *a, **k: pytest.fail("new DC solve"))
+    restored = response.restore_controlled_dc(record, stack, 16, binding, prepared)
+    assert np.array_equal(restored.state.coordinate, dc.state.coordinate)
+    changed = copy.deepcopy(record)
+    changed["current_A_m2"][0] += 1.
+    with pytest.raises(ValueError, match="content mismatch"):
+        response.restore_controlled_dc(changed, stack, 16, binding, prepared)
+
+
 def _reseal(record):
     record["sha256"] = common.digest({k: v for k, v in record.items() if k != "sha256"})
     return common.R1PreparedState.from_dict(record)

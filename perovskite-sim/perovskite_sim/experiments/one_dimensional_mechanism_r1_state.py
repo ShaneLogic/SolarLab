@@ -382,6 +382,22 @@ def _preparation_policy(value):
     raise R1StateError("common-state preparation_policy is not a declared R1 policy")
 
 
+def physical_preparation_identity(prepared):
+    """Physical content identity, separate from the timestamped artifact hash.
+
+    This does not permit approval transfer between runs: applications also
+    retain the full prepared artifact and collection manifest identities.
+    """
+    value = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
+    fields = ("schema", "kind", "state_time", "preparation_controls", "intervals", "grid",
+              "physical_stack", "stack_sha256", "fixed_reference", "reference_sha256",
+              "contact_velocities_m_s", "contact_certificate", "dc_state", "state",
+              "qf_references_V", "preparation_policy", "study_spec_sha256")
+    content = {key: value[key] for key in fields}
+    return {"schema": "R1PhysicalPreparationIdentityV1", "sha256": digest(content),
+            "fields": list(fields), "scope": "physical_content_not_execution_or_approval_identity"}
+
+
 def prepare_common_state(stack, intervals, binding, *, policy=None):
     """Prepare D once. A-D import copies of this state without another DC solve."""
     policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)

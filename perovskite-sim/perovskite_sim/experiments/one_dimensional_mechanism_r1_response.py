@@ -325,6 +325,41 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
     return result
 
 
+def restore_controlled_dc(record, stack, intervals, binding, prepared, *, policy=None):
+    """Restore a previously verified DC coordinate without a new root solve.
+
+    The enclosing caller must bind the original artifact and its verification
+    receipt. Reevaluate saved physical contents here; iteration history remains
+    provenance of that original solve, not a second computation.
+    """
+    common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
+    if (record.get("schema") != "R1ControlledDCResponseV1"
+            or record.get("prepared_sha256") != common["sha256"]
+            or record.get("reference_sha256") != binding["sha256"]
+            or record.get("intervals") != intervals or record.get("certified") is not True
+            or record.get("source") != common.get("source")):
+        raise ValueError("saved DC identity or certification differs from verified input")
+    policy = policy or r1_policy()
+    controls = R1DynamicsControls.from_label(record["control"])
+    system, initial = restore_common_state(prepared, stack, intervals, binding,
+        controls=controls, policy=policy, expected_prepared_sha256=common["sha256"])
+    system, initial = system.rebase(initial)
+    state = system.evaluate(np.asarray(record["coordinate"], dtype=float), record["voltage_V"])
+    observations, labels = physical_observations(system, state)
+    current = np.sum(observations[:3], axis=0)
+    expected = {
+        "state": snapshot(system, state), "checks": _dc_metrics(system, state, initial, policy),
+        "physical_face_labels": labels, "electron_current_A_m2": observations[0],
+        "hole_current_A_m2": observations[1], "ion_current_A_m2": observations[2],
+        "displacement_C_m2": observations[3], "current_A_m2": current,
+        "terminal_current_A_m2": float(current[0]), "junction_polarity": float(system.polarity),
+    }
+    _same_response_content({key: record[key] for key in expected}, expected)
+    if not expected["checks"]["certified"] or record.get("stop_reason") != "converged":
+        raise ValueError("saved DC does not satisfy the declared physical equations")
+    return R1DCResponse(system, state, {**record, **expected, "coordinate": state.coordinate.copy()})
+
+
 def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", policy=None,
                          expected_prepared_sha256=None):
     """Independent +/-0.1,0.05,0.025 mV steady states, without tail fitting."""

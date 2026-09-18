@@ -9,6 +9,7 @@ Use --window full for the logarithmic time grid; functional is a short diagnosis
 from __future__ import annotations
 
 import argparse
+import copy
 import dataclasses
 from datetime import datetime, timezone
 import hashlib
@@ -46,7 +47,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import (
     solve_controlled_dc, dc_conductance_study, small_signal_response, compare_transient_tail,
-    assess_small_signal_response, dc_amplitude_endpoint_study,
+    assess_small_signal_response, dc_amplitude_endpoint_study, restore_controlled_dc,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_physics_validation import verify_r1_step_physics
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_spatial import (
@@ -155,6 +156,8 @@ class Study:
         self.window = getattr(args, "window", "functional")
         self.times = (DEFAULT_TIMES_S if self.window == "functional" else
                       observation_times(first_time_s=args.first_time_s, last_time_s=args.last_time_s))
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_window import build_window_spec
+        self.window_spec = build_window_spec(self.times) if self.window == "full" else None
         self.frequencies = (np.r_[0., np.logspace(-6, 10, 65)]
                             if getattr(args, "extended_frequency", False) else FREQUENCIES)
         self.controls = tuple(getattr(args, "matrix_controls", ("D",)))
@@ -177,7 +180,7 @@ class Study:
             getattr(args, "qualification_file", None), getattr(args, "qualification_sha256", None),
             result_directory=self.output)
         request = {
-            "schema": "R1PhysicsStudyRequestV3", "run_class": self.run_class,
+            "schema": "R1PhysicsStudyRequestV4", "run_class": self.run_class,
             "source": self.source, "runner_sha256": sha(Path(__file__)),
             "fixture_sha256": hashlib.sha256(fixture_raw).hexdigest(),
             "reference_sha256": hashlib.sha256(reference_raw).hexdigest(),
@@ -187,6 +190,7 @@ class Study:
             "transient_amplitudes_V": list(self.amplitudes),
             "grids": self.grids, "matrix_controls": self.controls,
             "window": self.window, "times_s": self.times,
+            "window_spec": self.window_spec,
             "window_amplitude_V": getattr(args, "window_amplitude", .005),
             "linearity_case": getattr(args, "linearity_case", None),
             "qualification_inputs_sha256": getattr(args, "qualification_sha256", None),
@@ -272,6 +276,7 @@ class Study:
             raise ValueError("invalid study plan selection")
         collector = Study.__new__(Study)
         collector.__dict__.update(self.__dict__)
+        collector.planning = True
         records = {}
         exact = set(selection["cases"])
         def selected(key):
@@ -293,9 +298,25 @@ class Study:
                     if field in request:
                         grid = next(int(part[1:]) for part in request[field].split("/") if part.startswith("N"))
                         prepare(grid)
+            if key.startswith("AC/"):
+                baseline(request["intervals"], request.get("control", "D"))
+            if key.startswith(("Compare/", "MatrixCompare/", "Linearity/")):
+                grids = {request[name] for name in ("intervals", "grid", "left", "right") if name in request}
+                for name in ("left_case", "right_case"):
+                    if name in request:
+                        grids.add(next(int(p[1:]) for p in request[name].split("/") if p.startswith("N")))
+                for n in sorted(grids or set(self.grids)):
+                    baseline(n, request.get("control", "D"))
+            if key.startswith("Window/"):
+                n, control = request["intervals"], request["control"]
+                capture(self.target_dc_key(n, control, request["amplitude_V"]),
+                        self.dc_state_request(n, control, request["amplitude_V"]), None, dependency=True)
+                capture(f"DC/N{n}/{control}", self.dc_study_request(n, control), None, dependency=True)
             return None
         def prepare(n):
             capture(f"Preparation/N{n}", {"intervals": n, "scope": "common_D_equilibrium"}, None, dependency=True)
+        def baseline(n, control):
+            capture(f"DCBaseline/N{n}/{control}", self.dc_state_request(n, control, 0.), None, dependency=True)
         collector.case, collector.prepared, collector.selected = capture, prepare, selected
         collector.qualified_amplitude = lambda: (self.request["window_amplitude_V"], self.request["linearity_case"])
         collector.run(tuple(sections))
@@ -402,7 +423,7 @@ class Study:
                                                                time_substeps=request["time_substeps"]))):
                 raise ValueError("step result differs from the requested numerical/physical axes")
             return verify_r1_step_physics(self.stack, n, self.binding, self.prepared(n), result)
-        if key.startswith(("DC/", "AC/", "AmplitudeDC/")):
+        if key.startswith(("DC/", "DCBaseline/", "TargetDC/", "AC/", "AmplitudeDC/")):
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import verify_response_content
             return verify_response_content(result, stack=self.stack, intervals=request["intervals"],
                                            binding=self.binding, prepared=self.prepared(request["intervals"]),
@@ -681,8 +702,9 @@ class Study:
         if "dc" in sections:
             for n in self.grids:
                 for control in "ABCD":
-                    self.case(f"DC/N{n}/{control}", {"intervals": n, "control": control, "voltage_V": .005,
-                              "scope": "same_control_5mV_dc_and_three_step_zero_bias_conductance"},
+                    self.case(f"DCBaseline/N{n}/{control}", self.dc_state_request(n, control, 0.),
+                              lambda directory, n=n, c=control: self.solve_dc_state(n, c, 0.))
+                    self.case(f"DC/N{n}/{control}", self.dc_study_request(n, control),
                               lambda directory, n=n, c=control: self.dc_record(n, c))
         if "amplitude-dc" in sections:
             for n in self.grids:
@@ -699,9 +721,7 @@ class Study:
             for n in self.grids:
                 self.case(f"AC/N{n}/D", {"intervals": n, "control": "D", "frequency_Hz": self.frequencies,
                           "scope": "direct_zero_bias_ac_three_derivative_levels_not_window_coverage"},
-                          lambda directory, n=n: small_signal_response(solve_controlled_dc(
-                              self.stack, n, self.binding, self.prepared(n),
-                              expected_prepared_sha256=self.prepared(n).sha256), self.frequencies))
+                          lambda directory, n=n: small_signal_response(self.zero_dc(n, "D"), self.frequencies))
         if "amplitude" in sections:
             previous = None
             for amplitude in getattr(self, "amplitudes", AMPLITUDES_V):
@@ -741,6 +761,11 @@ class Study:
                 if label == "Extended" and last == end or label == "Earlier" and first == start:
                     continue
                 times = observation_times(first_time_s=first, last_time_s=last)
+                if (not getattr(self, "planning", False)
+                        and self.selected(f"Window/{label}/N{n}/A{amplitude}")):
+                    self.target_dc(n, "D", amplitude)
+                    self.case(f"DC/N{n}/D", self.dc_study_request(n, "D"),
+                              lambda directory, n=n: self.dc_record(n, "D"), dependency=True)
                 self.case(f"Window/{label}/N{n}/A{amplitude}", {"intervals": n, "control": "D", "amplitude_V": amplitude,
                           "time_substeps": (4, 8, 16), "nonlinear_factor": .01, "times_s": times,
                           "linearity_case": linearity, "scope": "declared_full_window_extension"},
@@ -767,7 +792,7 @@ class Study:
             external = self.qualification_inputs["double_domain_evidence"].get(f"DoubleDomain/N{n}/D", {})
             if set(external) - {"errors", "prerequisites"}:
                 raise ValueError("unknown externally supplied double-domain fields")
-            qualification_args = {"expected_scope": scope,
+            qualification_args = {"expected_scope": scope, "window_spec": self.window_spec,
                 "qualification_evidence": external.get("prerequisites"),
                 "trusted_evidence": self.qualification_inputs["trusted_evidence"]}
             prerequisites = {"input_trajectory_certified": self.verified_cases[keys[0]][1].get("certified") is True,
@@ -776,7 +801,7 @@ class Study:
                 "frequency_window_coverage": self.frequency_record(n)["device_frequency_window_certified"]}
             error_fields, uncertainty = {}, {}
             if linearity_key is not None and self.window == "full":
-                linearity = self.saved(linearity_key)
+                linearity = self.saved(linearity_key, require_scientific=False)
                 prerequisites["finite_amplitude_linearity"] = linearity["linearity_certified"]
                 _, numerical_error, uncertainty = self.amplitude_error(amplitude)
                 if np.array_equal(numerical_error.coordinates["time_s"], step["times_s"]):
@@ -823,8 +848,7 @@ class Study:
                 prerequisites[gate] = comparisons[gate]["passed"]
             # The measured tail state is compared against an independently
             # solved DC at the actual selected amplitude.
-            target = solve_controlled_dc(self.stack, n, self.binding, prepared, voltage_V=amplitude,
-                                          expected_prepared_sha256=prepared.sha256)
+            target = self.target_dc(n, "D", amplitude)
             row = next(r for r in reversed(step["accepted_steps"]) if r["time_s"] == step["times_s"][-1]
                        and r["substeps"] == max(step["policy"]["refinement_substeps"]))
             tail = {**row["state"], "prepared_sha256": step["prepared_sha256"],
@@ -857,7 +881,7 @@ class Study:
         if hasattr(self, "plan") or getattr(self.args, "plan_only", False):
             amplitude = getattr(self.args, "window_amplitude", .005)
             key = getattr(self.args, "linearity_case", None)
-            if key is not None:
+            if key is not None and getattr(self, "qualification_analysis", False):
                 report = self.saved(key)
                 from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import (
                     evidence_digest, select_response_amplitude,
@@ -866,7 +890,8 @@ class Study:
                 prepared = self.prepared(self.grids[-1]).to_dict()
                 scope = self.response_scope(prepared, self.grids[-1])
                 selection = select_response_amplitude([qualification], expected_scope=scope,
-                    verified_report_digests=[evidence_digest(qualification)], diagnostic_amplitude_V=amplitude)
+                    verified_report_digests=[evidence_digest(qualification)], diagnostic_amplitude_V=amplitude,
+                    window_spec=self.window_spec, declared_amplitudes_V=self.amplitudes)
                 if selection["device_qualified"] is not True or selection["qualified_amplitude_V"] != amplitude:
                     raise ValueError("requested window amplitude lacks the specified verified linearity evidence")
             return amplitude, key
@@ -896,6 +921,33 @@ class Study:
                                                     expected_prepared_sha256=prepared.sha256)}
 
     @staticmethod
+    def dc_state_request(n, control, voltage):
+        return {"intervals": n, "control": control, "voltage_V": voltage,
+                "scope": "sealed_same_control_dc_state_for_derived_analysis"}
+
+    @staticmethod
+    def dc_study_request(n, control):
+        return {"intervals": n, "control": control, "voltage_V": .005,
+                "scope": "same_control_5mV_dc_and_three_step_zero_bias_conductance"}
+
+    @staticmethod
+    def target_dc_key(n, control, amplitude):
+        return f"TargetDC/N{n}/{control}/A{amplitude}"
+
+    def solve_dc_state(self, n, control, voltage):
+        prepared = self.prepared(n)
+        return solve_controlled_dc(self.stack, n, self.binding, prepared, control=control,
+            voltage_V=voltage, expected_prepared_sha256=prepared.sha256).evidence
+
+    def target_dc(self, n, control, amplitude):
+        key = self.target_dc_key(n, control, amplitude)
+        record = self.case(key, self.dc_state_request(n, control, amplitude),
+            lambda directory: self.solve_dc_state(n, control, amplitude), dependency=True)
+        if record is None:
+            raise ValueError("required target DC has not been collected: " + key)
+        return restore_controlled_dc(record, self.stack, n, self.binding, self.prepared(n))
+
+    @staticmethod
     def amplitude_key(item):
         return (f"Amplitude/A{item.amplitude_V}/N{item.intervals}/T{item.time_substeps[0]}"
                 f"/F{str(item.nonlinear_factor).replace('.', 'p')}")
@@ -909,7 +961,7 @@ class Study:
         record = self.saved(key)
         baseline = self.zero_dc(item.intervals, item.control).evidence["current_A_m2"][[0, -1]]
         values = np.asarray([row["report_contact_current_A_m2"] for row in record["regular_currents"]])-baseline
-        return R1Response(values, {"time_s": np.asarray(record["times_s"])}, ("left", "right"))
+        return R1Response(values, {"time_s": np.asarray(record["times_s"])}, ("left_contact", "right_contact"))
 
     def amplitude_error(self, amplitude):
         choices = self.amplitude_cases(amplitude)
@@ -959,7 +1011,12 @@ class Study:
             qualification = assess_transient_linearity(*steps, coarse_baseline_A_m2=baseline,
                 fine_baseline_A_m2=baseline, expected_scope=scope, expected_times_s=self.times,
                 coarse_budget=self.qualification_inputs["current_budgets"].get(center_keys[0]),
-                fine_budget=self.qualification_inputs["current_budgets"].get(center_keys[1]), trusted_evidence=trusted)
+                fine_budget=self.qualification_inputs["current_budgets"].get(center_keys[1]), trusted_evidence=trusted,
+                window_spec=self.window_spec, declared_amplitudes_V=self.amplitudes,
+                verified_record_digests={"coarse_step": evidence_digest(steps[0]), "fine_step": evidence_digest(steps[1])},
+                measured_evidence={"coarse_current_error": error_a, "fine_current_error": error_b,
+                    "coarse_axes_passed": audit_a["axes_passed"], "fine_axes_passed": audit_b["axes_passed"],
+                    "comparison": report})
             qualified = (audit_a["axes_passed"] and audit_b["axes_passed"]
                          and qualification["device_qualified"] is True)
             return {"schema": "R1AmplitudeLinearityV3", "comparison": report,
@@ -974,14 +1031,15 @@ class Study:
     def response_scope(self, record, intervals):
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import evidence_digest, qualification_scope
         prepared = self.prepared(intervals).to_dict()
-        return qualification_scope(record, state_sha256=evidence_digest(prepared["state"]), domain="device")
+        return qualification_scope(record, state_sha256=evidence_digest(prepared["state"]), domain="device",
+                                   window_spec=self.window_spec)
 
     def frequency_record(self, intervals):
         key = f"AC/N{intervals}/D"
         ac = self.saved(key, require_scientific=False)
         return frequency_window_report(ac, expected_scope=self.response_scope(ac, intervals),
             turnover_evidence=self.qualification_inputs["turnover_evidence"].get(key),
-            trusted_evidence=self.qualification_inputs["trusted_evidence"])
+            trusted_evidence=self.qualification_inputs["trusted_evidence"], window_spec=self.window_spec)
 
     def short_comparison(self, left, right, control):
         keys = (f"Short/N{left}/{control}", f"Short/N{right}/{control}")
@@ -1083,9 +1141,12 @@ class Study:
     def zero_dc(self, intervals, control):
         key = intervals, control
         if key not in self.dc_baselines:
-            self.dc_baselines[key] = solve_controlled_dc(self.stack, intervals, self.binding,
-                                                        self.prepared(intervals), control=control,
-                                                        expected_prepared_sha256=self.prepared(intervals).sha256)
+            record = self.case(f"DCBaseline/N{intervals}/{control}", self.dc_state_request(intervals, control, 0.),
+                lambda directory: self.solve_dc_state(intervals, control, 0.), dependency=True)
+            if record is None:
+                raise ValueError("required baseline DC has not been collected")
+            self.dc_baselines[key] = restore_controlled_dc(record, self.stack, intervals, self.binding,
+                                                          self.prepared(intervals))
         return self.dc_baselines[key]
 
     def tail_record(self):
@@ -1243,8 +1304,16 @@ class Study:
                            verification_does_not_imply_scientific_acceptance=True)
         code = 1 if failures or local_fail else 2 if missing or unavailable or unknown or unchecked else 0
         summary["exit_code"] = code
+        self.last_summary = summary
         if getattr(self, "verifying", False):
             published = checked_read(self.output, "StudySummaryV1.json")
+            if hasattr(self, "plan"):
+                if published.get("study_request_sha256") != self.plan_sha256:
+                    raise ValueError("published summary study_request_sha256 differs from external request")
+                for invocation in sorted((self.output/"Invocations").glob("InvocationV*.json")):
+                    recorded = checked_read(self.output, invocation.relative_to(self.output).as_posix())
+                    if recorded.get("study_request_sha256") != self.plan_sha256:
+                        raise ValueError("recorded invocation study_request_sha256 differs from external request")
             if (published.get("schema") != "R1PhysicsStudySummaryV2"
                     or type(published.get("study_exit_passed")) is not bool
                     or set(published.get("requirements", {})) != set(requirements)):
@@ -1276,6 +1345,8 @@ class Study:
         write_json(self.output/"FailureIndexV1.json", {"schema": "R1PhysicsStudyFailureIndexV1", "cases": failures})
         write_json(self.output/"UnavailableComparisonIndexV1.json", {"schema": "R1UnavailableComparisonIndexV1", "cases": unavailable})
         write_json(self.output/"HistoricalAttemptsV2.json", {"cases": historical})
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import record_source_reads
+        record_source_reads(self.output, self.context)
         seal(self.output)
         print("STUDY_MANIFEST_SHA256", sha(self.output/"ManifestV1.json"), flush=True)
         return code
@@ -1292,6 +1363,8 @@ def scientific_checks(result):
     if result.get("schema") == "R1DCEndpointAmplitudeStudyV1":
         return (result.get("dc_states_certified") is True and result.get("linearity_certified") is False
                 and result.get("full_transient_linearity_certified") is False)
+    if result.get("schema") == "R1ControlledDCResponseV1":
+        return result.get("certified") is True
     if "double_domain_consistent" in result and "reconstruction" in result:
         return bool(result["double_domain_consistent"])
     for key in ("certificate", "preparation_checks"):
@@ -1322,6 +1395,223 @@ def compare_step_current_charge(left, right, left_baseline, right_baseline):
     return compare(left, right, left_baseline, right_baseline)
 
 
+class QualificationStudy(Study):
+    """Derived-only view of a fully checked, immutable numerical collection."""
+
+    def __init__(self, collection, args, request, receipt):
+        self.__dict__.update(collection.__dict__)
+        self.collection = collection
+        self.args = copy.copy(collection.args)
+        self.args.linearity_case = request["linearity_case"]
+        self.args.qualification_file = args.qualification_file
+        self.args.qualification_sha256 = args.qualification_sha256
+        self.qualification_analysis = True
+        self.analysis_request, self.verification_receipt = request, receipt
+        self.qualification_inputs = load_qualification_inputs(args.qualification_file,
+            args.qualification_sha256, result_directory=self.output)
+        self.derived_results, self.derived_rows, self.derived_dependencies = {}, {}, {}
+        self.verified_cases = dict(collection.verified_cases)
+        self.active_case = None
+
+    def selected(self, key):
+        return key in self.analysis_request["cases"]
+
+    def solve_dc_state(self, *args, **kwargs):
+        raise RuntimeError("post-execution qualification cannot create a new physical DC solution")
+
+    def step(self, *args, **kwargs):
+        raise RuntimeError("post-execution qualification cannot integrate a new trajectory")
+
+    def prepared(self, intervals):
+        if intervals not in self.collection.preparations:
+            raise ValueError("required preparation was not checked in the collection")
+        self.record_dependency(f"Preparation/N{intervals}")
+        return self.collection.preparations[intervals]
+
+    def record_dependency(self, key):
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import evidence_digest
+        owner = self.active_case
+        if owner is None or owner == key:
+            return
+        if key in self.derived_results:
+            value = {"kind": "derived", "result_sha256": evidence_digest(self.derived_results[key])}
+        else:
+            directory = self.collection.latest(key)
+            if directory is None:
+                raise ValueError("analysis dependency is absent: " + key)
+            value = {"kind": "collection", "attempt": directory.relative_to(self.output).as_posix(),
+                     "manifest_sha256": sha(directory/"ManifestV1.json")}
+        self.derived_dependencies.setdefault(owner, {})[key] = value
+
+    def saved(self, key, *, require_scientific=True):
+        if key.startswith(("Linearity/", "Frequency/", "DoubleDomain/")):
+            if key not in self.derived_results:
+                raise ValueError("required post-execution qualification has not run: " + key)
+            result = self.derived_results[key]
+            if require_scientific and scientific_checks(result) is not True:
+                raise ValueError("derived dependency lacks scientific eligibility: " + key)
+        else:
+            result = self.collection.saved(key, require_scientific=require_scientific)
+            if key in self.collection.verified_cases:
+                self.verified_cases[key] = self.collection.verified_cases[key]
+        self.record_dependency(key)
+        return result
+
+    def qualified_amplitude(self):
+        # An unqualified selected amplitude remains diagnostic. The actual
+        # linearity record is checked in reconstruction_record, not invented.
+        return self.analysis_request["window_amplitude_V"], self.analysis_request["linearity_case"]
+
+    def case(self, key, request, operation, *, dependency=False):
+        if not key.startswith(("Linearity/", "Frequency/", "DoubleDomain/")):
+            if key.startswith(("DCBaseline/", "TargetDC/", "DC/")):
+                return self.saved(key)
+            return None
+        if not self.selected(key):
+            return None
+        expected = self.analysis_request["cases"][key]
+        if any(ready(request.get(name)) != value for name, value in expected.items()):
+            raise ValueError("derived operation differs from the external analysis request")
+        previous = self.active_case
+        self.active_case = key
+        try:
+            self.source_unchanged()
+            result = ready(operation(None))
+            self.source_unchanged()
+            self.derived_results[key] = result
+            if result.get("comparison_available") is False:
+                status = "unavailable"
+            else:
+                status = "completed"
+            self.derived_rows[key] = {"case": key, "status": status,
+                "scientific_checks_passed": scientific_checks(result), "request": ready(request)}
+            return result
+        except Exception as exc:
+            self.derived_rows[key] = {"case": key, "status": "failed", "request": ready(request),
+                "scientific_checks_passed": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
+            return None
+        finally:
+            self.active_case = previous
+
+    def result_record(self):
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import physical_preparation_identity
+        qualifications = {}
+        for key in self.analysis_request["cases"]:
+            result = self.derived_results.get(key, {})
+            if key.startswith("Frequency/"):
+                qualifies = result.get("device_frequency_window_certified") is True
+            elif key.startswith("Linearity/"):
+                qualifies = (result.get("linearity_certified") is True
+                             and result.get("qualification", {}).get("device_qualified") is True)
+            else:
+                qualifies = result.get("device_double_domain_consistent") is True
+            qualifications[key] = qualifies
+        requirements = dict(self.verification_receipt["requirements"])
+        requirements["caller_approved_standard_bound"] = True
+        requirements["amplitude_linearity"] = any(v for k, v in qualifications.items() if k.startswith("Linearity/"))
+        requirements["window_and_double_domain"] = any(v for k, v in qualifications.items() if k.startswith("DoubleDomain/"))
+        missing = sorted(set(self.analysis_request["cases"]) - set(self.derived_rows))
+        failed = [key for key, row in self.derived_rows.items() if row["status"] == "failed"]
+        complete = not missing and not failed
+        return {"schema": "R1PostExecutionQualificationV1", "request": self.analysis_request,
+            "verification_receipt": self.verification_receipt,
+            "physical_preparation_identities": {str(n): physical_preparation_identity(p)
+                                                for n, p in self.collection.preparations.items()},
+            "cases": self.derived_rows, "results": self.derived_results,
+            "input_bindings": self.derived_dependencies, "missing_cases": missing,
+            "failed_cases": failed, "analysis_completed": complete,
+            "device_qualifications": qualifications,
+            "requested_device_qualifications_passed": complete and all(qualifications.values()),
+            "requirements": requirements,
+            "study_exit_passed": complete and all(requirements.values()),
+            "new_physical_solves_in_derivation": 0,
+            "independent_acceptance": "not_asserted",
+            "scope": "derived_qualification_of_fixed_collection; verification_is_not_scientific_approval"}
+
+
+def run_post_execution_analysis(args):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification_workflow import (
+        analysis_cases, analysis_request, load_analysis_request, verify_collection_receipt, require_digest,
+    )
+    collection_args = copy.copy(args)
+    collection_args.verify = True
+    collection_args.plan_only = False
+    collection_args.qualification_file = None
+    collection_args.qualification_sha256 = None
+    collection = Study(collection_args)
+    destination = args.analysis_dir.resolve()
+    if destination.is_relative_to(collection.output) or collection.output.is_relative_to(destination):
+        raise ValueError("analysis and numerical collection must have separate directories")
+    sections = tuple(name for name in ("amplitude", "reconstruct")
+                     if name in (args.analysis_section or ("amplitude", "reconstruct")))
+    cases = analysis_cases(collection.grids, collection.amplitudes, sections, args.analysis_case or ())
+    request = analysis_request(collection_manifest_sha256=args.manifest_sha256,
+        calculation_request_sha256=collection.plan_sha256,
+        qualification_sha256=args.qualification_sha256,
+        candidate_standard_sha256=collection.standard["candidate_standard_sha256"],
+        approved_standard_sha256=args.analysis_approved_standard_sha256,
+        source=collection.source, window_spec=collection.window_spec, cases=cases,
+        amplitude_ladder_V=collection.amplitudes, window_amplitude_V=collection.args.window_amplitude,
+        linearity_case=args.analysis_linearity_case)
+    # Validate the approval file now, before recording a request referencing it.
+    approval = load_qualification_inputs(args.qualification_file, args.qualification_sha256,
+                                        result_directory=collection.output)
+    plan_path = args.analysis_plan_file.resolve()
+    if plan_path.is_relative_to(collection.output) or plan_path.is_relative_to(destination):
+        raise ValueError("analysis request must be retained outside both result directories")
+    if args.analysis_plan_only:
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        if plan_path.exists() and plan_path.read_bytes() != raw_json(request):
+            raise ValueError("analysis request path already contains a different request")
+        if not plan_path.exists():
+            write_json(plan_path, request)
+        print("ANALYSIS_REQUEST_SHA256", sha(plan_path), flush=True)
+        return 0
+    load_analysis_request(plan_path, args.analysis_request_sha256, request)
+    if args.verify_analysis:
+        require_digest(args.analysis_manifest_sha256, "analysis manifest")
+        if sha(destination/"ManifestV1.json") != args.analysis_manifest_sha256:
+            raise ValueError("analysis manifest differs from external anchor")
+        if checked_read(destination, "AnalysisRequestV1.json") != request:
+            raise ValueError("saved analysis request differs from the caller request")
+    elif destination.exists():
+        raise ValueError("analysis output already exists; verify it or select a new version")
+    collection.run(SECTIONS)
+    collection.finish()
+    receipt = verify_collection_receipt(collection.last_summary)
+    receipt["collection_manifest_sha256"] = args.manifest_sha256
+    receipt["verifier_source"] = collection.source
+    analysis = QualificationStudy(collection, args, request, receipt)
+    analysis.run(sections)
+    result = ready(analysis.result_record())
+    # Recheck both immutable input anchors after all derived operations.
+    if sha(collection.output/"ManifestV1.json") != args.manifest_sha256:
+        raise ValueError("numerical collection changed during qualification")
+    checked_read(collection.output, "StudyRequestV1.json")
+    load_analysis_request(plan_path, args.analysis_request_sha256, request)
+    if load_qualification_inputs(args.qualification_file, args.qualification_sha256,
+                                result_directory=collection.output) != approval:
+        raise ValueError("qualification inputs changed during analysis")
+    if args.verify_analysis:
+        if checked_read(destination, "AnalysisResultV1.json") != result:
+            raise ValueError("saved qualification differs from recomputed analysis")
+        if checked_read(destination, "QualificationInputsV1.json") != approval:
+            raise ValueError("saved approval differs from the externally selected inputs")
+    else:
+        destination.mkdir(parents=True)
+        write_json(destination/"AnalysisRequestV1.json", request)
+        write_json(destination/"QualificationInputsV1.json", approval)
+        write_json(destination/"AnalysisResultV1.json", result)
+        write_json(destination/"VerificationReceiptV1.json", receipt)
+        record_frozen_source(destination, collection.context)
+        seal(destination)
+        print("ANALYSIS_MANIFEST_SHA256", sha(destination/"ManifestV1.json"), flush=True)
+    print(json.dumps({"analysis_completed": result["analysis_completed"],
+                      "requested_device_qualifications_passed": result["requested_device_qualifications_passed"],
+                      "study_exit_passed": result["study_exit_passed"]}), flush=True)
+    return 1 if result["failed_cases"] else 0 if result["requested_device_qualifications_passed"] else 2
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -1341,6 +1631,17 @@ def main(argv=None):
     parser.add_argument("--request-sha256", help="independently retained pre-execution request SHA256")
     parser.add_argument("--qualification-file", type=Path, help="caller-held independently reviewed response evidence")
     parser.add_argument("--qualification-sha256", help="independently retained qualification input SHA256")
+    parser.add_argument("--qualify", action="store_true", help="derive qualification from an immutable checked collection")
+    parser.add_argument("--analysis-dir", type=Path, help="separate output for post-execution qualification")
+    parser.add_argument("--analysis-plan-file", type=Path, help="caller-held post-execution analysis request")
+    parser.add_argument("--analysis-plan-only", action="store_true")
+    parser.add_argument("--analysis-request-sha256")
+    parser.add_argument("--analysis-approved-standard-sha256")
+    parser.add_argument("--analysis-section", action="append", choices=("amplitude", "reconstruct"))
+    parser.add_argument("--analysis-case", action="append")
+    parser.add_argument("--analysis-linearity-case")
+    parser.add_argument("--verify-analysis", action="store_true")
+    parser.add_argument("--analysis-manifest-sha256")
     parser.add_argument("--approved-standard-sha256", help="optional caller-held approved standard digest; candidate pins alone are not approval")
     parser.add_argument("--grids", type=int, nargs="+", default=(16, 32, 64), choices=(16, 32, 64, 128, 256))
     parser.add_argument("--matrix-controls", nargs="+", default=("D",), choices=tuple("ABCD"))
@@ -1354,6 +1655,18 @@ def main(argv=None):
                         help="fixed diagnostic window amplitude; does not assert linearity")
     parser.add_argument("--linearity-case", help="explicit verified linearity case for the chosen window amplitude")
     args = parser.parse_args(argv)
+    if args.qualify:
+        if (not args.analysis_dir or not args.analysis_plan_file or not args.qualification_file
+                or not args.qualification_sha256 or not args.manifest_sha256
+                or args.plan_only or args.retry_failed or args.resume or args.verify):
+            parser.error("--qualify requires collection/approval anchors and separate analysis paths; no collection mutation options")
+        try:
+            return run_post_execution_analysis(args)
+        except Exception as exc:
+            print(f"QUALIFICATION STOPPED: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
+    if args.analysis_plan_only or args.verify_analysis:
+        parser.error("analysis options require --qualify")
     if args.max_cases is not None and args.max_cases <= 0:
         parser.error("--max-cases must be positive")
     if args.retry_failed and not args.resume:
