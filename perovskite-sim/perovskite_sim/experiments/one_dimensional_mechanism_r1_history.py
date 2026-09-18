@@ -15,15 +15,24 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import _gi
 
 
 HISTORICAL_PRODUCERS = {
+    "04170c4efcbcaa023a63fcee1f30bb41cceee0f8": {
+        "evidence_revision": 6,
+        "response_contract_sha256": "bf3b183ad3b9a361429502cc3a8930bea0bd730134cdb806b68c3be1014b9cce",
+        "finite_step_current_metric": "internal_faces; separate_physical_contact_check",
+        "supported_kinds": ["stage-one"],
+        "launcher_selects_runner": False,
+    },
     "3928259a684b0d4c6c07dc05490bfea09401b015": {
         "evidence_revision": 6,
         "response_contract_sha256": "d6c7c4a1cafebefa75a8729b23f9fdaac570faf148b0ba895a288896b80d2da3",
         "finite_step_current_metric": "internal_and_physical_contact_faces",
+        "supported_kinds": ["stage-one", "physics-study"],
     },
     "815c2fe7c5d884381b2ecaefa4d39b355e1b4904": {
         "evidence_revision": 6,
         "response_contract_sha256": "d61d0385985d07f306af6f0d013a97e29c2eb20c232e6a4bb3a2a8f343e1422f",
         "finite_step_current_metric": "internal_and_physical_contact_faces",
+        "supported_kinds": ["stage-one", "physics-study"],
     },
 }
 
@@ -43,6 +52,8 @@ def historical_verifier_command(output, *, expected_source_commit, producer_proj
         raise ValueError("historical producer is outside the explicit compatibility set")
     if kind not in ("stage-one", "physics-study"):
         raise ValueError("unsupported historical evidence kind")
+    if kind not in HISTORICAL_PRODUCERS[expected_source_commit]["supported_kinds"]:
+        raise ValueError("historical evidence kind is outside the selected producer profile")
     project = Path(producer_project).resolve(strict=True)
     if _git(project, "rev-parse", "HEAD").decode().strip() != expected_source_commit:
         raise ValueError("historical verifier checkout differs from selected producer commit")
@@ -57,8 +68,10 @@ def historical_verifier_command(output, *, expected_source_commit, producer_proj
         raise ValueError("historical manifest differs from the caller's anchor")
     arguments = [str(Path(python_executable).resolve(strict=True)), "-I", "-S",
         str(project / "scripts/run_one_dimensional_mechanism_r1_controlled.py"),
-        "--project", str(project), "--source-commit", expected_source_commit,
-        "--runner", kind, "--dependency-path", str(Path(dependency_path).resolve(strict=True)), "--"]
+        "--project", str(project), "--source-commit", expected_source_commit]
+    if HISTORICAL_PRODUCERS[expected_source_commit].get("launcher_selects_runner", True):
+        arguments += ["--runner", kind]
+    arguments += ["--dependency-path", str(Path(dependency_path).resolve(strict=True)), "--"]
     if kind == "stage-one":
         arguments += ["verify", "--mode", "acceptance", "--required-evidence-revision", "6",
             "--output-dir", str(output), "--expected-manifest-sha256", expected_manifest_sha256,
@@ -120,6 +133,18 @@ def inspect_historical_evidence(output, *, expected_source_commit, producer_proj
         reconstructed = completed
     if not completed:
         raise ValueError("historical source-bound reconstruction failed: " + result.stderr.strip()[-1000:])
+    producer_report = reports[-1]
+    if kind == "stage-one":
+        completion = json.loads((Path(output) / "CompletionV1.json").read_text())
+        recorded_status = completion["status"]
+        failed_count = int(recorded_status == "failed")
+        case_count = 1
+        contract_passed = bool(recorded_status == "passed" and producer_report.get("scientifically_accepted"))
+    else:
+        recorded_status = "failed" if producer_report.get("diagnostic_failure_count", 0) else "no_recorded_failure"
+        failed_count = producer_report["diagnostic_failure_count"]
+        case_count = producer_report["active_case_count"]
+        contract_passed = producer_report["study_exit_passed"]
     return {
         "schema": "R1HistoricalInspectionV1", "mode": "historical_inspection",
         "producer_source_commit": expected_source_commit,
@@ -128,7 +153,14 @@ def inspect_historical_evidence(output, *, expected_source_commit, producer_proj
         "manifest_sha256": expected_manifest_sha256, "root_manifest_unchanged": True,
         "verification_completed_without_invocation_error": True,
         "reconstruction_completed": reconstructed, "producer_exit_code": result.returncode,
-        "producer_report": reports[-1],
+        "producer_report": producer_report,
+        "historical_contract_passed": contract_passed,
+        "recorded_status": recorded_status,
+        "recorded_case_count": case_count, "diagnostic_failure_count": failed_count,
+        "case_universe_assurance": "caller_anchored_sealed_archive; original_pre_execution_universe_not_attested",
+        "original_requested_case_set_verified": False,
+        "inspection_completed_does_not_imply_historical_pass": True,
+        "eligible_for_current_acceptance": False,
         "scientifically_accepted": False, "eligible_for_v3_acceptance": False,
         "scope": "selected_historical_producer_contract; not_current_standard_approval_or_R1_2_qualification",
         "command": command,

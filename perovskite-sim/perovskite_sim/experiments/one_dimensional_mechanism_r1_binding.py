@@ -38,6 +38,8 @@ def standard_binding_record(context=None, *, approved_standard_sha256=None):
     that the current numerical result satisfies that standard.
     """
     context = context or require_r1_checkout()
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_standard import physical_standard_binding
+    physical_standard, runtime_check = physical_standard_binding(context)
     declarations = {}
     for relative, (role, exported, expected) in R1_DECLARATIONS.items():
         actual = hashlib.sha256(context.read_bytes(relative)).hexdigest()
@@ -48,6 +50,7 @@ def standard_binding_record(context=None, *, approved_standard_sha256=None):
         "schema": "R1CandidateStandardV1", "declarations": declarations,
         "study_input_sha256": PINNED_STUDY_INPUT_SHA256,
         "fixed_reference_sha256": PINNED_REFERENCE_BINDING_SHA256,
+        "physical_standard": physical_standard,
     }
     digest = hashlib.sha256(json.dumps(standard, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if approved_standard_sha256 is not None:
@@ -59,6 +62,7 @@ def standard_binding_record(context=None, *, approved_standard_sha256=None):
     return {
         "schema": "R1StandardBindingV1", "candidate_standard": standard,
         "candidate_standard_sha256": digest, "candidate_internal_consistency": True,
+        "runtime_standard_check": runtime_check,
         "approved_standard_sha256": approved_standard_sha256,
         "matches_external_approval": approved_standard_sha256 is not None,
         "source_commit": context.source_commit,

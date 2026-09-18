@@ -21,6 +21,7 @@ import zipfile
 PROJECT_RELATIVE_PATH = "perovskite-sim"
 STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 ADDITIONAL_FAILURES_V2_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV2.json"
+PHYSICAL_STANDARD_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1PhysicalStandardV1.json"
 _CHECKOUT_MODULE = "perovskite_sim/experiments/one_dimensional_mechanism_r1_checkout.py"
 _RUNNER = "scripts/run_one_dimensional_mechanism_r1_stage_one.py"
 _LAUNCHER = "scripts/run_one_dimensional_mechanism_r1_controlled.py"
@@ -38,6 +39,7 @@ LEGACY_SOURCE_ANCHORS = _ANCHORS
 # One registry owns snapshot coverage, pins, and exported names. New R1
 # declarations must be classified here before a controlled checkout can run.
 R1_DECLARATIONS = {
+    PHYSICAL_STANDARD_RELATIVE_PATH: ("acceptance_machine", "PhysicalStandardV1.json", "c918c3c3a4205e6e7cfc507f788ce0e308378a317f6ada6d3bb3862272d9d739"),
     "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "9b85a07120f5bb7fee50849e0801ae2c6aa85d60b2801228a254ce71e48b537a"),
     "docs/OneDimensionalMechanismR1CurrentChecksV3.md": ("acceptance", "CurrentChecksV3.md", "819682ab6b942edadc52210d31cf4f7c52358179a725e2d1b87c8e9959d4ac8f"),
     "docs/OneDimensionalMechanismR1DynamicsV1.md": ("execution", "ExecutionContractV1.md", "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"),
@@ -61,7 +63,21 @@ REQUIRED_SOURCE_ANCHORS = (
     "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json",
     ADDITIONAL_FAILURES_V2_RELATIVE_PATH,
     *(name for name in R1_DECLARATIONS if name not in _ANCHORS),
+    "tests/fixtures/OneDimensionalMechanismR1ReferenceBindingV1.json",
+    PHYSICAL_STANDARD_RELATIVE_PATH,
+    "scripts/inspect_one_dimensional_mechanism_r1_history.py",
 )
+# This registry governs supported data reads, regardless of directory or
+# extension. Adding an entry is a source change, not runtime self-approval.
+R1_SOURCE_DEPENDENCIES = {
+    **{name: "declaration:" + role for name, (role, _, _) in R1_DECLARATIONS.items()},
+    STUDY_INPUT_RELATIVE_PATH: "study_input",
+    "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml": "fixture",
+    "tests/fixtures/OneDimensionalMechanismR1ReferenceBindingV1.json": "reference",
+    "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json": "historical_observations",
+    ADDITIONAL_FAILURES_V2_RELATIVE_PATH: "historical_observations",
+    PHYSICAL_STANDARD_RELATIVE_PATH: "physical_standard",
+}
 _CURRENT_CONTEXT = None
 
 
@@ -84,22 +100,37 @@ class R1CheckoutContext:
     runtime: dict | None = None
     _source_bytes: Mapping[str, bytes] = field(default_factory=dict, repr=False, compare=False)
     _source_changes: bytes = field(default=b"", repr=False, compare=False)
+    _dependency_roles: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
+    _read_dependencies: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def study_input(self):
         return self.project / STUDY_INPUT_RELATIVE_PATH
 
-    def read_bytes(self, path):
-        """Return frozen bytes, never reopen a possibly changed source."""
+    def read_bytes(self, path, *, role=None):
+        """Read a classified frozen dependency; never reopen a disk input.
+
+        This is the supported source/data interface, not an arbitrary Python
+        sandbox. An optional role must match the frozen registry entry.
+        """
         path = Path(path)
         if not path.is_absolute():
             path = (self.root if path.parts[:1] == (PROJECT_RELATIVE_PATH,) else self.project) / path
         try:
             name = Path(os.path.abspath(path)).relative_to(self.root).as_posix()
             relative = name.removeprefix(PROJECT_RELATIVE_PATH + "/")
-            if relative.startswith("docs/") and relative.endswith(".md") and relative not in R1_DECLARATIONS:
-                raise R1CheckoutError("R1 document read requires declaration classification: " + relative)
-            return self._source_bytes[name]
+            roles = self._dependency_roles or R1_SOURCE_DEPENDENCIES
+            classification = roles.get(relative)
+            if classification is None and relative.endswith(".py") and name in self.required_sources:
+                classification = "execution_source"
+            if classification is None:
+                raise R1CheckoutError("R1 source read requires dependency classification: " + relative)
+            if role is not None and role != classification:
+                raise R1CheckoutError("R1 source dependency role mismatch: " + relative)
+            raw = self._source_bytes[name]
+            if classification != "execution_source":
+                self._read_dependencies[relative] = {"role": classification, **_identity(raw)}
+            return raw
         except R1CheckoutError:
             raise
         except (ValueError, KeyError) as exc:
@@ -153,6 +184,8 @@ def declaration_coverage(source_bytes):
     declared = set()
     for name, raw in source_bytes.items():
         relative = name.removeprefix(prefix)
+        if relative in R1_DECLARATIONS and not relative.endswith(".md"):
+            declared.add(relative)
         if relative.startswith("docs/") and Path(relative).name.startswith("OneDimensionalMechanismR1") and relative.endswith(".md"):
             declared.add(relative)
         reader = (
@@ -367,7 +400,8 @@ def require_r1_checkout(*, project=None, runner=None, formal=False, source_commi
     if declaration_paths != set(R1_DECLARATIONS):
         raise R1CheckoutError("R1 declaration registry coverage mismatch: " +
                               ", ".join(sorted(declaration_paths ^ set(R1_DECLARATIONS))))
-    required_paths = set(package_sources) | {expected_project / name for name in REQUIRED_SOURCE_ANCHORS}
+    required_paths = (set(package_sources) | {expected_project / name for name in REQUIRED_SOURCE_ANCHORS}
+                      | {expected_project / name for name in R1_SOURCE_DEPENDENCIES})
     required, disk = {}, {}
     for path in sorted(required_paths):
         relative = path.relative_to(root).as_posix()
@@ -402,6 +436,7 @@ def require_r1_checkout(*, project=None, runner=None, formal=False, source_commi
         root, expected_project, head, tuple(sorted(tracked)), required, dirty,
         "formal" if formal else "development", selected, content_sha256, mismatches,
         _source_bytes=MappingProxyType(dict(captured)), _source_changes=patch,
+        _dependency_roles=MappingProxyType(dict(R1_SOURCE_DEPENDENCIES)),
     )
 
 
@@ -443,6 +478,27 @@ def record_frozen_source(output, context):
     return context
 
 
+def record_source_reads(output, context):
+    """Seal the supported data reads at completion, outside source identity.
+
+    Source identity is fixed before execution. This receipt reports reads made
+    by the trusted execution path; it cannot attest arbitrary external I/O.
+    """
+    if not isinstance(context, R1CheckoutContext) or not context._source_bytes:
+        raise R1CheckoutError("a frozen source context is required")
+    registry = {}
+    for relative, role in sorted((context._dependency_roles or R1_SOURCE_DEPENDENCIES).items()):
+        name = PROJECT_RELATIVE_PATH + "/" + relative
+        if name not in context.required_sources or name not in context._source_bytes:
+            raise R1CheckoutError("registered dependency lacks source coverage: " + relative)
+        registry[relative] = {"role": role, **_identity(context._source_bytes[name])}
+    report = {"schema": "R1SourceReadsV1", "source_commit": context.source_commit,
+              "registry": registry, "reads": dict(sorted(context._read_dependencies.items())),
+              "scope": "supported_frozen_data_reads; not_arbitrary_external_IO"}
+    _atomic_bytes(Path(output) / "SourceReadsV1.json", (json.dumps(report, indent=2) + "\n").encode())
+    return report
+
+
 def validate_source_coverage(output, context):
     """Match captured evidence to the frozen required execution bytes."""
     if not isinstance(context, R1CheckoutContext):
@@ -468,7 +524,7 @@ def validate_source_coverage(output, context):
             for name, expected in context.required_sources.items():
                 if entries[name] != expected:
                     raise R1CheckoutError(f"source manifest identity mismatch: {name}")
-                if context._source_bytes and _identity(context.read_bytes(name)) != expected:
+                if context._source_bytes and _identity(context._source_bytes[name]) != expected:
                     raise R1CheckoutError(f"frozen execution source identity mismatch: {name}")
                 info = archive.getinfo(name)
                 if info.file_size != expected["bytes"]:
@@ -487,5 +543,6 @@ def validate_source_coverage(output, context):
 
 
 __all__ = ["R1CheckoutError", "R1CheckoutContext", "git_environment", "require_r1_checkout",
-           "current_execution_context", "record_frozen_source", "validate_source_coverage",
+           "current_execution_context", "record_frozen_source", "record_source_reads", "validate_source_coverage",
+           "R1_SOURCE_DEPENDENCIES", "PHYSICAL_STANDARD_RELATIVE_PATH",
            "REQUIRED_SOURCE_ANCHORS", "source_content_digest"]

@@ -219,6 +219,8 @@ def main(argv=None):
     parser.add_argument("--expected-manifest-sha256")
     parser.add_argument("--expected-source-commit",
                         help="full Git commit selected outside the bundle for current acceptance")
+    parser.add_argument("--approved-standard-sha256",
+                        help="optional caller-held physical standard approval identity")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--ledger-sha256")
     parser.add_argument("--run-id")
@@ -256,11 +258,13 @@ def main(argv=None):
                     required_evidence_revision=args.required_evidence_revision,
                     expected_source_commit=args.expected_source_commit,
                     expected_prepared_manifest_sha256=args.prepared_manifest_sha256,
+                    approved_standard_sha256=args.approved_standard_sha256,
                     source_repository=PROJECT.parent,
                 )
             else:
                 if any((args.expected_manifest_sha256, args.expected_source_commit,
-                        args.prepared_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id)):
+                        args.prepared_manifest_sha256, args.ledger, args.ledger_sha256, args.run_id,
+                        args.approved_standard_sha256)):
                     raise ValueError("external anchors require --mode acceptance or --mode legacy-inspect")
                 completion, count = verify_output(output)
         except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -340,6 +344,9 @@ def main(argv=None):
             raise ValueError("formal R1 computation requires the controlled -I -S launcher; use --development for unverified development")
         if controlled and args.development:
             raise ValueError("controlled execution cannot be relabelled as development")
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import standard_binding_record
+        write_json(output / "StandardBindingV1.json", standard_binding_record(
+            execution_context, approved_standard_sha256=args.approved_standard_sha256))
         canonical_input = (execution_context.read_bytes(INPUT_PATH) if execution_context is not None
                            else INPUT_PATH.read_bytes())
         supplied_input = (canonical_input if args.input.resolve() == INPUT_PATH.resolve()
@@ -528,6 +535,18 @@ def main(argv=None):
                     "type": type(serialization_error).__name__,
                     "message": str(serialization_error),
                 })
+    if execution_context is not None:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import record_source_reads
+        record_source_reads(output, execution_context)
+        if failure is not None:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_witness import build_failure_witness
+            write_json(output / "FailureWitnessV1.json", build_failure_witness(
+                source_commit=execution_context.source_commit,
+                protocol=read_json(output / "ProtocolV1.json") if (output / "ProtocolV1.json").exists() else {},
+                failure=failure,
+                result=read_json(output / "FailedResultV1.json") if (output / "FailedResultV1.json").exists() else None,
+                persisted_rows=read_json(output / "AcceptedStepsV1.json") if (output / "AcceptedStepsV1.json").exists() else [],
+            ))
     write_json(output / "CompletionV1.json", {
         "schema": "R1StageOneCompletionV1", "stage_scope": stage_scope if computation_started else "R1-rejected",
         "stage": args.stage, "status": "failed" if failure else "passed",

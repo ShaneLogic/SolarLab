@@ -651,6 +651,9 @@ def failure_scope_report(record, reconstruction, *, persisted_rows=None, failure
         "saved_physical_failure_demonstrated": bool(witnesses or violations),
         "failure_origin_status": ("saved_physical_violations_reproduced"
                                   if witnesses or violations else "not_reconstructed_from_saved_prefix"),
+        "saved_prefix_physical_limits_satisfied": reconstruction.get("physical_limits_satisfied"),
+        "terminal_state_physics_verified": True if witnesses or violations else None,
+        "whole_failed_run_physical_limits_satisfied": False,
         "original_execution_extent_verified": False,
         "recorded_failure": failure if failure is not None else record.get("failure"),
         "provenance_only": ["failure_type_and_message", "unpersisted_execution", "I/O_history"],
@@ -676,6 +679,13 @@ def _verify_physical_result_records(output, completion):
     }
     if failed:
         _same(read_json(output / "FailureV1.json"), completion["failure"], "failure record")
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_witness import verify_failure_witness
+        witness_check = verify_failure_witness(read_json(output / "FailureWitnessV1.json"),
+            source_commit=read_json(output / "ExecutionSourceV1.json")["source_commit"],
+            protocol=read_json(output / "ProtocolV1.json"), failure=completion["failure"],
+            result=read_json(output / "FailedResultV1.json") if (output / "FailedResultV1.json").exists() else None,
+            persisted_rows=read_json(output / "AcceptedStepsV1.json") if (output / "AcceptedStepsV1.json").exists() else [])
+        base_scope["failure_witness"] = witness_check
     elif any((output / name).exists() for name in ("FailureV1.json", "FailedResultV1.json")):
         raise ValueError("passed result contains conflicting failure evidence")
     if stage != "step":
@@ -795,9 +805,21 @@ def _verify_physical_result_records(output, completion):
     )
     if not failed and not physics["certified"]:
         raise ValueError("passed result fails reconstructed physical gates")
+    failure_scope = None
+    if failed:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_reconstruction import rebuild_failure_witness
+        terminal = rebuild_failure_witness(load_device_from_yaml(output / "SourceFixtureV1.yaml"),
+            protocol["intervals"], read_json(output / "ReferenceBindingV1.json"), prepared, record)
+        base_scope["terminal_state_reconstruction"] = terminal
+        failure_scope = failure_scope_report(record, physics, persisted_rows=rows, failure=completion.get("failure"))
+        if terminal["available"]:
+            failure_scope["terminal_state_physics_verified"] = terminal["terminal_state_physics_recomputed"]
+            failure_scope["terminal_state_physics_passed"] = terminal["terminal_state_physics_passed"]
     return {**base_scope, **physics, "scientifically_accepted": not failed and physics["certified"],
-            "failure_scope": (failure_scope_report(record, physics, persisted_rows=rows,
-                                                   failure=completion.get("failure")) if failed else None),
+            "certified": not failed and physics["certified"],
+            "saved_prefix_physical_limits_satisfied": physics["physical_limits_satisfied"] if failed else None,
+            "physical_limits_satisfied": not failed and physics["physical_limits_satisfied"],
+            "failure_scope": failure_scope,
             "scope": base_scope["scope"], "reconstruction_scope": physics["scope"],
             "provenance_only": sorted(set(base_scope["provenance_only"]) | set(physics["provenance_only"])),
             "checked": ["state_to_transport_and_current", "charge_and_storage_equations",

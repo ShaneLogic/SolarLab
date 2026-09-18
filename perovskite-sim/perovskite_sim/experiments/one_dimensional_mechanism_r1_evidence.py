@@ -211,6 +211,7 @@ def evidence_file_scope(output):
         "PreparedStateV1.json", "PreparedStateV1.npz", "StepResultV1.json", "StepResultV1.npz",
         "AcceptedStepsV1.json", "AcceptedStepsV1.npz", "ZeroExcitationV1.json", "ZeroExcitationV1.npz",
         "FailureV1.json", "FailedResultV1.json", "FailedResultV1.npz", "FailureSerializationV1.json",
+        "ResolvedStackV1.json", "SourceReadsV1.json", "StandardBindingV1.json", "FailureWitnessV1.json",
         *(declaration[1] for declaration in R1_DECLARATIONS.values()),
     }
     entries = read_json(Path(output) / "ManifestV1.json")
@@ -224,11 +225,31 @@ def evidence_file_scope(output):
             "scope": "file_bytes_and_classified_record_content_are_separate_checks"}
 
 
+def verify_source_reads(output, execution, source):
+    """Bind a supported-read receipt to the verifier's registry and source."""
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import R1_SOURCE_DEPENDENCIES
+    report = read_json(Path(output) / "SourceReadsV1.json")
+    if (set(report) != {"schema", "source_commit", "registry", "reads", "scope"}
+            or report["schema"] != "R1SourceReadsV1"
+            or report["source_commit"] != execution["source_commit"]
+            or report["scope"] != "supported_frozen_data_reads; not_arbitrary_external_IO"):
+        raise ValueError("invalid frozen source-read receipt")
+    registry = {name: {"role": role, **source["perovskite-sim/" + name]}
+                for name, role in R1_SOURCE_DEPENDENCIES.items()}
+    if report["registry"] != registry or not isinstance(report["reads"], dict):
+        raise ValueError("source-read registry differs from the frozen source")
+    if any(name not in registry or identity != registry[name] for name, identity in report["reads"].items()):
+        raise ValueError("source-read receipt contains an unclassified or changed dependency")
+    return {"supported_reads_checked": len(report["reads"]), "registry_entries_checked": len(registry),
+            "scope": report["scope"]}
+
+
 def _verify_controlled_evidence(output, completion, *, expected_source_commit=None,
                                 committed_source=None, pin_contract=False):
     """Check the verifier-selected controlled format and optional source root."""
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import (
         REQUIRED_SOURCE_ANCHORS, LEGACY_SOURCE_ANCHORS, source_content_digest, R1_DECLARATIONS,
+        R1_SOURCE_DEPENDENCIES,
     )
     from perovskite_sim.experiments import one_dimensional_mechanism_r1_binding as binding_policy
 
@@ -261,6 +282,8 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
         "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json")
     anchors = REQUIRED_SOURCE_ANCHORS if revision >= 6 else fifth_anchors if revision == 5 else LEGACY_SOURCE_ANCHORS
     expected = {"perovskite-sim/" + name for name in anchors}
+    if revision >= 6:
+        expected.update("perovskite-sim/" + name for name in R1_SOURCE_DEPENDENCIES)
     if revision < 6 and isinstance(required, dict):
         # Old formats may have been produced with a superset of the old roots.
         # Accept only this known extension, never arbitrary bundle-selected roots.
@@ -276,6 +299,8 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
         raise ValueError("formal execution records source content mismatches")
     if source_content_digest(required) != execution.get("source_content_sha256"):
         raise ValueError("execution source content digest mismatch")
+    if revision >= 6:
+        verify_source_reads(output, execution, source)
     if committed_source is not None:
         committed_identities = {
             name: {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
@@ -615,6 +640,18 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
         selected = SimpleNamespace(source_commit=source_commit,
             read_bytes=lambda relative: committed_source["perovskite-sim/" + str(relative)])
         standard = standard_binding_record(selected, approved_standard_sha256=approved_standard_sha256)
+        published_standard = read_json(output / "StandardBindingV1.json")
+        if set(published_standard) != set(standard):
+            raise ValueError("published standard binding contains unclassified fields")
+        prior_approval = published_standard["approved_standard_sha256"]
+        if (prior_approval not in (None, standard["candidate_standard_sha256"])
+                or published_standard["matches_external_approval"] is not (prior_approval is not None)):
+            raise ValueError("published standard approval identity is inconsistent")
+        for key in ("schema", "candidate_standard", "candidate_standard_sha256",
+                    "candidate_internal_consistency", "runtime_standard_check", "source_commit",
+                    "scientific_qualification_asserted", "scope"):
+            if published_standard.get(key) != standard[key]:
+                raise ValueError("published standard binding differs from the verified criteria: " + key)
     elif approved_standard_sha256 is not None:
         raise ValueError("historical inspection cannot assert current standard approval")
     if entry is not None:
