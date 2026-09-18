@@ -10,6 +10,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import run
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import verify_result_records
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from tests.fixtures.r1_reference import approved_r1_binding
+from tests.fixtures.r1_failure_evidence import record_development_source, refresh_stage_one_failure_witness
 from tests.unit.experiments.test_one_dimensional_mechanism_r1_stage_one_cli import runner, PROJECT
 from tests.unit.experiments.test_one_dimensional_mechanism_r1_evidence_revision_four import canonical_seal
 
@@ -30,6 +31,7 @@ def physical_case():
 @pytest.fixture
 def bundle(physical_case, runner, tmp_path):
     prepared, result = physical_case
+    record_development_source(tmp_path, PROJECT)
     for name, value in (("PreparedStateV1.json", prepared), ("ReferenceBindingV1.json", approved_r1_binding()),
                         ("StepResultV1.json", result), ("AcceptedStepsV1.json", result["accepted_steps"])):
         runner.write_json(tmp_path / name, value)
@@ -76,6 +78,7 @@ def fail_prefix(bundle, runner):
     runner._record_failure_result(output, result)
     runner.write_json(output / "AcceptedStepsV1.json", result["accepted_steps"])
     (output / "AcceptedStepsV1.npz").unlink(missing_ok=True)
+    refresh_stage_one_failure_witness(output)
     return result
 
 
@@ -84,6 +87,10 @@ def test_honest_failed_prefix_is_checked_without_changing_failed_status(bundle, 
     report = verify_result_records(*bundle)
     assert report["content_matches_recomputed"] and report["checked_row_count"] == 2
     assert not report["scientifically_accepted"] and not report["certified"]
+    assert report["physical_limits_satisfied"] is False
+    assert report["saved_prefix_physical_limits_satisfied"] is True
+    assert report["failure_witness"]["termination_binding_verified"] is True
+    assert report["terminal_state_reconstruction"]["terminal_state_physics_recomputed"] is None
 
 
 def test_coordinated_failed_payload_and_saved_row_edits_are_rejected(bundle, runner):
@@ -92,6 +99,7 @@ def test_coordinated_failed_payload_and_saved_row_edits_are_rejected(bundle, run
     result["accepted_steps"][1]["state"]["n_m3"][1] *= 2.
     runner._record_failure_result(output, result)
     runner.write_json(output / "AcceptedStepsV1.json", result["accepted_steps"])
+    refresh_stage_one_failure_witness(output)
     with pytest.raises(ValueError, match="accepted state"):
         verify_result_records(*bundle)
 
@@ -132,5 +140,6 @@ def test_failed_prepare_cannot_hide_an_existing_modified_prepared_state(bundle, 
     prepared = read_json(output / "PreparedStateV1.json")
     prepared["state"]["n_m3"][1] *= 2.
     runner.write_json(output / "PreparedStateV1.json", canonical_seal(prepared))
+    refresh_stage_one_failure_witness(output)
     with pytest.raises(ValueError, match="physical array"):
         verify_result_records(output, completion)

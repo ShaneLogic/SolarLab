@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from tests.fixtures.r1_failure_evidence import refresh_study_failure_witness
 
 
 pytestmark = pytest.mark.slow
@@ -232,6 +233,7 @@ def test_repeated_subset_resume_retains_failure_or_missing_inventory(formal_stud
         write(case / "CompletionV1.json", completion)
         write(case / "FailureV1.json", failure)
         (case / "ResultV1.json").unlink()
+        refresh_study_failure_witness(output, case)
         reseal(case)
     reseal(output)
     for _ in range(2):

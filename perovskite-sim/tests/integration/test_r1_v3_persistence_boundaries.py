@@ -9,6 +9,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_evidence import rea
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import verify_result_records
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from tests.integration.test_one_dimensional_mechanism_r1_physics_result_records import physical_case, bundle, FIXTURE
+from tests.fixtures.r1_failure_evidence import refresh_stage_one_failure_witness
 from tests.unit.experiments.test_one_dimensional_mechanism_r1_stage_one_cli import runner, PROJECT
 
 pytestmark = pytest.mark.slow
@@ -40,6 +41,7 @@ def persistence_bundle(bundle, runner):
         accepted_record_count=len(persisted), observed_record_count=len(record["accepted_steps"]),
         persisted_record_count=len(persisted), persisted_finite_step_count=0,
         physical_passed_finite_step_count=0)
+    refresh_stage_one_failure_witness(output)
     return output, completion
 
 
@@ -47,6 +49,9 @@ def test_real_write_failure_keeps_raw_observed_row_separate_from_durable_prefix(
     result = verify_result_records(*persistence_bundle)
     assert result["content_matches_recomputed"]
     assert not result["scientifically_accepted"]
+    assert result["physical_limits_satisfied"] is False
+    assert result["saved_prefix_physical_limits_satisfied"] is True
+    assert result["failure_witness"]["termination_binding_verified"] is True
     scope = result["failure_scope"]
     assert scope["saved_row_count"] == 2
     assert scope["persisted_row_count"] == 1
@@ -63,6 +68,7 @@ def test_persistence_coordinates_cannot_be_shifted_to_a_different_raw_row(persis
     record["accepted_steps"][-1]["persistence_failure"]["record_index"] = 0
     record["failure"]["record_index"] = 0
     runner._record_failure_result(output, record)
+    refresh_stage_one_failure_witness(output)
     with pytest.raises(ValueError, match="persistence failure must identify the last saved raw row"):
         verify_result_records(output, completion)
 
@@ -78,6 +84,7 @@ def test_nested_persistence_copy_is_classified_and_bound(persistence_bundle, run
     elif mutation == "mismatch":
         nested["message"] = "different historical failure"
     runner._record_failure_result(output, record)
+    refresh_stage_one_failure_witness(output)
     if mutation == "none":
         assert verify_result_records(output, completion)["content_matches_recomputed"]
     else:

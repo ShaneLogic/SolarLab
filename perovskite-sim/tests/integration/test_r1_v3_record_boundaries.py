@@ -10,6 +10,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import che
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import verify_result_records
 from perovskite_sim.models.config_loader import load_device_from_yaml
 from tests.fixtures.r1_reference import approved_r1_binding
+from tests.fixtures.r1_failure_evidence import refresh_stage_one_failure_witness
 from tests.integration.test_one_dimensional_mechanism_r1_physics_result_records import (
     physical_case, bundle, fail_prefix, FIXTURE,
 )
@@ -114,6 +115,8 @@ def test_clean_failed_prefix_does_not_claim_the_failure_origin_was_reproduced(bu
     result = verify_result_records(*bundle)
     scope = result["failure_scope"]
     assert not result["scientifically_accepted"]
+    assert result["physical_limits_satisfied"] is False
+    assert result["saved_prefix_physical_limits_satisfied"] is True
     assert scope["saved_schedule_checked"]
     assert scope["saved_row_count"] == scope["persisted_row_count"] == 2
     assert scope["expected_row_count"] == 10
@@ -133,5 +136,6 @@ def test_failure_label_cannot_claim_a_missing_physical_witness(bundle, runner):
     completion["failure"] = failure
     runner.write_json(output / "FailureV1.json", failure)
     runner._record_failure_result(output, result)
+    refresh_stage_one_failure_witness(output)
     with pytest.raises(ValueError, match="no violating saved row"):
         verify_result_records(output, completion)

@@ -13,6 +13,7 @@ import pytest
 from tests.integration.test_r1_physics_study_formal import (
     ENV, digest, frozen_project, read, reseal, write,
 )
+from tests.fixtures.r1_failure_evidence import refresh_study_failure_witness
 
 pytestmark = pytest.mark.slow
 KEY = "Short/N16/D"
@@ -115,6 +116,7 @@ def failed_prefix(output, *, persistence=False, durable_rows=2, post_append=Fals
             row.update(status="failed", scientific_checks_passed=False)
     published.update(diagnostic_failure_count=1, diagnostic_failed_case_count=1, exit_code=1, study_exit_passed=False)
     write(output / "StudySummaryV1.json", published)
+    refresh_study_failure_witness(output, case)
     reseal(case)
     reseal(output)
     return case
@@ -129,6 +131,9 @@ def test_real_failed_prefix_reports_its_checked_and_unobserved_scope(short_study
     assert row["failure_scope"]["complete_requested_schedule"] is False
     assert row["failure_scope"]["original_execution_extent_verified"] is False
     assert row["failure_scope"]["failure_origin_status"] == "not_reconstructed_from_saved_prefix"
+    assert row["failure_scope"]["saved_prefix_physical_limits_satisfied"] is True
+    assert row["failure_scope"]["whole_failed_run_physical_limits_satisfied"] is False
+    assert row["failure_scope"]["failure_witness"]["termination_binding_verified"] is True
 
 
 @pytest.mark.parametrize("erase", ["missing", "empty", "all_partial"])
@@ -140,6 +145,7 @@ def test_erasing_reconstruction_never_hides_retained_corrupt_failed_states(short
     failure["partial_result"]["accepted_steps"][1]["state"]["n_m3"][1] *= 2.
     (case / "AcceptedStepsV1.jsonl").write_text("".join(json.dumps(row)+"\n" for row in failure["partial_result"]["accepted_steps"]))
     write(case / "FailureV1.json", failure)
+    refresh_study_failure_witness(output, case)
     reseal(case); reseal(output)
     detected = short_study.launch(output, verifying=True)
     assert detected.returncode == 1 and "accepted state 1" in detected.stderr
@@ -150,6 +156,7 @@ def test_erasing_reconstruction_never_hides_retained_corrupt_failed_states(short
     else:
         failure["partial_result"] = None
     write(case / "FailureV1.json", failure)
+    refresh_study_failure_witness(output, case)
     reseal(case); reseal(output)
     rejected = short_study.launch(output, verifying=True)
     assert rejected.returncode == 1
@@ -186,6 +193,7 @@ def test_no_saved_scientific_data_never_claims_independent_physics_replay(short_
     failure["partial_result"] = {"schema": "UnreconstructableDiagnosticV1", "message": "no saved state"}
     write(case / "FailureV1.json", failure)
     (case / "AcceptedStepsV1.jsonl").unlink()
+    refresh_study_failure_witness(output, case)
     reseal(case); reseal(output)
     row = verified_failure(short_study.launch(output, verifying=True))
     assert row["independently_verified"] is False
