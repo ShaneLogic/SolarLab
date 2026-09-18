@@ -39,6 +39,19 @@ def test_original_standard_retains_explicit_normalization_and_units(standard, re
     assert standard["populations"]["ion_site_comparison"] == "strict_less"
 
 
+def test_installed_runtime_matches_the_frozen_physical_standard(standard):
+    assert verify_runtime_standard(standard)["constants_match"]
+
+
+def test_installed_limit_change_is_rejected_without_changing_the_standard(standard, monkeypatch):
+    from perovskite_sim.experiments import one_dimensional_mechanism_r1_independent_physics as independent
+    changed = dict(independent.METRIC_LIMITS)
+    changed["charge_balance_normalized"] = 1e-7
+    monkeypatch.setattr(independent, "METRIC_LIMITS", changed)
+    with pytest.raises(ValueError, match="executed R1 criteria differ.*metric_limits"):
+        verify_runtime_standard(standard)
+
+
 @pytest.mark.parametrize("metric", ["internal_face_current_spread_relative",
     "contact_internal_current_spread_relative", "interface_current_spread_relative",
     "charge_balance_normalized", "inventory_relative_drift"])
