@@ -154,7 +154,9 @@ def test_actual_amplitude_runner_retains_early_and_interior_contact_errors(ampli
     result = study.amplitude_record()
     assert records[coarse]["regular_currents"][-1] == old_final
     assert not result["linearity_certified"]
-    assert result["qualification"]["status"] == "response_not_linear"
+    assert result["qualification"]["status"] == "unresolved_numerical_evidence_conflict"
+    assert result["qualification"]["measured_consistency"]["qualified"] is False
+    assert result["qualification"]["comparison"]["status"] == "response_not_linear"
     failures = result["qualification"]["comparison"]["failures"]
     assert any(f["coordinates"]["time_s"] == study.times[index]
                and f["component"] == ("left_contact", "right_contact")[contact] for f in failures)
