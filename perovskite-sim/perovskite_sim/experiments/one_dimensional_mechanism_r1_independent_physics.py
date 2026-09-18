@@ -31,9 +31,22 @@ METRIC_LIMITS = {
     "charge_balance_normalized": 1e-10,
     "inventory_relative_drift": 1e-10,
 }
-FINITE_STEP_METRICS = frozenset(METRIC_LIMITS)-{"inventory_relative_drift"}
+SPREAD_FLOOR_A_M2 = 1e-20
+CHARGE_SCALE_FLOOR_A_M2 = 1.
+ION_SITE_OCCUPANCY_CEILING = .999
+METRIC_APPLICABILITY = {
+    "internal_face_current_spread_relative": "finite_step",
+    "contact_internal_current_spread_relative": "finite_step",
+    "interface_current_spread_relative": "finite_step",
+    "charge_balance_normalized": "finite_step",
+    "inventory_relative_drift": "all_saved_rows",
+}
+FINITE_STEP_METRICS = frozenset(name for name, scope in METRIC_APPLICABILITY.items()
+                              if scope == "finite_step")
+ASSESSMENT_FIELDS = frozenset({"content_consistent", "conservation_compliant",
+    "reference_accuracy_qualified", "reference_accuracy_status"})
 ROW_FIELDS = frozenset({"schema", "scope", "finite_step", "shared_constitutive_dependencies",
-    "arrays", "metrics", "limits", "checks", "reasons", "passed"})
+    "arrays", "metrics", "limits", "checks", "reasons", "passed", "assessment"})
 ARRAY_FIELDS = frozenset({"electron_current_A_m2", "hole_current_A_m2", "positive_ion_flux_m2_s",
     "internal_conduction_A_m2", "internal_displacement_A_m2", "internal_total_A_m2",
     "contact_conduction_A_m2", "contact_displacement_A_m2", "contact_total_A_m2",
@@ -148,7 +161,19 @@ def _spread(values):
     values = np.asarray(values)
     if not values.size:
         return 0.
-    return float(np.ptp(values))/max(float(np.max(np.abs(values))), 1e-20)
+    return float(np.ptp(values))/max(float(np.max(np.abs(values))), SPREAD_FLOOR_A_M2)
+
+
+def _assessment(checks):
+    """Keep content, conservation and unassessed solution accuracy distinct."""
+    content = {name: value for name, value in checks.items()
+               if "content_matches" in name or name == "physical_geometry_matches"}
+    conservation = {name: value for name, value in checks.items() if name not in content}
+    def passed(group):
+        return all(not check["applicable"] or check["passed"] is True for check in group.values())
+    return {"content_consistent": passed(content), "conservation_compliant": passed(conservation),
+            "reference_accuracy_qualified": None,
+            "reference_accuracy_status": "not_assessed_shared_constitutive_laws"}
 
 
 def independent_physics_row(system, state, previous, dt, *, reported=None):
@@ -191,7 +216,7 @@ def independent_physics_row(system, state, previous, dt, *, reported=None):
     interface = interface_conduction+interface_displacement
     charge_absolute = abs(charge_rate-float(contact_conduction[0]-contact_conduction[1]))
     charge_scale = max(abs(charge_rate),abs(float(contact_conduction[0]-contact_conduction[1])),
-                       float(np.max(np.abs(conduction))),1.)
+                       float(np.max(np.abs(conduction))),CHARGE_SCALE_FLOOR_A_M2)
     initial = system.common_dc_state.positive_ion_density_m3
     inventories, initial_inventories = [], []
     for component in system.ion_layout.positive_components:
@@ -214,9 +239,9 @@ def independent_physics_row(system, state, previous, dt, *, reported=None):
         "contact_internal_current_spread_relative":_spread(np.r_[internal,contact]),
         "interface_current_spread_relative":max((_spread(pair) for pair in interface),default=0.),
         "charge_balance_normalized":charge_absolute/charge_scale,"inventory_relative_drift":drift}
-    checks = {name:{"applicable":finite or name not in FINITE_STEP_METRICS,
+    checks = {name:{"applicable":finite or METRIC_APPLICABILITY[name] == "all_saved_rows",
                     "passed":bool(np.isfinite(value) and value<=METRIC_LIMITS[name])
-                              if finite or name not in FINITE_STEP_METRICS else None}
+                              if finite or METRIC_APPLICABILITY[name] == "all_saved_rows" else None}
               for name,value in metrics.items()}
     checks["physical_geometry_matches"]={"applicable":True,"passed":bool(np.array_equal(widths,system.widths))}
     checks["finite_positive_populations"]={"applicable":True,"passed":bool(
@@ -225,7 +250,7 @@ def independent_physics_row(system, state, previous, dt, *, reported=None):
         and np.all((state.occupancy>=0)&(state.occupancy<=1)))}
     limits = np.broadcast_to(system.material.P_lim_node,state.positive.shape)
     checks["ion_site_occupancy_physical"]={"applicable":True,"passed":bool(np.all(
-        state.positive[system.positive_nodes]/limits[system.positive_nodes] < .999))}
+        state.positive[system.positive_nodes]/limits[system.positive_nodes] < ION_SITE_OCCUPANCY_CEILING))}
     for key,actual in (("electron_current_A_m2",state.current_n),("hole_current_A_m2",state.current_p),
                        ("positive_ion_flux_m2_s",state.positive_flux)):
         checks[key+"_state_content_matches"]={"applicable":True,"passed":bool(np.array_equal(actual,arrays[key]))}
@@ -241,4 +266,4 @@ def independent_physics_row(system, state, previous, dt, *, reported=None):
     return _json({"schema":SCHEMA,"scope":SCOPE,"finite_step":finite,
         "shared_constitutive_dependencies":SHARED_CONSTITUTIVE_DEPENDENCIES,
         "arrays":arrays,"metrics":metrics,"limits":METRIC_LIMITS,"checks":checks,
-        "reasons":reasons,"passed":not reasons})
+        "reasons":reasons,"passed":not reasons,"assessment":_assessment(checks)})
