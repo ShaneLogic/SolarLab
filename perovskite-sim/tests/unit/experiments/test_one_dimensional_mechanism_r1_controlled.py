@@ -389,7 +389,8 @@ def test_real_extended_controlled_request_cannot_be_relabelled_development(repos
     root, project, _ = repository
     for relative in ("scripts/run_one_dimensional_mechanism_r1.py",
                      "scripts/run_one_dimensional_mechanism_r0.py",
-                     "perovskite_sim/experiments/one_dimensional_mechanism_r1_convergence.py"):
+                     "perovskite_sim/experiments/one_dimensional_mechanism_r1_convergence.py",
+                     "perovskite_sim/experiments/one_dimensional_mechanism_r1_failure_witness.py"):
         (project / relative).write_bytes((PROJECT / relative).read_bytes())
     output = tmp_path / "rejected_development"
     runner = (PROJECT / "scripts/run_one_dimensional_mechanism_r1_stage_one.py").read_text()

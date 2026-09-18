@@ -24,6 +24,13 @@ def test_historical_inspection_cannot_accept_current_revision(tmp_path, revision
         evidence.inspect_legacy_evidence(tmp_path, required_evidence_revision=revision)
 
 
+def test_historical_cli_rejects_current_standard_approval(runner, tmp_path, capsys):
+    assert runner.main(["verify", "--mode", "legacy-inspect", "--output-dir", str(tmp_path),
+                        "--required-evidence-revision", "5",
+                        "--approved-standard-sha256", "a" * 64]) == 1
+    assert "historical inspection cannot assert current standard approval" in capsys.readouterr().err
+
+
 def test_early_rejection_remains_integrity_readable_but_not_accepted(tmp_path):
     failure = {"type": "InputRejected", "message": "execution did not begin"}
     write(tmp_path / "CompletionV1.json", {
@@ -89,7 +96,12 @@ def test_cli_success_uses_scientific_acceptance_not_saved_status(runner, monkeyp
 
 def test_external_commit_alone_cannot_select_a_different_physics_implementation(repository, tmp_path):
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import R1_DECLARATIONS
-    source_repository = repository
+    root, project, _ = repository
+    producer = project / "scripts/run_one_dimensional_mechanism_r1_stage_one.py"
+    with producer.open("a") as stream:
+        stream.write("\nfrom perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import record_source_reads\n"
+                     "if args.output:\n    record_source_reads(args.output, context)\n")
+    source_repository = (root, project, commit(root))
     # The tiny source fixture has genuine pinned data and a genuine external
     # commit, but deliberately only a stub physics package.
     output = make_bundle(source_repository, tmp_path / "six")

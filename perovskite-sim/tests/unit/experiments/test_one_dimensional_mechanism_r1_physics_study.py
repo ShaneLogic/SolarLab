@@ -24,6 +24,7 @@ def study(runner, tmp_path):
     value.args = SimpleNamespace(case_filter="", max_cases=None, retry_failed=False)
     value.output, value.rows, value.attempted = tmp_path, [], 0
     value.preparations, value.started = {}, "test"
+    value.context = runner.require_r1_checkout(project=runner.PROJECT)
     value.source_unchanged = lambda: None
     return value
 

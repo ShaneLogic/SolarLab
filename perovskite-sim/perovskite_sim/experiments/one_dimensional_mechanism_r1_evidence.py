@@ -724,10 +724,12 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
 def inspect_legacy_evidence(output, *, expected_manifest_sha256=None, ledger=None,
                             ledger_sha256=None, run_id=None, required_evidence_revision=5,
                             expected_source_commit=None, source_repository=None,
-                            expected_prepared_manifest_sha256=None):
+                            expected_prepared_manifest_sha256=None, approved_standard_sha256=None):
     """Inspect externally anchored revisions 1-5 without current science approval."""
     if type(required_evidence_revision) is not int or required_evidence_revision not in (1, 2, 3, 4, 5):
         raise ValueError("historical inspection supports only evidence revisions 1 through 5")
+    if approved_standard_sha256 is not None:
+        raise ValueError("historical inspection cannot assert current standard approval")
     return _verify_anchored_evidence(output, expected_manifest_sha256=expected_manifest_sha256,
         ledger=ledger, ledger_sha256=ledger_sha256, run_id=run_id,
         required_evidence_revision=required_evidence_revision,
