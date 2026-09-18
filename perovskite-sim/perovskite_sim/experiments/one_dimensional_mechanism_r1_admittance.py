@@ -21,11 +21,13 @@ from scipy.integrate import quad
 class R1AdmittanceErrors:
     """Caller-supplied absolute uncertainties; ``None`` means unknown.
 
-    The three integral bounds are L1 bounds on the *normalized residual*
+    The three integral uncertainties describe L1 error magnitudes on the *normalized residual*
     r = (j_reg-j_dc)/a-G0: the omitted [0,t_first), omitted (T,infinity),
     and interpolation error on [t_first,T], respectively, in F/m2.
-    They require independent evidence; finite-window differences alone are
-    not rigorous infinite-tail bounds. Sample errors describe node errors,
+    Their interpretation as validated estimates, conditional bounds or strict
+    bounds belongs to the independently reviewed qualification evidence.
+    Finite-window differences alone are not rigorous infinite-tail bounds.
+    Sample errors describe node errors,
     excluding the separately supplied baseline/G0/impulse errors. Voltage,
     time and frequency coordinates are treated as exact declared inputs.
     """

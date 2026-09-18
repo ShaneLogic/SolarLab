@@ -19,8 +19,11 @@ import math
 import numpy as np
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import (
-    AMPLITUDES_V, R1Response, compare_amplitude_halving, observation_times,
+    AMPLITUDES_V, R1Response, compare_amplitude_halving,
     step_current_charge_responses,
+)
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_window import (
+    validate_window_spec, window_spec_digest,
 )
 
 
@@ -34,6 +37,7 @@ DOUBLE_DOMAIN_PREREQUISITES = (
     "baseline_current_error", "dc_conductance_error",
 )
 _ERROR_PREREQUISITES = frozenset(DOUBLE_DOMAIN_PREREQUISITES[9:])
+_NUMERICAL_EVIDENCE_CLASSES = frozenset(("validated_estimate", "conditional_bound", "bounded"))
 
 
 def _plain(value):
@@ -74,7 +78,7 @@ def evidence_digest(value):
 
 
 def _scope(value):
-    if not isinstance(value, Mapping) or set(value) != set(SCOPE_FIELDS):
+    if not isinstance(value, Mapping) or set(value) not in (set(SCOPE_FIELDS), set(SCOPE_FIELDS) | {"window_spec_sha256"}):
         raise ValueError("qualification scope must contain exactly the declared identity fields")
     result = _plain(value)
     for key in ("source_sha256", "prepared_sha256", "state_sha256", "reference_sha256"):
@@ -88,10 +92,14 @@ def _scope(value):
         raise ValueError("qualification scope requires a finite operating voltage")
     if result["domain"] not in ("device", "analytic_fixture"):
         raise ValueError("qualification domain must be device or analytic_fixture")
+    if "window_spec_sha256" in result:
+        digest = result["window_spec_sha256"]
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("qualification scope has an invalid window specification digest")
     return result
 
 
-def qualification_scope(record, *, state_sha256, domain="device"):
+def qualification_scope(record, *, state_sha256, domain="device", window_spec=None):
     """Bind the shared initial state, never an amplitude-dependent end state.
 
     ``state_sha256`` is supplied by the caller from the independently checked
@@ -108,7 +116,7 @@ def qualification_scope(record, *, state_sha256, domain="device"):
     prepared = record.get("prepared_sha256")
     if prepared is None and record.get("kind") == "equilibrium_D":
         prepared = record.get("sha256")
-    return _scope({
+    scope = {
         "source_sha256": record.get("source", {}).get("sha256"),
         "prepared_sha256": prepared, "state_sha256": state_sha256,
         "reference_sha256": record.get("reference_sha256"),
@@ -116,7 +124,41 @@ def qualification_scope(record, *, state_sha256, domain="device"):
         "intervals": record.get("intervals"),
         "operating_voltage_V": event.get("voltage_V", record.get("operating_voltage_V", record.get("voltage_V", 0.))),
         "domain": domain,
-    })
+    }
+    if window_spec is not None:
+        window = validate_window_spec(window_spec)
+        if window["domain"] != domain:
+            raise ValueError("qualification and window domains differ")
+        scope["window_spec_sha256"] = window_spec_digest(window)
+    return _scope(scope)
+
+
+def _bound_window(scope, window_spec, *, times_s=None):
+    if window_spec is None:
+        if scope["domain"] == "device" or "window_spec_sha256" in scope:
+            raise ValueError("device qualification requires an externally bound window specification")
+        return None
+    window = validate_window_spec(window_spec)
+    if window["domain"] != scope["domain"] or scope.get("window_spec_sha256") != window_spec_digest(window):
+        raise ValueError("window specification differs from the requested qualification scope")
+    if times_s is not None and not np.array_equal(times_s, window["times_s"]):
+        raise ValueError("response does not contain the complete externally requested window")
+    return window
+
+
+def _amplitude_pair(declared, *, coarse, fine, device):
+    if declared is None:
+        if device:
+            raise ValueError("device qualification requires an externally declared amplitude ladder")
+        declared = (coarse, fine)
+    array = np.asarray(declared)
+    if (array.dtype.kind not in "fiu" or array.ndim != 1 or len(array) < 2
+            or not np.all(np.isfinite(array)) or any(value not in AMPLITUDES_V for value in array)
+            or any(array[i] != 2*array[i+1] for i in range(len(array)-1))):
+        raise ValueError("declared amplitudes must be a contiguous descending part of the prescribed ladder")
+    if (coarse, fine) != tuple(array[-2:]):
+        raise ValueError("linearity must compare the smallest two declared amplitudes")
+    return array.astype(float).tolist()
 
 
 def _trusted(evidence, trusted_evidence):
@@ -125,8 +167,14 @@ def _trusted(evidence, trusted_evidence):
             and trusted_evidence.get(identifier) == evidence_digest(evidence))
 
 
-def _checked_record(record, trusted_evidence):
-    return isinstance(trusted_evidence, Mapping) and evidence_digest(record) in trusted_evidence.values()
+def _checked_record(record, trusted_evidence, *, role, verified_record_digests, domain):
+    if isinstance(verified_record_digests, Mapping):
+        return verified_record_digests.get(role) == evidence_digest(record)
+    # Historical fixture calls retain their old API. Device callers must use
+    # named digests obtained from their data-verification receipts, separately
+    # from the independently reviewed scientific-evidence map.
+    return (domain == "analytic_fixture" and isinstance(trusted_evidence, Mapping)
+            and evidence_digest(record) in trusted_evidence.values())
 
 
 def _base_report(schema, expected_scope):
@@ -143,7 +191,8 @@ def assess_current_error_budget(budget, response, *, expected_scope, amplitude_V
     digest mapping must be held outside the evidence being assessed.
     """
     report = _base_report("R1CurrentErrorBudgetAssessmentV1", expected_scope)
-    report.update(classification="unknown", bound_A_m2=None, units="A/m2")
+    report.update(classification="unknown", bound_A_m2=None, uncertainty_A_m2=None,
+                  rigorous_bound=False, units="A/m2")
     if budget is None:
         report["reasons"].append("independent_current_error_budget_missing")
         return report
@@ -153,13 +202,13 @@ def assess_current_error_budget(budget, response, *, expected_scope, amplitude_V
         if budget.get("schema") != "R1CurrentErrorBudgetV1" or _scope(budget.get("scope")) != report["scope"]:
             raise ValueError("current budget scope differs from the requested initial state")
         classification = budget.get("classification")
-        if classification not in ("bounded", "estimate_only", "unknown"):
+        if classification not in _NUMERICAL_EVIDENCE_CLASSES | {"estimate_only", "unknown"}:
             raise ValueError("unknown current budget classification")
         report["classification"] = classification
         if budget.get("units") != "A/m2" or budget.get("amplitude_V") != amplitude_V:
             raise ValueError("current budget units or amplitude differ")
         if (not isinstance(budget.get("method"), str) or not budget["method"]
-                or budget.get("propagation_method") != "sum_nonnegative_absolute_bounds"
+                or budget.get("propagation_method") not in ("sum_nonnegative_absolute_bounds", "sum_nonnegative_absolute_uncertainties")
                 or not isinstance(budget.get("source_evidence"), list) or not budget["source_evidence"]
                 or any(not isinstance(value, str) or not value for value in budget["source_evidence"])):
             raise ValueError("current budget lacks source evidence or propagation method")
@@ -187,17 +236,20 @@ def assess_current_error_budget(budget, response, *, expected_scope, amplitude_V
                 total += array
         if not np.all(np.isfinite(total)):
             raise ValueError("current budget sum is nonfinite")
-        report["bound_A_m2"] = total.tolist()
+        report["uncertainty_A_m2"] = total.tolist()
+        report["bound_A_m2"] = total.tolist() if classification in ("conditional_bound", "bounded") else None
         report["evidence_digests"] = [evidence_digest(budget)]
-        if classification != "bounded":
+        if classification not in _NUMERICAL_EVIDENCE_CLASSES:
             report.update(status="estimate_only", reasons=["estimate_is_not_an_approved_absolute_bound"])
         elif (budget.get("review_status") != "approved" or not isinstance(budget.get("review_id"), str)
               or not budget["review_id"] or not _trusted(budget, trusted_evidence)):
             report.update(status="unapproved", reasons=["independent_budget_approval_not_externally_bound"])
         else:
-            report.update(status="qualified", qualified=True, device_qualified=report["scope"]["domain"] == "device")
+            report.update(status="qualified", qualified=True, device_qualified=report["scope"]["domain"] == "device",
+                          rigorous_bound=classification == "bounded")
     except (TypeError, ValueError, KeyError) as exc:
-        report.update(status="invalid", qualified=False, device_qualified=False, reasons=[str(exc)], bound_A_m2=None)
+        report.update(status="invalid", qualified=False, device_qualified=False, reasons=[str(exc)],
+                      bound_A_m2=None, uncertainty_A_m2=None, rigorous_bound=False)
     return report
 
 
@@ -213,12 +265,91 @@ def _halving_diagnostic(coarse, fine, coarse_amplitude, fine_amplitude):
             "scope": "response_difference_diagnostic_without_error_budget"}
 
 
+def _measured_error(value, response):
+    if isinstance(value, Mapping) and set(value) == {"values", "coordinates", "components"}:
+        value = R1Response(np.asarray(value["values"]), value["coordinates"], tuple(value["components"]))
+    if (not isinstance(value, R1Response) or value.values.dtype.kind not in "fiu" or value.values.shape != response.values.shape
+            or value.components != response.components or set(value.coordinates) != set(response.coordinates)
+            or any(not np.array_equal(value.coordinates[key], response.coordinates[key]) for key in response.coordinates)
+            or not np.all(np.isfinite(value.values)) or np.any(value.values < 0)):
+        raise ValueError("measured current uncertainty must align with every current coordinate and component")
+    return value
+
+
+def _measurement_consistency(coarse, fine, coarse_budget, fine_budget, budget_reports, *,
+                             coarse_amplitude, fine_amplitude, expected_scope, measured_evidence,
+                             reconciliation_evidence, trusted_evidence):
+    """Preserve an empirical failure until its particular conflict is reviewed.
+
+    A refinement difference is not a known true error of the finest solution.
+    A smaller independently justified estimate/bound may therefore be used,
+    but only with an explicit review binding both measurements and budgets.
+    This function does not turn the refinement difference into a strict bound.
+    """
+    result = {"qualified": False, "status": "unknown", "concerns": [], "comparison": None,
+              "measured_evidence_sha256": None, "reconciliation_evidence_sha256": None}
+    if measured_evidence is None:
+        if expected_scope["domain"] == "analytic_fixture":
+            result.update(qualified=True, status="fixture_without_refinement_evidence")
+        else:
+            result["status"] = "measured_numerical_evidence_missing"
+            result["concerns"] = ["measured_numerical_evidence_missing"]
+        return result
+    required = {"coarse_current_error", "fine_current_error", "coarse_axes_passed", "fine_axes_passed"}
+    if (not isinstance(measured_evidence, Mapping) or not required <= set(measured_evidence)
+            or set(measured_evidence) - required - {"comparison"}
+            or any(type(measured_evidence[key]) is not bool for key in ("coarse_axes_passed", "fine_axes_passed"))):
+        raise ValueError("measured numerical evidence requires two aligned errors and explicit axis verdicts")
+    errors = [_measured_error(measured_evidence[key], response) for key, response in
+              (("coarse_current_error", coarse), ("fine_current_error", fine))]
+    comparison = compare_amplitude_halving(coarse, fine, coarse_amplitude_V=coarse_amplitude,
+        fine_amplitude_V=fine_amplitude, coarse_current_error=errors[0], fine_current_error=errors[1])
+    if measured_evidence.get("comparison") is not None and _plain(measured_evidence["comparison"]) != _plain(comparison):
+        raise ValueError("published empirical linearity differs from the measured errors and actual trajectories")
+    measurement = {**{key: measured_evidence[key] for key in required}, "comparison": comparison}
+    result.update(comparison=comparison, measured_evidence_sha256=evidence_digest(measurement))
+    concerns = []
+    for label, report, error in zip(("coarse", "fine"), budget_reports, errors):
+        if not measured_evidence[label+"_axes_passed"]:
+            concerns.append(label+"_measured_convergence_failed")
+        if np.any(np.asarray(report["uncertainty_A_m2"]) < error.values):
+            concerns.append(label+"_declared_uncertainty_smaller_than_refinement_estimate")
+    if comparison["passed"] is not True:
+        concerns.append("measured_linearity_"+comparison["status"])
+    result["concerns"] = concerns
+    if not concerns:
+        result.update(qualified=True, status="consistent_with_measured_evidence")
+        return result
+    evidence = reconciliation_evidence
+    if not isinstance(evidence, Mapping):
+        result["status"] = "unresolved_numerical_evidence_conflict"
+        return result
+    expected = {"schema": "R1NumericalEvidenceReconciliationV1", "scope": expected_scope,
+                "measured_evidence_sha256": result["measured_evidence_sha256"],
+                "budget_evidence_sha256": [evidence_digest(coarse_budget), evidence_digest(fine_budget)],
+                "response_sha256": [evidence_digest(coarse), evidence_digest(fine)],
+                "decision": "supersedes_empirical_estimate"}
+    if (any(_plain(evidence.get(key)) != _plain(value) for key, value in expected.items())
+            or sorted(evidence.get("resolved_concerns", [])) != sorted(concerns)
+            or any(not isinstance(evidence.get(key), str) or not evidence[key]
+                   for key in ("method", "explanation", "review_id"))
+            or not isinstance(evidence.get("source_evidence"), list) or not evidence["source_evidence"]
+            or any(not isinstance(item, str) or not item for item in evidence["source_evidence"])
+            or evidence.get("review_status") != "approved" or not _trusted(evidence, trusted_evidence)):
+        result["status"] = "unresolved_numerical_evidence_conflict"
+        return result
+    result.update(qualified=True, status="independently_explained_estimate_conflict",
+                  reconciliation_evidence_sha256=evidence_digest(evidence))
+    return result
+
+
 def assess_transient_linearity(coarse_step, fine_step, *, coarse_baseline_A_m2, fine_baseline_A_m2,
-                               expected_scope, expected_times_s, coarse_budget=None, fine_budget=None,
-                               trusted_evidence=None):
+                               expected_scope, expected_times_s=None, coarse_budget=None, fine_budget=None,
+                               trusted_evidence=None, window_spec=None, declared_amplitudes_V=None,
+                               verified_record_digests=None, measured_evidence=None, reconciliation_evidence=None):
     """Assess the full requested regular-current history, including both contacts.
 
-    Device qualification requires the frozen full 0--100 s observation grid.
+    Device qualification requires the externally frozen section-6 window.
     An analytic fixture can exercise a smaller declared grid but cannot be
     promoted to device qualification. Impulse/tail/transform uncertainty is
     separately required by the double-domain qualification layer.
@@ -226,22 +357,28 @@ def assess_transient_linearity(coarse_step, fine_step, *, coarse_baseline_A_m2, 
     report = _base_report("R1TransientLinearityQualificationV1", expected_scope)
     report.update(full_transient_linearity_certified=False, comparison=None,
                   coarse_budget=None, fine_budget=None, diagnostic=None,
-                  quantity="regular_current_response", complete_time_scope=False)
+                  quantity="regular_current_response", complete_time_scope=False,
+                  window_spec=None, measured_consistency=None)
     try:
+        scope = report["scope"]
+        window = validate_window_spec(window_spec) if window_spec is not None else None
+        if expected_times_s is None and window is not None:
+            expected_times_s = window["times_s"]
         expected = np.asarray(expected_times_s, dtype=float)
         if (expected.ndim != 1 or len(expected) < 3 or expected[0] != 0
                 or not np.all(np.isfinite(expected)) or np.any(np.diff(expected) <= 0)):
             raise ValueError("linearity requires a complete increasing requested time axis")
-        scope = report["scope"]
         for step in (coarse_step, fine_step):
             if step.get("schema") != "R1ControlledStepV1":
                 raise ValueError("linearity requires controlled step records")
-            actual = qualification_scope(step, state_sha256=scope["state_sha256"], domain=scope["domain"])
+            actual = qualification_scope(step, state_sha256=scope["state_sha256"], domain=scope["domain"],
+                                         window_spec=window)
             if actual != scope:
                 raise ValueError("linearity inputs do not share the requested initial-state scope")
         a, b = coarse_step["amplitude_V"], fine_step["amplitude_V"]
         if a not in AMPLITUDES_V or b not in AMPLITUDES_V or a != 2*b:
             raise ValueError("linearity requires adjacent declared amplitude levels")
+        declared = _amplitude_pair(declared_amplitudes_V, coarse=a, fine=b, device=scope["domain"] == "device")
         for step in (coarse_step, fine_step):
             event = step["initial_event"]
             if (not np.array_equal(step.get("voltage_V"), np.full(expected.shape, scope["operating_voltage_V"]+step["amplitude_V"]))
@@ -253,12 +390,19 @@ def assess_transient_linearity(coarse_step, fine_step, *, coarse_baseline_A_m2, 
         if not np.all(np.isfinite(coarse.values)) or not np.all(np.isfinite(fine.values)):
             raise ValueError("linearity response contains nonfinite current")
         report.update(coarse_amplitude_V=a, fine_amplitude_V=b, times_s=expected.tolist(),
-                      components=list(coarse.components), diagnostic=_halving_diagnostic(coarse, fine, a, b))
-        complete = scope["domain"] == "analytic_fixture" or np.array_equal(expected, observation_times())
-        report["complete_time_scope"] = bool(complete)
-        inputs_checked = all(_checked_record(step, trusted_evidence)
+                      components=list(coarse.components), diagnostic=_halving_diagnostic(coarse, fine, a, b),
+                      declared_amplitudes_V=declared)
+        try:
+            report["window_spec"] = _bound_window(scope, window, times_s=expected)
+            complete = True
+        except ValueError as exc:
+            complete = False
+            report["reasons"].append(str(exc))
+        report["complete_time_scope"] = complete
+        inputs_checked = all(_checked_record(step, trusted_evidence, role=role,
+                              verified_record_digests=verified_record_digests, domain=scope["domain"])
                              and step.get("certificate", {}).get("certified") is True and "failure" not in step
-                             for step in (coarse_step, fine_step))
+                             for role, step in (("coarse_step", coarse_step), ("fine_step", fine_step)))
         budgets = [assess_current_error_budget(value, response, expected_scope=scope, amplitude_V=amplitude,
                                                trusted_evidence=trusted_evidence)
                    for value, response, amplitude in ((coarse_budget, coarse, a), (fine_budget, fine, b))]
@@ -269,29 +413,49 @@ def assess_transient_linearity(coarse_step, fine_step, *, coarse_baseline_A_m2, 
         elif not all(item["qualified"] for item in budgets):
             report.update(status="budget_unqualified", reasons=["approved_independent_current_budgets_required"])
         else:
-            error_a, error_b = [R1Response(np.asarray(item["bound_A_m2"]), coarse.coordinates, coarse.components)
+            consistency = _measurement_consistency(coarse, fine, coarse_budget, fine_budget, budgets,
+                coarse_amplitude=a, fine_amplitude=b, expected_scope=scope, measured_evidence=measured_evidence,
+                reconciliation_evidence=reconciliation_evidence, trusted_evidence=trusted_evidence)
+            report["measured_consistency"] = consistency
+            error_a, error_b = [R1Response(np.asarray(item["uncertainty_A_m2"]), coarse.coordinates, coarse.components)
                                 for item in budgets]
             comparison = compare_amplitude_halving(coarse, fine, coarse_amplitude_V=a, fine_amplitude_V=b,
                                                    coarse_current_error=error_a, fine_current_error=error_b)
-            qualified = comparison["passed"] is True
-            report.update(comparison=comparison, status=comparison["status"], qualified=qualified,
+            qualified = comparison["passed"] is True and consistency["qualified"] is True
+            status = comparison["status"] if consistency["qualified"] else consistency["status"]
+            report.update(comparison=comparison, status=status, qualified=qualified,
                           full_transient_linearity_certified=qualified,
                           device_qualified=qualified and scope["domain"] == "device",
-                          reasons=[] if qualified else [comparison["status"]])
+                          reasons=[] if qualified else [status])
     except (KeyError, TypeError, ValueError) as exc:
         report.update(status="invalid", reasons=[str(exc)])
     return _plain(report)
 
 
-def select_response_amplitude(reports, *, expected_scope, verified_report_digests=(), diagnostic_amplitude_V=.005):
+def select_response_amplitude(reports, *, expected_scope, verified_report_digests=(), diagnostic_amplitude_V=.005,
+                              window_spec=None, declared_amplitudes_V=None):
     """Select only independently replayed qualifications, never a default pass."""
     scope = _scope(expected_scope)
     if diagnostic_amplitude_V not in AMPLITUDES_V:
         raise ValueError("diagnostic amplitude must belong to the declared ladder")
-    candidates = []
+    candidates, reasons = [], []
     for report in reports:
-        if (report.get("schema") != "R1TransientLinearityQualificationV1" or report.get("scope") != scope
+        if (not isinstance(report, Mapping) or report.get("schema") != "R1TransientLinearityQualificationV1" or report.get("scope") != scope
                 or evidence_digest(report) not in verified_report_digests):
+            continue
+        try:
+            window = _bound_window(scope, window_spec, times_s=report.get("times_s"))
+            if window is not None and report.get("window_spec") != window:
+                raise ValueError("linearity report does not bind the externally requested window")
+            declared = _amplitude_pair(declared_amplitudes_V, coarse=report.get("coarse_amplitude_V"),
+                                       fine=report.get("fine_amplitude_V"), device=scope["domain"] == "device")
+            if scope["domain"] == "device" and (report.get("declared_amplitudes_V") != declared
+                    or report.get("device_qualified") is not True
+                    or not isinstance(report.get("measured_consistency"), Mapping)
+                    or report["measured_consistency"].get("qualified") is not True):
+                raise ValueError("device amplitude lacks complete declared and measured evidence")
+        except (TypeError, ValueError) as exc:
+            reasons.append(str(exc))
             continue
         if (report.get("qualified") is True and report.get("full_transient_linearity_certified") is True
                 and report.get("complete_time_scope") is True
@@ -306,7 +470,7 @@ def select_response_amplitude(reports, *, expected_scope, verified_report_digest
             "qualified_amplitude_V": chosen[0], "qualification_report_sha256": chosen[1],
             "diagnostic_amplitude_V": diagnostic_amplitude_V, "qualified": chosen[0] is not None,
             "device_qualified": chosen[0] is not None and scope["domain"] == "device",
-            "status": "qualified" if candidates else "diagnostic_only"}
+            "status": "qualified" if candidates else "diagnostic_only", "reasons": reasons}
 
 
 def assess_frequency_coverage(frequency_Hz, numerically_eligible, *, turnover_evidence=None,
@@ -366,7 +530,7 @@ def assess_frequency_coverage(frequency_Hz, numerically_eligible, *, turnover_ev
 
 
 def assess_double_domain_prerequisites(evidence, *, expected_scope, frequency_Hz, trusted_evidence=None,
-                                       expected_application=None):
+                                       expected_application=None, window_spec=None):
     """Check every independently qualified prerequisite on the exact AC axis.
 
     Each item is R1QualificationEvidenceV1 with ``kind``, scope, frequency_Hz,
@@ -381,9 +545,12 @@ def assess_double_domain_prerequisites(evidence, *, expected_scope, frequency_Hz
             or not np.all(np.isfinite(frequency)) or np.any(frequency < 0) or np.any(np.diff(frequency) <= 0)):
         raise ValueError("double-domain frequency axis is invalid")
     evidence = evidence or {}
+    if not isinstance(evidence, Mapping):
+        raise ValueError("double-domain prerequisites must be named evidence records")
+    application_keys = {"step_sha256", "ac_sha256", "conductance_sha256", "step_amplitude_V",
+                        "times_s", "reconstruction_request_sha256"}
     application_valid = (isinstance(expected_application, Mapping)
-                         and set(expected_application) == {"step_sha256", "ac_sha256", "conductance_sha256",
-                                                          "step_amplitude_V", "times_s", "reconstruction_request_sha256"})
+                         and set(expected_application) in (application_keys, application_keys | {"window_spec_sha256"}))
     if application_valid:
         application_times = np.asarray(expected_application["times_s"])
         application_valid = (all(isinstance(expected_application[key], str) and expected_application[key]
@@ -392,8 +559,15 @@ def assess_double_domain_prerequisites(evidence, *, expected_scope, frequency_Hz
                              and application_times.dtype.kind in "fiu" and application_times.ndim == 1
                              and len(application_times) >= 3 and np.all(np.isfinite(application_times))
                              and application_times[0] == 0 and np.all(np.diff(application_times) > 0))
-        if application_valid and report["scope"]["domain"] == "device":
-            application_valid = np.array_equal(application_times, observation_times())
+        if application_valid:
+            try:
+                window = _bound_window(report["scope"], window_spec, times_s=application_times)
+                if window is not None:
+                    application_valid = expected_application.get("window_spec_sha256") == window_spec_digest(window)
+                elif "window_spec_sha256" in expected_application:
+                    application_valid = False
+            except ValueError:
+                application_valid = False
     masks, missing, invalid = {}, [], {}
     for kind in DOUBLE_DOMAIN_PREREQUISITES:
         item = evidence.get(kind)
@@ -418,8 +592,14 @@ def assess_double_domain_prerequisites(evidence, *, expected_scope, frequency_Hz
                         or not isinstance(item.get("review_id"), str) or not item.get("review_id")
                         or not _trusted(item, trusted_evidence)):
                     raise ValueError("prerequisite has no externally bound qualification")
-                if kind in _ERROR_PREREQUISITES and item.get("classification") != "bounded":
-                    raise ValueError("prerequisite is not an independently approved error bound")
+                if kind in _ERROR_PREREQUISITES:
+                    if item.get("classification") not in _NUMERICAL_EVIDENCE_CLASSES:
+                        raise ValueError("prerequisite is not independently reviewed numerical error evidence")
+                    if report["scope"]["domain"] == "device" and (
+                        not isinstance(item.get("method"), str) or not item["method"]
+                        or not isinstance(item.get("source_evidence"), list) or not item["source_evidence"]
+                        or any(not isinstance(value, str) or not value for value in item["source_evidence"])):
+                        raise ValueError("device error evidence lacks method or underlying sources")
                 mask = values.copy()
                 report["evidence_digests"].append(evidence_digest(item))
             except (KeyError, TypeError, ValueError) as exc:
@@ -430,12 +610,75 @@ def assess_double_domain_prerequisites(evidence, *, expected_scope, frequency_Hz
     report.update(status="qualified" if qualified else "unqualified", qualified=qualified,
                   device_qualified=qualified and report["scope"]["domain"] == "device",
                   prerequisites=masks, eligible_frequency_points=eligible.tolist(),
+                  device_eligible_frequency_points=(eligible & (report["scope"]["domain"] == "device")).tolist(),
                   missing_prerequisites=missing, invalid_prerequisites=invalid,
                   reasons=missing+list(invalid), frequency_Hz=frequency.tolist(),
                   application=_plain(expected_application) if application_valid else None)
     return report
 
 
+def device_response_gate(report, *, expected_scope, window_spec, required_frequency_Hz):
+    """Assess a caller-declared device intersection, not all possible spectra.
+
+    The caller must first verify/replay the supplied reconstruction. This
+    stage adapter rechecks scope, external window, application and exact
+    frequency masks; it does not authenticate a report or approve its method.
+    A nonempty required frequency set is frozen by the caller, never inferred
+    by trimming failed points from the result.
+    """
+    result = {"schema": "R1DeviceResponseGateV1", "qualified": False, "device_qualified": False,
+              "status": "unqualified", "reasons": [], "required_frequency_Hz": None}
+    try:
+        scope = _scope(expected_scope)
+        if scope["domain"] != "device":
+            raise ValueError("a device stage cannot consume analytic-fixture qualification")
+        window = _bound_window(scope, window_spec)
+        if (not isinstance(report, Mapping) or report.get("schema") != "R1StudyReconstructedResponseV1"
+                or report.get("full_time_window_covered") is not True):
+            raise ValueError("device stage requires a complete reconstructed response")
+        qualification = report["qualification"]
+        if not isinstance(qualification, Mapping):
+            raise ValueError("device stage requires a qualification evidence report")
+        if qualification.get("scope") != scope or report.get("window_spec") != window:
+            raise ValueError("device reconstruction scope or window differs")
+        application = qualification.get("application", {})
+        if not isinstance(application, Mapping):
+            raise ValueError("device stage requires a bound reconstruction application")
+        if (application.get("window_spec_sha256") != window_spec_digest(window)
+                or not np.array_equal(application.get("times_s"), window["times_s"])):
+            raise ValueError("device application does not bind the requested window")
+        identity = report["published_identity"]
+        for key in ("prepared_sha256", "reference_sha256", "intervals", "control", "source_sha256", "operating_voltage_V"):
+            if identity.get(key) != scope[key]:
+                raise ValueError("device published identity differs: "+key)
+        frequency = np.asarray(report["reconstruction"]["frequency_Hz"])
+        required = np.asarray(required_frequency_Hz)
+        if (required.dtype.kind not in "fiu" or required.ndim != 1 or not len(required)
+                or not np.all(np.isfinite(required)) or np.any(required < 0) or np.any(np.diff(required) <= 0)
+                or frequency.dtype.kind not in "fiu" or frequency.ndim != 1 or not len(frequency)
+                or not np.all(np.isfinite(frequency)) or np.any(frequency < 0) or np.any(np.diff(frequency) <= 0)):
+            raise ValueError("device stage requires explicit increasing finite frequency axes")
+        if not np.all(np.isin(required, frequency)) or not np.array_equal(qualification.get("frequency_Hz"), frequency):
+            raise ValueError("required device frequencies are missing or differ from the qualified axis")
+        numeric = np.asarray(report["comparison"]["double_domain_consistent_frequency_points"])
+        evidence = np.asarray(qualification.get("device_eligible_frequency_points"))
+        published = np.asarray(report.get("device_double_domain_consistent_frequency_points"))
+        if any(mask.dtype.kind != "b" or mask.shape != frequency.shape for mask in (numeric, evidence, published)):
+            raise ValueError("device stage requires explicit aligned boolean qualification masks")
+        mask = numeric & evidence
+        if not np.array_equal(mask, published):
+            raise ValueError("published device mask differs from numeric and evidence intersection")
+        accepted = bool(np.all(mask[np.isin(frequency, required)]))
+        result.update(qualified=accepted, device_qualified=accepted,
+                      status="qualified" if accepted else "required_frequency_points_unqualified",
+                      required_frequency_Hz=required.tolist(), scope=scope,
+                      window_spec_sha256=window_spec_digest(window), eligible_frequency_points=mask.tolist(),
+                      reasons=[] if accepted else ["one_or_more_required_frequency_points_unqualified"])
+    except (KeyError, TypeError, ValueError) as exc:
+        result.update(status="invalid", reasons=[str(exc)])
+    return result
+
+
 __all__ = ["SCOPE_FIELDS", "DOUBLE_DOMAIN_PREREQUISITES", "evidence_digest", "qualification_scope",
            "assess_current_error_budget", "assess_transient_linearity", "select_response_amplitude",
-           "assess_frequency_coverage", "assess_double_domain_prerequisites"]
+           "assess_frequency_coverage", "assess_double_domain_prerequisites", "device_response_gate"]

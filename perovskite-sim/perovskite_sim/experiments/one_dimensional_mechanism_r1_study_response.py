@@ -14,6 +14,7 @@ import numpy as np
 
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import reconstruct_admittance
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import observation_times
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_window import validate_window_spec, window_spec_digest
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_qualification import (
     assess_double_domain_prerequisites, assess_frequency_coverage, evidence_digest, qualification_scope,
 )
@@ -52,7 +53,7 @@ def _bands(frequency, eligible):
     return bands
 
 
-def frequency_window_report(ac, *, turnover_evidence=None, expected_scope=None, trusted_evidence=None):
+def frequency_window_report(ac, *, turnover_evidence=None, expected_scope=None, trusted_evidence=None, window_spec=None):
     """Report sampled diagnostics and independently evidenced mode coverage.
 
     Endpoint flatness is a response diagnostic, not proof that weak or hidden
@@ -103,7 +104,7 @@ def frequency_window_report(ac, *, turnover_evidence=None, expected_scope=None, 
     if expected_scope is not None:
         try:
             actual_scope = qualification_scope(ac, state_sha256=expected_scope["state_sha256"],
-                                               domain=expected_scope["domain"])
+                                               domain=expected_scope["domain"], window_spec=window_spec)
             if actual_scope != expected_scope:
                 raise ValueError("AC identity differs from the requested turnover scope")
             if turnover_evidence is not None and (not isinstance(turnover_evidence, Mapping)
@@ -140,7 +141,7 @@ def _matching_identity(record, common, control):
 
 
 def reconstruct_study_response(step, prepared, conductance, ac, *, errors=None, prerequisites=None,
-                               qualification_evidence=None, expected_scope=None, trusted_evidence=None,
+                               qualification_evidence=None, expected_scope=None, trusted_evidence=None, window_spec=None,
                                quadrature_absolute_tolerance_F_m2=1e-12,
                                quadrature_relative_tolerance=1e-10):
     """Reconstruct the regular response using the saved independent DC ladder.
@@ -151,6 +152,10 @@ def reconstruct_study_response(step, prepared, conductance, ac, *, errors=None, 
     preserved as unknown by the integration routine.
     """
     common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
+    window = validate_window_spec(window_spec) if window_spec is not None else None
+    if expected_scope is not None and expected_scope.get("domain") == "device":
+        if "state" not in common or expected_scope.get("state_sha256") != evidence_digest(common["state"]):
+            raise ValueError("device reconstruction initial-state digest differs from the supplied preparation")
     if step.get("schema") != "R1ControlledStepV1" or conductance.get("schema") != "R1DCConductanceStudyV1":
         raise ValueError("study reconstruction requires controlled step and DC conductance records")
     control = step["control_label"]
@@ -198,10 +203,15 @@ def reconstruct_study_response(step, prepared, conductance, ac, *, errors=None, 
         impulse_charge_C_m2=impulse, errors=errors,
         quadrature_absolute_tolerance_F_m2=quadrature_absolute_tolerance_F_m2,
         quadrature_relative_tolerance=quadrature_relative_tolerance)
-    try:
-        full_window = np.array_equal(times, observation_times(first_time_s=float(times[1]), last_time_s=float(times[-1])))
-    except ValueError:
-        full_window = False
+    if window is not None:
+        full_window = np.array_equal(times, window["times_s"])
+    else:
+        # Legacy diagnostic callers keep their original completeness report.
+        # Device eligibility below still requires an external WindowSpec.
+        try:
+            full_window = np.array_equal(times, observation_times(first_time_s=float(times[1]), last_time_s=float(times[-1])))
+        except ValueError:
+            full_window = False
     physical = step.get("certificate", {}).get("certified") is True and "failure" not in step
     identity = {"prepared_sha256": step["prepared_sha256"], "reference_sha256": step["reference_sha256"],
                 "intervals": step["intervals"], "control": control, "source_sha256": step["source"]["sha256"],
@@ -212,14 +222,16 @@ def reconstruct_study_response(step, prepared, conductance, ac, *, errors=None, 
                    "times_s": times.tolist(), "reconstruction_request_sha256": evidence_digest({
                        "errors": errors, "quadrature_absolute_tolerance_F_m2": quadrature_absolute_tolerance_F_m2,
                        "quadrature_relative_tolerance": quadrature_relative_tolerance})}
+    if window is not None:
+        application["window_spec_sha256"] = window_spec_digest(window)
     if expected_scope is not None:
         for record in (step, ac):
             if qualification_scope(record, state_sha256=expected_scope["state_sha256"],
-                                   domain=expected_scope["domain"]) != expected_scope:
+                                   domain=expected_scope["domain"], window_spec=window) != expected_scope:
                 raise ValueError("double-domain input differs from the requested qualification scope")
         qualification = assess_double_domain_prerequisites(
             qualification_evidence, expected_scope=expected_scope, frequency_Hz=ac["frequency_Hz"],
-            trusted_evidence=trusted_evidence, expected_application=application)
+            trusted_evidence=trusted_evidence, expected_application=application, window_spec=window)
         for key, mask in qualification["prerequisites"].items():
             supplied = np.asarray(conditions.get(key, True))
             if supplied.dtype.kind != "b" or supplied.shape not in ((), (len(ac["frequency_Hz"]),)):
@@ -237,12 +249,15 @@ def reconstruct_study_response(step, prepared, conductance, ac, *, errors=None, 
                 & np.asarray(qualification["eligible_frequency_points"], dtype=bool))
     comparison["double_domain_consistent_frequency_points"] = eligible
     comparison["double_domain_consistent"] = bool(np.all(eligible))
+    device_eligible = eligible & np.asarray(qualification.get("device_eligible_frequency_points",
+                                                              np.zeros(len(eligible), dtype=bool)), dtype=bool)
     return _ready({"schema": "R1StudyReconstructedResponseV1", "published_identity": identity,
                    "input_trajectory_certified": physical, "full_time_window_covered": full_window,
                    "dc_inputs_certified": bool(dc_certified), "reconstruction": reconstruction,
                    "comparison": comparison, "double_domain_consistent": comparison["double_domain_consistent"],
-                   "device_double_domain_consistent": bool(comparison["double_domain_consistent"] and qualification["device_qualified"]),
-                   "qualification": qualification,
+                   "device_double_domain_consistent": bool(np.all(device_eligible)),
+                   "device_double_domain_consistent_frequency_points": device_eligible,
+                   "qualification": qualification, "window_spec": window,
                    "scope": "verified_input_finite_window_reconstruction_with_bound_qualification_evidence"})
 
 
