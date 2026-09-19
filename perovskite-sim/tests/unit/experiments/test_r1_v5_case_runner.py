@@ -13,6 +13,8 @@ def test_explicit_short_cases_preserve_axes_and_reject_scope_or_anchor_changes(t
     spec = importlib.util.spec_from_file_location("v5_case_runner_validation", script)
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
+    snapshot = runner.source_files()
+    assert snapshot["perovskite-sim/scripts/run_r1_v5_cases.py"] == hashlib.sha256(script.read_bytes()).hexdigest()
     case = {"control": "A", "intervals": 64, "nonlinear_factor": .01,
             "time_substeps": [2, 4, 8], "amplitude_V": .005, "times_s": [0., 1e-9, 1e-8, 1e-6, 1e-4]}
     request = {"schema": "R1V5CaseRequestV1", "cases": [case,

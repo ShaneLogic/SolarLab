@@ -91,7 +91,8 @@ def git(*args):
 
 def source_files():
     root = Path(git("rev-parse", "--show-toplevel"))
-    return {name: digest(root / name) for name in git("ls-files").splitlines()}
+    names = subprocess.check_output(["git", "ls-files"], cwd=root, text=True).splitlines()
+    return {name: digest(root / name) for name in names}
 
 
 def seal(directory):
