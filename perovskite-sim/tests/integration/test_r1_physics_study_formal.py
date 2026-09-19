@@ -218,7 +218,7 @@ def test_inventory_erasure_is_detected_even_if_archived_plan_is_kept(formal_stud
     assert "externally anchored study request" in result.stderr
 
 
-@pytest.mark.parametrize("state,exit_code", [("failed", 1), ("missing", 2)])
+@pytest.mark.parametrize("state,exit_code", [("failed", 1), ("missing", 1)])
 def test_repeated_subset_resume_retains_failure_or_missing_inventory(formal_study, tmp_path, state, exit_code):
     output = tmp_path / state
     shutil.copytree(formal_study.output, output)
@@ -236,13 +236,17 @@ def test_repeated_subset_resume_retains_failure_or_missing_inventory(formal_stud
         refresh_study_failure_witness(output, case)
         reseal(case)
     reseal(output)
+    original_anchor = digest(output / "ManifestV1.json")
     for _ in range(2):
         result = formal_study.launch(output, "--section", "prepare", "--resume",
                                      "--manifest-sha256", digest(output / "ManifestV1.json"))
         assert result.returncode == exit_code, result.stdout + result.stderr
+        if state == "missing":
+            # This case was recorded as attempted. Deleting it is distinct
+            # from a legal case-budget stop before any attempt was created.
+            assert "recorded invocation attempt is missing" in result.stderr
+            assert digest(output / "ManifestV1.json") == original_anchor
+            continue
         summary = read(output / "StudySummaryV1.json")
         assert not summary["study_exit_passed"]
-        if state == "missing":
-            assert "AC/N16/D" in summary["missing_cases"]
-        else:
-            assert any(item["completion"]["case"] == "AC/N16/D" for item in read(output / "FailureIndexV1.json")["cases"])
+        assert any(item["completion"]["case"] == "AC/N16/D" for item in read(output / "FailureIndexV1.json")["cases"])

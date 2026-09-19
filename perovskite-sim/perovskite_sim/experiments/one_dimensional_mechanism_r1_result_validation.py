@@ -621,7 +621,8 @@ def _failed_zero_physics(output, record, prepared):
         _same(value.get("initial_event"), build_initial_step(system, state, 0.0, policy=policy).event,
               "failed zero initial event " + label)
 
-def failure_scope_report(record, reconstruction, *, persisted_rows=None, failure=None):
+def failure_scope_report(record, reconstruction, *, persisted_rows=None, failure=None,
+                         terminal_reconstruction=None):
     """Describe exactly the saved prefix checked, not the unwitnessed execution.
 
     Call only after the row schedule and equations have been validated. A
@@ -634,6 +635,9 @@ def failure_scope_report(record, reconstruction, *, persisted_rows=None, failure
     violations = reconstruction.get("physical_limit_violations", [])
     witnesses = [index for index, row in enumerate(rows)
                  if row.get("physical_checks_passed") is False]
+    terminal = terminal_reconstruction or {}
+    terminal_available = terminal.get("available") is True
+    last_row_verified = bool(rows and checked == len(rows))
     def endpoint(row):
         return {key: row.get(key) for key in ("substeps", "time_s", "dt_s", "phase")}
     return {
@@ -652,7 +656,12 @@ def failure_scope_report(record, reconstruction, *, persisted_rows=None, failure
         "failure_origin_status": ("saved_physical_violations_reproduced"
                                   if witnesses or violations else "not_reconstructed_from_saved_prefix"),
         "saved_prefix_physical_limits_satisfied": reconstruction.get("physical_limits_satisfied"),
-        "terminal_state_physics_verified": True if witnesses or violations else None,
+        "saved_last_row_physics_verified": True if last_row_verified else None,
+        "saved_last_row_physics_passed": rows[-1].get("physical_checks_passed") if last_row_verified else None,
+        "terminal_state_reconstruction_available": terminal_available,
+        "terminal_state_physics_verified": terminal.get("terminal_state_physics_recomputed") if terminal_available else None,
+        "terminal_state_physics_passed": terminal.get("terminal_state_physics_passed") if terminal_available else None,
+        "terminal_state_missing_reason": None if terminal_available else terminal.get("reason", "no_terminal_reconstruction_supplied"),
         "whole_failed_run_physical_limits_satisfied": False,
         "original_execution_extent_verified": False,
         "recorded_failure": failure if failure is not None else record.get("failure"),
@@ -811,10 +820,8 @@ def _verify_physical_result_records(output, completion):
         terminal = rebuild_failure_witness(load_device_from_yaml(output / "SourceFixtureV1.yaml"),
             protocol["intervals"], read_json(output / "ReferenceBindingV1.json"), prepared, record)
         base_scope["terminal_state_reconstruction"] = terminal
-        failure_scope = failure_scope_report(record, physics, persisted_rows=rows, failure=completion.get("failure"))
-        if terminal["available"]:
-            failure_scope["terminal_state_physics_verified"] = terminal["terminal_state_physics_recomputed"]
-            failure_scope["terminal_state_physics_passed"] = terminal["terminal_state_physics_passed"]
+        failure_scope = failure_scope_report(record, physics, persisted_rows=rows, failure=completion.get("failure"),
+                                             terminal_reconstruction=terminal)
     return {**base_scope, **physics, "scientifically_accepted": not failed and physics["certified"],
             "certified": not failed and physics["certified"],
             "saved_prefix_physical_limits_satisfied": physics["physical_limits_satisfied"] if failed else None,

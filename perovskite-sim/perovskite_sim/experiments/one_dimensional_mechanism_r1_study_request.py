@@ -50,11 +50,14 @@ def build_execution_plan(settings, sections, selection, cases):
     return json.loads(canonical_bytes(value))
 
 
-def load_execution_plan(path, expected_sha256):
+def load_execution_plan(path, expected_sha256, *, result_directory=None):
+    path = Path(path).resolve()
+    if result_directory is not None and path.is_relative_to(Path(result_directory).resolve()):
+        raise ValueError("external study request must be held outside the result directory")
     if (not isinstance(expected_sha256, str) or len(expected_sha256) != 64
             or any(c not in "0123456789abcdef" for c in expected_sha256)):
         raise ValueError("external study request digest is required")
-    raw = Path(path).read_bytes()
+    raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != expected_sha256:
         raise ValueError("external study request digest mismatch")
     value = json.loads(raw)
@@ -80,6 +83,41 @@ def inventory_coverage(plan, stored_inventory, active_cases):
         if request != expected[key]:
             raise ValueError("archived case differs from externally planned request: " + key)
     return sorted(set(expected) - set(active_cases))
+
+
+def verify_invocation_attempts(record, *, planned_cases, recorded_attempts):
+    """Check one invocation's attempts against retained directories.
+
+    This count is local to the invocation, not the cumulative active-case
+    count. Missing planned cases and retained interrupted attempts are legal.
+    The external manifest protects history; this check rejects inconsistent
+    self-resealed records without inventing erased execution history.
+    """
+    count = record.get("attempted_cases")
+    attempts = record.get("invocation_attempts")
+    if (type(count) is not int or count < 0 or not isinstance(attempts, list)
+            or record.get("attempt_count_scope") != "new_attempts_in_this_invocation"
+            or count != len(attempts)):
+        raise ValueError("invocation attempt count differs from its recorded attempts")
+    seen = set()
+    for attempt in attempts:
+        if not isinstance(attempt, dict) or set(attempt) != {"case", "directory"}:
+            raise ValueError("invalid invocation attempt identity")
+        key, directory = attempt["case"], attempt["directory"]
+        if (key not in planned_cases or directory != key + "/AttemptV1"
+                or directory in seen):
+            raise ValueError("invocation attempt differs from the fixed case request")
+        seen.add(directory)
+        if directory not in recorded_attempts:
+            raise ValueError("recorded invocation attempt is missing: " + directory)
+        if recorded_attempts[directory] != planned_cases[key]:
+            raise ValueError("recorded invocation attempt request differs: " + directory)
+    for row in record.get("cases", []):
+        if (row.get("directory") and not row.get("resumed")
+                and row.get("status") in {"completed", "failed", "unavailable"}
+                and row["directory"] not in seen):
+            raise ValueError("invocation result is absent from its recorded attempts")
+    return seen
 
 
 def load_qualification_inputs(path, expected_sha256, *, result_directory):

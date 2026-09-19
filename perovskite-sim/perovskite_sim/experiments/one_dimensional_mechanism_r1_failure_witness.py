@@ -18,6 +18,24 @@ def _row_identity(rows):
             **{name: row.get(name) for name in ("substeps", "phase", "time_s", "dt_s", "solver_accepted")}}
 
 
+def newton_witness_available(numerical):
+    """Validate an unavailable collector result before skipping reconstruction."""
+    available = numerical.get("terminal_state_available")
+    if type(available) is not bool:
+        raise ValueError("failed Newton witness requires boolean terminal availability")
+    if not available:
+        allowed = {"schema", "terminal_state_available", "witness_collection_error",
+                   "time_s", "previous_time_s", "dt_s", "substeps"}
+        if set(numerical) - allowed:
+            raise ValueError("unavailable Newton witness contains terminal state fields")
+        reason = numerical.get("witness_collection_error")
+        if (not isinstance(reason, dict) or set(reason) != {"type", "message"}
+                or not isinstance(reason["type"], str) or not reason["type"]
+                or not isinstance(reason["message"], str)):
+            raise ValueError("unavailable Newton witness lacks its collector failure reason")
+    return available
+
+
 def build_failure_witness(*, source_commit, protocol, failure, result=None, persisted_rows=()):
     """Use serialized raw observations; callers must not substitute inferred state."""
     result = result or {}
@@ -30,7 +48,7 @@ def build_failure_witness(*, source_commit, protocol, failure, result=None, pers
         terminal = {"kind": "saved_physical_failure_row", "available": True,
                     "record_index": len(rows) - 1, "missing_reason": None}
     elif isinstance(numerical, dict) and numerical.get("schema") == "R1NewtonFailureWitnessV1":
-        available = numerical.get("terminal_state_available") is True
+        available = newton_witness_available(numerical)
         terminal = {"kind": "saved_newton_failure", "available": available,
                     "numerical_evidence_sha256": _digest(numerical),
                     "time_s": numerical.get("time_s"), "dt_s": numerical.get("dt_s"),

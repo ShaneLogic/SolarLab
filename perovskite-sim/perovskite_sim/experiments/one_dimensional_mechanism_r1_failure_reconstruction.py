@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_witness import newton_witness_available
+
 WITNESS_FIELDS = frozenset({"schema", "terminal_state_available", "scope", "voltage_V", "dt_s",
     "coordinate", "previous_coordinate", "previous_state", "attempted_state", "scaled_residual_vector",
     "storage_scale", "poisson_scale", "local_scale", "diagnostics", "independent_physics",
@@ -27,9 +29,10 @@ def rebuild_failure_witness(stack, intervals, binding, prepared, result):
     if not isinstance(witness, dict) or witness.get("schema") != "R1NewtonFailureWitnessV1":
         return {"available": False, "terminal_state_physics_recomputed": None,
                 "reason": "no_supported_failed_newton_witness"}
-    if witness.get("terminal_state_available") is not True:
+    if not newton_witness_available(witness):
         return {"available": False, "terminal_state_physics_recomputed": None,
-                "reason": "failed_newton_witness_collection_unavailable"}
+                "reason": "failed_newton_witness_collection_unavailable",
+                "witness_collection_error": witness["witness_collection_error"]}
     if set(witness) != WITNESS_FIELDS or set(witness.get("diagnostics", {})) != DIAGNOSTIC_FIELDS:
         raise ValueError("failed Newton witness fields differ from the declared schema")
     if witness["scope"] != "failed_iterate_not_accepted_step_or_complete_newton_history":

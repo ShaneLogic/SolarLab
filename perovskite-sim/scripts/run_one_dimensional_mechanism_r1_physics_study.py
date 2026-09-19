@@ -60,6 +60,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response impo
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import R1AdmittanceErrors
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_request import (
     build_execution_plan, load_execution_plan, inventory_coverage, load_qualification_inputs,
+    verify_invocation_attempts,
 )
 
 
@@ -213,6 +214,7 @@ class Study:
             self.stack = load_device_from_yaml(fixture_path)
         self.started = datetime.now(timezone.utc).isoformat()
         self.rows, self.attempted = [], 0
+        self.invocation_attempts = []
         self.preparations = {}
         self.dc_baselines = {}
         self.qualification_inputs = load_qualification_inputs(
@@ -257,7 +259,8 @@ class Study:
         if self.run_class == "formal" and supplied_plan is None:
             raise ValueError("formal study requires a pre-execution plan and external study request digest")
         if supplied_plan is not None:
-            self.plan = load_execution_plan(supplied_plan, getattr(args, "request_sha256", None))
+            self.plan = load_execution_plan(supplied_plan, getattr(args, "request_sha256", None),
+                                            result_directory=self.output)
             if self.plan["study_settings"] != self.request:
                 raise ValueError("source, standard or study settings differ from the externally anchored request")
             expected_plan = self.make_plan(self.plan["sections"], self.plan["selection"])
@@ -289,6 +292,8 @@ class Study:
             inventory_coverage(self.plan, existing_inventory, {})
             if checked_read(self.output, "QualificationInputsV1.json") != self.qualification_inputs:
                 raise ValueError("archived qualification inputs differ from caller-held inputs")
+            if self.run_class == "formal":
+                self.verify_recorded_invocations()
         else:
             self.output.mkdir(parents=True)
             write_json(self.output/"StudyRequestV1.json", request)
@@ -563,6 +568,9 @@ class Study:
         write_json(directory/"RequestV1.json", request)
         start = time.monotonic()
         self.attempted += 1
+        if not hasattr(self, "invocation_attempts"):
+            self.invocation_attempts = []
+        self.invocation_attempts.append({"case": key, "directory": directory.relative_to(self.output).as_posix()})
         print("START", key, flush=True)
         previous_owner = getattr(self, "active_case", None)
         self.active_case = key
@@ -671,17 +679,15 @@ class Study:
                     matches = rows[:-1] == raw_rows[:-1] and rows[-1] == last
             if not matches:
                 raise ValueError("failed saved rows differ from the raw persisted prefix")
-            audit["failure_scope"] = failure_scope_report(partial, audit, persisted_rows=rows, failure=completion["failure"])
-            audit["failure_scope"]["last_observed_row_persisted"] = len(rows) == len(raw_rows)
-            audit["failure_scope"]["post_callback_persistence_annotation_replayed"] = False
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_reconstruction import rebuild_failure_witness
             terminal = rebuild_failure_witness(self.stack, request["intervals"], self.binding,
                                               self.prepared(request["intervals"]), partial)
+            audit["failure_scope"] = failure_scope_report(partial, audit, persisted_rows=rows,
+                failure=completion["failure"], terminal_reconstruction=terminal)
+            audit["failure_scope"]["last_observed_row_persisted"] = len(rows) == len(raw_rows)
+            audit["failure_scope"]["post_callback_persistence_annotation_replayed"] = False
             audit["terminal_state_reconstruction"] = terminal
             audit["failure_scope"]["failure_witness"] = witness_check
-            if terminal["available"]:
-                audit["failure_scope"]["terminal_state_physics_verified"] = terminal["terminal_state_physics_recomputed"]
-                audit["failure_scope"]["terminal_state_physics_passed"] = terminal["terminal_state_physics_passed"]
             audit["saved_prefix_physical_limits_satisfied"] = audit["physical_limits_satisfied"]
             audit["physical_limits_satisfied"] = False
             audit["certified"] = False
@@ -1269,6 +1275,33 @@ class Study:
         return compare_transient_tail(dc, initial_state=prepared.to_dict()["state"], tail_state=state,
                                        tail_regular_current_A_m2=regular, time_s=row["time_s"])
 
+    def verify_recorded_invocations(self):
+        """Verify each sealed invocation's local count without conflating resumes."""
+        recorded = {}
+        for directory in sorted(self.output.rglob("AttemptV*")):
+            if directory.is_dir() and (directory / "RequestV1.json").is_file():
+                recorded[directory.relative_to(self.output).as_posix()] = json.loads(
+                    (directory / "RequestV1.json").read_text())
+        claimed = set()
+        invocations = sorted((self.output / "Invocations").glob("InvocationV*.json"),
+                             key=lambda path: int(path.stem.removeprefix("InvocationV")))
+        if not invocations:
+            raise ValueError("formal study has no recorded invocation accounting")
+        for path in invocations:
+            value = checked_read(self.output, path.relative_to(self.output).as_posix())
+            if value.get("study_request_sha256") != self.plan_sha256:
+                raise ValueError("recorded invocation study_request_sha256 differs from external request")
+            current = verify_invocation_attempts(value, planned_cases=self.planned_cases,
+                                                recorded_attempts=recorded)
+            if claimed & current:
+                raise ValueError("formal attempt is claimed by more than one invocation")
+            claimed.update(current)
+        published = checked_read(self.output, "StudySummaryV1.json")
+        verify_invocation_attempts(published, planned_cases=self.planned_cases, recorded_attempts=recorded)
+        for name in ("attempted_cases", "attempt_count_scope", "invocation_attempts"):
+            if published.get(name) != value.get(name):
+                raise ValueError("published invocation accounting differs from its latest recorded invocation")
+
     def finish(self):
         failures, unavailable, active, historical = [], [], {}, []
         interrupted = []
@@ -1365,6 +1398,8 @@ class Study:
         summary = {"schema": "R1PhysicsStudySummaryV2", "started_utc": self.started,
                    "finished_utc": datetime.now(timezone.utc).isoformat(), "argv": sys.argv,
                    "cases": self.rows, "attempted_cases": self.attempted,
+                   "attempt_count_scope": "new_attempts_in_this_invocation",
+                   "invocation_attempts": getattr(self, "invocation_attempts", []),
                    "active_case_count": len(active), "historical_attempt_count": len(historical),
                    "diagnostic_failure_count": len(failures),
                    "required_finest_pair_count": len(required_pairs),
@@ -1387,6 +1422,8 @@ class Study:
         summary["exit_code"] = code
         self.last_summary = summary
         if getattr(self, "verifying", False):
+            if getattr(self, "run_class", "development") == "formal" and hasattr(self, "plan"):
+                self.verify_recorded_invocations()
             published = checked_read(self.output, "StudySummaryV1.json")
             if hasattr(self, "context"):
                 verify_study_source(self.output, self.context, require_read_receipt=True)
@@ -1403,11 +1440,21 @@ class Study:
                 raise ValueError("published study summary has an invalid scientific contract")
             if published["active_case_count"] != len(active) or published["historical_attempt_count"] != len(historical):
                 raise ValueError("published study counts differ from recorded attempts")
+            if hasattr(self, "plan"):
+                for name in ("diagnostic_failure_count", "diagnostic_failed_case_count", "planned_case_count"):
+                    if type(published.get(name)) is not int or published[name] != summary[name]:
+                        raise ValueError("published study count differs from recorded extent: " + name)
+                for name in ("missing_cases", "unresolved_cases"):
+                    if published.get(name) != summary[name]:
+                        raise ValueError("published study extent differs from recorded cases: " + name)
             for key, value in published["requirements"].items():
                 if type(value) is not bool:
                     raise ValueError("published study requirement must be boolean: "+key)
-                # Verification may request more sections than the preceding
-                # invocation; its enlarged missing-case list is not tampering.
+                # A legacy unplanned invocation may enlarge its scope. A
+                # fixed external plan cannot change the expected case set.
+                if (key == "declared_cases_available" and hasattr(self, "plan")
+                        and value != requirements[key]):
+                    raise ValueError("published study requirement differs from the fixed request: " + key)
                 if key != "declared_cases_available" and value and not requirements[key]:
                     raise ValueError("published study requirement is not supported: "+key)
             if published["study_exit_passed"] and not summary["study_exit_passed"]:

@@ -53,5 +53,7 @@ def test_physical_violation_witness_remains_a_failed_run():
     assert witness["terminal_evidence"]["kind"] == "saved_physical_failure_row"
     scope = failure_scope_report(arguments["result"], {"physical_limit_violations": [{"row": 0}],
                                                       "physical_limits_satisfied": False})
-    assert scope["terminal_state_physics_verified"] is True
+    assert scope["saved_last_row_physics_verified"] is True
+    assert scope["saved_last_row_physics_passed"] is False
+    assert scope["terminal_state_physics_verified"] is None
     assert not scope["scientifically_accepted"]
