@@ -1906,6 +1906,25 @@ def _jacobian_error(
     return max(columns, default=0.0)
 
 
+def effective_newton_acceptance_settings(policy) -> dict[str, float]:
+    """Return the actual residual and closure limits consumed by Newton."""
+    return {
+        "maximum_scaled_nonlinear_residual": policy.maximum_scaled_nonlinear_residual,
+        "maximum_charge_balance_relative_error": max(
+            policy.maximum_charge_balance_relative_error,
+            _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR,
+        ),
+        "maximum_all_face_current_spread_relative": max(
+            policy.maximum_all_face_current_spread_relative,
+            _DEFAULT_MAXIMUM_ALL_FACE_CURRENT_SPREAD_RELATIVE,
+        ),
+        "maximum_two_sided_interface_total_current_relative_error": max(
+            policy.maximum_two_sided_interface_total_current_relative_error,
+            _DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR,
+        ),
+    }
+
+
 def _solve_step(
     system: _InterfaceTransientSystem,
     coordinate: np.ndarray,
@@ -1930,18 +1949,11 @@ def _solve_step(
     maximum_jacobian_error = 0.0
     maximum_nnz = 0
     nonmonotone_step_count = 0
-    solver_charge_limit = max(
-        policy.maximum_charge_balance_relative_error,
-        _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR,
-    )
-    solver_face_limit = max(
-        policy.maximum_all_face_current_spread_relative,
-        _DEFAULT_MAXIMUM_ALL_FACE_CURRENT_SPREAD_RELATIVE,
-    )
-    solver_interface_limit = max(
-        policy.maximum_two_sided_interface_total_current_relative_error,
-        _DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR,
-    )
+    acceptance_settings = effective_newton_acceptance_settings(policy)
+    solver_residual_limit = acceptance_settings["maximum_scaled_nonlinear_residual"]
+    solver_charge_limit = acceptance_settings["maximum_charge_balance_relative_error"]
+    solver_face_limit = acceptance_settings["maximum_all_face_current_spread_relative"]
+    solver_interface_limit = acceptance_settings["maximum_two_sided_interface_total_current_relative_error"]
     def failure(message):
         error = InterfaceDefectTransientError(message)
         collector = getattr(system, "failure_evidence", None)
@@ -1977,7 +1989,7 @@ def _solve_step(
             dt,
         )
         if (
-            norm <= policy.maximum_scaled_nonlinear_residual
+            norm <= solver_residual_limit
             and charge_error <= solver_charge_limit
             and face_error <= solver_face_limit
             and interface_error <= solver_interface_limit
