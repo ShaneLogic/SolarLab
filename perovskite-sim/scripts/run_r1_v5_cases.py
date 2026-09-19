@@ -20,6 +20,7 @@ import traceback
 PROJECT = Path(__file__).resolve().parents[1]
 TIMES = [0.0, 1e-9, 1e-8, 1e-6, 1e-4]
 MAX_CASES = 32
+TIME_LADDERS = ([1, 2, 4], [2, 4, 8], [4, 8, 16], [8, 16, 32], [16, 32, 64])
 CASE_FIELDS = {"control", "intervals", "nonlinear_factor", "time_substeps", "amplitude_V", "times_s"}
 THREAD_KEYS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
                "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS")
@@ -71,7 +72,7 @@ def load_request(path, expected_sha256, output):
             raise ValueError("unsupported nonlinear factor")
         steps = case["time_substeps"]
         if (not isinstance(steps, list) or any(type(v) is not int for v in steps)
-                or steps not in ([1, 2, 4], [2, 4, 8], [4, 8, 16])):
+                or steps not in TIME_LADDERS):
             raise ValueError("unsupported time-substep ladder")
         times = case["times_s"]
         if (type(case["amplitude_V"]) not in (int, float) or case["amplitude_V"] != 0.005

@@ -33,6 +33,11 @@ def test_explicit_short_cases_preserve_axes_and_reject_scope_or_anchor_changes(t
         runner.load_request(path, "0" * 64, output)
     with pytest.raises(ValueError, match="outside the result"):
         runner.load_request(path, anchor, tmp_path)
+    # The frozen study allows these only after a necessary time comparison
+    # fails. Parsing supports them without adding them to any request.
+    for ladder in ([8, 16, 32], [16, 32, 64]):
+        extended = {"schema": "R1V5CaseRequestV1", "cases": [{**case, "time_substeps": ladder}]}
+        assert runner.load_request(path, save(extended), output)[0] == extended
     for field, value in [("control", "E"), ("intervals", 64.), ("nonlinear_factor", True),
                          ("time_substeps", [1, 3, 9]), ("times_s", [0., 1e-9, 100.]),
                          ("amplitude_V", .01)]:
@@ -40,6 +45,9 @@ def test_explicit_short_cases_preserve_axes_and_reject_scope_or_anchor_changes(t
         wrong["cases"][0][field] = value
         with pytest.raises(ValueError):
             runner.load_request(path, save(wrong), output)
+    beyond_limit = {"schema": "R1V5CaseRequestV1", "cases": [{**case, "time_substeps": [32, 64, 128]}]}
+    with pytest.raises(ValueError, match="time-substep"):
+        runner.load_request(path, save(beyond_limit), output)
     for cases in ([], [case, case], [case] * 33):
         wrong = {"schema": "R1V5CaseRequestV1", "cases": cases}
         with pytest.raises(ValueError):
