@@ -127,6 +127,26 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         spread = float(np.ptp(all_total)) / max(float(np.max(np.abs(all_total))), 1e-20)
         return (*metrics[:4], spread, metrics[5])
 
+    def newton_residual_target(self, previous, storage_scale, poisson_scale, local_scale):
+        """Guide a near-converged step without discharging a prior Gauss error.
+
+        A previously accepted algebraic residual divided by a short time step
+        can exceed the current-continuity tolerance when Newton removes it.
+        Preserve that already permitted residual in the direction calculation.
+        The caller still accepts only the original absolute residual, charge
+        balance and every current-closure condition, with unchanged limits.
+        """
+        target = np.zeros(len(storage_scale) + len(poisson_scale) + len(local_scale))
+        start = len(storage_scale)
+        target[start:start + len(poisson_scale)] = previous.poisson_residual / poisson_scale
+        start += len(poisson_scale)
+        for index in range(self.interface_count):
+            rows = slice(6 * index, 6 * index + 2)
+            target[start + rows.start:start + rows.stop] = (
+                previous.local_residual[rows] / local_scale[rows]
+            )
+        return target
+
     def failure_evidence(self, state, previous, voltage, dt, residual, storage_scale,
                          poisson_scale, local_scale, diagnostics):
         """Retain the actual failed Newton iterate without changing its verdict."""

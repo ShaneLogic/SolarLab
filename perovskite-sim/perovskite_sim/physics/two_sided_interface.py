@@ -571,12 +571,35 @@ def _bernoulli_pair_with_derivative(
     )
 
 
+def _product_difference(a, b, c, d):
+    """Compensate both products in a*b-c*d, retaining Python 3.11 support."""
+    def product_error(x, y, product):
+        if hasattr(math, "fma"):
+            return math.fma(x, y, -product)
+        # Split normalized mantissas so the splitter cannot overflow.
+        xm, xe = math.frexp(x)
+        ym, ye = math.frexp(y)
+        xs, ys = 134217729. * xm, 134217729. * ym
+        xh, yh = xs - (xs - xm), ys - (ys - ym)
+        xl, yl = xm - xh, ym - yh
+        normalized = math.ldexp(product, -(xe + ye))
+        error = ((xh * yh - normalized) + xh * yl + xl * yh) + xl * yl
+        return math.ldexp(error, xe + ye)
+
+    a, b, c, d = map(float, (a, b, c, d))
+    first, second = a * b, c * d
+    return math.fsum((first, -second, product_error(a, b, first),
+                      -product_error(c, d, second)))
+
+
 def _bulk_flux_and_log_jacobian(
     state: np.ndarray,
     traces: InterfaceTracePotentials,
     geometry: TwoSidedInterfaceGeometry,
     physics: TwoSidedInterfacePhysics,
     bulk: TwoSidedBulkState,
+    *,
+    paired_bernoulli: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_left, p_left, n_right, p_right = state
     thermal_voltage = float(physics.thermal_voltage_V)
@@ -603,6 +626,20 @@ def _bulk_flux_and_log_jacobian(
         ],
         dtype=float,
     )
+    if paired_bernoulli:
+        # B(-x)=B(x)+x avoids two independently rounded Bernoulli factors
+        # multiplying nearly equal densities. The SG law and its tangent are
+        # unchanged. Only R1's explicit incremental-density entry opts in.
+        flux = np.array([
+            k_n_left * _product_difference(b_left, bulk.n_left_m3 - n_left,
+                                            -xi_left, bulk.n_left_m3),
+            k_p_left * _product_difference(b_left, bulk.p_left_m3 - p_left,
+                                            xi_left, p_left),
+            k_n_right * _product_difference(b_right, bulk.n_right_m3 - n_right,
+                                             xi_right, n_right),
+            k_p_right * _product_difference(b_right, bulk.p_right_m3 - p_right,
+                                             -xi_right, bulk.p_right_m3),
+        ])
     jacobian = np.diag(
         [
             -k_n_left * b_left * n_left,
@@ -963,13 +1000,15 @@ def fixed_occupancy_carrier_balance_and_jacobian(
 
 def _fixed_occupancy_carrier_balance_from_density(
     state, geometry, physics, bulk, fixed, trace_values, *, capture_multiplier,
+    paired_bernoulli=False,
 ):
     (
         bulk_flux,
         bulk_jacobian,
         bulk_trace_jacobian,
         bulk_coordinate_jacobian,
-    ) = _bulk_flux_and_log_jacobian(state, trace_values, geometry, physics, bulk)
+    ) = _bulk_flux_and_log_jacobian(state, trace_values, geometry, physics, bulk,
+                                  paired_bernoulli=paired_bernoulli)
     cross_pair, cross_derivative, cross_trace_derivative, one_way_scale = (
         _cross_flux_and_log_derivatives(state, trace_values, physics)
     )
@@ -1048,6 +1087,7 @@ def fixed_occupancy_carrier_tangent_from_density(
     traces: InterfaceTracePotentials | None = None,
     *,
     capture_multiplier: float = 1.0,
+    paired_bernoulli: bool = False,
 ) -> FixedOccupancyCarrierTangent:
     """Evaluate the same log-coordinate tangent from resolved densities.
 
@@ -1075,6 +1115,7 @@ def fixed_occupancy_carrier_tangent_from_density(
         geometry,
         physics,
         bulk,
+        paired_bernoulli=paired_bernoulli,
     )
     _capture_flux, capture_log_jacobian = (
         fixed_occupancy_trap_capture_flux_and_log_jacobian(
@@ -1105,6 +1146,7 @@ def fixed_occupancy_carrier_tangent_from_density(
         fixed,
         trace_values,
         capture_multiplier=capture_multiplier,
+        paired_bernoulli=paired_bernoulli,
     )
     return FixedOccupancyCarrierTangent(
         balance=balance,

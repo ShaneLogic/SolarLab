@@ -949,6 +949,7 @@ class _InterfaceTransientSystem:
                 occupancy[index],
                 traces,
                 capture_multiplier=self.capture_multiplier,
+                **({"paired_bernoulli": True} if trace_density_m3 is not None else {}),
             )
             balance = tangent.balance
             base = 4 * index
@@ -2016,10 +2017,21 @@ def _solve_step(
                 nonmonotone_step_count,
             )
         linear_backward_error = None
+        # Guide an R1 step without removing a previously admissible Gauss
+        # residual through an error/dt displacement current. This changes only
+        # the search direction; every trial retains the original residual and
+        # closure tests below. Other solvers have no such direction target.
+        linear_rhs = residual
+        target_builder = getattr(system, "newton_residual_target", None)
+        if norm <= solver_residual_limit and target_builder is not None:
+            target = np.asarray(target_builder(previous, storage_scale, poisson_scale, local_scale))
+            if (target.shape == residual.shape and np.all(np.isfinite(target))
+                    and float(np.max(np.abs(target))) <= solver_residual_limit):
+                linear_rhs = residual - target
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
             try:
-                step = np.asarray(spsolve(jacobian, -residual), dtype=float)
+                step = np.asarray(spsolve(jacobian, -linear_rhs), dtype=float)
             except (MatrixRankWarning, RuntimeError, ValueError) as exc:
                 raise failure(
                     f"analytic sparse Newton solve failed: {exc}"
@@ -2028,9 +2040,9 @@ def _solve_step(
             raise failure(
                 "analytic sparse Newton solve returned a non-finite step"
             )
-        linear_residual = np.asarray(jacobian @ step + residual, dtype=float)
+        linear_residual = np.asarray(jacobian @ step + linear_rhs, dtype=float)
         linear_scale = max(
-            float(np.max(np.abs(residual))),
+            float(np.max(np.abs(linear_rhs))),
             float(np.max(np.asarray(abs(jacobian) @ np.abs(step)))),
             np.finfo(float).tiny,
         )

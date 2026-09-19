@@ -105,7 +105,8 @@ def _interface_balance(system, state, index):
     return fixed_occupancy_carrier_tangent_from_density(
         local.state_m3, geometry, physics, bulk, state.occupancy[index],
         InterfaceTracePotentials(*local.trace_potential),
-        capture_multiplier=system.controls.nu_t).balance
+        capture_multiplier=system.controls.nu_t,
+        paired_bernoulli=getattr(system, "_step_reference", None) is not None).balance
 
 
 def _currents(system, state):
