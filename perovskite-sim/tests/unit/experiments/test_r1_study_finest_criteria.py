@@ -24,6 +24,7 @@ def study(runner, tmp_path):
     item.args = SimpleNamespace(case_filter="", max_cases=None, retry_failed=False)
     item.output, item.rows, item.attempted = tmp_path, [], 0
     item.started = "unit-regression"
+    item.context = runner.require_r1_checkout(project=runner.PROJECT)
     item.grids, item.controls, item.window = (16, 32, 64), ("D",), "full"
     item.source_unchanged = lambda: None
     return item
