@@ -267,10 +267,22 @@ def _trap_storage_summary(physical_records):
     }
 
 
+def effective_physical_row_limits(policy, *, finite_step):
+    """Return the scalar limits published by each physical-row check."""
+    limits = {**dict(_PHYSICAL_LIMITS), "trap_storage": 1.0}
+    if not finite_step:
+        limits.update({
+            "regular_right_limit_charge_balance_normalized": policy.maximum_charge_balance_relative_error,
+            "regular_right_limit_contact_internal_current_spread_relative": policy.maximum_all_face_current_spread_relative,
+        })
+    return limits
+
+
 def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
     """Collect every applicable physical violation before observation or failure."""
     checks = {}
     covered_paths = set()
+    limits = effective_physical_row_limits(policy, finite_step=finite_step)
 
     def scalar_check(name, value, limit, *, source, path):
         nonfinite = nonfinite_numeric_paths(value, prefix=path)
@@ -286,7 +298,8 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
             "passed": reason is None, "failure_reason": reason, "source": source,
         }
 
-    for key, limit in _PHYSICAL_LIMITS:
+    for key, _ in _PHYSICAL_LIMITS:
+        limit = limits[key]
         if not finite_step and key in ("charge_balance_normalized", "contact_internal_current_spread_relative"):
             checks[key] = {
                 "applicable": False, "value": None, "limit": limit, "passed": None,
@@ -299,7 +312,7 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
     trap = physical["trap_storage_check"]
     checks["trap_storage"] = {
         "applicable": trap["applicable"], "value": trap.get("normalized_error"),
-        "limit": 1.0, "passed": trap["certified"],
+        "limit": limits["trap_storage"], "passed": trap["certified"],
         "failure_reason": trap.get("failure_reason"),
         "source": "finite_step" if finite_step else "compatibility_placeholder_not_computed",
     }
@@ -316,10 +329,8 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
     if not finite_step:
         # These are the evaluated derivative right limits, with their original
         # current-at-state policy limits, not the finite-step placeholders.
-        for key, limit in (
-            ("charge_balance_normalized", policy.maximum_charge_balance_relative_error),
-            ("contact_internal_current_spread_relative", policy.maximum_all_face_current_spread_relative),
-        ):
+        for key in ("charge_balance_normalized", "contact_internal_current_spread_relative"):
+            limit = limits["regular_right_limit_" + key]
             scalar_check("regular_right_limit_" + key, physical["regular_right_limit"][key],
                          limit, source="initial_event.regular_current",
                          path="physical.regular_right_limit." + key)
@@ -346,6 +357,12 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
                         else ["independent_physics_evidence_unavailable"]),
             "source": "saved_state_independent_current_charge_and_inventory_assembly",
         }
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_standard import (
+        verify_execution_policy, verify_used_execution_limits,
+    )
+    verify_execution_policy(policy)
+    verify_used_execution_limits("protocol_finite_row" if finite_step else "protocol_initial_row",
+                                 {name: check["limit"] for name, check in checks.items() if "limit" in check})
     reasons = [check["failure_reason"] for check in checks.values() if check["failure_reason"]]
     return {"checks": checks, "passed": not reasons and not paths, "reasons": reasons,
             "nonfinite_numeric_paths": paths}

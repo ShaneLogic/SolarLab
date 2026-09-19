@@ -1,0 +1,80 @@
+{
+  "effective_limits": {
+    "independent_regular_relative": {
+      "charge_balance_normalized": 1e-10,
+      "contact_internal_current_spread_relative": 2e-06,
+      "interface_current_spread_relative": 2e-06,
+      "internal_face_current_spread_relative": 2e-06
+    },
+    "independent_regular_zero_excitation": {
+      "absolute_current_spread_A_m2": 0.0001,
+      "charge_balance_normalized": 1e-10,
+      "contact_internal_current_spread_relative": 2e-06,
+      "electron_continuity_A_m2": 0.0001,
+      "electron_normalized_residual": 1e-08,
+      "hole_continuity_A_m2": 0.0001,
+      "hole_normalized_residual": 1e-08,
+      "interface_current_spread_relative": 2e-06,
+      "internal_face_current_spread_relative": 2e-06,
+      "ionic_face_current_A_m2": 1e-06,
+      "trap_charge_rate_A_m2": 0.0001
+    },
+    "iteration_caps": {
+      "maximum_line_search_steps": 40,
+      "maximum_near_acceptance_nonmonotone_steps": 2,
+      "maximum_newton_iterations": 100
+    },
+    "newton_acceptance": {
+      "maximum_all_face_current_spread_relative": 2e-06,
+      "maximum_charge_balance_relative_error": 1e-10,
+      "maximum_scaled_nonlinear_residual": 0.05,
+      "maximum_two_sided_interface_total_current_relative_error": 2e-06
+    },
+    "protocol_finite_row": {
+      "charge_balance_normalized": 1e-10,
+      "contact_internal_current_spread_relative": 2e-06,
+      "gauss_normalized": 1e-10,
+      "inventory_relative_drift": 1e-10,
+      "trap_storage": 1.0
+    },
+    "protocol_initial_row": {
+      "charge_balance_normalized": 1e-10,
+      "contact_internal_current_spread_relative": 2e-06,
+      "gauss_normalized": 1e-10,
+      "inventory_relative_drift": 1e-10,
+      "regular_right_limit_charge_balance_normalized": 1e-10,
+      "regular_right_limit_contact_internal_current_spread_relative": 2e-06,
+      "trap_storage": 1.0
+    },
+    "published_regular_relative": {
+      "charge_balance_normalized": 1e-10,
+      "contact_internal_current_spread_relative": 2e-06,
+      "differentiated_poisson_normalized": 1e-10,
+      "face_current_spread_relative": 2e-06,
+      "interface_current_spread_relative": 2e-06
+    },
+    "published_regular_zero_excitation": {
+      "absolute_current_spread_A_m2": 0.0001,
+      "charge_balance_normalized": 1e-10,
+      "differentiated_poisson_normalized": 1e-10,
+      "electron_continuity_A_m2": 0.0001,
+      "electron_normalized_residual": 1e-08,
+      "hole_continuity_A_m2": 0.0001,
+      "hole_normalized_residual": 1e-08,
+      "ionic_face_current_A_m2": 1e-06,
+      "trap_charge_rate_A_m2": 0.0001
+    }
+  },
+  "notes": [
+    "This contract records existing execution and regular-current settings; it does not change PhysicalStandardV1.",
+    "Newton closure settings retain max(policy limit, solver default); the residual retains its policy limit.",
+    "Every physical row and regular evaluation checks the actual limits it consumes or publishes.",
+    "Relative regular metrics are inapplicable at zero excitation; the published absolute DC checks retain their original limits.",
+    "Source and standard identity checks are separate from physical counterexample tests of formulas and production vetoes.",
+    "Readout equality and discrete conservation do not establish reference-solution accuracy."
+  ],
+  "physical_standard_sha256": "c918c3c3a4205e6e7cfc507f788ce0e308378a317f6ada6d3bb3862272d9d739",
+  "schema": "R1ExecutionStandardV1",
+  "scope": "existing_R1_effective_execution_limits_not_new_physical_acceptance_or_reference_accuracy",
+  "version": 1
+}

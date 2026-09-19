@@ -29,6 +29,22 @@ SHARED_CONSTITUTIVE_DEPENDENCIES = finite.SHARED_CONSTITUTIVE_DEPENDENCIES + (
     "recombination.total_recombination",)
 
 
+def effective_regular_limits(policy, *, require_relative_closure=True):
+    """Return the limits actually consumed and published by this reconstruction."""
+    limits = {key: finite.METRIC_LIMITS[key] for key in (
+        "internal_face_current_spread_relative", "contact_internal_current_spread_relative",
+        "interface_current_spread_relative", "charge_balance_normalized")}
+    if not require_relative_closure:
+        limits.update({"electron_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
+            "hole_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
+            "electron_normalized_residual": policy.maximum_dc_normalized_residual,
+            "hole_normalized_residual": policy.maximum_dc_normalized_residual,
+            "trap_charge_rate_A_m2": policy.maximum_dc_continuity_bound_A_m2,
+            "absolute_current_spread_A_m2": policy.maximum_dc_face_current_spread_A_m2,
+            "ionic_face_current_A_m2": policy.maximum_dc_ionic_face_current_A_m2})
+    return limits
+
+
 def _geometry(system):
     mat = system.material
     widths = finite._volumes(system)
@@ -125,7 +141,7 @@ def independent_regular_current(system, state, *, policy, require_relative_closu
         "interface_current_spread_relative": max((finite._spread(pair) for pair in interface), default=0.),
         "charge_balance_normalized": absolute / scale,
     }
-    limits = {key: finite.METRIC_LIMITS[key] for key in metrics}
+    limits = effective_regular_limits(policy, require_relative_closure=require_relative_closure)
     checks = {key: {"applicable": key == "charge_balance_normalized" or bool(require_relative_closure),
                     "passed": bool(np.isfinite(value) and value <= limits[key])
                     if key == "charge_balance_normalized" or require_relative_closure else None}
@@ -138,13 +154,6 @@ def independent_regular_current(system, state, *, policy, require_relative_closu
             "trap_charge_rate_A_m2": float(np.max(np.abs(sigma_dot), initial=0.)),
             "absolute_current_spread_A_m2": float(np.ptp(all_total)),
             "ionic_face_current_A_m2": float(np.max(np.abs(Q * ion_flux), initial=0.))})
-        limits.update({"electron_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
-            "hole_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
-            "electron_normalized_residual": policy.maximum_dc_normalized_residual,
-            "hole_normalized_residual": policy.maximum_dc_normalized_residual,
-            "trap_charge_rate_A_m2": policy.maximum_dc_continuity_bound_A_m2,
-            "absolute_current_spread_A_m2": policy.maximum_dc_face_current_spread_A_m2,
-            "ionic_face_current_A_m2": policy.maximum_dc_ionic_face_current_A_m2})
         for key in metrics:
             if key not in checks:
                 checks[key] = {"applicable": True, "passed": bool(np.isfinite(metrics[key]) and metrics[key] <= limits[key])}
@@ -174,6 +183,9 @@ def independent_regular_current(system, state, *, policy, require_relative_closu
                 atol=arithmetic["relative_allowance"] * current_scale)
             checks[key + "_reported_content_matches"] = {"applicable": True, "passed": bool(match)}
     checks["finite_values"] = {"applicable": True, "passed": all(np.all(np.isfinite(value)) for value in arrays.values())}
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_standard import verify_used_execution_limits
+    verify_used_execution_limits("independent_regular_relative" if require_relative_closure
+                                 else "independent_regular_zero_excitation", limits)
     reasons = [key for key, check in checks.items() if check["applicable"] and check["passed"] is not True]
     return finite._json({"schema": SCHEMA, "scope": SCOPE,
         "relative_current_applicable": bool(require_relative_closure),

@@ -245,6 +245,25 @@ def _solve_local_carriers(system, voltage: float, policy, coordinate=None):
     })
 
 
+def effective_regular_limits(policy, *, require_relative_closure=True):
+    """Return the actual original regular-current conservation gate limits."""
+    limits = {"charge_balance_normalized": policy.maximum_charge_balance_relative_error,
+              "differentiated_poisson_normalized": _GAUSS_LIMIT}
+    if require_relative_closure:
+        limits.update({"face_current_spread_relative": policy.maximum_all_face_current_spread_relative,
+            "interface_current_spread_relative": policy.maximum_two_sided_interface_total_current_relative_error,
+            "contact_internal_current_spread_relative": policy.maximum_all_face_current_spread_relative})
+    else:
+        limits.update({"electron_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
+            "hole_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
+            "electron_normalized_residual": policy.maximum_dc_normalized_residual,
+            "hole_normalized_residual": policy.maximum_dc_normalized_residual,
+            "trap_charge_rate_A_m2": policy.maximum_dc_continuity_bound_A_m2,
+            "absolute_current_spread_A_m2": policy.maximum_dc_face_current_spread_A_m2,
+            "ionic_face_current_A_m2": policy.maximum_dc_ionic_face_current_A_m2})
+    return limits
+
+
 def regular_current_at_state(system, state, *, policy, require_relative_closure=True) -> CurrentAtState:
     """Evaluate dD/dt from the differentiated Poisson equation at fixed voltage.
 
@@ -334,17 +353,10 @@ def regular_current_at_state(system, state, *, policy, require_relative_closure=
             else "relative_current_not_certified_zero_excitation"
         ),
     }
-    gates = [
-        (evidence["charge_balance_normalized"], policy.maximum_charge_balance_relative_error),
-        (evidence["differentiated_poisson_normalized"], _GAUSS_LIMIT),
-    ]
-    if require_relative_closure:
-        gates.extend((
-            (face_error, policy.maximum_all_face_current_spread_relative),
-            (interface_error, policy.maximum_two_sided_interface_total_current_relative_error),
-            (contact_error, policy.maximum_all_face_current_spread_relative),
-        ))
-    else:
+    limits = effective_regular_limits(policy, require_relative_closure=require_relative_closure)
+    evidence["limits"] = limits
+    gate_values = evidence.copy()
+    if not require_relative_closure:
         count = system.interior_count
         equilibrium = {
             "electron_continuity_A_m2": float(np.sum(np.abs(Q * state.rate[:count] * widths[1:-1]))),
@@ -356,16 +368,15 @@ def regular_current_at_state(system, state, *, policy, require_relative_closure=
             "ionic_face_current_A_m2": float(np.max(np.abs(state.positive_current), initial=0.)),
         }
         evidence["zero_excitation_absolute_checks"] = equilibrium
-        gates.extend((
-            (equilibrium["electron_continuity_A_m2"], policy.maximum_dc_continuity_bound_A_m2),
-            (equilibrium["hole_continuity_A_m2"], policy.maximum_dc_continuity_bound_A_m2),
-            (equilibrium["electron_normalized_residual"], policy.maximum_dc_normalized_residual),
-            (equilibrium["hole_normalized_residual"], policy.maximum_dc_normalized_residual),
-            (equilibrium["trap_charge_rate_A_m2"], policy.maximum_dc_continuity_bound_A_m2),
-            (equilibrium["absolute_current_spread_A_m2"], policy.maximum_dc_face_current_spread_A_m2),
-            (equilibrium["ionic_face_current_A_m2"], policy.maximum_dc_ionic_face_current_A_m2),
-        ))
+        gate_values.update(equilibrium)
         evidence["algebraic_certificate"] = _check_algebraic(system, state, policy)
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_standard import (
+        verify_execution_policy, verify_used_execution_limits,
+    )
+    verify_execution_policy(policy)
+    verify_used_execution_limits("published_regular_relative" if require_relative_closure
+                                 else "published_regular_zero_excitation", limits)
+    gates = [(gate_values[key], limit) for key, limit in limits.items()]
     arrays = (phi_dot, total, interface_total, contact_total, state.rate)
     if any(not np.all(np.isfinite(v)) for v in arrays) or any(not np.isfinite(v) or v > limit for v, limit in gates):
         _fail("R1-1 regular current failed its original conservation gates", evidence)

@@ -22,6 +22,7 @@ PROJECT_RELATIVE_PATH = "perovskite-sim"
 STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
 ADDITIONAL_FAILURES_V2_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV2.json"
 PHYSICAL_STANDARD_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1PhysicalStandardV1.json"
+EXECUTION_STANDARD_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1ExecutionStandardV1.json"
 _CHECKOUT_MODULE = "perovskite_sim/experiments/one_dimensional_mechanism_r1_checkout.py"
 _RUNNER = "scripts/run_one_dimensional_mechanism_r1_stage_one.py"
 _LAUNCHER = "scripts/run_one_dimensional_mechanism_r1_controlled.py"
@@ -39,6 +40,7 @@ LEGACY_SOURCE_ANCHORS = _ANCHORS
 # One registry owns snapshot coverage, pins, and exported names. New R1
 # declarations must be classified here before a controlled checkout can run.
 R1_DECLARATIONS = {
+    EXECUTION_STANDARD_RELATIVE_PATH: ("execution_machine", "ExecutionStandardV1.json", "056895bfd60f8385daeda1b7c5d79786b9240918b3dbdfdb7d17657ac32d37bc"),
     PHYSICAL_STANDARD_RELATIVE_PATH: ("acceptance_machine", "PhysicalStandardV1.json", "c918c3c3a4205e6e7cfc507f788ce0e308378a317f6ada6d3bb3862272d9d739"),
     "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "33a57053266f5efdb949177a3a175aa26f2d6bd65d9d54c768469d087946f218"),
     "docs/OneDimensionalMechanismR1CurrentChecksV3.md": ("acceptance", "CurrentChecksV3.md", "5c51a874b2ca68e46c7431154481a733ed97086d2a666b41e03bc7a6a14c3cb6"),
@@ -77,6 +79,7 @@ R1_SOURCE_DEPENDENCIES = {
     "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json": "historical_observations",
     ADDITIONAL_FAILURES_V2_RELATIVE_PATH: "historical_observations",
     PHYSICAL_STANDARD_RELATIVE_PATH: "physical_standard",
+    EXECUTION_STANDARD_RELATIVE_PATH: "execution_standard",
 }
 _CURRENT_CONTEXT = None
 

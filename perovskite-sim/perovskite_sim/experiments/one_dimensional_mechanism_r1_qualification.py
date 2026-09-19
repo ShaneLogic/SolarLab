@@ -542,7 +542,9 @@ def assess_double_domain_prerequisites(evidence, *, expected_scope, frequency_Hz
     boolean eligible_frequency_points, qualified/review status and an external
     digest. ``application`` binds the exact step/AC/DC records, amplitude and
     full time axis; sharing an initial-state scope alone is insufficient.
-    Error items additionally require classification='bounded'.
+    Numerical error items require a reviewed classification of
+    ``validated_estimate``, ``conditional_bound`` or ``bounded``; their
+    evidence must retain the assumptions and application scope of that class.
     """
     report = _base_report("R1DoubleDomainPrerequisitesV1", expected_scope)
     frequency = np.asarray(frequency_Hz)
