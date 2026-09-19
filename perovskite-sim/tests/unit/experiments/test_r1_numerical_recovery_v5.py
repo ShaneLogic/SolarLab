@@ -54,6 +54,47 @@ def test_paired_bernoulli_resolves_near_balanced_sg_flux(drop):
         np.testing.assert_array_equal(old, new)
 
 
+@pytest.mark.parametrize("drop", [-50., -40., 40., 50.])
+@pytest.mark.parametrize("densities", [(1e24, 1e6), (1e6, 1e24)])
+def test_paired_flux_retains_small_density_at_large_signed_drop(drop, densities):
+    geometry = _geometry(left_distance_m=1., right_distance_m=1.)
+    physics = _physics(D_n_left_m2_s=1., D_p_left_m2_s=1.,
+                       D_n_right_m2_s=1., D_p_right_m2_s=1., transmission=0.)
+    bulk_density, trace_density = densities
+    bulk = _bulk(phi_left_V=0., phi_right_V=0., n_left_m3=bulk_density,
+                 p_left_m3=bulk_density, n_right_m3=bulk_density, p_right_m3=bulk_density)
+    traces = InterfaceTracePotentials(drop * physics.thermal_voltage_V,
+                                     -drop * physics.thermal_voltage_V)
+    state = np.full(4, trace_density)
+    xi = traces.phi_left_V / physics.thermal_voltage_V
+    with localcontext() as context:
+        context.prec = 100
+        x = Decimal.from_float(xi)
+        b_plus, b_minus = x / (x.exp() - 1), -x / ((-x).exp() - 1)
+        n, t = Decimal.from_float(bulk_density), Decimal.from_float(trace_density)
+        forward, backward = float(b_minus * n - b_plus * t), float(b_plus * n - b_minus * t)
+        expected = [forward, backward, backward, forward]
+    result = _bulk_flux_and_log_jacobian(state, traces, geometry, physics, bulk,
+                                       paired_bernoulli=True)
+    np.testing.assert_allclose(result[0], expected, rtol=3e-15, atol=0.)
+    assert np.all(result[0] != 0.)
+    # A perturbation of the trace density has the original SG log derivative,
+    # including the small-current cases that the former expansion zeroed.
+    h = 1e-5
+    for k in range(4):
+        plus, minus = state.copy(), state.copy()
+        plus[k] *= math.exp(h)
+        minus[k] *= math.exp(-h)
+        a = _bulk_flux_and_log_jacobian(plus, traces, geometry, physics, bulk,
+                                       paired_bernoulli=True)[0][k]
+        b = _bulk_flux_and_log_jacobian(minus, traces, geometry, physics, bulk,
+                                       paired_bernoulli=True)[0][k]
+        # Only test a resolved derivative, rather than subtracting two huge
+        # currents to infer a negligible sensitivity.
+        if abs(result[1][k, k] * h) > 1e-8 * abs(result[0][k]):
+            assert (a - b) / (2 * h) == pytest.approx(result[1][k, k], rel=1e-8)
+
+
 class OneCellGauss:
     """One-cell absolute Gauss error and its finite-step displacement current."""
     interface_count = 0

@@ -628,17 +628,21 @@ def _bulk_flux_and_log_jacobian(
     )
     if paired_bernoulli:
         # B(-x)=B(x)+x avoids two independently rounded Bernoulli factors
-        # multiplying nearly equal densities. The SG law and its tangent are
-        # unchanged. Only R1's explicit incremental-density entry opts in.
+        # multiplying nearly equal densities. Expand about the smaller factor
+        # for either sign, otherwise a large negative x can cancel away the
+        # smaller density entirely. The SG law and its tangent are unchanged.
+        # Only R1's explicit incremental-density entry opts in.
+        small_left = b_left if xi_left >= 0. else b_minus_left
+        small_right = b_right if xi_right >= 0. else b_minus_right
         flux = np.array([
-            k_n_left * _product_difference(b_left, bulk.n_left_m3 - n_left,
-                                            -xi_left, bulk.n_left_m3),
-            k_p_left * _product_difference(b_left, bulk.p_left_m3 - p_left,
-                                            xi_left, p_left),
-            k_n_right * _product_difference(b_right, bulk.n_right_m3 - n_right,
-                                             xi_right, n_right),
-            k_p_right * _product_difference(b_right, bulk.p_right_m3 - p_right,
-                                             -xi_right, bulk.p_right_m3),
+            k_n_left * _product_difference(small_left, bulk.n_left_m3 - n_left,
+                                            -xi_left, bulk.n_left_m3 if xi_left >= 0. else n_left),
+            k_p_left * _product_difference(small_left, bulk.p_left_m3 - p_left,
+                                            xi_left, p_left if xi_left >= 0. else bulk.p_left_m3),
+            k_n_right * _product_difference(small_right, bulk.n_right_m3 - n_right,
+                                             xi_right, n_right if xi_right >= 0. else bulk.n_right_m3),
+            k_p_right * _product_difference(small_right, bulk.p_right_m3 - p_right,
+                                             -xi_right, bulk.p_right_m3 if xi_right >= 0. else p_right),
         ])
     jacobian = np.diag(
         [
