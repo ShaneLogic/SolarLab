@@ -189,7 +189,8 @@ def independent_regular_current(system, state, *, policy, require_relative_closu
     reasons = [key for key, check in checks.items() if check["applicable"] and check["passed"] is not True]
     return finite._json({"schema": SCHEMA, "scope": SCOPE,
         "relative_current_applicable": bool(require_relative_closure),
-        "shared_constitutive_dependencies": SHARED_CONSTITUTIVE_DEPENDENCIES,
+        "shared_constitutive_dependencies": finite.shared_constitutive_dependencies(system) + (
+            "recombination.total_recombination",),
         "arrays": arrays, "metrics": metrics, "limits": limits, "checks": checks,
         "assessment": finite._assessment(checks), "reasons": reasons, "passed": not reasons,
         "content_comparison": arithmetic})

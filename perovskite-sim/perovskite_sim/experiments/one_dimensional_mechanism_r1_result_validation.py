@@ -621,6 +621,69 @@ def _failed_zero_physics(output, record, prepared):
         _same(value.get("initial_event"), build_initial_step(system, state, 0.0, policy=policy).event,
               "failed zero initial event " + label)
 
+
+def _pair_zero_physics(output, record, prepared, *, failed, stack=None, binding=None, protocol=None):
+    """Rebuild each saved control from the explicit, verified pair backend."""
+    from .one_dimensional_mechanism_r1_backend import PAIR
+    from .one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
+    from .one_dimensional_mechanism_r1_protocol import r1_policy
+    from .one_dimensional_mechanism_r1_result_contract import verify_zero_metadata
+    from .one_dimensional_mechanism_r1_state import equilibrium_checks
+    from .one_dimensional_mechanism_r1_step import build_initial_step
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+
+    verify_zero_metadata(record, same=_same, failed=failed)
+    _same(record.get("schema"), "R1ZeroExcitationV2", "pair zero schema")
+    _sealed(record)
+    for name in ("source", "reference_sha256"):
+        _same(record.get(name), prepared[name], "pair zero " + name)
+    _same(record.get("prepared_sha256"), prepared["sha256"], "pair zero preparation")
+    protocol = read_json(output / "ProtocolV1.json") if protocol is None else protocol
+    labels = set(record["controls"])
+    if (not failed and labels != set(protocol["control"])) or not labels <= set(protocol["control"]):
+        raise ValueError("pair zero-control coverage mismatch")
+    certificate = record["certificate"]
+    if certificate.get("certified") is not (not failed) or (not failed and certificate.get("reasons") != []):
+        raise ValueError("pair zero completion/certificate mismatch")
+    policy = r1_policy(protocol["nonlinear_factor"], time_substeps=protocol["time_substeps"])
+    _same(protocol["policy"], policy, "pair zero policy")
+    stack = load_device_from_yaml(output / "SourceFixtureV1.yaml") if stack is None else stack
+    binding = read_json(output / "ReferenceBindingV1.json") if binding is None else binding
+    base, before = PAIR.verify(prepared, stack, binding, policy=policy)
+    for label, value in record["controls"].items():
+        controls = R1DynamicsControls.from_label(label)
+        system, state = PAIR.controlled(base, before, stack, binding, controls, policy)
+        _same(value["controls"], controls, "pair zero controls " + label)
+        _same(value["population_identity"], PAIR.snapshot(system, state), "pair zero population " + label)
+        checks = equilibrium_checks(system, state, policy)
+        _same(value["remaining_equations"], checks, "pair zero equations " + label)
+        _same(value["initial_event"], build_initial_step(system, state, 0., policy=policy, backend=PAIR).event,
+              "pair zero initial event " + label)
+        if not failed and checks.get("certified") is not True:
+            raise ValueError("pair zero contains failed equilibrium equations")
+
+
+def _failed_pair_preparation_physics(output, payload, *, stack=None, binding=None, protocol=None):
+    from .one_dimensional_mechanism_r1_backend import PAIR
+    from .one_dimensional_mechanism_r1_pair_codec import verify_pair_state, FAILED_PREPARATION_SCHEMA, REPRESENTATION
+    from .one_dimensional_mechanism_r1_state import verify_prepared_physics
+    from perovskite_sim.models.config_loader import load_device_from_yaml
+    if set(payload) != {"schema", "representation", "raw_preparation", "certified", "reasons"}:
+        raise ValueError("failed pair preparation field coverage mismatch")
+    _same(payload["schema"], FAILED_PREPARATION_SCHEMA, "failed pair preparation schema")
+    _same(payload["representation"], REPRESENTATION, "failed pair preparation representation")
+    raw = payload["raw_preparation"]
+    if payload["certified"] is not False or raw["preparation_checks"].get("certified") is not False:
+        raise ValueError("failed pair preparation cannot assert passed gates")
+    _same(payload["reasons"], raw["preparation_checks"]["reasons"], "failed pair preparation reasons")
+    protocol = read_json(output / "ProtocolV1.json") if protocol is None else protocol
+    _same(raw["intervals"], protocol["intervals"], "failed pair preparation grid")
+    stack = load_device_from_yaml(output / "SourceFixtureV1.yaml") if stack is None else stack
+    binding = read_json(output / "ReferenceBindingV1.json") if binding is None else binding
+    verify_pair_state(raw, stack, binding, require_pass=False,
+        legacy_verify=verify_prepared_physics, fine_factory=PAIR.fine_factory, snapshot=PAIR.snapshot)
+
+
 def failure_scope_report(record, reconstruction, *, persisted_rows=None, failure=None,
                          terminal_reconstruction=None):
     """Describe exactly the saved prefix checked, not the unwitnessed execution.
@@ -679,6 +742,19 @@ def _verify_physical_result_records(output, completion):
     )
 
     failed, stage = completion["status"] == "failed", completion["stage"]
+    pair = completion.get("evidence_revision") == 7
+    backend_args = {"backend": "pair"} if pair else {}
+    if pair:
+        from .one_dimensional_mechanism_r1_pair_codec import (
+            verify_numeric_sidecar, verify_failed_numeric_sidecar, contains_nonfinite_tags)
+        def sidecar(path, record):
+            if failed and isinstance(record, dict) and contains_nonfinite_tags(record):
+                return verify_failed_numeric_sidecar(path, record)
+            return verify_numeric_sidecar(path, record)
+        _same(completion.get("representation"), "float64-pair-v1", "completion representation")
+        _same(read_json(output / "ProtocolV1.json").get("representation"), "float64-pair-v1", "protocol representation")
+    else:
+        sidecar = _failed_sidecar
     base_scope = {
         "stage": stage, "integration_replayed": False,
         "numerical_certificate_independently_approved": False,
@@ -704,27 +780,33 @@ def _verify_physical_result_records(output, completion):
             if (output / "PreparedStateV1.json").exists():
                 prepared = read_json(output / "PreparedStateV1.json")
                 verify_prepared_metadata(prepared)
-                _failed_sidecar(output / "PreparedStateV1.npz", prepared)
+                sidecar(output / "PreparedStateV1.npz", prepared)
                 verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
-                                        read_json(output / "ReferenceBindingV1.json"))
+                                        read_json(output / "ReferenceBindingV1.json"), **backend_args)
                 checked.append("saved_preparation_equations")
             payload_path = output / "FailedResultV1.json"
             if payload_path.exists():
                 payload = read_json(payload_path)
-                _failed_sidecar(payload_path.with_suffix(".npz"), payload)
+                sidecar(payload_path.with_suffix(".npz"), payload)
                 duplicate = output / "ZeroExcitationV1.json"
                 if duplicate.exists():
                     _same(read_json(duplicate), payload, "failed zero-excitation duplicate")
-                    _failed_sidecar(duplicate.with_suffix(".npz"), payload)
+                    sidecar(duplicate.with_suffix(".npz"), payload)
                 if payload.get("certificate", {}).get("certified") is True or payload.get("certified") is True:
                     raise ValueError("failed scientific payload cannot assert a passed certificate")
                 schema = payload.get("schema")
                 if schema == "R1FailedPreparationV1" and "raw_preparation" in payload:
                     _failed_preparation_physics(output, payload["raw_preparation"])
                     checked.append("failed_preparation_state_and_reported_equations")
+                elif pair and schema == "R1FailedPreparationPairV2" and "raw_preparation" in payload:
+                    _failed_pair_preparation_physics(output, payload)
+                    checked.append("failed_pair_preparation_state_and_reported_equations")
                 elif schema == "R1ZeroExcitationV1" and prepared is not None:
                     _failed_zero_physics(output, payload, prepared)
                     checked.append("saved_partial_zero_excitation_equations")
+                elif pair and schema == "R1ZeroExcitationV2" and prepared is not None:
+                    _pair_zero_physics(output, payload, prepared, failed=True)
+                    checked.append("saved_partial_pair_zero_excitation_equations")
                 else:
                     raise ValueError("present failed scientific payload has no reconstructable physical schema")
             return {**base_scope, "content_matches_recomputed": True if checked else None,
@@ -734,13 +816,16 @@ def _verify_physical_result_records(output, completion):
                     "unavailable": "failed experiment remains ineligible for scientific acceptance"}
         prepared = read_json(output / "PreparedStateV1.json")
         verify_prepared_metadata(prepared)
-        _failed_sidecar(output / "PreparedStateV1.npz", prepared)
+        sidecar(output / "PreparedStateV1.npz", prepared)
         verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
-                                read_json(output / "ReferenceBindingV1.json"))
+                                read_json(output / "ReferenceBindingV1.json"), **backend_args)
         if stage == "zero-check":
             verify_zero_metadata(read_json(output / "ZeroExcitationV1.json"), same=_same)
-            _verify_legacy_result_records(output, completion)
-            _failed_sidecar(output / "ZeroExcitationV1.npz", read_json(output / "ZeroExcitationV1.json"))
+            if pair:
+                _pair_zero_physics(output, read_json(output / "ZeroExcitationV1.json"), prepared, failed=False)
+            else:
+                _verify_legacy_result_records(output, completion)
+            sidecar(output / "ZeroExcitationV1.npz", read_json(output / "ZeroExcitationV1.json"))
         return {**base_scope, "scientifically_accepted": True,
                 "content_matches_recomputed": True, "physical_limits_satisfied": True,
                 "reconstruction_scope": "saved_preparation_and_zero_equations; declared_historical_metadata_not_replayed",
@@ -750,7 +835,7 @@ def _verify_physical_result_records(output, completion):
                 "checked": ["saved_preparation_equations"] + (["zero_excitation_equations"] if stage == "zero-check" else [])}
     rows_path = output / "AcceptedStepsV1.json"
     rows = read_json(rows_path) if rows_path.exists() else []
-    _failed_sidecar(rows_path.with_suffix(".npz"), rows)
+    sidecar(rows_path.with_suffix(".npz"), rows)
     _counts(completion, rows)
     result_path = output / ("FailedResultV1.json" if failed else "StepResultV1.json")
     if not result_path.exists():
@@ -762,8 +847,8 @@ def _verify_physical_result_records(output, completion):
     record = read_json(result_path)
     if failed and (output / "StepResultV1.json").exists():
         _same(read_json(output / "StepResultV1.json"), record, "failed step duplicate")
-        _failed_sidecar(output / "StepResultV1.npz", record)
-    if record.get("schema") != "R1ControlledStepV1":
+        sidecar(output / "StepResultV1.npz", record)
+    if record.get("schema") != ("R1ControlledStepV2" if pair else "R1ControlledStepV1"):
         if failed and not rows:
             return {**base_scope, "content_matches_recomputed": None,
                     "physical_limits_satisfied": False, "checked_row_count": 0,
@@ -782,6 +867,8 @@ def _verify_physical_result_records(output, completion):
         _same(record_rows, rows, "accepted step records")
     prepared = read_json(output / "PreparedStateV1.json")
     verify_prepared_metadata(prepared)
+    if pair:
+        sidecar(output / "PreparedStateV1.npz", prepared)
     protocol = read_json(output / "ProtocolV1.json")
     for name in ("intervals", "amplitude_V", "times_s", "policy"):
         _same(record.get(name), protocol.get(name), "executed " + name)
@@ -790,13 +877,13 @@ def _verify_physical_result_records(output, completion):
     if not failed:
         _sealed(record)
         _same(record.get("source"), prepared["source"], "source identity")
-        _npz_matches_json(result_path.with_suffix(".npz"), record)
+        (sidecar if pair else _npz_matches_json)(result_path.with_suffix(".npz"), record)
     else:
         if "source" in record:
             _same(record["source"], prepared["source"], "failed source identity")
         if "sha256" in record:
             _sealed(record)
-        _failed_sidecar(result_path.with_suffix(".npz"), record)
+        sidecar(result_path.with_suffix(".npz"), record)
         if record.get("certificate", {}).get("certified") is not False:
             raise ValueError("failed result cannot assert a passed certificate")
         if not rows and not record.get("physics_reconstruction"):
@@ -811,6 +898,7 @@ def _verify_physical_result_records(output, completion):
         load_device_from_yaml(output / "SourceFixtureV1.yaml"), protocol["intervals"],
         read_json(output / "ReferenceBindingV1.json"), prepared, record,
         expected_prepared_sha256=prepared["sha256"], allow_incomplete=failed,
+        **backend_args,
     )
     if not failed and not physics["certified"]:
         raise ValueError("passed result fails reconstructed physical gates")
@@ -818,7 +906,8 @@ def _verify_physical_result_records(output, completion):
     if failed:
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_reconstruction import rebuild_failure_witness
         terminal = rebuild_failure_witness(load_device_from_yaml(output / "SourceFixtureV1.yaml"),
-            protocol["intervals"], read_json(output / "ReferenceBindingV1.json"), prepared, record)
+            protocol["intervals"], read_json(output / "ReferenceBindingV1.json"), prepared, record,
+            **backend_args)
         base_scope["terminal_state_reconstruction"] = terminal
         failure_scope = failure_scope_report(record, physics, persisted_rows=rows, failure=completion.get("failure"),
                                              terminal_reconstruction=terminal)
@@ -837,9 +926,9 @@ def _verify_physical_result_records(output, completion):
 
 
 def verify_result_records(output: Path, completion: dict) -> dict:
-    """Revision six checks saved physics; legacy formats retain explicit scope."""
+    """Revisions six/seven select their explicit saved-physics representation."""
     output = Path(output)
-    if completion.get("evidence_revision", 5) == 6:
+    if completion.get("evidence_revision", 5) in (6, 7):
         return _verify_physical_result_records(output, completion)
     scope = _verify_legacy_result_records(output, completion)
     return {**scope, "scientifically_accepted": False, "mode": "historical_inspection"}

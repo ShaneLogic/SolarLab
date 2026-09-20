@@ -58,6 +58,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_response impo
     frequency_window_report, reconstruct_study_response,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_admittance import R1AdmittanceErrors
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_backend import get_backend
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_request import (
     build_execution_plan, load_execution_plan, inventory_coverage, load_qualification_inputs,
     verify_invocation_attempts,
@@ -98,6 +99,20 @@ def ready(value):
 
 def raw_json(value):
     return (json.dumps(ready(value), indent=2, sort_keys=True, allow_nan=False)+"\n").encode()
+
+
+def pair_ready(value):
+    """Keep legacy serialization unchanged while sharing pair failure tags."""
+    def convert(item):
+        if isinstance(item, dict):
+            if (set(item) == {"value","reason","representation"}
+                    and item["reason"] == "nonfinite_numeric_evidence"):
+                return {"nonfinite":item["representation"]}
+            return {key:convert(child) for key,child in item.items()}
+        if isinstance(item,list):
+            return [convert(child) for child in item]
+        return item
+    return convert(ready(value))
 
 
 def write_json(path, value):
@@ -178,8 +193,13 @@ def verify_study_source(directory, context, *, require_read_receipt):
 
 
 class Study:
+    @property
+    def numerics(self):
+        return get_backend(getattr(self, "_backend", None))
+
     def __init__(self, args):
         self.args, self.output = args, args.output_dir.resolve()
+        self._backend = get_backend(getattr(args, "backend", None))
         self.context = require_r1_checkout(project=PROJECT)
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_binding import standard_binding_record
         self.standard = standard_binding_record(self.context,
@@ -194,7 +214,9 @@ class Study:
             raise ValueError("scientific study verification requires controlled source execution")
         self.grids = tuple(getattr(args, "grids", (16, 32, 64)))
         self.window = getattr(args, "window", "functional")
-        self.times = (DEFAULT_TIMES_S if self.window == "functional" else
+        if self.window == "diagnostic" and not self.numerics.is_pair:
+            raise ValueError("the fixed diagnostic window requires explicit pair backend")
+        self.times = ((0., 1e-9) if self.window == "diagnostic" else DEFAULT_TIMES_S if self.window == "functional" else
                       observation_times(first_time_s=args.first_time_s, last_time_s=args.last_time_s))
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_window import build_window_spec
         self.window_spec = build_window_spec(self.times) if self.window == "full" else None
@@ -221,11 +243,11 @@ class Study:
             getattr(args, "qualification_file", None), getattr(args, "qualification_sha256", None),
             result_directory=self.output)
         request = {
-            "schema": "R1PhysicsStudyRequestV4", "run_class": self.run_class,
+            "schema": "R1PhysicsStudyRequestV5" if self.numerics.is_pair else "R1PhysicsStudyRequestV4", "run_class": self.run_class,
             "source": self.source, "runner_sha256": sha(Path(__file__)),
             "fixture_sha256": hashlib.sha256(fixture_raw).hexdigest(),
             "reference_sha256": hashlib.sha256(reference_raw).hexdigest(),
-            "short_times_s": DEFAULT_TIMES_S, "full_times_s": observation_times(),
+            "short_times_s": self.times if self.window == "diagnostic" else DEFAULT_TIMES_S, "full_times_s": observation_times(),
             "frequency_Hz": self.frequencies,
             "amplitude_ladder_V": list(AMPLITUDES_V),
             "transient_amplitudes_V": list(self.amplitudes),
@@ -242,6 +264,9 @@ class Study:
             "scope": "single_frozen_study_settings_not_independent_R1_2_acceptance",
             "matrix_scope": "base_27_plus_declared_extensions_and_control_axis_crosses",
         }
+        if self.numerics.is_pair:
+            request["representation"] = self.numerics.representation_id
+            request["pair_scope"] = "prepared_zero_transient_and_replay_only_DC_AC_not_migrated"
         self.request = ready(request)
         if getattr(args, "plan_only", False):
             self.plan = self.make_plan(expanded_sections(args.section))
@@ -429,6 +454,14 @@ class Study:
             return cached[1]
         if completion.get("case") != key or completion.get("scope") != request.get("scope"):
             raise ValueError("case completion differs from requested identity or scope")
+        if self.numerics.is_pair:
+            if (completion.get("schema") != "R1PhysicsStudyCaseV2"
+                    or completion.get("representation") != self.numerics.representation_id):
+                raise ValueError("pair case completion representation/schema differs from request")
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import verify_numeric_sidecar
+            verify_numeric_sidecar(directory/"StateArraysV1.npz", result)
+        elif completion.get("schema") == "R1PhysicsStudyCaseV2" or "representation" in completion:
+            raise ValueError("legacy study cannot inherit pair case evidence")
         if hasattr(self, "run_class") and completion.get("run_class") != self.run_class:
             raise ValueError("case execution class differs from the study")
         if (directory/"InputBindingsV2.json").is_file():
@@ -452,15 +485,15 @@ class Study:
         if key.startswith("Preparation/"):
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import verify_prepared_metadata
             verify_prepared_metadata(result)
-            prepared = R1PreparedState.from_dict(result)
+            prepared = self.numerics.decode_prepared(result)
             if result.get("source") != self.source or result.get("intervals") != request["intervals"]:
                 raise ValueError("preparation source/grid differs from the study")
             if result.get("preparation_policy") != ready(r1_policy()):
                 raise ValueError("preparation policy differs from declared R1 policy")
-            verify_prepared_physics(prepared, self.stack, self.binding, policy=r1_policy())
+            verify_prepared_physics(prepared, self.stack, self.binding, policy=r1_policy(), backend=self.numerics)
             return {"certified": bool(result["preparation_checks"]["certified"]),
                     "content_matches_recomputed": True}
-        if result.get("schema") == "R1ControlledStepV1":
+        if result.get("schema") in ("R1ControlledStepV1", "R1ControlledStepV2"):
             n = request["intervals"]
             if (result.get("intervals") != n or result.get("control_label") != request.get("control", "D")
                     or result.get("amplitude_V") != request.get("amplitude_V", .005)
@@ -468,12 +501,12 @@ class Study:
                     or result.get("policy") != ready(r1_policy(request["nonlinear_factor"],
                                                                time_substeps=request["time_substeps"]))):
                 raise ValueError("step result differs from the requested numerical/physical axes")
-            return verify_r1_step_physics(self.stack, n, self.binding, self.prepared(n), result)
+            return verify_r1_step_physics(self.stack, n, self.binding, self.prepared(n), result, backend=self.numerics)
         if key.startswith(("DC/", "DCBaseline/", "TargetDC/", "AC/", "AmplitudeDC/")):
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_response import verify_response_content
             return verify_response_content(result, stack=self.stack, intervals=request["intervals"],
                                            binding=self.binding, prepared=self.prepared(request["intervals"]),
-                                           request=request)
+                                           request=request, backend=self.numerics)
         if key.startswith("Zero/"):
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import verify_zero_metadata
             def same(actual, expected, label):
@@ -482,7 +515,7 @@ class Study:
             verify_zero_metadata(result, same=same)
             p = self.prepared(request["intervals"])
             fresh = check_zero_excitation(self.stack, request["intervals"], self.binding, p,
-                                          expected_prepared_sha256=p.sha256)
+                                          expected_prepared_sha256=p.sha256, backend=self.numerics)
         elif operation is not None and key.startswith(("Compare/", "MatrixCompare/", "Amplitude/Comparison",
                                                        "Linearity/", "Frequency/", "DoubleDomain/")):
             fresh = operation(None)
@@ -580,13 +613,29 @@ class Study:
             result = operation(directory)
             self.source_unchanged()
             write_json(directory/"ResultV1.json", result)
+            if self.numerics.is_pair:
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import write_numeric_sidecar, verify_numeric_sidecar
+                write_numeric_sidecar(directory/"StateArraysV1.npz", result)
+                verify_numeric_sidecar(directory/"StateArraysV1.npz", result)
             status, failure = ("unavailable" if isinstance(result, dict) and result.get("comparison_available") is False
                                else "completed"), None
         except Exception as exc:
             status = "failed"
             failure = {"type": type(exc).__name__, "message": str(exc),
                        "partial_result": getattr(exc, "result", None)}
-            write_json(directory/"FailureV1.json", failure)
+            write_json(directory/"FailureV1.json", pair_ready(failure) if self.numerics.is_pair else failure)
+            partial = failure["partial_result"]
+            if self.numerics.is_pair and isinstance(partial, dict):
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import write_numeric_sidecar, numeric_arrays
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import nonfinite_numeric_paths
+                try:
+                    if nonfinite_numeric_paths(partial):
+                        np.savez_compressed(directory/"StateArraysV1.npz", **numeric_arrays(partial, allow_nonfinite=True))
+                    else:
+                        write_numeric_sidecar(directory/"StateArraysV1.npz", partial)
+                except Exception as sidecar_error:
+                    write_json(directory/"NumericSidecarFailureV1.json", {
+                        "type": type(sidecar_error).__name__, "message": str(sidecar_error)})
             result = None
         finally:
             self.active_case = previous_owner
@@ -596,7 +645,7 @@ class Study:
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_registry import historical_observation
             historical = historical_observation({**request, "source_commit": getattr(self, "source", {}).get("source_commit")}, failure)
         completion = {
-            "schema": "R1PhysicsStudyCaseV1", "case": key, "status": status,
+            "schema": "R1PhysicsStudyCaseV2" if self.numerics.is_pair else "R1PhysicsStudyCaseV1", "case": key, "status": status,
             "duration_s": time.monotonic()-start, "run_class": getattr(self, "run_class", "development"),
             "finished_utc": datetime.now(timezone.utc).isoformat(),
             "study_exit_passed": False, "scope": request.get("scope"),
@@ -604,6 +653,8 @@ class Study:
             "failure": None if failure is None else {k: v for k, v in failure.items() if k != "partial_result"},
             "historical_observation": historical,
         }
+        if self.numerics.is_pair:
+            completion["representation"] = self.numerics.representation_id
         write_json(directory/"CompletionV1.json", completion)
         if failure is not None:
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_witness import build_failure_witness
@@ -611,8 +662,8 @@ class Study:
             rows = [json.loads(line) for line in persisted.read_text().splitlines()] if persisted.is_file() else []
             write_json(directory/"FailureWitnessV1.json", build_failure_witness(
                 source_commit=getattr(self, "source", {}).get("source_commit"),
-                protocol=self.failure_protocol(request), failure=ready(failure),
-                result=ready(failure.get("partial_result")), persisted_rows=rows))
+                protocol=self.failure_protocol(request), failure=pair_ready(failure) if self.numerics.is_pair else ready(failure),
+                result=pair_ready(failure.get("partial_result")) if self.numerics.is_pair else ready(failure.get("partial_result")), persisted_rows=rows))
         seal(directory)
         if not hasattr(self, "produced_cases"):
             self.produced_cases = {}
@@ -632,6 +683,11 @@ class Study:
     def audit_failed(self, key, directory, request):
         failure = checked_read(directory, "FailureV1.json")
         completion = checked_read(directory, "CompletionV1.json")
+        if self.numerics.is_pair and (completion.get("schema") != "R1PhysicsStudyCaseV2"
+                or completion.get("representation") != self.numerics.representation_id):
+            raise ValueError("failed pair case representation/schema differs from request")
+        if not self.numerics.is_pair and (completion.get("schema") == "R1PhysicsStudyCaseV2" or "representation" in completion):
+            raise ValueError("legacy study cannot inherit failed pair case evidence")
         if completion.get("scientific_checks_passed") is not False:
             raise ValueError("failed case cannot have scientific eligibility")
         if completion.get("failure") != {k: v for k, v in failure.items() if k != "partial_result"}:
@@ -645,12 +701,52 @@ class Study:
             witness_check = verify_failure_witness(checked_read(directory, "FailureWitnessV1.json"),
                 source_commit=getattr(self, "source", {}).get("source_commit"),
                 protocol=self.failure_protocol(request), failure=failure, result=partial, persisted_rows=rows)
-        elif getattr(self, "request", {}).get("schema") == "R1PhysicsStudyRequestV4":
+        elif getattr(self, "request", {}).get("schema") in ("R1PhysicsStudyRequestV4", "R1PhysicsStudyRequestV5"):
             raise ValueError("V4 failed study case lacks its saved termination witness")
         if partial is not None and not isinstance(partial, dict):
             raise ValueError("failed scientific payload has no classified record schema")
         if isinstance(partial, dict) and "accepted_steps" in partial and not isinstance(partial["accepted_steps"], list):
             raise ValueError("failed accepted states must be a classified row list")
+        if self.numerics.is_pair and isinstance(partial,dict):
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import contains_nonfinite_tags, verify_failed_numeric_sidecar
+            if contains_nonfinite_tags(partial):
+                verify_failed_numeric_sidecar(directory/"StateArraysV1.npz", partial)
+                return {"certified":False,"content_matches_recomputed":None,
+                    "physical_limits_satisfied":False,"failure_record_checked":True,
+                    "numeric_sidecar_checked":True,"finite_state_validity":False,
+                    "failure_scope":{"failure_witness":witness_check,"saved_row_count":len(rows)},
+                    "reason":"raw nonfinite failure retained; finite equations cannot be certified"}
+            if partial.get("schema") == "R1ZeroExcitationV2":
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_validation import _pair_zero_physics
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import verify_numeric_sidecar
+                verify_numeric_sidecar(directory/"StateArraysV1.npz", partial)
+                _pair_zero_physics(directory, partial, self.prepared(request["intervals"]).to_dict(), failed=True,
+                    stack=self.stack,binding=self.binding,protocol={"control":request.get("controls","ABCD"),
+                        "nonlinear_factor":.1,"time_substeps":[1,2,4],"policy":ready(r1_policy())})
+                return {"certified":False,"content_matches_recomputed":True,
+                    "physical_limits_satisfied":False,"saved_zero_controls_reconstructed":sorted(partial["controls"]),
+                    "scope":"saved_failed_zero_controls_only_not_scientific_acceptance"}
+        if (self.numerics.is_pair and isinstance(partial, dict)
+                and partial.get("schema") == "R1FailedPreparationPairV2" and "raw_preparation" in partial):
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import verify_pair_state, verify_numeric_sidecar
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_backend import _legacy_verify
+            if (set(partial) != {"schema","representation","raw_preparation","certified","reasons"}
+                    or partial.get("representation") != self.numerics.representation_id
+                    or partial.get("certified") is not False):
+                raise ValueError("failed pair preparation identity differs from its contract")
+            raw = partial["raw_preparation"]
+            if raw.get("intervals") != request["intervals"] or raw.get("source") != self.source:
+                raise ValueError("failed pair preparation grid/source differs from the study")
+            verify_pair_state(raw, self.stack, self.binding, policy=r1_policy(), require_pass=False,
+                legacy_verify=_legacy_verify, fine_factory=self.numerics.fine_factory,
+                snapshot=self.numerics.snapshot)
+            verify_numeric_sidecar(directory/"StateArraysV1.npz", partial)
+            if (raw["preparation_checks"].get("certified") is not False
+                    or partial["reasons"] != raw["preparation_checks"].get("reasons")):
+                raise ValueError("failed pair preparation gates contradict saved failure")
+            return {"certified":False,"content_matches_recomputed":True,
+                "physical_limits_satisfied":False,"failed_preparation_reconstructed":True,
+                "scope":"failed_preparation_identity_and_equations_not_scientific_acceptance"}
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import RESULT_ARRAY_FIELDS
         contains_state = (bool(rows) or (isinstance(partial, dict) and (
             bool(partial.get("accepted_steps")) or any(name in partial for name in RESULT_ARRAY_FIELDS))))
@@ -665,7 +761,11 @@ class Study:
                                                                time_substeps=request["time_substeps"]))):
                 raise ValueError("failed step prefix differs from the planned request")
             audit = verify_r1_step_physics(self.stack, request["intervals"], self.binding,
-                                          self.prepared(request["intervals"]), partial, allow_incomplete=True)
+                                          self.prepared(request["intervals"]), partial, allow_incomplete=True,
+                                          backend=self.numerics)
+            if self.numerics.is_pair:
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import verify_numeric_sidecar
+                verify_numeric_sidecar(directory/"StateArraysV1.npz", partial)
             raw_rows = partial["accepted_steps"]
             persistence = partial.get("persistence_failure")
             matches = rows == raw_rows
@@ -681,7 +781,7 @@ class Study:
                 raise ValueError("failed saved rows differ from the raw persisted prefix")
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_reconstruction import rebuild_failure_witness
             terminal = rebuild_failure_witness(self.stack, request["intervals"], self.binding,
-                                              self.prepared(request["intervals"]), partial)
+                                              self.prepared(request["intervals"]), partial, backend=self.numerics)
             audit["failure_scope"] = failure_scope_report(partial, audit, persisted_rows=rows,
                 failure=completion["failure"], terminal_reconstruction=terminal)
             audit["failure_scope"]["last_observed_row_persisted"] = len(rows) == len(raw_rows)
@@ -706,13 +806,13 @@ class Study:
         if intervals not in self.preparations:
             result = self.case(f"Preparation/N{intervals}", {"intervals": intervals, "scope": "common_D_equilibrium"},
                                lambda directory: prepare_common_state(self.stack, intervals, self.binding,
-                                                                        policy=r1_policy()).to_dict(),
+                                                                        policy=r1_policy(), backend=self.numerics).to_dict(),
                                dependency=True)
             if result is None:
                 if self.args.max_cases is not None and self.attempted >= self.args.max_cases:
                     raise CaseBudgetExhausted("new-case budget exhausted before required preparation")
                 raise ValueError("preparation unavailable within selected case budget")
-            self.preparations[intervals] = R1PreparedState.from_dict(result)
+            self.preparations[intervals] = self.numerics.decode_prepared(result)
         self.record_dependency(f"Preparation/N{intervals}")
         return self.preparations[intervals]
 
@@ -731,13 +831,13 @@ class Study:
                                  amplitude_V=amplitude, times_s=times,
                                  policy=r1_policy(factor, time_substeps=substeps),
                                  accepted_step_observer=observe, physics_evidence=True,
-                                 expected_prepared_sha256=prepared.sha256)
+                                 expected_prepared_sha256=prepared.sha256, backend=self.numerics)
         except Exception as exc:
             partial = getattr(exc, "result", None)
             if isinstance(partial, dict) and partial.get("physics_reconstruction") and partial.get("accepted_steps"):
                 try:
                     audit = verify_r1_step_physics(self.stack, intervals, self.binding, prepared,
-                                                   partial, allow_incomplete=True)
+                                                   partial, allow_incomplete=True, backend=self.numerics)
                     write_json(directory/"FailedPrefixPhysicsAuditV1.json", audit)
                 except Exception as audit_exc:
                     write_json(directory/"FailedPrefixPhysicsAuditFailureV1.json", {
@@ -745,7 +845,7 @@ class Study:
                         "partial_result": getattr(audit_exc, "result", None),
                     })
             raise
-        audit = verify_r1_step_physics(self.stack, intervals, self.binding, prepared, result)
+        audit = verify_r1_step_physics(self.stack, intervals, self.binding, prepared, result, backend=self.numerics)
         write_json(directory/"PhysicsRecomputationV1.json", audit)
         if audit.get("certified") is not True:
             error = ValueError("completed trajectory fails reconstructed physical gates")
@@ -762,14 +862,15 @@ class Study:
             for n in self.grids:
                 self.case(f"Zero/N{n}", {"intervals": n, "controls": "ABCD", "scope": "zero_excitation_A_D"},
                           lambda directory, n=n: check_zero_excitation(self.stack, n, self.binding, self.prepared(n),
-                              expected_prepared_sha256=self.prepared(n).sha256))
+                              expected_prepared_sha256=self.prepared(n).sha256, backend=self.numerics))
         if "short" in sections:
+            short_times = self.times if getattr(self, "window", "functional") == "diagnostic" else DEFAULT_TIMES_S
             for n in self.grids:
                 for control in "ABCD":
                     self.case(f"Short/N{n}/{control}", {"intervals": n, "control": control,
-                              "times_s": DEFAULT_TIMES_S, "time_substeps": (1, 2, 4), "nonlinear_factor": .1,
+                              "times_s": short_times, "time_substeps": (1, 2, 4), "nonlinear_factor": .1,
                               "scope": "short_controlled_physics_recomputation"},
-                              lambda directory, n=n, c=control: self.step(directory, n, c, (1, 2, 4), .1, DEFAULT_TIMES_S))
+                              lambda directory, n=n, c=control: self.step(directory, n, c, (1, 2, 4), .1, short_times))
         if "matrix" in sections:
             for item in self.matrix_cases():
                 self.case(self.matrix_key(item), {**dataclasses.asdict(item), "times_s": self.times,
@@ -1395,7 +1496,7 @@ class Study:
                 for axis in ("intervals", "time_substeps", "nonlinear_factor")} <= pair_coverage
             requirements["full_window_base_27_available"] = requirements.pop("full_window_base_27")
             requirements["three_axes_recorded"] = requirements.pop("three_independent_axis_comparisons")
-        summary = {"schema": "R1PhysicsStudySummaryV2", "started_utc": self.started,
+        summary = {"schema": "R1PhysicsStudySummaryV3" if self.numerics.is_pair else "R1PhysicsStudySummaryV2", "started_utc": self.started,
                    "finished_utc": datetime.now(timezone.utc).isoformat(), "argv": sys.argv,
                    "cases": self.rows, "attempted_cases": self.attempted,
                    "attempt_count_scope": "new_attempts_in_this_invocation",
@@ -1418,6 +1519,9 @@ class Study:
                                if row["case"].startswith("MatrixCompare/")}),
                            availability_does_not_imply_convergence=True,
                            verification_does_not_imply_scientific_acceptance=True)
+        if self.numerics.is_pair:
+            summary["representation"] = self.numerics.representation_id
+            summary["pair_scope"] = self.request["pair_scope"]
         code = 1 if failures or local_fail else 2 if missing or unavailable or unknown or unchecked else 0
         summary["exit_code"] = code
         self.last_summary = summary
@@ -1434,7 +1538,9 @@ class Study:
                     recorded = checked_read(self.output, invocation.relative_to(self.output).as_posix())
                     if recorded.get("study_request_sha256") != self.plan_sha256:
                         raise ValueError("recorded invocation study_request_sha256 differs from external request")
-            if (published.get("schema") != "R1PhysicsStudySummaryV2"
+            if (published.get("schema") != summary["schema"]
+                    or published.get("representation") != summary.get("representation")
+                    or published.get("pair_scope") != summary.get("pair_scope")
                     or type(published.get("study_exit_passed")) is not bool
                     or set(published.get("requirements", {})) != set(requirements)):
                 raise ValueError("published study summary has an invalid scientific contract")
@@ -1766,6 +1872,8 @@ def main(argv=None):
     parser.add_argument("--case", action="append", help="exact planned case key; repeat for a bounded set")
     parser.add_argument("--max-cases", type=int, help="maximum newly started cases in this invocation")
     parser.add_argument("--formal", action="store_true", help="require the controlled source launcher")
+    parser.add_argument("--backend", choices=("legacy", "pair"), default="legacy",
+                        help="explicit per-run representation; pair DC/AC consumers are not yet qualified")
     parser.add_argument("--verify", action="store_true", help="recompute archived evidence without writing it")
     parser.add_argument("--manifest-sha256", help="external root manifest anchor for formal resume/verify")
     parser.add_argument("--plan-only", action="store_true", help="write exact case requests without solving or creating results")
@@ -1788,7 +1896,7 @@ def main(argv=None):
     parser.add_argument("--approved-standard-sha256", help="optional caller-held approved standard digest; candidate pins alone are not approval")
     parser.add_argument("--grids", type=int, nargs="+", default=(16, 32, 64), choices=(16, 32, 64, 128, 256))
     parser.add_argument("--matrix-controls", nargs="+", default=("D",), choices=tuple("ABCD"))
-    parser.add_argument("--window", choices=("functional", "full"), default="functional")
+    parser.add_argument("--window", choices=("functional", "full", "diagnostic"), default="functional")
     parser.add_argument("--first-time-s", type=float, default=1e-9)
     parser.add_argument("--last-time-s", type=float, default=1e2)
     parser.add_argument("--extended-frequency", action="store_true", help="include protocol limit band 1e-6..1e10 Hz")

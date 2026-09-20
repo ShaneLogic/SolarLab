@@ -62,6 +62,30 @@ def test_failed_case_retains_raw_prefix_and_next_case_runs(runner, study):
     assert study.rows[-1]["status"] == "completed"
 
 
+def test_pair_nonfinite_failure_keeps_low_words_and_remains_unqualified(runner, study):
+    study._backend = runner.get_backend("pair")
+    def fail(directory):
+        error = RuntimeError("actual nonfinite attempted value")
+        error.result = {"schema":"R1ControlledStepV2","representation":"float64-pair-v1",
+            "certificate":{"certified":False},"accepted_steps":[],
+            "attempted":[float("nan"),float("inf")],
+            "state":{"precision_phi_V_hi":[1.],"precision_phi_V_lo":[1e-20]}}
+        raise error
+    request = {"scope":"failed_pair_diagnostic"}
+    assert study.case("Failed", request, fail) is None
+    directory = study.latest("Failed")
+    failure = runner.checked_read(directory,"FailureV1.json")
+    assert failure["partial_result"]["attempted"] == [{"nonfinite":"nan"},{"nonfinite":"inf"}]
+    with np.load(directory/"StateArraysV1.npz",allow_pickle=False) as arrays:
+        assert arrays["data.state.precision_phi_V_lo"][0] == 1e-20
+    audit = study.audit_failed("Failed",directory,request)
+    assert audit["numeric_sidecar_checked"] and not audit["certified"]
+    assert audit["content_matches_recomputed"] is None
+    study._backend = runner.get_backend("legacy")
+    with pytest.raises(ValueError,match="cannot inherit failed pair"):
+        study.audit_failed("Failed",directory,request)
+
+
 def test_resume_skips_verified_result_and_rejects_modified_content(runner, study):
     request = {"scope": "resume"}
     operation = lambda directory: {"certificate": {"certified": True}}

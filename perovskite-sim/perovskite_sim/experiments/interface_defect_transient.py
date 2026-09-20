@@ -2160,7 +2160,9 @@ def _integrate_trace(
     accepted_step_observer=None,
     initial_state=None,
     initial_current_metrics=None,
+    step_solver=None,
 ) -> _Trace:
+    solve_step = _solve_step if step_solver is None else step_solver
     coordinate = (
         system.initial_coordinate()
         if initial_state is None
@@ -2255,7 +2257,7 @@ def _integrate_trace(
             if hasattr(step_system, "set_voltage_lift"):
                 step_system.set_voltage_lift(target_voltage, step_previous)
             try:
-                state, count, residual, jacobian_error, nnz, nonmonotone_count = _solve_step(
+                state, count, residual, jacobian_error, nnz, nonmonotone_count = solve_step(
                     step_system,
                     np.zeros(system.dimension),
                     step_previous,

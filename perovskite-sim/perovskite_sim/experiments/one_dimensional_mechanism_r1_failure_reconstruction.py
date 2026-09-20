@@ -13,7 +13,7 @@ DIAGNOSTIC_FIELDS = frozenset({"iteration", "scaled_nonlinear_residual", "charge
     "solver_current_spread_relative", "interface_current_spread_relative", "linear_backward_error"})
 
 
-def rebuild_failure_witness(stack, intervals, binding, prepared, result):
+def rebuild_failure_witness(stack, intervals, binding, prepared, result, *, backend=None):
     """Rebuild saved prefix and terminal state with independently derived scales.
 
     Call only after the result and preparation's source/request/manifests have
@@ -21,10 +21,13 @@ def rebuild_failure_witness(stack, intervals, binding, prepared, result):
     or reconstruction of historical Newton/line-search iterations.
     """
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
-        R1PreparedState, restore_common_state, _preparation_policy, snapshot, json_data)
+        R1PreparedState, restore_common_state, verify_prepared_physics,
+        _preparation_policy, snapshot, json_data)
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import build_initial_step
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_independent_physics import independent_physics_row
+    from .one_dimensional_mechanism_r1_backend import get_backend
+    numerical = get_backend(backend)
     witness = result.get("failure", {}).get("numerical_evidence")
     if not isinstance(witness, dict) or witness.get("schema") != "R1NewtonFailureWitnessV1":
         return {"available": False, "terminal_state_physics_recomputed": None,
@@ -41,13 +44,23 @@ def rebuild_failure_witness(stack, intervals, binding, prepared, result):
         if json_data(actual) != json_data(expected):
             raise ValueError("failed Newton witness mismatch: " + name)
     policy = _preparation_policy(result["policy"])
-    prepared = prepared if isinstance(prepared, R1PreparedState) else R1PreparedState.from_dict(prepared)
-    system, before = restore_common_state(prepared, stack, intervals, binding,
-        controls=R1DynamicsControls.from_label(result["control_label"]), policy=policy,
-        expected_prepared_sha256=prepared.sha256)
+    controls = R1DynamicsControls.from_label(result["control_label"])
+    if numerical.is_pair:
+        prepared = numerical.decode_prepared(prepared)
+        same(result.get("schema"), "R1ControlledStepV2", "result representation")
+        same(result.get("prepared_sha256"), prepared.sha256, "preparation identity")
+        system, before = verify_prepared_physics(prepared, stack, binding,
+                                                 policy=policy, backend=numerical)
+        if controls != R1DynamicsControls():
+            system, before = numerical.controlled(system, before, stack, binding, controls, policy)
+    else:
+        prepared = prepared if isinstance(prepared, R1PreparedState) else R1PreparedState.from_dict(prepared)
+        system, before = restore_common_state(prepared, stack, intervals, binding,
+            controls=controls, policy=policy, expected_prepared_sha256=prepared.sha256)
     voltage = float(result["amplitude_V"])
     same(witness["voltage_V"], voltage, "voltage")
-    initial = build_initial_step(system, before, voltage, policy=policy)
+    initial = build_initial_step(system, before, voltage, policy=policy,
+        **({"backend": numerical} if backend is not None else {}))
     rows = result.get("accepted_steps", [])
     if not rows:
         raise ValueError("failed Newton witness requires the saved initial/accepted prefix")

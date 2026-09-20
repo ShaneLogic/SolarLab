@@ -65,7 +65,10 @@ def r1_policy(nonlinear_factor=0.1, *, time_substeps=(1, 2, 4)):
     return replace(policy, **{k: getattr(policy, k)*factor for k in _TOLERANCE_FIELDS})
 
 
-def _prepared(value):
+def _prepared(value, backend=None):
+    if backend is not None:
+        from .one_dimensional_mechanism_r1_backend import get_backend
+        return get_backend(backend).decode_prepared(value)
     return value if isinstance(value, R1PreparedState) else R1PreparedState.from_dict(value)
 
 
@@ -369,9 +372,12 @@ def _physical_step_checks(physical, *, finite_step, policy, evidence=None):
 
 
 def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD", policy=None,
-                          expected_prepared_sha256=None):
+                          expected_prepared_sha256=None, backend=None):
     """Check A-D remaining equilibrium equations; do not invent a zero-current relative pass."""
-    prepared = _prepared(prepared)
+    from .one_dimensional_mechanism_r1_backend import get_backend
+    numerical = get_backend(backend)
+    backend_args = {} if backend is None else {"backend": numerical}
+    prepared = _prepared(prepared, backend)
     policy = policy or r1_policy()
     results = {}
     try:
@@ -379,9 +385,10 @@ def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD
             choice = R1DynamicsControls.from_label(label)
             system, state = restore_common_state(prepared, stack, intervals, binding,
                                                  controls=choice, policy=policy,
-                                                 expected_prepared_sha256=expected_prepared_sha256)
+                                                 expected_prepared_sha256=expected_prepared_sha256,
+                                                 **backend_args)
             checks = equilibrium_checks(system, state, policy)
-            initial = build_initial_step(system, state, 0.0, policy=policy)
+            initial = build_initial_step(system, state, 0.0, policy=policy, **backend_args)
             results[label] = {
                 "controls": json_data(choice), "remaining_equations": checks,
                 "initial_event": initial.event,
@@ -396,6 +403,7 @@ def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD
             "failure": {"type": type(exc).__name__, "message": str(exc),
                         "numerical_evidence": getattr(exc, "result", None)},
         }
+        partial = numerical.finalize_record(partial, kind="zero")
         raise R1RunError(f"R1 zero-excitation check failed: {exc}", partial) from exc
     certified = bool(results) and all(r["remaining_equations"]["certified"] for r in results.values())
     record = {
@@ -410,6 +418,7 @@ def check_zero_excitation(stack, intervals, binding, prepared, *, controls="ABCD
     }
     _require_finite_result(record)
     record["sha256"] = digest(record)
+    record = numerical.finalize_record(record, kind="zero")
     if not certified:
         raise R1RunError("R1 zero-excitation check failed", record)
     return record
@@ -501,9 +510,14 @@ def _trace_certificate(system, zero_minus, levels, policy, physical_records):
 
 def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V=0.005,
                 times_s=None, policy=None, accepted_step_observer=None,
-                expected_prepared_sha256=None, physics_evidence=False):
+                expected_prepared_sha256=None, physics_evidence=False, backend=None):
     """Integrate from 0+; finite steps contain no ideal charging impulse."""
-    prepared = _prepared(prepared)
+    from .one_dimensional_mechanism_r1_backend import get_backend
+    numerical = get_backend(backend)
+    backend_args = {} if backend is None else {"backend": numerical}
+    prepared = _prepared(prepared, backend)
+    # Production pair evidence always retains both sides and exact coordinates.
+    physics_evidence = bool(physics_evidence or numerical.is_pair)
     choice = control if isinstance(control, R1DynamicsControls) else R1DynamicsControls.from_label(control)
     policy = policy or r1_policy()
     times = np.asarray(DEFAULT_TIMES_S if times_s is None else times_s, dtype=float)
@@ -530,10 +544,11 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
     try:
         system, before = restore_common_state(prepared, stack, intervals, binding,
                                               controls=choice, policy=policy,
-                                              expected_prepared_sha256=expected_prepared_sha256)
+                                              expected_prepared_sha256=expected_prepared_sha256,
+                                              **backend_args)
         record["junction_polarity"] = system.polarity
         record["current_sign_convention"] = "J_x along +x; reported j = junction_polarity * J_x"
-        initial = build_initial_step(system, before, amplitude, policy=policy)
+        initial = build_initial_step(system, before, amplitude, policy=policy, **backend_args)
         record["initial_event"] = initial.event
         if physics_evidence:
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_physics_validation import (
@@ -592,6 +607,7 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
                     item["physics_reconstruction"] = capture_r1_physics_row(
                         initial.system, working, state, previous, amplitude, dt, policy,
                         check_jacobian=first_finite,
+                        **backend_args,
                     )
                 except Exception as exc:
                     # Diagnostics must not erase an already accepted state.
@@ -680,16 +696,13 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
         levels = tuple(
             _integrate_trace(initial.system, times, np.full(times.size, amplitude), substeps, policy,
                              accepted_step_observer=observe, initial_state=initial.zero_plus,
-                             initial_current_metrics=initial.initial_current_metrics)
+                             initial_current_metrics=initial.initial_current_metrics,
+                             step_solver=numerical.solve_step if backend is not None else None)
             for substeps in policy.refinement_substeps
         )
         final = levels[-1]
         record["certificate"] = _trace_certificate(initial.system, before, levels, policy, physical_records)
-        record["output_states"] = {
-            name: np.asarray([getattr(s, attribute) for s in final.states])
-            for name, attribute in (("n_m3", "n"), ("p_m3", "p"), ("positive_m3", "positive"),
-                                    ("occupancy", "occupancy"), ("phi_V", "phi"), ("sheet_charge_C_m2", "sheet_charge"))
-        }
+        record["output_states"] = numerical.output_states(initial.system, final.states)
         record["regular_currents"] = [
             regular_current_at_state(initial.system, s, policy=policy).evidence for s in final.states
         ]
@@ -712,6 +725,7 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
             raise R1RunError("source changed during the controlled experiment", record)
         _require_finite_result(record)
         record["sha256"] = digest(record)
+        record = numerical.finalize_record(record, kind="step")
         if not record["certificate"]["certified"]:
             raise R1RunError("R1 controlled-step certificate failed: " + ", ".join(record["certificate"]["reasons"]), record)
         return record
@@ -720,6 +734,7 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
             certificate = exc.result.get("certificate")
             if not isinstance(certificate, dict) or certificate.get("certified"):
                 exc.result["certificate"] = {"certified": False, "reasons": [str(exc)], "scope": SCOPE}
+            exc.result = numerical.finalize_record(exc.result, kind="step")
         raise
     except Exception as exc:
         record["failure"] = {"type": type(exc).__name__, "message": str(exc)}
@@ -727,6 +742,7 @@ def run_r1_step(stack, intervals, binding, prepared, *, control="D", amplitude_V
         if evidence is not None and evidence is not record:
             record["failure"]["numerical_evidence"] = evidence
         record["certificate"] = {"certified": False, "reasons": [str(exc)], "scope": SCOPE}
+        record = numerical.finalize_record(record, kind="step")
         raise R1RunError(f"R1 controlled step failed: {exc}", record) from exc
 
 

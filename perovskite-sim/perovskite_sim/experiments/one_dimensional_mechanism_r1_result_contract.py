@@ -127,6 +127,10 @@ def verify_failure_metadata(record, *, failed, rows=None, same=None):
 
 def verify_prepared_metadata(record):
     """Close preparation containers; equations and historical types are checked separately."""
+    if record.get("schema") == "R1CommonStatePairV2":
+        from .one_dimensional_mechanism_r1_pair_codec import R1CommonStatePairV2
+        R1CommonStatePairV2.from_dict(record)
+        return
     _closed(record, PREPARED_FIELDS, "prepared state")
     if "dc_state" in record:
         _closed(record["dc_state"], DC_STATE_FIELDS, "prepared DC state")
@@ -142,8 +146,11 @@ def verify_zero_metadata(record, *, same, failed=False):
         SCOPE, VERSION, nonfinite_numeric_paths,
     )
 
-    _closed(record, ZERO_FIELDS, "zero-excitation")
-    for name, expected in (("schema", "R1ZeroExcitationV1"), ("scope", SCOPE), ("version", VERSION)):
+    pair = record.get("schema") == "R1ZeroExcitationV2"
+    _closed(record, ZERO_FIELDS | {"representation"} if pair else ZERO_FIELDS, "zero-excitation")
+    if pair:
+        same(record.get("representation"), "float64-pair-v1", "zero representation")
+    for name, expected in (("schema", "R1ZeroExcitationV2" if pair else "R1ZeroExcitationV1"), ("scope", SCOPE), ("version", VERSION)):
         same(record.get(name), expected, "zero metadata " + name)
     certificate = record.get("certificate")
     _closed(certificate, {"certified", "reasons", "scope", "relative_dynamic_current_certified",
@@ -170,7 +177,8 @@ def verify_zero_metadata(record, *, same, failed=False):
 def verify_step_metadata(record, *, intervals, policy, polarity, same):
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import SCOPE, VERSION
 
-    unclassified = set(record) - STEP_FIELD_ROLES.keys()
+    pair = record.get("schema") == "R1ControlledStepV2"
+    unclassified = set(record) - (set(STEP_FIELD_ROLES) | {"representation"} if pair else set(STEP_FIELD_ROLES))
     if unclassified:
         raise ValueError("unclassified controlled-step fields: " + ", ".join(sorted(unclassified)))
     certificate = record.get("certificate", {})
@@ -180,15 +188,20 @@ def verify_step_metadata(record, *, intervals, policy, polarity, same):
         raise ValueError("accepted rows must be a list")
     for index, row in enumerate(rows):
         _closed(row, ACCEPTED_ROW_FIELDS, "accepted row " + str(index))
+        if pair:
+            from .one_dimensional_mechanism_r1_pair_codec import validate_snapshot
+            validate_snapshot(row["state"])
     verify_failure_metadata(record, failed=certificate.get("certified") is False, rows=rows, same=same)
     expected = {
-        "schema": "R1ControlledStepV1", "scope": SCOPE, "version": VERSION,
+        "schema": "R1ControlledStepV2" if pair else "R1ControlledStepV1", "scope": SCOPE, "version": VERSION,
         "scope_note": SCOPE_NOTE,
         "execution_axes": {"intervals": int(intervals), "time_substeps": list(policy.refinement_substeps)},
         "junction_polarity": polarity, "current_sign_convention": CURRENT_SIGN_CONVENTION,
     }
     for name, value in expected.items():
         same(record.get(name), value, "result metadata " + name)
+    if pair:
+        same(record.get("representation"), "float64-pair-v1", "result representation")
     if "finite_step_averages" in record:
         same(record["finite_step_averages"].get("note"), AVERAGE_NOTE, "finite-step average meaning")
     if "charge_integral" in record:

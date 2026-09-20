@@ -133,7 +133,7 @@ def verify_output(output):
         or not (rejected or completion.get("stage_scope") == "R1-1" or (
             completion.get("stage_scope") == "R1-2-physics"
             and completion.get("run_class") == "formal"
-            and completion.get("evidence_revision") == 6) or (
+            and completion.get("evidence_revision") in (6, 7)) or (
             completion.get("stage_scope") == "R1-2-development"
             and completion.get("run_class") == "development"))
         or completion.get("stage") not in ("prepare", "zero-check", "step")
@@ -141,12 +141,23 @@ def verify_output(output):
         or (completion["status"] == "passed") != (completion.get("failure") is None)
     ):
         raise ValueError("invalid R1-1 completion record")
+    revision = completion.get("evidence_revision", 1)
+    representation = completion.get("representation", "float64-baseline")
+    if (revision == 7 and representation != "float64-pair-v1"
+            or revision <= 6 and representation != "float64-baseline"):
+        raise ValueError("completion representation/evidence revision mismatch")
     if completion["status"] == "passed":
         required = set(COMMON_ARTIFACTS)
+        if revision == 7:
+            required.add("PreparedStateV1.npz")
         if completion["stage"] == "zero-check":
             required.add("ZeroExcitationV1.json")
+            if revision == 7:
+                required.add("ZeroExcitationV1.npz")
         if completion["stage"] == "step":
             required.update(("StepResultV1.json", "AcceptedStepsV1.json"))
+            if revision == 7:
+                required.update(("StepResultV1.npz", "AcceptedStepsV1.npz"))
         if not required <= entries.keys():
             raise ValueError("passed completion lacks required R1-1 evidence")
         source = read_json(output / "SourceManifestV1.json")
@@ -160,7 +171,7 @@ def verify_output(output):
     return completion, len(entries)
 
 
-def _producer_evidence_revision(source_bytes):
+def _producer_evidence_revision(source_bytes, representation="float64-baseline"):
     """Read a producer's literal completion format without executing its code.
 
     This is read only after source ZIP/commit identity checks. It cannot be
@@ -172,6 +183,13 @@ def _producer_evidence_revision(source_bytes):
     except (SyntaxError, UnicodeDecodeError) as exc:
         raise ValueError("producer source cannot declare its evidence format") from exc
     revisions = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "R1_PRODUCER_FORMATS"
+                                               for target in node.targets):
+            formats = ast.literal_eval(node.value)
+            if representation not in formats:
+                raise ValueError("anchored producer does not support the requested representation")
+            return formats[representation]
     for node in ast.walk(tree):
         if isinstance(node, ast.Dict):
             entries = {key.value: value for key, value in zip(node.keys, node.values)
@@ -320,7 +338,8 @@ def _verify_controlled_evidence(output, completion, *, expected_source_commit=No
                         or hashlib.sha256(archive.read(name)).hexdigest() != identity.get("sha256")):
                     raise ValueError("source ZIP identity mismatch: " + name)
             producer_revision = (_producer_evidence_revision(committed_source[
-                "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py"])
+                "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py"],
+                completion.get("representation", "float64-baseline"))
                 if committed_source is not None else None)
             if producer_revision is not None and revision < producer_revision:
                 raise ValueError("bundle evidence revision downgrades its anchored producer format")
@@ -461,8 +480,15 @@ def _verify_prepared_record(output, execution, *, classify_current=True):
     prepared = read_json(output / "PreparedStateV1.json")
     if classify_current:
         verify_prepared_metadata(prepared)
-    if not isinstance(prepared, dict) or prepared.get("schema") != "R1CommonStateV1":
+    representation = read_json(output / "ProtocolV1.json").get("representation", "float64-baseline")
+    completion_representation = read_json(output / "CompletionV1.json").get("representation", "float64-baseline")
+    if representation != completion_representation or representation not in ("float64-baseline", "float64-pair-v1"):
+        raise ValueError("prepared consumer representation does not match completion")
+    expected_schema = "R1CommonStatePairV2" if representation == "float64-pair-v1" else "R1CommonStateV1"
+    if not isinstance(prepared, dict) or prepared.get("schema") != expected_schema:
         raise ValueError("invalid revision-four prepared-state record")
+    if prepared.get("representation", "float64-baseline") != representation:
+        raise ValueError("prepared representation differs from consuming protocol")
     payload = {key: value for key, value in prepared.items() if key != "sha256"}
     if hashlib.sha256(_canonical(payload).encode()).hexdigest() != prepared.get("sha256"):
         raise ValueError("prepared-state canonical payload digest mismatch")
@@ -518,7 +544,7 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
         from perovskite_sim.models.config_loader import load_device_from_yaml
 
         verify_prepared_physics(prepared, load_device_from_yaml(output / "SourceFixtureV1.yaml"),
-                                read_json(output / "ReferenceBindingV1.json"))
+                                read_json(output / "ReferenceBindingV1.json"), **({"backend": "pair"} if revision == 7 else {}))
     parent = output / "PreparationV1"
     if completion["stage"] == "prepare":
         if (protocol.get("preparation", "missing") is not None or parent.exists()
@@ -560,6 +586,8 @@ def _verify_preparation_chain(output, completion, execution, *, source_repositor
                 raise ValueError("imported policy artifact differs from the anchored parent: " + name)
     if revision >= 6 and _required_bytes(output / "PhysicsProtocolV1.md") != _required_bytes(parent / "PhysicsProtocolV1.md"):
         raise ValueError("imported physics protocol differs from anchored parent")
+    if revision == 7 and _required_bytes(output / "PreparedStateV1.npz") != _required_bytes(parent / "PreparedStateV1.npz"):
+        raise ValueError("imported pair arrays differ from anchored parent")
     if protocol.get("prepared_file_sha256") != sha256(output / "PreparedStateV1.json"):
         raise ValueError("protocol prepared-state file identity mismatch")
 
@@ -577,7 +605,7 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
     completion, count = verify_output(output)
     result_checks = None
     execution_parameters = None
-    if required_evidence_revision not in (1, 2, 3, 4, 5, 6):
+    if required_evidence_revision not in (1, 2, 3, 4, 5, 6, 7):
         raise ValueError("unsupported externally required evidence revision")
     if completion.get("stage_scope") == "R1-rejected":
         raise ValueError("physical execution did not start; required scientific inputs and trajectory unavailable")
@@ -600,7 +628,8 @@ def _verify_anchored_evidence(output, *, expected_manifest_sha256=None, ledger=N
     producer_revision = None
     if committed_source is not None:
         producer_revision = _producer_evidence_revision(committed_source.get(
-            "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py", b""))
+            "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py", b""),
+            completion.get("representation", "float64-baseline"))
         if producer_revision is not None and required_evidence_revision < producer_revision:
             raise ValueError("bundle evidence revision downgrades its anchored producer format")
     if required_evidence_revision < 4 and committed_source is not None:
@@ -711,11 +740,11 @@ def verify_acceptance(output, *, expected_manifest_sha256=None, ledger=None,
                       expected_source_commit=None, source_repository=None,
                       expected_prepared_manifest_sha256=None, approved_standard_sha256=None):
     """Current physical acceptance; historical contracts cannot lower this gate."""
-    if type(required_evidence_revision) is not int or required_evidence_revision != 6:
-        raise ValueError("current physical acceptance requires evidence revision 6; use inspect_legacy_evidence for historical inspection")
+    if type(required_evidence_revision) is not int or required_evidence_revision not in (6, 7):
+        raise ValueError("physical acceptance requires evidence revision 6 baseline or revision 7 pair")
     return _verify_anchored_evidence(output, expected_manifest_sha256=expected_manifest_sha256,
         ledger=ledger, ledger_sha256=ledger_sha256, run_id=run_id,
-        required_evidence_revision=6, expected_source_commit=expected_source_commit,
+        required_evidence_revision=required_evidence_revision, expected_source_commit=expected_source_commit,
         source_repository=source_repository,
         expected_prepared_manifest_sha256=expected_prepared_manifest_sha256,
         approved_standard_sha256=approved_standard_sha256)

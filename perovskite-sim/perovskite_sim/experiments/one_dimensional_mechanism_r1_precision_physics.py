@@ -21,7 +21,7 @@ from perovskite_sim.physics.compensated import DD
 from . import one_dimensional_mechanism_r1_independent_physics as finite
 
 
-_LEGACY_ROW = finite.independent_physics_row
+_LEGACY_ROW = finite._legacy_independent_physics_row
 SHARED_CONSTITUTIVE_DEPENDENCIES = (
     "one_dimensional_mechanism_r1_precision.carrier_currents_pair",
     "one_dimensional_mechanism_r1_precision.ion_flux_pair",

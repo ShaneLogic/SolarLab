@@ -21,6 +21,7 @@ import zipfile
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+R1_PRODUCER_FORMATS = {"float64-baseline": 6, "float64-pair-v1": 7}
 if not (sys.flags.isolated and sys.flags.no_site):
     sys.path.insert(0, str(PROJECT))
 from run_one_dimensional_mechanism_r1 import (
@@ -53,7 +54,7 @@ def manifest(output):
     write_json(output / "ManifestV1.json", entries)
 
 
-def _write_evidence(path, result):
+def _write_evidence(path, result, *, pair=False):
     """Atomically replace each evidence file, tagging nonfinite JSON values."""
     import dataclasses
     import numpy as np
@@ -93,7 +94,13 @@ def _write_evidence(path, result):
         elif isinstance(value, (list, tuple)):
             for index, child in enumerate(value):
                 collect(child, key + "." + str(index))
-    collect(result)
+    if pair:
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import numeric_arrays, state_sidecar_payload
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_protocol import nonfinite_numeric_paths
+        arrays = (numeric_arrays(result, allow_nonfinite=True) if nonfinite_numeric_paths(result)
+                  else numeric_arrays(state_sidecar_payload(result)))
+    else:
+        collect(result)
     text = json.dumps(tagged(result), indent=2, allow_nan=False) + "\n"
     temporary = []
     try:
@@ -102,7 +109,7 @@ def _write_evidence(path, result):
             json_temp = Path(stream.name)
             temporary.append(json_temp)
             stream.write(text)
-        if arrays:
+        if arrays or pair:
             with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent,
                                              prefix=".r1-arrays-", delete=False) as stream:
                 array_temp = Path(stream.name)
@@ -116,7 +123,8 @@ def _write_evidence(path, result):
 
 
 def _record_failure_result(output, result):
-    _write_evidence(Path(output) / "FailedResultV1.json", result)
+    _write_evidence(Path(output) / "FailedResultV1.json", result,
+                    pair=isinstance(result, dict) and result.get("representation") == "float64-pair-v1")
 
 
 def _record_execution_source(output):
@@ -130,7 +138,7 @@ def _record_execution_source(output):
     return context
 
 
-def _import_preparation(output, prepared_path, expected_manifest, context):
+def _import_preparation(output, prepared_path, expected_manifest, context, *, representation="float64-baseline"):
     """Snapshot and check a whole parent bundle before trusting its metadata."""
     parent = Path(prepared_path).resolve(strict=True).parent
     if Path(prepared_path).name != "PreparedStateV1.json":
@@ -155,7 +163,7 @@ def _import_preparation(output, prepared_path, expected_manifest, context):
     completion, _ = verify_acceptance(
         archived, expected_manifest_sha256=expected_manifest,
         expected_source_commit=context.source_commit, source_repository=context.root,
-        required_evidence_revision=6,
+        required_evidence_revision=R1_PRODUCER_FORMATS[representation],
     )
     if completion["stage"] != "prepare" or completion["status"] != "passed":
         raise ValueError("formal import requires a passed formal preparation bundle")
@@ -166,6 +174,8 @@ def _import_preparation(output, prepared_path, expected_manifest, context):
             raise ValueError("preparation and consuming inputs disagree: " + filename)
     raw = (archived / "PreparedStateV1.json").read_bytes()
     (output / "PreparedStateV1.json").write_bytes(raw)
+    if representation == "float64-pair-v1":
+        shutil.copyfile(archived / "PreparedStateV1.npz", output / "PreparedStateV1.npz")
     execution = read_json(archived / "ExecutionSourceV1.json")
     preparation = {
         "manifest_sha256": expected_manifest, "source_commit": execution["source_commit"],
@@ -199,6 +209,8 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--reference", type=Path)
     parser.add_argument("--prepared", type=Path)
+    parser.add_argument("--backend", choices=("legacy", "pair"), default="legacy",
+                        help="explicit numerical backend; pair uses production evidence revision 7")
     parser.add_argument("--prepared-manifest-sha256",
                         help="externally selected parent preparation manifest digest for formal import/verification")
     parser.add_argument("--control", choices=tuple("ABCD"))
@@ -208,8 +220,8 @@ def main(argv=None):
     parser.add_argument("--time-substeps", type=int, nargs=3, default=(1, 2, 4),
                         metavar=("COARSE", "MIDDLE", "FINE"),
                         help="independent step time setting: 1 2 4 through 16 32 64")
-    parser.add_argument("--window", choices=("functional", "full"), default="functional",
-                        help="step output grid: legacy short functional grid or section-6 full logarithmic grid")
+    parser.add_argument("--window", choices=("functional", "full", "diagnostic"), default="functional",
+                        help="functional, full logarithmic, or pair-only fixed [0, 1e-9] diagnostic grid")
     parser.add_argument("--first-time-s", type=float,
                         help="first positive full-grid time: 1e-9, 1e-10, 1e-11 or 1e-12 s")
     parser.add_argument("--last-time-s", type=float,
@@ -224,13 +236,16 @@ def main(argv=None):
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--ledger-sha256")
     parser.add_argument("--run-id")
-    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3, 4, 5, 6), default=6,
-                        help="current physical acceptance requires 6; use legacy-inspect for revisions 1-5")
+    parser.add_argument("--required-evidence-revision", type=int, choices=(1, 2, 3, 4, 5, 6, 7),
+                        help="defaults to 6 for legacy or 7 for the explicit pair backend")
     parser.add_argument("--physics-evidence", action="store_true",
                         help="save state-equation evidence in development runs; always enabled for controlled runs")
     parser.add_argument("--development", action="store_true",
                         help="explicit unverified development execution; not formal study evidence")
     args = parser.parse_args(argv)
+    args.representation = "float64-pair-v1" if args.backend == "pair" else "float64-baseline"
+    if args.required_evidence_revision is None:
+        args.required_evidence_revision = R1_PRODUCER_FORMATS[args.representation]
     if args.stage == "list":
         print(
             "prepare: shared dark zero-bias D equilibrium from a fixed R1-0 reference\n"
@@ -241,7 +256,8 @@ def main(argv=None):
             "R1-2 physics: --time-substeps selects an independent nested time setting;\n"
             "--intervals supports 16/32/64/128/256; --window full uses 0+ and 1e-9..1e2 s,\n"
             "12 intervals per decade; --first-time-s/--last-time-s select declared extensions.\n"
-            "Controlled runs save per-step state-equation evidence under revision 6.\n"
+            "--backend pair --window diagnostic fixes [0,1e-9] for the production short chain.\n"
+            "Controlled legacy/pair runs save per-step equations under revision 6/7.\n"
             "Each invocation runs one setting; three-axis convergence and full-window certification are not asserted."
         )
         return 0
@@ -310,9 +326,13 @@ def main(argv=None):
         or args.first_time_s is not None or args.last_time_s is not None
     ):
         parser.error("time-axis and observation-window options apply only to step")
-    if args.window == "functional" and (args.first_time_s is not None or args.last_time_s is not None):
+    if args.window != "full" and (args.first_time_s is not None or args.last_time_s is not None):
         parser.error("--first-time-s/--last-time-s require --window full")
     args.resolved_times_s = None
+    if args.window == "diagnostic":
+        if args.backend != "pair" or args.intervals != 16 or args.time_substeps != (1, 2, 4):
+            parser.error("diagnostic requires --backend pair, N16, and time substeps 1 2 4")
+        args.resolved_times_s = [0.0, 1e-9]
     if args.window == "full":
         try:
             args.resolved_times_s = observation_times(
@@ -387,10 +407,14 @@ def main(argv=None):
         binding = read_json(output / "ReferenceBindingV1.json")
         if args.prepared is not None and controlled:
             preparation, expected_prepared_sha256 = _import_preparation(
-                output, args.prepared, args.prepared_manifest_sha256, execution_context,
+                output, args.prepared, args.prepared_manifest_sha256, execution_context, representation=args.representation,
             )
         elif args.prepared is not None:
             shutil.copyfile(args.prepared, output / "PreparedStateV1.json")
+            if args.backend == "pair":
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import verify_numeric_sidecar
+                verify_numeric_sidecar(args.prepared.with_suffix(".npz"), read_json(args.prepared))
+                shutil.copyfile(args.prepared.with_suffix(".npz"), output / "PreparedStateV1.npz")
             if args.prepared_manifest_sha256 is not None:
                 raise ValueError("development import cannot claim an anchored formal preparation chain")
 
@@ -441,6 +465,7 @@ def main(argv=None):
                 "started_utc": datetime.now(timezone.utc).isoformat(),
                 "checkout": execution_context.to_dict() if execution_context is not None else None,
                 "run_class": "formal" if controlled else "development",
+                "representation": args.representation,
                 "independent_approval": "not_asserted_by_execution",
                 "controlled_runtime": execution_context.runtime if controlled else None,
             })
@@ -452,6 +477,7 @@ def main(argv=None):
                 "source_commit": execution_context.source_commit if execution_context is not None else None,
                 "source_content_sha256": execution_context.source_content_sha256 if execution_context is not None else None,
                 "run_class": "formal" if controlled else "development",
+                "representation": args.representation,
                 "preparation": preparation,
                 "intervals": args.intervals, "policy": policy,
                 "nonlinear_factor": args.nonlinear_factor,
@@ -487,25 +513,34 @@ def main(argv=None):
                 "claims_excluded": study["claims_excluded"],
             })
             computation_started = True
+            backend_args = {"backend": "pair"} if args.backend == "pair" else {}
             if args.stage == "prepare":
-                prepared = prepare_common_state(stack, args.intervals, binding, policy=policy)
-                write_json(output / "PreparedStateV1.json", prepared.to_dict())
+                prepared = prepare_common_state(stack, args.intervals, binding, policy=policy, **backend_args)
+                if args.backend == "pair":
+                    _write_evidence(output / "PreparedStateV1.json", prepared.to_dict(), pair=True)
+                else:
+                    write_json(output / "PreparedStateV1.json", prepared.to_dict())
             else:
-                prepared = R1PreparedState.from_dict(read_json(output / "PreparedStateV1.json"))
+                from perovskite_sim.experiments.one_dimensional_mechanism_r1_backend import get_backend
+                prepared = get_backend(args.backend).decode_prepared(read_json(output / "PreparedStateV1.json"))
                 if args.stage == "zero-check":
                     result = check_zero_excitation(
                         stack, args.intervals, binding, prepared,
                         controls=args.control or "ABCD", policy=policy,
                         expected_prepared_sha256=expected_prepared_sha256,
+                        **backend_args,
                     )
-                    write_json(output / "ZeroExcitationV1.json", result)
+                    if args.backend == "pair":
+                        _write_evidence(output / "ZeroExcitationV1.json", result, pair=True)
+                    else:
+                        write_json(output / "ZeroExcitationV1.json", result)
                 else:
-                    _write_evidence(output / "AcceptedStepsV1.json", accepted)
+                    _write_evidence(output / "AcceptedStepsV1.json", accepted, pair=args.backend == "pair")
 
                     def observe(record):
                         nonlocal persisted_count
                         accepted.append(record)
-                        _write_evidence(output / "AcceptedStepsV1.json", accepted)
+                        _write_evidence(output / "AcceptedStepsV1.json", accepted, pair=args.backend == "pair")
                         persisted_count = len(accepted)
 
                     result = run_r1_step(
@@ -514,8 +549,12 @@ def main(argv=None):
                         policy=policy, accepted_step_observer=observe,
                         expected_prepared_sha256=expected_prepared_sha256,
                         physics_evidence=controlled or args.physics_evidence,
+                        **backend_args,
                     )
-                    write_json(output / "StepResultV1.json", result)
+                    if args.backend == "pair":
+                        _write_evidence(output / "StepResultV1.json", result, pair=True)
+                    else:
+                        write_json(output / "StepResultV1.json", result)
                 if not result["certificate"]["certified"]:
                     error = RuntimeError(f"R1-1 certification failed: {result['certificate']['reasons']}")
                     error.result = result
@@ -552,7 +591,7 @@ def main(argv=None):
         "stage": args.stage, "status": "failed" if failure else "passed",
         "duration_s": time.monotonic() - started,
         "finished_utc": datetime.now(timezone.utc).isoformat(), "failure": failure,
-        "evidence_revision": 6,
+        "evidence_revision": R1_PRODUCER_FORMATS[args.representation], "representation": args.representation,
         "run_class": ("rejected_before_execution" if not computation_started else
                       execution_context.run_class if execution_context is not None else
                       "development" if args.development else "rejected_before_execution"),

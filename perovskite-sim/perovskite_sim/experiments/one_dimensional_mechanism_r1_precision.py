@@ -1,14 +1,15 @@
-"""Opt-in R1 V7 compensated-state trajectory prototype.
+"""R1 compensated arithmetic for the explicit production backend.
 
-No default solver, physical equation, acceptance limit or legacy reader is
-changed by importing this module.  The explicit context installs the bounded
-research implementation, including its state reconstruction consumers.
+Importing this module changes no default solver, equation, acceptance limit
+or reader. The historical precision_context remains a V7/V8 compatibility
+interface; V9 production execution calls the explicit helpers directly.
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 import copy
+import json
 import sys
 
 import numpy as np
@@ -205,6 +206,104 @@ class EliminatedDiagnostics(dict):
     def __init__(self, values, precision_evidence):
         super().__init__(values)
         self.precision_evidence = precision_evidence
+
+
+_INDEPENDENT_FIXED_FIELDS = ("dqfn_V", "dqfp_V", "positive_m3", "occupancy", "sheet_charge_C_m2")
+_INDEPENDENT_PREPARATION_FIELDS = (
+    "phi0_V", "log_n0", "log_p0", "contact_n_m3", "contact_p_m3", "thermal_voltage_V",
+    "poisson_capacitance_F_m2", "poisson_width_m", "N_D_m3", "N_A_m3", "ion_background_m3",
+    "interface_nodes", "sheet_weights", "boundary_phi_V",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class IndependentPoissonInputs:
+    """Immutable allowlisted inputs, without direct phi, n/p, flux or caches.
+
+Canonical JSON owns copies of the input words and coefficients. Unlike a
+frozen object containing NumPy arrays or DD objects, its data cannot change
+through an alias while an independent solve is in progress.
+"""
+    fixed_inputs_json: str
+    preparation_json: str
+    seed_phi_json: str
+    seed_provenance: str
+
+    def __post_init__(self):
+        if set(json.loads(self.fixed_inputs_json)) != set(_INDEPENDENT_FIXED_FIELDS):
+            raise ValueError("independent Poisson fixed-input field coverage mismatch")
+        if set(json.loads(self.preparation_json)) != set(_INDEPENDENT_PREPARATION_FIELDS):
+            raise ValueError("independent Poisson preparation field coverage mismatch")
+        if set(json.loads(self.seed_phi_json)) != {"hi", "lo"}:
+            raise ValueError("independent Poisson seed must retain both words")
+        if self.seed_provenance not in (
+                "independent_legacy_fixed_qf_evaluation",
+                "same_diagnostics_call_legacy_potential_eliminated_channel"):
+            raise ValueError("independent Poisson seed provenance is unavailable")
+
+    def to_dict(self):
+        return {"schema": "R1IndependentPoissonInputsV1",
+                "fixed_inputs": json.loads(self.fixed_inputs_json),
+                "preparation": json.loads(self.preparation_json),
+                "seed_phi_V": json.loads(self.seed_phi_json),
+                "seed_provenance": self.seed_provenance}
+
+
+def solve_independent_poisson(inputs):
+    """Solve fixed-QF Poisson solely from the immutable, isolated input DTO."""
+    from .one_dimensional_mechanism_r1_state import digest
+    if not isinstance(inputs, IndependentPoissonInputs):
+        raise TypeError("independent Poisson requires an isolated input bundle")
+    payload = inputs.to_dict()
+    f = {name: DD(value["hi"], value["lo"]) for name, value in payload["fixed_inputs"].items()}
+    a = payload["preparation"]
+    seed = payload["seed_phi_V"]
+    phi = put(DD(seed["hi"], seed["lo"]), [0, -1], a["boundary_phi_V"])
+    phi0, log_n0, log_p0 = DD(a["phi0_V"]), DD(a["log_n0"]), DD(a["log_p0"])
+    vt, c, widths = DD(a["thermal_voltage_V"]), DD(a["poisson_capacitance_F_m2"]), DD(a["poisson_width_m"])
+    donors, acceptors, background = DD(a["N_D_m3"]), DD(a["N_A_m3"]), DD(a["ion_background_m3"])
+    laplacian = sparse.diags((c.hi[1:-1], -(c.hi[:-1] + c.hi[1:]), c.hi[1:-1]),
+                            (-1, 0, 1), format="csr")
+
+    def populations(potential):
+        change = potential - phi0
+        n = (log_n0 + (f["dqfn_V"] + change) / vt).exp()
+        p = (log_p0 + (f["dqfp_V"] - change) / vt).exp()
+        return (put(n, [0, -1], a["contact_n_m3"]),
+                put(p, [0, -1], a["contact_p_m3"]))
+
+    def poisson(potential, n, p):
+        rho = _CHARGE * (p - n + donors - acceptors + f["positive_m3"] - background)
+        residual = diff(c * diff(potential)) + rho[1:-1] * widths
+        for k, (nodes, weights) in enumerate(zip(a["interface_nodes"], a["sheet_weights"])):
+            for node, weight in zip(nodes, weights):
+                residual = put(residual, node - 1, residual[node - 1] + DD(weight) * f["sheet_charge_C_m2"][k])
+        return residual
+
+    for iteration in range(1, 13):
+        n, p = populations(phi)
+        residual = poisson(phi, n, p)
+        jac = laplacian - sparse.diags(Q * (n.hi[1:-1] + p.hi[1:-1])
+                                       * widths.hi / a["thermal_voltage_V"])
+        delta = np.asarray(spsolve(jac.tocsr(), -residual.hi))
+        phi = put(phi, slice(1, -1), phi[1:-1] + DD(delta))
+        maximum = float(np.max(np.abs(delta), initial=0.))
+        if maximum < 1e-28:
+            n, p = populations(phi)
+            residual = poisson(phi, n, p)
+            solved = {"phi_V": phi, "n_m3": n, "p_m3": p,
+                      "poisson_residual_C_m2": residual}
+            return solved, {
+                "kind": "independent_fixed_qf_poisson", "iterations": iteration,
+                "last_correction_max_abs_V": maximum,
+                "poisson_residual_max_abs_C_m2": float(np.max(np.abs(residual.to_float()), initial=0.)),
+                "used_direct_phi": False, "converged": True,
+                "seed_provenance": inputs.seed_provenance, "seed_phi_V": seed,
+                "fixed_input_digest": digest(payload["fixed_inputs"]),
+                "solve_inputs_digest": digest(payload),
+                "solved_fields_digest": digest({key: pair_words(value) for key, value in solved.items()}),
+            }
+    raise RuntimeError("independent compensated Poisson did not converge in 12 corrections")
 
 
 class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
@@ -595,8 +694,13 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         # deliberately inherited absolute Gauss offset in the search target.
         return np.zeros(len(storage_scale)+len(poisson_scale)+len(local_scale))
 
-    def _independent_eliminated_state(self, state, voltage, *, seed_phi=None):
-        f = state.fine
+    def independent_poisson_inputs(self, fixed_inputs, voltage, *, seed_phi=None):
+        """Copy fixed inputs and preparation anchors into the isolated DTO."""
+        from .one_dimensional_mechanism_r1_state import canonical
+        from perovskite_sim.solver.mol import poisson_right_boundary
+        if set(fixed_inputs) != set(_INDEPENDENT_FIXED_FIELDS):
+            raise ValueError("independent input adapter rejects direct outputs")
+        f = fixed_inputs
         if seed_phi is None:
             old = self.system.evaluate_quasi_fermi_increments_defect_ion_combined(
                 f["dqfn_V"].hi, f["dqfp_V"].hi, 0.,
@@ -607,45 +711,35 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
             provenance = "independent_legacy_fixed_qf_evaluation"
         else:
             provenance = "same_diagnostics_call_legacy_potential_eliminated_channel"
-        phi = DD(seed_phi)
-        # These immutable local constants originate from physical inputs,
-        # not the direct evaluation's transient or material caches.
-        phi0 = DD(self.system.phi0)
-        log_n0, log_p0 = DD(self.system.log_n0), DD(self.system.log_p0)
-        vt = DD(self.thermal_voltage)
-        def populations(potential):
-            change = potential-phi0
-            n = (log_n0+(f["dqfn_V"]+change)/vt).exp()
-            p = (log_p0+(f["dqfp_V"]-change)/vt).exp()
-            return (put(n,[0,-1],self.reference_n[[0,-1]]),
-                    put(p,[0,-1],self.reference_p[[0,-1]]))
-        # This solves the charged, fixed-QF nonlinear Poisson problem anew.
-        # The immutable preparation, never the direct solution, anchors n/p.
-        for iteration in range(1,13):
-            n,p=populations(phi)
-            residual = self._poisson_pair(phi,n,p,f["positive_m3"],f["sheet_charge_C_m2"])
-            jac = self._poisson_laplacian[:,1:-1] - sparse.diags(
-                Q*(n.hi[1:-1]+p.hi[1:-1])*self.material.poisson_factor.h_cell/self.thermal_voltage)
-            delta = np.asarray(spsolve(jac.tocsr(), -residual.hi))
-            phi = put(phi, slice(1,-1), phi[1:-1]+DD(delta))
-            maximum = float(np.max(np.abs(delta), initial=0.))
-            if maximum < 1e-28:
-                # The reported populations/residual belong to the actual
-                # final potential, after its last applied correction.
-                n,p=populations(phi)
-                residual=self._poisson_pair(phi,n,p,f["positive_m3"],f["sheet_charge_C_m2"])
-                return {"phi_V": phi, "n_m3": n, "p_m3": p,
-                        "poisson_residual_C_m2": residual}, {
-                    "kind": "independent_fixed_qf_poisson", "iterations": iteration,
-                    "last_correction_max_abs_V": maximum,
-                    "poisson_residual_max_abs_C_m2": float(np.max(np.abs(residual.to_float()),initial=0.)),
-                    "used_direct_phi": False, "converged": True,
-                    "seed_provenance": provenance, "seed_phi_V": pair_words(DD(seed_phi)),
-                }
-        raise RuntimeError("independent compensated Poisson did not converge in 12 corrections")
+        preparation = {
+            "phi0_V": self.system.phi0, "log_n0": self.system.log_n0,
+            "log_p0": self.system.log_p0,
+            "contact_n_m3": self.reference_n[[0, -1]],
+            "contact_p_m3": self.reference_p[[0, -1]],
+            "thermal_voltage_V": self.thermal_voltage,
+            "poisson_capacitance_F_m2": self.material.poisson_factor.C,
+            "poisson_width_m": self.material.poisson_factor.h_cell,
+            "N_D_m3": self.material.N_D, "N_A_m3": self.material.N_A,
+            "ion_background_m3": self.material.P_ion0,
+            "interface_nodes": list(zip(self.left_nodes, self.right_nodes)),
+            "sheet_weights": [self._sheet_weights(k) for k in range(self.interface_count)],
+            "boundary_phi_V": [0., poisson_right_boundary(self.material, float(voltage))],
+        }
+        return IndependentPoissonInputs(
+            canonical({key: pair_words(value) for key, value in f.items()}),
+            canonical(preparation), canonical(pair_words(DD(seed_phi))), provenance)
+
+    def _independent_eliminated_state(self, inputs):
+        # Compatibility name, with the same isolated-input contract as the
+        # production pure function. No direct state is accepted here.
+        return solve_independent_poisson(inputs)
 
     def _independent_eliminated_phi(self, state, voltage):
-        fields,_ = self._independent_eliminated_state(state,voltage)
+        # Historical convenience wrapper; production diagnostics never passes
+        # the complete state to the independent constraint solver.
+        inputs = self.independent_poisson_inputs(
+            {key: state.fine[key] for key in _INDEPENDENT_FIXED_FIELDS}, voltage)
+        fields, _ = solve_independent_poisson(inputs)
         return fields["phi_V"]
 
     def _eliminated_flux_potential(self, phi):
@@ -656,8 +750,10 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         values = super().eliminated_operator_diagnostics(state, voltage)
         if not isinstance(state, PrecisionState):
             return values
-        eliminated, solve = self._independent_eliminated_state(
-            state,voltage,seed_phi=values["potential"]["eliminated"])
+        inputs = self.independent_poisson_inputs(
+            {key: state.fine[key] for key in _INDEPENDENT_FIXED_FIELDS},
+            voltage, seed_phi=values["potential"]["eliminated"])
+        eliminated, solve = solve_independent_poisson(inputs)
         constraint_phi = eliminated["phi_V"]
         phi = self._eliminated_flux_potential(constraint_phi)
         flux = (ion_flux_pair(phi,state.fine["positive_m3"],self.material,np.diff(self.grid),fault=self.precision_fault)
@@ -685,6 +781,17 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
             "positive_flux_m2_s": flux, "positive_rate_m3_s": rate,
             "boundary_flux_m2_s": boundary,
         }
+        from .one_dimensional_mechanism_r1_state import digest
+        ion_inputs = {
+            "phi_V": pair_words(phi), "positive_m3": pair_words(state.fine["positive_m3"]),
+            "boundary_flux_m2_s": pair_words(boundary),
+            "spacing_m": np.diff(self.grid).tolist(),
+            "D_ion_face_m2_s": self.material.D_ion_face.tolist(),
+            "P_lim_node_m3": self.material.P_lim_node.tolist(),
+            "thermal_voltage_V": float(self.material.V_T_device),
+            "nu_I": int(self.controls.nu_I), "fault": self.precision_fault,
+        }
+        solve["ion_input_digest"] = digest(ion_inputs)
         identity = fine_identity(state.fine)
         evidence = {
             "schema": "R1EliminatedPrecisionV1", "state_identity": identity,
@@ -698,6 +805,11 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
                                 "constraint_phi_V":"independent_poisson_solution_for_n_and_p"},
             "trace_state_scope": "not_claimed_as_an_independent_fine_trace_carrier_solve",
         }
+        if getattr(getattr(self, "_r1_backend", None), "is_pair", False):
+            evidence["schema"] = "R1EliminatedPrecisionV2"
+            evidence["shared_inputs"]["fields"] = inputs.to_dict()["fixed_inputs"]
+            evidence["solve_inputs"] = inputs.to_dict()
+            evidence["ion_inputs"] = ion_inputs
         return EliminatedDiagnostics(values,evidence)
 
 
@@ -766,6 +878,85 @@ def _precision_solve_step(original,system,coordinate,previous,voltage,dt,policy,
     raise AssertionError("unreachable precision-correction loop")
 
 
+def capture_initial_local_context(system, state, voltage):
+    """Record actual local-solve inputs before rebasing the initial state."""
+    context = system.precision_arithmetic_context()
+    context["trace_state_arithmetic"] = {
+        "kind": "recorded_log_update",
+        "reference_m3": pair_words(system._fine_reference["trace_state_m3"]),
+        "log_increment": np.asarray([state.coordinate[system._local_block_slice(k)][2:]
+                                      for k in range(system.interface_count)]).tolist(),
+        "inputs_derived_from_final_state": False,
+        "scope": "actual_reference_and_coordinate_before_evaluation",
+    }
+    context["actual_update"] = {
+        "reference_fields": {k: pair_words(system._fine_reference[k]) for k in REFERENCE_FIELDS},
+        "coordinate": state.coordinate.tolist(),
+        "voltage_lift_V": pair_words(system._fine_lift),
+        "trace_voltage_lift_V": pair_words(system._fine_trace_lift),
+        "contact_boundary_inputs": {
+            "voltage_V": float(voltage),
+            "built_in_voltage_V": float(system.material.V_bi_bc),
+            "junction_polarity": int(system.material.junction_polarity),
+        },
+        "contact_evaluation": {
+            "source": "original_binary64_coordinates_before_fine_endpoint_insertion",
+            "inputs_derived_from_final_state": False,
+            **{k: v.tolist() for k, v in system._precision_contact_evaluation.items()},
+        },
+        "coordinate_indices": {
+            "potential": list(range(*system.potential_slice.indices(system.dimension))),
+            "electron": list(range(*system.electron_slice.indices(system.dimension))),
+            "hole": list(range(*system.hole_slice.indices(system.dimension))),
+            "trap": list(range(*system.trap_slice.indices(system.dimension))),
+            "positive": list(range(*system.positive_slice.indices(system.dimension))),
+            "local": [list(range(*system._local_block_slice(k).indices(system.dimension)))
+                      for k in range(system.interface_count)],
+        },
+        "qf_rule": "qn=reference_qn+VT*z_e-lift; qp=reference_qp+VT*z_h+lift",
+        "potential_rule": "phi=reference_phi+VT*z_phi+lift; endpoints=original_contact_rule",
+        "fine_state_identity": fine_identity(state.fine),
+    }
+    system._precision_zero_plus_context = context
+
+
+def finalize_initial_precision(system, before, result, *, snapshot):
+    context = system.precision_arithmetic_context()
+    context["zero_minus_fine"] = {k: pair_words(v) for k, v in before.fine.items()}
+    context["zero_minus_state"] = snapshot(system, before)
+    context["zero_plus_state"] = snapshot(result.system, result.zero_plus)
+    context["zero_minus_state_identity"] = fine_identity(before.fine)
+    context["zero_plus_state_identity"] = fine_identity(result.zero_plus.fine)
+    context["zero_plus_context"] = result.system._precision_zero_plus_context
+    return replace(result, event={**result.event, "precision_arithmetic_context": context})
+
+
+def independent_currents_pair(system, state):
+    from .one_dimensional_mechanism_r1_independent_physics import _interface_balance
+    locals_new = []
+    for k, item in enumerate(state.local):
+        balance = _interface_balance(system, state, k)
+        locals_new.append(replace(item, tangent=replace(item.tangent, balance=balance)))
+    _, _, electron, hole = carrier_currents_pair(system, state.fine, locals_new)
+    ion = (ion_flux_pair(state.fine["phi_V"], state.fine["positive_m3"], system.material,
+                         np.diff(system.grid)) if system.controls.nu_I
+           else DD(np.zeros(system.node_count - 1)))
+    interface = np.empty((system.interface_count, 2))
+    for k, face in enumerate(system.interface_faces):
+        flux = locals_new[k].tangent.balance.bulk_flux_m2_s
+        interface[k] = Q * np.array([-flux[0] + flux[1], flux[2] - flux[3]]) + Q * ion.hi[face]
+    return electron.hi.copy(), hole.hi.copy(), ion.hi.copy(), interface
+
+
+def independent_increments_pair(system, state, previous):
+    f, p = state.fine, previous.fine
+    rho = DD(Q) * ((f["p_m3"] - p["p_m3"]) - (f["n_m3"] - p["n_m3"])
+                   + (f["positive_m3"] - p["positive_m3"]))
+    occupied = DD(system.trap_density) * (f["occupancy"] - p["occupancy"])
+    return tuple(v.hi.copy() for v in (rho, occupied, f["phi_V"] - p["phi_V"],
+                                       f["trace_potential_V"] - p["trace_potential_V"]))
+
+
 @contextmanager
 def precision_context(mode="compensated"):
     global _ACTIVE
@@ -810,81 +1001,19 @@ def precision_context(mode="compensated"):
     def local_solve(system,*args,**kwargs):
         result=original_local_solve(system,*args,**kwargs)
         if isinstance(system,CompensatedR1System):
-            state=result[0]
-            context=system.precision_arithmetic_context()
-            context["trace_state_arithmetic"]={
-                "kind":"recorded_log_update",
-                "reference_m3":pair_words(system._fine_reference["trace_state_m3"]),
-                "log_increment":np.asarray([state.coordinate[system._local_block_slice(k)][2:]
-                                             for k in range(system.interface_count)]).tolist(),
-                "inputs_derived_from_final_state":False,
-                "scope":"actual_reference_and_coordinate_before_evaluation",
-            }
-            context["actual_update"]={
-                "reference_fields":{k:pair_words(system._fine_reference[k]) for k in REFERENCE_FIELDS},
-                "coordinate":state.coordinate.tolist(),
-                "voltage_lift_V":pair_words(system._fine_lift),
-                "trace_voltage_lift_V":pair_words(system._fine_trace_lift),
-                "contact_boundary_inputs":{
-                    "voltage_V":float(args[0] if args else kwargs["voltage"]),
-                    "built_in_voltage_V":float(system.material.V_bi_bc),
-                    "junction_polarity":int(system.material.junction_polarity),
-                },
-                "contact_evaluation":{
-                    "source":"original_binary64_coordinates_before_fine_endpoint_insertion",
-                    "inputs_derived_from_final_state":False,
-                    **{k:v.tolist() for k,v in system._precision_contact_evaluation.items()},
-                },
-                "coordinate_indices":{
-                    "potential":list(range(*system.potential_slice.indices(system.dimension))),
-                    "electron":list(range(*system.electron_slice.indices(system.dimension))),
-                    "hole":list(range(*system.hole_slice.indices(system.dimension))),
-                    "trap":list(range(*system.trap_slice.indices(system.dimension))),
-                    "positive":list(range(*system.positive_slice.indices(system.dimension))),
-                    "local":[list(range(*system._local_block_slice(k).indices(system.dimension)))
-                             for k in range(system.interface_count)],
-                },
-                "qf_rule":"qn=reference_qn+VT*z_e-lift; qp=reference_qp+VT*z_h+lift",
-                "potential_rule":"phi=reference_phi+VT*z_phi+lift; endpoints=original_contact_rule",
-                "fine_state_identity":fine_identity(state.fine),
-            }
-            system._precision_zero_plus_context=context
+            capture_initial_local_context(system,result[0],args[0] if args else kwargs["voltage"])
         return result
     def build_initial(system,before,*args,**kwargs):
         result=original_initial(system,before,*args,**kwargs)
         if not isinstance(system,CompensatedR1System):
             return result
-        context=system.precision_arithmetic_context()
-        context["zero_minus_fine"]={k:pair_words(v) for k,v in before.fine.items()}
-        context["zero_minus_state"]=snapshot(system,before)
-        context["zero_plus_state"]=snapshot(result.system,result.zero_plus)
-        context["zero_minus_state_identity"]=fine_identity(before.fine)
-        context["zero_plus_state_identity"]=fine_identity(result.zero_plus.fine)
-        context["zero_plus_context"]=result.system._precision_zero_plus_context
-        return replace(result,event={**result.event,"precision_arithmetic_context":context})
+        return finalize_initial_precision(system,before,result,snapshot=snapshot)
     def independent_currents(system,state):
         if not isinstance(state,PrecisionState):return original_currents(system,state)
-        # Rebuild the interface constitutive state rather than reading saved
-        # current/rate arrays. Shared fine bulk laws are declared in scope.
-        locals_new=[]
-        for k,item in enumerate(state.local):
-            balance=independent._interface_balance(system,state,k)
-            tangent=replace(item.tangent,balance=balance)
-            locals_new.append(replace(item,tangent=tangent))
-        _,_,electron,hole=carrier_currents_pair(system,state.fine,locals_new)
-        ion=(ion_flux_pair(state.fine["phi_V"],state.fine["positive_m3"],system.material,np.diff(system.grid))
-             if system.controls.nu_I else DD(np.zeros(system.node_count-1)))
-        interface=np.empty((system.interface_count,2))
-        for k,face in enumerate(system.interface_faces):
-            flux=locals_new[k].tangent.balance.bulk_flux_m2_s
-            interface[k]=Q*np.array([-flux[0]+flux[1],flux[2]-flux[3]])+Q*ion.hi[face]
-        return electron.hi.copy(),hole.hi.copy(),ion.hi.copy(),interface
+        return independent_currents_pair(system,state)
     def independent_increments(system,state,previous):
         if not isinstance(state,PrecisionState):return original_increments(system,state,previous)
-        f,p=state.fine,previous.fine
-        rho=DD(Q)*((f["p_m3"]-p["p_m3"])-(f["n_m3"]-p["n_m3"])+(f["positive_m3"]-p["positive_m3"]))
-        occupied=DD(system.trap_density)*(f["occupancy"]-p["occupancy"])
-        return tuple(v.hi.copy() for v in (rho,occupied,f["phi_V"]-p["phi_V"],f["trace_potential_V"]-p["trace_potential_V"]))
+        return independent_increments_pair(system,state,previous)
     for module in list(sys.modules.values()):
         if module is None or not getattr(module,"__name__","").startswith("perovskite_sim.experiments"):
             continue

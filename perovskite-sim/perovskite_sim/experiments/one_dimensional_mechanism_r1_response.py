@@ -129,6 +129,25 @@ def descriptor_frequency_response(frequency_Hz, *, storage, rate, forcing,
     }
 
 
+def _require_legacy_response(*, backend=None, prepared=None, system=None, state=None):
+    """Fail before a response consumer can discard a compensated low word.
+
+    V9 migrates the transient production chain. DC inventory constraints and
+    finite-difference frequency observations have a separate numerical contract
+    and are not qualified for pair states by that migration.
+    """
+    from .one_dimensional_mechanism_r1_backend import get_backend, backend_for
+    selected = backend_for(system, backend) if system is not None else get_backend(backend)
+    common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
+    pair_record = isinstance(common, Mapping) and (
+        str(common.get("schema", "")).startswith("R1CommonStatePair")
+        or common.get("representation") == "float64-pair-v1"
+        or common.get("representation_id") == "float64-pair-v1")
+    if selected.is_pair or pair_record or hasattr(state, "fine"):
+        raise ValueError("pair DC/frequency response consumers are not migrated or qualified in V9")
+    return selected
+
+
 def physical_observations(system, state):
     """Separate n/p/ion currents and D at contacts, bulk, both interface sides.
 
@@ -136,6 +155,7 @@ def physical_observations(system, state):
     are blocking. Reservoir carrier densities are pinned, hence no omitted
     endpoint carrier storage is introduced by their recombination correction.
     """
+    _require_legacy_response(system=system, state=state)
     mat, w = system.material, system.widths
     rho, _ = system.system._bulk_space_charge_and_tangent(
         state.n, state.p, positive_ion_density_m3=state.positive,
@@ -249,13 +269,14 @@ def _dc_metrics(system, state, initial, policy):
 
 
 def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
-                        voltage_V=0., policy=None, expected_prepared_sha256=None):
+                        voltage_V=0., policy=None, expected_prepared_sha256=None, backend=None):
     """Bounded direct DC on the controlled transient equations and inventory.
 
     Freeze means retain the common prepared population, including its charge.
     This function never calls a full-D biased solver for A-C. A converged
     nonlinear solve is distinct from numerical accuracy of a tiny DC current.
     """
+    _require_legacy_response(backend=backend, prepared=prepared)
     from .one_dimensional_mechanism_r1_qualification_workflow import require_collection_phase
     require_collection_phase("solve_controlled_dc")
     voltage = _finite_scalar(voltage_V, "voltage_V")
@@ -327,13 +348,14 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
     return result
 
 
-def restore_controlled_dc(record, stack, intervals, binding, prepared, *, policy=None):
+def restore_controlled_dc(record, stack, intervals, binding, prepared, *, policy=None, backend=None):
     """Restore a previously verified DC coordinate without a new root solve.
 
     The enclosing caller must bind the original artifact and its verification
     receipt. Reevaluate saved physical contents here; iteration history remains
     provenance of that original solve, not a second computation.
     """
+    _require_legacy_response(backend=backend, prepared=prepared)
     common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
     if (record.get("schema") != "R1ControlledDCResponseV1"
             or record.get("prepared_sha256") != common["sha256"]
@@ -363,8 +385,9 @@ def restore_controlled_dc(record, stack, intervals, binding, prepared, *, policy
 
 
 def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", policy=None,
-                         expected_prepared_sha256=None):
+                         expected_prepared_sha256=None, backend=None):
     """Independent +/-0.1,0.05,0.025 mV steady states, without tail fitting."""
+    _require_legacy_response(backend=backend, prepared=prepared)
     widths = np.array([1e-4, 5e-5, 2.5e-5])
     pairs, conductance, error_indicators = [], [], []
     baseline = solve_controlled_dc(stack, intervals, binding, prepared, control=control, policy=policy,
@@ -398,12 +421,13 @@ def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", po
 
 
 def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control="D", policy=None,
-                                 expected_prepared_sha256=None, amplitudes_V=AMPLITUDES_V):
+                                 expected_prepared_sha256=None, amplitudes_V=AMPLITUDES_V, backend=None):
     """Measure the seven declared DC endpoints without certifying linearity.
 
     Differences of j(a)/a are endpoint diagnostics. An independent current
     uncertainty budget and the full transient are absent from this study.
     """
+    _require_legacy_response(backend=backend, prepared=prepared)
     amplitudes = tuple(_finite_scalar(value, "amplitude_V") for value in amplitudes_V)
     if amplitudes != AMPLITUDES_V:
         raise ValueError("DC endpoints require the complete declared amplitude ladder")
@@ -649,6 +673,7 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
     """
     if not isinstance(dc, R1DCResponse) or not dc.evidence.get("certified"):
         raise ValueError("small signal requires a certified controlled DC result")
+    _require_legacy_response(system=dc.system, state=dc.state)
     frequency = _frequencies(frequency_Hz)
     steps = tuple(_finite_scalar(h, "derivative step") for h in derivative_steps)
     if steps != (1e-5, 5e-6, 2.5e-6):
@@ -818,7 +843,7 @@ def _same_response_content(actual, expected, path="response"):
             raise ValueError("response content mismatch: " + path)
 
 
-def verify_response_content(record, *, stack, intervals, binding, prepared, request, policy=None):
+def verify_response_content(record, *, stack, intervals, binding, prepared, request, policy=None, backend=None):
     """Rebuild a requested DC/AC result from separately verified source inputs.
 
     The caller must validate source/preparation provenance before this call.
@@ -826,6 +851,7 @@ def verify_response_content(record, *, stack, intervals, binding, prepared, requ
     compared, not only a certificate. No timestamp or execution metadata is
     part of these response schemas. Replay requires the frozen runtime.
     """
+    _require_legacy_response(backend=backend, prepared=prepared)
     if request.get("intervals") != intervals or request.get("control") not in ("A", "B", "C", "D"):
         raise ValueError("response request intervals/control identity differs")
     common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
@@ -894,6 +920,9 @@ def compare_transient_tail(dc: R1DCResponse, *, initial_state, tail_state,
     """
     if not dc.evidence.get("certified"):
         raise ValueError("tail comparison requires certified same-model DC")
+    _require_legacy_response(system=dc.system, state=dc.state)
+    if any(str(key).startswith("precision_") for row in (initial_state, tail_state) for key in row):
+        raise ValueError("pair transient/DC tail comparison is not migrated or qualified in V9")
     for key in ("prepared_sha256", "control", "voltage_V"):
         if tail_state.get(key) != dc.evidence[key]:
             raise ValueError(f"tail/DC identity mismatch: {key}")

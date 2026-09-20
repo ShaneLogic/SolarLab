@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
+from time import perf_counter
 
 import numpy as np
 
@@ -17,7 +18,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1 import physical_ste
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls, CURRENT_METRIC_SEMANTICS
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_independent_physics import independent_physics_row
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
-    R1PreparedState, _make_system, _preparation_policy, canonical, json_data,
+    R1PreparedState, _make_system, _preparation_policy, canonical, digest, json_data,
     snapshot, verify_prepared_physics,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import (
@@ -72,8 +73,10 @@ def reconstruction_context(system, state, prepared_sha256, reference_sha256):
 
 
 def capture_r1_physics_row(scaling_system, working, state, previous, voltage, dt,
-                           policy, *, check_jacobian=False):
+                           policy, *, check_jacobian=False, backend=None):
     """Record enough equation detail to audit an accepted state independently."""
+    from .one_dimensional_mechanism_r1_backend import backend_for
+    numerical = backend_for(working, backend)
     local_carrier, local_gauss = scaling_system.local_normalized_residuals(state)
     details = scaling_system.eliminated_operator_diagnostics(state, voltage)
     result = {
@@ -142,7 +145,8 @@ def capture_r1_physics_row(scaling_system, working, state, previous, voltage, dt
                 poisson_scale, local_scale, jacobian, policy.jacobian_check_step,
             )
     result["independent_physics"] = independent_physics_row(
-        working, state, previous, dt, reported=result)
+        working, state, previous, dt, reported=result,
+        **({"backend": numerical} if backend is not None or numerical.is_pair else {}))
     return json_data(result)
 
 
@@ -192,7 +196,8 @@ def _level(states, observations, initial):
 
 
 def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
-                           expected_prepared_sha256=None, allow_incomplete=False):
+                           expected_prepared_sha256=None, allow_incomplete=False,
+                           backend=None, row_observer=None):
     """Re-evaluate a bounded complete trajectory or a saved failed prefix.
 
     The caller must separately anchor source and policy. Legacy rows without
@@ -206,9 +211,15 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import (
         RESULT_ARRAY_FIELDS, verify_step_metadata,
     )
+    from .one_dimensional_mechanism_r1_backend import get_backend
+    numerical = get_backend(backend)
+    backend_args = {} if backend is None else {"backend": numerical}
     if not allow_incomplete and nonfinite_numeric_paths(record):
         raise R1PhysicsValidationError("nonfinite numeric evidence in controlled result")
-    prepared = prepared if isinstance(prepared, R1PreparedState) else R1PreparedState.from_dict(prepared)
+    prepared = (numerical.decode_prepared(prepared) if backend is not None else
+                prepared if isinstance(prepared, R1PreparedState) else R1PreparedState.from_dict(prepared))
+    if numerical.is_pair != (record.get("schema") == "R1ControlledStepV2"):
+        raise R1PhysicsValidationError("controlled result and selected numerical backend disagree")
     _same(record.get("prepared_sha256"), prepared.sha256, "preparation identity")
     if expected_prepared_sha256 is not None:
         _same(prepared.sha256, expected_prepared_sha256, "external preparation identity")
@@ -217,13 +228,11 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     policy = _preparation_policy(record["policy"])
     controls = R1DynamicsControls.from_label(record["control_label"])
     _same(record["controls"], json_data(controls), "rate controls")
-    base, before_D = verify_prepared_physics(prepared, stack, binding, policy=policy)
+    base, before_D = verify_prepared_physics(prepared, stack, binding, policy=policy, **backend_args)
     if controls == R1DynamicsControls():
         system, before = base, before_D
     else:
-        system = _make_system(stack, base.grid, base.material, base.common_dc_state,
-                              binding, controls, policy)
-        before = system.evaluate(system.initial_coordinate(), 0.0)
+        system, before = numerical.controlled(base, before_D, stack, binding, controls, policy)
         for name in ("n", "p", "positive", "occupancy", "phi", "sheet_charge"):
             _same(getattr(before, name), getattr(before_D, name), "initial control population " + name)
     verify_step_metadata(record, intervals=intervals, policy=policy, polarity=system.polarity, same=_same)
@@ -235,7 +244,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
             or times[1] < 1e-12):
         raise R1PhysicsValidationError("invalid physical reconstruction voltage/time domain")
     _same(record["voltage_V"], np.full(times.size, amplitude), "constant step voltage")
-    initial = build_initial_step(system, before, amplitude, policy=policy)
+    initial = build_initial_step(system, before, amplitude, policy=policy, **backend_args)
     _same(record.get("initial_event"), initial.event, "initial charging and right-limit current")
     _same(record.get("physics_reconstruction"), reconstruction_context(
         initial.system, initial.zero_plus, prepared.sha256, binding["sha256"]), "initial reconstruction references")
@@ -251,6 +260,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     available_levels = {}
     consumed = 0
     all_recomputed_rows = []
+    row_bindings = []
     any_physical_failure = False
     independent_physics_passed = True
     limit_violations = []
@@ -265,6 +275,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         for local_index, (time, dt, is_output) in enumerate(schedule):
             if consumed == len(rows):
                 break
+            row_started = perf_counter() if row_observer is not None else None
             row = rows[consumed]
             _same(row["substeps"], int(count), "nested level")
             _same(row["time_s"], time, "accepted time")
@@ -289,7 +300,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
                 state = working.evaluate(coordinate, amplitude)
             _same(row["state"], snapshot(working, state), f"accepted state {consumed}")
             diagnostic = capture_r1_physics_row(initial.system, working, state, local_previous,
-                amplitude, dt, policy, check_jacobian=local_index == 1)
+                amplitude, dt, policy, check_jacobian=local_index == 1, **backend_args)
             independent = diagnostic["independent_physics"]
             independent_physics_passed &= independent["passed"]
             if not independent["passed"]:
@@ -345,6 +356,24 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
                                   "relative_error", "floor_active", "unit")}
                                   for name, detail in diagnostic["eliminated_operator"].items()}})
             all_recomputed_rows.append(recomputed)
+            if numerical.is_pair:
+                # The diagnostic and state above are from this replay, never
+                # copied out of the serialized eliminated records.
+                from .one_dimensional_mechanism_r1_precision import fine_identity
+                eliminated = diagnostic["eliminated_precision"]
+                solved = eliminated["solve"]
+                row_bindings.append({
+                    "row_index": consumed, "substeps": int(count), "time_s": float(time),
+                    "direct_primary_digest": fine_identity(state.fine),
+                    "fixed_input_digest": solved["fixed_input_digest"],
+                    "solve_inputs_digest": solved["solve_inputs_digest"],
+                    "solved_fields_digest": solved["solved_fields_digest"],
+                    "ion_input_digest": solved["ion_input_digest"],
+                    "record_digest": digest(eliminated),
+                })
+            if row_observer is not None:
+                row_observer({"row_index": consumed, "substeps": int(count),
+                              "time_s": float(time), "elapsed_s": perf_counter() - row_started})
             previous, consumed = state, consumed + 1
         if observations:
             integrals[count] = integrated
@@ -394,9 +423,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     if final is None and any(name in record for name in sampled_fields):
         raise R1PhysicsValidationError("result samples have no reconstructed finest-level prefix")
     if final is not None:
-        output_states = {name: np.asarray([getattr(s, attribute) for s in final.states])
-            for name, attribute in (("n_m3", "n"), ("p_m3", "p"), ("positive_m3", "positive"),
-                                    ("occupancy", "occupancy"), ("phi_V", "phi"), ("sheet_charge_C_m2", "sheet_charge"))}
+        output_states = numerical.output_states(initial.system, final.states)
         if "output_states" in record:
             _same(record["output_states"], output_states, "output state samples")
         if "regular_currents" in record:
@@ -447,7 +474,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         limits_satisfied = limits_satisfied and certificate["certified"]
     successful = bool(has_complete_result and certificate is not None and certificate["certified"]
                       and limits_satisfied and "failure" not in record)
-    return {
+    report = {
         "schema": SCHEMA, "scope": SCOPE, "certified": successful,
         "evidence_matches_equations": True, "content_matches_recomputed": True,
         "physical_limits_satisfied": bool(limits_satisfied),
@@ -464,3 +491,19 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         "provenance_only": reconstruction_context(initial.system, initial.zero_plus,
                              prepared.sha256, binding["sha256"])["provenance_only"],
     }
+    if numerical.is_pair:
+        from .one_dimensional_mechanism_r1_replay_receipt import (
+            R1PhysicsReplayReport, _issue_replay_receipt,
+        )
+        ledger = {
+            "schema": "R1ActualPhysicsReplayLedgerV1", "representation": numerical.representation_id,
+            "source_digest": digest(record["source"]), "prepared_sha256": prepared.sha256,
+            "result_sha256": record.get("sha256"), "saved_rows_digest": digest(rows),
+            "actual_recomputed_rows_digest": digest(all_recomputed_rows),
+            "row_bindings_digest": digest(row_bindings), "row_bindings": row_bindings,
+            "checked_row_count": consumed, "complete": complete,
+            "scope": "actual_replayed_fixed_qf_poisson_and_ion_inputs_not_independence_of_shared_constitutive_laws",
+        }
+        report["actual_recomputed_evidence"] = ledger
+        return R1PhysicsReplayReport(report, _issue_replay_receipt(ledger))
+    return report

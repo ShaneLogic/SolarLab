@@ -392,8 +392,10 @@ def regular_current_at_state(system, state, *, policy, require_relative_closure=
     )
 
 
-def build_initial_step(system, zero_minus_state, voltage_after: float, *, policy) -> InitialStepResult:
+def build_initial_step(system, zero_minus_state, voltage_after: float, *, policy, backend=None) -> InitialStepResult:
     """Apply the ideal voltage step without evolving any dynamic population."""
+    from .one_dimensional_mechanism_r1_backend import backend_for
+    numerical = backend_for(system, backend)
     voltage_after = float(voltage_after)
     if not np.isfinite(voltage_after):
         raise ValueError("R1-1 step voltage must be finite")
@@ -405,6 +407,7 @@ def build_initial_step(system, zero_minus_state, voltage_after: float, *, policy
     working.set_voltage_lift(voltage_after, local_before)
     coordinate, correction = _fixed_population_electrostatic_correction(working, voltage_after)
     zero_plus, iterations, norm = _solve_local_carriers(working, voltage_after, policy, coordinate)
+    numerical.initial_local_solved(working, zero_plus, voltage_after)
     for field in ("n", "p", "positive", "negative", "occupancy", "sheet_charge"):
         old, new = getattr(before, field), getattr(zero_plus, field)
         if (old is None) != (new is None) or (old is not None and not np.array_equal(old, new)):
@@ -450,4 +453,5 @@ def build_initial_step(system, zero_minus_state, voltage_after: float, *, policy
         "algebraic_certificate": algebraic, "regular_current": current.evidence,
         "certified": True,
     }
-    return InitialStepResult(integration_system, integration_state, current.metrics, event)
+    return numerical.finalize_initial(system, before,
+        InitialStepResult(integration_system, integration_state, current.metrics, event))

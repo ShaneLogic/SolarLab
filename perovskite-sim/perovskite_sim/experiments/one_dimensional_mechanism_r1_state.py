@@ -160,7 +160,12 @@ class R1PreparedState:
         return self.to_dict()["sha256"]
 
 
-def snapshot(system, state):
+def snapshot(system, state, *, backend=None):
+    from .one_dimensional_mechanism_r1_backend import backend_for
+    return backend_for(system, backend).snapshot(system, state)
+
+
+def _snapshot_legacy(system, state):
     return json_data({
         "n_m3": state.n, "p_m3": state.p, "positive_m3": state.positive,
         "occupancy": state.occupancy, "phi_V": state.phi,
@@ -398,8 +403,12 @@ def physical_preparation_identity(prepared):
             "fields": list(fields), "scope": "physical_content_not_execution_or_approval_identity"}
 
 
-def prepare_common_state(stack, intervals, binding, *, policy=None):
+def prepare_common_state(stack, intervals, binding, *, policy=None, backend=None):
     """Prepare D once. A-D import copies of this state without another DC solve."""
+    from .one_dimensional_mechanism_r1_backend import get_backend
+    numerical = get_backend(backend)
+    if numerical.is_pair:
+        return numerical.prepare(stack, intervals, binding, policy=policy)
     from .one_dimensional_mechanism_r1_qualification_workflow import require_collection_phase
     require_collection_phase("prepare_common_state")
     policy = policy or InterfaceDefectIonTransientPolicy(maximum_ion_inventory_relative_drift=1e-10)
@@ -440,10 +449,14 @@ def prepare_common_state(stack, intervals, binding, *, policy=None):
 
 
 def restore_common_state(prepared, stack, intervals, binding, *, controls=None, policy=None,
-                         expected_prepared_sha256=None):
+                         expected_prepared_sha256=None, backend=None):
     """Verify identities and live residuals, then copy the same populations."""
-    if not isinstance(prepared, R1PreparedState):
-        prepared = R1PreparedState.from_dict(prepared)
+    from .one_dimensional_mechanism_r1_backend import get_backend
+    numerical = get_backend(backend)
+    # Historical precision_context installs its own pair decoder. Explicit
+    # production pair routes always use the selected backend decoder.
+    if backend is not None or not isinstance(prepared, R1PreparedState):
+        prepared = numerical.decode_prepared(prepared)
     record = prepared.to_dict()
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import current_execution_context
 
@@ -464,24 +477,28 @@ def restore_common_state(prepared, stack, intervals, binding, *, controls=None, 
         raise R1StateError("common-state identity mismatch: intervals")
     if record.get("source") != execution_source():
         raise R1StateError("common-state identity mismatch: source")
-    baseline, initial = verify_prepared_physics(prepared, stack, binding, policy=policy)
+    baseline, initial = verify_prepared_physics(prepared, stack, binding, policy=policy,
+                                               **({"backend": numerical} if backend is not None else {}))
     controls = controls or R1DynamicsControls()
     if controls == R1DynamicsControls():
         return baseline, initial
     policy = policy or _preparation_policy(record["preparation_policy"])
-    system = _make_system(stack, baseline.grid, baseline.material, baseline.common_dc_state,
-                          binding, controls, policy)
-    controlled = system.evaluate(system.initial_coordinate(), 0.0)
+    system, controlled = numerical.controlled(baseline, initial, stack, binding, controls, policy)
     for name in ("n", "p", "positive", "occupancy", "phi", "sheet_charge"):
         if not np.array_equal(getattr(controlled, name), getattr(initial, name)):
             raise R1StateError(f"control switch changed a shared physical population: {name}")
+    if numerical.is_pair:
+        from .one_dimensional_mechanism_r1_precision import REFERENCE_FIELDS, pair_words
+        for name in REFERENCE_FIELDS:
+            if pair_words(controlled.fine[name]) != pair_words(initial.fine[name]):
+                raise R1StateError(f"control switch changed a shared fine population: {name}")
     checks = equilibrium_checks(system, controlled, policy)
     if not checks["certified"]:
         raise R1StateError(f"control switch fails zero-excitation equations: {checks['reasons']}")
     return system, controlled
 
 
-def verify_prepared_physics(prepared, stack, binding, *, policy=None):
+def verify_prepared_physics(prepared, stack, binding, *, policy=None, backend=None):
     """Verify saved physics without asserting historical execution provenance.
 
     This bounded verifier is usable after a bundle's source has independently
@@ -491,8 +508,11 @@ def verify_prepared_physics(prepared, stack, binding, *, policy=None):
     returns the unchanged D system/state. Saved checks use the declared saved
     preparation policy; an optional consumer policy adds live equation gates.
     """
-    if not isinstance(prepared, R1PreparedState):
-        prepared = R1PreparedState.from_dict(prepared)
+    from .one_dimensional_mechanism_r1_backend import get_backend
+    numerical = get_backend(backend)
+    if numerical.is_pair:
+        return numerical.verify(prepared, stack, binding, policy=policy)
+    prepared = numerical.decode_prepared(prepared)
     record = prepared.to_dict()
     preparation_policy = _preparation_policy(record.get("preparation_policy"))
     if type(record.get("intervals")) is not int or record["intervals"] < 1:

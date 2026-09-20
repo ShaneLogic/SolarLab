@@ -18,6 +18,8 @@ def _same(actual, expected, name):
 
 def verify_execution_parameters(output, completion):
     protocol = read_json(output / "ProtocolV1.json")
+    representation = completion.get("representation", "float64-baseline")
+    _same(protocol.get("representation", "float64-baseline"), representation, "numerical representation")
     study = read_json(output / "StudyInputV1.json")
     additional = read_json(output / "AdditionalFailuresV1.json")
     additional_v2 = read_json(output / "AdditionalFailuresV2.json")
@@ -61,6 +63,10 @@ def verify_execution_parameters(output, completion):
                                       last_time_s=window.get("last_time_s")).tolist()
             spacing = 12
             extended = True
+        elif window.get("kind") == "diagnostic":
+            if representation != "float64-pair-v1" or interval != 16 or tuple(substeps) != (1, 2, 4):
+                raise ValueError("diagnostic window requires the fixed N16 production pair short chain")
+            times, spacing, extended = [0.0, 1e-9], None, True
         else:
             raise ValueError("unknown observation window")
         expected_window = {"kind": window["kind"], "first_positive_time_s": times[1],
@@ -85,4 +91,6 @@ def verify_execution_parameters(output, completion):
         _same(read_json(output / "ResolvedStackV1.json"), prepared.get("physical_stack"), "resolved material stack")
     return {"intervals": interval, "time_substeps": list(substeps), "times_s": times,
             "control": control, "nonlinear_factor": factor, "scope": scope,
+            "representation": representation,
+            "diagnostic_only": stage == "step" and protocol["observation_window"]["kind"] == "diagnostic",
             "convergence_claimed": False, "mechanism_identification_claimed": False}

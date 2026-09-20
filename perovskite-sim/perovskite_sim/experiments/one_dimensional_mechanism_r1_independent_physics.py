@@ -110,6 +110,10 @@ def _interface_balance(system, state, index):
 
 
 def _currents(system, state):
+    from .one_dimensional_mechanism_r1_backend import backend_for
+    if backend_for(system).is_pair:
+        from .one_dimensional_mechanism_r1_precision import independent_currents_pair
+        return independent_currents_pair(system, state)
     mat, vt = system.material, system.thermal_voltage
     spacing = np.diff(system.grid)
     xi_n = np.diff(state.phi+mat.chi)/vt
@@ -138,6 +142,10 @@ def _currents(system, state):
 
 
 def _increments(system, state, previous):
+    from .one_dimensional_mechanism_r1_backend import backend_for
+    if backend_for(system).is_pair:
+        from .one_dimensional_mechanism_r1_precision import independent_increments_pair
+        return independent_increments_pair(system, state, previous)
     z = state.coordinate-previous.coordinate
     du = z[system.potential_slice]
     electron = np.zeros(system.node_count)
@@ -195,7 +203,24 @@ def _metric_checks(metrics, finite):
             for name, value in metrics.items()}
 
 
-def independent_physics_row(system, state, previous, dt, *, reported=None):
+def independent_physics_row(system, state, previous, dt, *, reported=None, backend=None):
+    """Dispatch from the immutable backend attached to this physical system."""
+    from .one_dimensional_mechanism_r1_backend import backend_for
+    if backend_for(system, backend).is_pair:
+        from .one_dimensional_mechanism_r1_precision_physics import independent_physics_row_pair
+        return independent_physics_row_pair(system, state, previous, dt, reported=reported)
+    return _legacy_independent_physics_row(system, state, previous, dt, reported=reported)
+
+
+def shared_constitutive_dependencies(system):
+    from .one_dimensional_mechanism_r1_backend import backend_for
+    if backend_for(system).is_pair:
+        from .one_dimensional_mechanism_r1_precision_physics import SHARED_CONSTITUTIVE_DEPENDENCIES as dependencies
+        return dependencies
+    return SHARED_CONSTITUTIVE_DEPENDENCIES
+
+
+def _legacy_independent_physics_row(system, state, previous, dt, *, reported=None):
     """Reconstruct a row; acceptance checks cover every supplied time level.
 
     ``reported`` is optional diagnostic content to check, never an input to
