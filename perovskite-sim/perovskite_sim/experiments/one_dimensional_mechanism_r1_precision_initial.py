@@ -210,7 +210,8 @@ def initialize_fine_reference(system) -> dict[str, DD]:
         )
         charged = replace(geometry, fixed_sheet_charge_C_m2=float(sigma[k].to_float()))
         trace = InterfaceTracePotentials(float(trace_left.hi), float(trace_right.hi))
-        density = DD(healthy.local[k].state_m3)
+        density_input = np.asarray(healthy.local[k].state_m3).copy()
+        density = DD(density_input)
 
         def local_balance(values):
             return fixed_occupancy_carrier_tangent_from_density(
@@ -229,7 +230,8 @@ def initialize_fine_reference(system) -> dict[str, DD]:
                 initial_state_m3=density.hi, residual_tolerance=_LOCAL_CARRIER_LIMIT,
                 capture_multiplier=system.capture_multiplier,
             )
-            density = DD(solved.qss.state_m3)
+            density_input = np.asarray(solved.qss.state_m3).copy()
+            density = DD(density_input)
             evaluations = int(solved.qss.evaluations)
             balance = local_balance(density)
         norm_after = float(np.max(np.abs(balance.residual_m2_s / system.reference_local_scale[k, 2:])))
@@ -239,12 +241,19 @@ def initialize_fine_reference(system) -> dict[str, DD]:
             "normalized_residual_before": norm_before, "normalized_residual_after": norm_after,
             "fixed_occupancy_limit": _LOCAL_CARRIER_LIMIT, "new_solver_evaluations": evaluations,
             "re_solved": bool(evaluations),
+            "binary64_density_input_m3": density_input.tolist(),
         })
         if not np.isfinite(norm_after) or norm_after > _LOCAL_CARRIER_LIMIT:
             diagnostics["status"] = "failed_local_carrier_balance"
             raise RuntimeError("fine initial trace carriers do not satisfy the original local balance")
         density_hi[k], density_lo[k] = density.hi, density.lo
     diagnostics["trace_electrostatic_residuals"] = trace_residuals
+    diagnostics["trace_state_arithmetic"] = {
+        "kind": "raw_binary64_local_solver_input",
+        "input_m3": [item["binary64_density_input_m3"] for item in diagnostics["local_carriers"]],
+        "inputs_derived_from_final_state": False,
+        "scope": "conversion_of_actual_local_solver_result_to_fine_words_not_an_independent_local_nonlinear_solve",
+    }
     diagnostics["status"] = "completed"
     return {
         "phi_V": phi, "dqfn_V": qn, "dqfp_V": qp,

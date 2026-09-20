@@ -100,6 +100,13 @@ def capture_r1_physics_row(scaling_system, working, state, previous, voltage, dt
         "accepted_state_jacobian_nnz": None,
         "scaled_nonlinear_residual": 0.0,
     }
+    # Opt-in precision diagnostics carry the actual independent solve without
+    # introducing a non-component key into the legacy operator comparisons.
+    if hasattr(details, "precision_evidence"):
+        result["eliminated_precision"] = details.precision_evidence
+    reference_quantization = getattr(working, "rebase_evidence", None)
+    if reference_quantization is not None:
+        result["reference_quantization"] = reference_quantization
     if previous is not None:
         storage_scale = scaling_system.storage_scale(previous.storage, previous, dt, policy)
         poisson_scale = scaling_system.poisson_scale(policy)

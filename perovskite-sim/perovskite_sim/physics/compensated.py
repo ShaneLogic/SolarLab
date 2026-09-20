@@ -24,6 +24,7 @@ or an accumulated error bound for a scientific trajectory.
 from __future__ import annotations
 
 import operator
+from functools import lru_cache
 
 import numpy as np
 
@@ -60,13 +61,29 @@ def _two_product(a, b):
 
 
 def _validate(hi, lo):
-    if not np.all(np.isfinite(hi)) or not np.all(np.isfinite(lo)):
+    if not np.isfinite(hi).all() or not np.isfinite(lo).all():
         raise ArithmeticError("DD requires finite real components")
     magnitude = np.abs(hi)
-    if np.any((magnitude != 0) & (magnitude < _MIN_HIGH)):
+    if ((magnitude != 0) & (magnitude < _MIN_HIGH)).any():
         raise ArithmeticError("DD result is below the supported precision range")
-    if np.any(magnitude > _MAX_HIGH):
+    if (magnitude > _MAX_HIGH).any():
         raise ArithmeticError("DD result is above the supported precision range")
+
+
+def _immutable_array(value):
+    """Own immutable storage, rather than a reversible NumPy write flag.
+
+    A bytes-backed array cannot acquire a writable flag through a public
+    component or its base.  Existing such arrays can be shared safely by
+    metadata-only operations; advanced indexing is frozen before sharing.
+    """
+    value = np.asarray(value, dtype=float)
+    root = value
+    while isinstance(root, np.ndarray) and root.base is not None:
+        root = root.base
+    if isinstance(root, bytes):
+        return value
+    return np.frombuffer(value.tobytes(order="C"), dtype=float).reshape(value.shape)
 
 
 class DD:
@@ -85,7 +102,7 @@ class DD:
         if isinstance(hi, DD):
             if np.any(np.asarray(lo) != 0):
                 raise TypeError("use DD arithmetic to add a low part to a DD")
-            hi, lo = hi.hi, hi.lo
+            hi, lo = hi._hi, hi._lo
         a, b = np.asarray(hi), np.asarray(lo)
         if a.dtype.kind not in "biuf" or b.dtype.kind not in "biuf":
             raise TypeError("DD inputs must be real binary64-compatible numbers")
@@ -103,15 +120,22 @@ class DD:
             raise ArithmeticError("DD requires finite real components")
         high, low = _two_sum(a, b)
         _validate(high, low)
-        self._hi, self._lo = np.array(high, copy=True), np.array(low, copy=True)
-        self._hi.flags.writeable = self._lo.flags.writeable = False
+        self._hi, self._lo = _immutable_array(high), _immutable_array(low)
 
     @classmethod
     def _normalized(cls, hi, lo):
         _validate(hi, lo)
+        return cls._trusted_parts(hi, lo)
+
+    @classmethod
+    def _trusted_parts(cls, hi, lo):
+        """Internal selection/copy of already validated normalized words.
+
+        No arithmetic or external input may enter this path.  Immutable
+        backing storage is established even when indexing allocated a copy.
+        """
         result = object.__new__(cls)
-        result._hi, result._lo = np.asarray(hi), np.asarray(lo)
-        result._hi.flags.writeable = result._lo.flags.writeable = False
+        result._hi, result._lo = _immutable_array(hi), _immutable_array(lo)
         return result
 
     @classmethod
@@ -121,42 +145,44 @@ class DD:
 
     @property
     def hi(self):
-        return self._hi
+        # NumPy's readonly flag protects values, not shape metadata. A fresh
+        # public view keeps a caller's reshape from modifying the DD object.
+        return self._hi.view()
 
     @property
     def lo(self):
-        return self._lo
+        return self._lo.view()
 
     @property
     def shape(self):
-        return self.hi.shape
+        return self._hi.shape
 
     @property
     def ndim(self):
-        return self.hi.ndim
+        return self._hi.ndim
 
     @property
     def size(self):
-        return self.hi.size
+        return self._hi.size
 
     def __len__(self):
-        return len(self.hi)
+        return len(self._hi)
 
     def __getitem__(self, index):
-        return self._normalized(self.hi[index], self.lo[index])
+        return self._trusted_parts(self._hi[index], self._lo[index])
 
     def reshape(self, *shape):
-        return self._normalized(self.hi.reshape(*shape), self.lo.reshape(*shape))
+        return self._trusted_parts(self._hi.reshape(*shape), self._lo.reshape(*shape))
 
     def ravel(self):
         return self.reshape(-1)
 
     def copy(self):
-        return DD(self.hi, self.lo)
+        return self._trusted_parts(self._hi, self._lo)
 
     def to_float(self):
         """Explicitly round the represented value to one binary64 array."""
-        return self.hi + self.lo
+        return self._hi + self._lo
 
     def __array__(self, dtype=None, copy=None):
         raise TypeError("implicit DD rounding is forbidden; use .to_float()")
@@ -167,27 +193,28 @@ class DD:
     def __bool__(self):
         if self.ndim:
             raise ValueError("the truth value of a DD array is ambiguous")
-        return bool(self.hi != 0)
+        return bool(self._hi != 0)
 
     def __repr__(self):
         return f"DD(hi={self.hi!r}, lo={self.lo!r})"
 
     def __neg__(self):
-        return self._normalized(-self.hi, -self.lo)
+        # A sign change preserves normalization, finite values and range.
+        return self._trusted_parts(-self._hi, -self._lo)
 
     def __pos__(self):
         return self
 
     def __abs__(self):
-        return self._normalized(
-            np.where(self.hi < 0, -self.hi, self.hi),
-            np.where(self.hi < 0, -self.lo, self.lo),
+        return self._trusted_parts(
+            np.where(self._hi < 0, -self._hi, self._hi),
+            np.where(self._hi < 0, -self._lo, self._lo),
         )
 
     def __add__(self, other):
         other = _as_dd(other)
-        high, low = _two_sum(self.hi, other.hi)
-        tail, tail_error = _two_sum(self.lo, other.lo)
+        high, low = _two_sum(self._hi, other._hi)
+        tail, tail_error = _two_sum(self._lo, other._lo)
         high, low = _two_sum(high, low + tail)
         high, low = _two_sum(high, low + tail_error)
         return self._normalized(high, low)
@@ -202,30 +229,30 @@ class DD:
 
     def __mul__(self, other):
         other = _as_dd(other)
-        high, low = _two_product(self.hi, other.hi)
+        high, low = _two_product(self._hi, other._hi)
         with np.errstate(over="raise", invalid="raise", under="ignore"):
-            cross = self.hi * other.lo + self.lo * other.hi
+            cross = self._hi * other._lo + self._lo * other._hi
             low = low + cross
             high, low = _two_sum(high, low)
-            high, low = _two_sum(high, low + self.lo * other.lo)
+            high, low = _two_sum(high, low + self._lo * other._lo)
         return self._normalized(high, low)
 
     __rmul__ = __mul__
 
     def __truediv__(self, other):
         other = _as_dd(other)
-        if np.any(other.hi == 0):
+        if np.any(other._hi == 0):
             raise ZeroDivisionError("DD division by zero")
         with np.errstate(over="raise", invalid="raise", under="ignore"):
-            q1 = self.hi / other.hi
-        if np.any((self.hi != 0) & (q1 == 0)):
+            q1 = self._hi / other._hi
+        if np.any((self._hi != 0) & (q1 == 0)):
             raise ArithmeticError("DD quotient underflow")
         first = DD(q1)
         remainder = self - other * first
-        q2 = remainder.hi / other.hi
+        q2 = remainder._hi / other._hi
         second = DD(q2)
         remainder = remainder - other * second
-        q3 = remainder.hi / other.hi
+        q3 = remainder._hi / other._hi
         return (first + second) + DD(q3)
 
     def __rtruediv__(self, other):
@@ -233,14 +260,14 @@ class DD:
 
     def __eq__(self, other):
         other = _as_dd(other)
-        return (self.hi == other.hi) & (self.lo == other.lo)
+        return (self._hi == other._hi) & (self._lo == other._lo)
 
     def __ne__(self, other):
         return ~(self == other)
 
     def __lt__(self, other):
         other = _as_dd(other)
-        return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo < other.lo))
+        return (self._hi < other._hi) | ((self._hi == other._hi) & (self._lo < other._lo))
 
     def __le__(self, other):
         return (self < other) | (self == other)
@@ -268,56 +295,93 @@ class DD:
 
 
 def _as_dd(value):
-    return value if isinstance(value, DD) else DD(value)
+    if isinstance(value, DD):
+        return value
+    if type(value) in (float, int, bool):
+        return _scalar_constant(value)
+    return DD(value)
+
+
+@lru_cache(maxsize=128, typed=True)
+def _scalar_constant(value):
+    # Public construction still validates every external input.  Arithmetic
+    # literal constants are immutable and retain the original exact input.
+    return DD(value)
 
 
 _LN2 = DD(0.6931471805599453, 2.3190468138462996e-17)
 # A third constant word is used only during range reduction.  Forming m*ln2
 # first and then subtracting x would round an O(m) DD before cancellation.
 _LN2_TAIL = 5.707708438416212e-34
+# Exact integer denominators are converted once, using the same DD division
+# as before. Recurrence multiplication changes rounding order and is covered
+# separately by Decimal tests. No external or mutable coefficient is cached.
+_SERIES_RECIPROCALS = tuple(DD(1) / n for n in range(1, 53))
+_LOCAL_EXPM1_MAX = np.ldexp(1.0, -10)
 
 
 def _scale_two(value, exponent):
     with np.errstate(over="raise", invalid="raise", under="ignore"):
-        hi = np.ldexp(value.hi, exponent)
-        lo = np.ldexp(value.lo, exponent)
-    if np.any((value.hi != 0) & (hi == 0)):
+        hi = np.ldexp(value._hi, exponent)
+        lo = np.ldexp(value._lo, exponent)
+    if np.any((value._hi != 0) & (hi == 0)):
         raise ArithmeticError("DD power-of-two scaling underflow")
     return DD._normalized(hi, lo)
 
 
 def _small_expm1(value):
-    """Taylor series on |x| <= log(2)/1024, preserving tiny x directly."""
+    """Taylor series on |x| <= 2**-10, preserving tiny x directly.
+
+    The first omitted term after degree twelve is bounded by
+    exp(2**-10)*(2**-10)**13/13! < 1.3e-49. The earlier adaptive stop omits
+    a tail below SERIES_EPS*|partial_sum|/1023. These are truncation bounds;
+    the separate DD operation error is checked against Decimal.
+    """
     result, term = value, value
     for n in range(2, 13):
-        active = (np.abs(term.hi) > np.abs(result.hi) * _SERIES_EPS) & (
-            np.abs(value.hi) > _SERIES_EPS
+        active = (np.abs(term._hi) > np.abs(result._hi) * _SERIES_EPS) & (
+            np.abs(value._hi) > _SERIES_EPS
         )
         if not np.any(active):
             return result
-        next_term = term[active] * value[active] / float(n)
+        next_term = (term[active] * value[active]) * _SERIES_RECIPROCALS[n-1]
         increment = DD(np.zeros(value.shape))
-        hi, lo = increment.hi.copy(), increment.lo.copy()
-        hi[active], lo[active] = next_term.hi, next_term.lo
+        hi, lo = increment._hi.copy(), increment._lo.copy()
+        hi[active], lo[active] = next_term._hi, next_term._lo
         term = DD._normalized(hi, lo)
         result = result + term
     raise ArithmeticError("DD exponential Taylor series did not converge")
 
 
 def _reduced_expm1(value):
-    m = np.rint(value.hi / _LN2.hi).astype(np.int64)
-    product_hi, product_lo = _two_product(_LN2.hi, m.astype(float))
+    local = np.abs(value._hi) <= _LOCAL_EXPM1_MAX
+    if np.all(local):
+        return _small_expm1(value), np.zeros(value.shape,dtype=np.int64)
+    if np.any(local):
+        hi,lo=np.empty(value.shape),np.empty(value.shape)
+        exponent=np.zeros(value.shape,dtype=np.int64)
+        small=_small_expm1(value[local])
+        other,exponent[~local]=_general_reduced_expm1(value[~local])
+        hi[local],lo[local]=small._hi,small._lo
+        hi[~local],lo[~local]=other._hi,other._lo
+        return DD._normalized(hi,lo),exponent
+    return _general_reduced_expm1(value)
+
+
+def _general_reduced_expm1(value):
+    m = np.rint(value._hi / _LN2._hi).astype(np.int64)
+    product_hi, product_lo = _two_product(_LN2._hi, m.astype(float))
     residual = (value - DD(product_hi)) - DD(product_lo)
-    residual = residual - DD(_LN2.lo) * m
+    residual = residual - DD(_LN2._lo) * m
     residual = residual - DD(_LN2_TAIL) * m
     reduced = _scale_two(residual, -9)
     small = _small_expm1(reduced)
     for _ in range(9):
-        active = np.abs(small.hi) > _SERIES_EPS
+        active = np.abs(small._hi) > _SERIES_EPS
         hi, lo = np.zeros(small.shape), np.zeros(small.shape)
         if np.any(active):
             square = small[active] * small[active]
-            hi[active], lo[active] = square.hi, square.lo
+            hi[active], lo[active] = square._hi, square._lo
         small = _scale_two(small, 1) + DD._normalized(hi, lo)
     return small, m
 
@@ -325,7 +389,7 @@ def _reduced_expm1(value):
 def exp(value):
     """Exponential with compensated argument reduction and reconstruction."""
     value = _as_dd(value)
-    if np.any(np.abs(value.hi) > 672.0):
+    if np.any(np.abs(value._hi) > 672.0):
         raise ArithmeticError("DD exponential is outside the supported precision range")
     reduced, exponent = _reduced_expm1(value)
     return _scale_two(1.0 + reduced, exponent)
@@ -334,13 +398,15 @@ def exp(value):
 def expm1(value):
     """Compute exp(x)-1 without discarding a sub-ULP driving increment."""
     value = _as_dd(value)
-    if np.any(np.abs(value.hi) > 672.0):
+    if np.any(np.abs(value._hi) > 672.0):
         raise ArithmeticError("DD exponential is outside the supported precision range")
     reduced, exponent = _reduced_expm1(value)
+    if not np.any(exponent):
+        return reduced
     full = _scale_two(1.0 + reduced, exponent) - 1.0
     return DD._normalized(
-        np.where(exponent == 0, reduced.hi, full.hi),
-        np.where(exponent == 0, reduced.lo, full.lo),
+        np.where(exponent == 0, reduced._hi, full._hi),
+        np.where(exponent == 0, reduced._lo, full._lo),
     )
 
 
@@ -348,40 +414,40 @@ def _small_log1p(value):
     """log(1+x)=2*atanh(x/(2+x)); |x| <= 1/4."""
     z = value / (2.0 + value)
     result, term = z, z
-    active = np.abs(z.hi) > _SERIES_EPS
+    active = np.abs(z._hi) > _SERIES_EPS
     hi, lo = np.zeros(z.shape), np.zeros(z.shape)
     if np.any(active):
         square = z[active] * z[active]
-        hi[active], lo[active] = square.hi, square.lo
+        hi[active], lo[active] = square._hi, square._lo
     z2 = DD._normalized(hi, lo)
     for odd in range(3, 53, 2):
-        active &= np.abs(term.hi) > np.abs(result.hi) * _SERIES_EPS
+        active &= np.abs(term._hi) > np.abs(result._hi) * _SERIES_EPS
         if not np.any(active):
             return 2.0 * result
         next_term = term[active] * z2[active]
         hi, lo = np.zeros(z.shape), np.zeros(z.shape)
-        hi[active], lo[active] = next_term.hi, next_term.lo
+        hi[active], lo[active] = next_term._hi, next_term._lo
         term = DD._normalized(hi, lo)
-        result = result + term / float(odd)
+        result = result + term * _SERIES_RECIPROCALS[odd-1]
     raise ArithmeticError("DD logarithm Taylor series did not converge")
 
 
 def log(value):
     """Natural logarithm, with a cancellation-safe path close to one."""
     value = _as_dd(value)
-    if np.any(value.hi <= 0):
+    if np.any(value._hi <= 0):
         raise ValueError("DD logarithm requires a positive argument")
     near = (value > 0.75) & (value < 1.25)
     hi, lo = np.zeros(value.shape), np.zeros(value.shape)
     if np.any(near):
         local = _small_log1p(value[near] - 1.0)
-        hi[near], lo[near] = local.hi, local.lo
+        hi[near], lo[near] = local._hi, local._lo
     if np.any(~near):
         a = value[~near]
-        guess = DD(np.log(a.hi))
+        guess = DD(np.log(a._hi))
         for _ in range(2):
             guess = guess + (a * exp(-guess) - 1.0)
-        hi[~near], lo[~near] = guess.hi, guess.lo
+        hi[~near], lo[~near] = guess._hi, guess._lo
     return DD._normalized(hi, lo)
 
 
@@ -394,10 +460,10 @@ def log1p(value):
     hi, lo = np.zeros(value.shape), np.zeros(value.shape)
     if np.any(near):
         local = _small_log1p(value[near])
-        hi[near], lo[near] = local.hi, local.lo
+        hi[near], lo[near] = local._hi, local._lo
     if np.any(~near):
         local = log(1.0 + value[~near])
-        hi[~near], lo[~near] = local.hi, local.lo
+        hi[~near], lo[~near] = local._hi, local._lo
     return DD._normalized(hi, lo)
 
 
@@ -416,11 +482,11 @@ def sum(value, axis=None, keepdims=False):
         raise ValueError("DD reduction axes must be distinct")
     result = value
     for current in sorted(axes, reverse=True):
-        high = np.moveaxis(result.hi, current, 0)
-        low = np.moveaxis(result.lo, current, 0)
+        high = np.moveaxis(result._hi, current, 0)
+        low = np.moveaxis(result._lo, current, 0)
         reduced = DD(np.zeros(high.shape[1:]))
         for i in range(high.shape[0]):
-            reduced = reduced + DD._normalized(high[i], low[i])
+            reduced = reduced + DD._trusted_parts(high[i], low[i])
         result = reduced
     if keepdims:
         result = result.reshape(tuple(1 if i in axes else n for i, n in enumerate(value.shape)))
