@@ -480,6 +480,73 @@
         }
       },
       "coverage_id": "r1_physics_acceptance_v1_ac_axes"
+    },
+    {
+      "case_id": "r1_physics_v6_b_n256_t8_16_32_f0p01",
+      "observed_source_commit": "a71f1fa6adef719202913ef3e2fc4c8c9297f7f2",
+      "control": "B",
+      "intervals": 256,
+      "nonlinear_factor": 0.01,
+      "amplitude_V": 0.005,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        8,
+        16,
+        32
+      ],
+      "phase": "finite_step",
+      "failure": "R1 controlled step failed: analytic sparse Newton line search stalled at iteration 3 with residual 0.0514306, charge closure 6.42193e-16, all-face current closure 2.11199e-10, interface current closure 7.61797e-12, linear backward error 2.62366e-17",
+      "fault": "none",
+      "evidence_sources": [
+        {
+          "path": "R1PhysicsDevelopmentV6/CrossCode/R1V5N256Tight/B_N256_F0p01_T8_none/Result.json",
+          "sha256": "4eebd247de5a38fd5d8a48903846b1de2c366755346f3720c80fd237f329e96a",
+          "json_pointer": "/failure"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV6/CrossCode/R1V5N256Tight/Summary.json",
+          "sha256": "441fcdd25f8afbbd6e6d9bf6851c29ce3e98af26cd5c113211fc71154d34c1f5",
+          "json_pointer": "/cases/0"
+        },
+        {
+          "path": "R1PhysicsDevelopmentV6/CrossCode/R1V5N256Tight/B_N256_F0p01_T8_none/AcceptedStepsV1.jsonl",
+          "sha256": "f2ff811c29cc88c9f9bfb879197467371214c083839a6c390011e2a874eb61b8",
+          "json_pointer": "",
+          "raw_case": "B_N256_F0p01_T8_none"
+        }
+      ],
+      "confirmation": {
+        "observed_source_commit": "a71f1fa6adef719202913ef3e2fc4c8c9297f7f2",
+        "manifest_sha256": "cc28705fe8b1e98b9b8a9f0a5fa2ee24a516f59297c36a421232174ed19a14f2",
+        "manifest_path": "R1PhysicsDevelopmentV6/CrossCode/ManifestV1.json",
+        "run_class": "development",
+        "failure_message": "R1 controlled step failed: analytic sparse Newton line search stalled at iteration 3 with residual 0.0514306, charge closure 6.42193e-16, all-face current closure 2.11199e-10, interface current closure 7.61797e-12, linear backward error 2.62366e-17",
+        "artifact_sha256": {
+          "Result.json": "4eebd247de5a38fd5d8a48903846b1de2c366755346f3720c80fd237f329e96a",
+          "AcceptedStepsV1.jsonl": "f2ff811c29cc88c9f9bfb879197467371214c083839a6c390011e2a874eb61b8",
+          "Prepared.json": "653c8438cd77fa8b8053badbe05295f2f159ffab4f9fc4a48ec068fa1e836b9f",
+          "Summary.json": "441fcdd25f8afbbd6e6d9bf6851c29ce3e98af26cd5c113211fc71154d34c1f5"
+        },
+        "source_identity_scope": "recorded HEAD and 227 package source hashes match this commit; development execution, not a formal source qualification",
+        "accepted_rows": 110,
+        "expected_complete_rows": 227,
+        "rows_by_substeps": {
+          "8": 33,
+          "16": 65,
+          "32": 12
+        },
+        "terminal_time_s": 3.7500000000000005e-10,
+        "previous_time_s": 3.4375000000000003e-10,
+        "terminal_iteration": 3,
+        "root_cause_established": false
+      },
+      "coverage_id": "r1_physics_v6_strict_b_n256_t8"
     }
   ],
   "known_physical_gate_failures": [
@@ -687,6 +754,13 @@
       "observed_failed_case_count": 8,
       "source_commit": "04170c4efcbcaa023a63fcee1f30bb41cceee0f8",
       "scope": "A-C, N64, factors 1/.1/.01, triples (2,4,8)/(4,8,16), amplitude .005, five-point short window; review measurement17"
+    },
+    {
+      "coverage_id": "r1_physics_v6_strict_b_n256_t8",
+      "observed_case_count": 1,
+      "observed_failed_case_count": 1,
+      "source_commit": "a71f1fa6adef719202913ef3e2fc4c8c9297f7f2",
+      "scope": "one development no-fault B/N256/F0.01/[8,16,32]/+5mV/five-time-point observation; 110 of 227 rows; no full-slice claim and no change to original D2 grants"
     }
   ]
 }

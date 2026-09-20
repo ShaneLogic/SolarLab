@@ -239,7 +239,7 @@ def test_runtime_archives_supplement_and_observes_total_registry_count(runner, s
     assert runner.main(arguments) == 1
     assert captured, runner.read_json(output / "FailureV1.json")
     saved = runner.read_json(output / "ProtocolV1.json")
-    assert saved["historical_failure_case_count"] == 39
+    assert saved["historical_failure_case_count"] == 40
     assert (output / "AdditionalFailuresV1.json").read_bytes() == runner.ADDITIONAL_FAILURES_PATH.read_bytes()
     assert (output / "StudyInputV1.json").read_bytes() == runner.INPUT_PATH.read_bytes()
     assert saved["additional_failures_sha256"] == runner.sha256(runner.ADDITIONAL_FAILURES_PATH)
