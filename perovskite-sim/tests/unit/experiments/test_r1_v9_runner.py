@@ -135,3 +135,45 @@ def test_sidecar_failure_keeps_actual_accepted_prefix_and_result(tmp_path,contra
     assert json.loads((tmp_path/"ResultV1.json").read_text())==result
     assert len((tmp_path/"AcceptedStepsV1.jsonl").read_text().splitlines())==1
     assert report["phase_timing"]["exclusive_sum_s"]<=report["cost"]["elapsed_s"]
+
+
+def test_raw_array_owner_released_before_readback_and_replay(tmp_path, contract):
+    import weakref
+    class RawResult(dict):
+        pass
+    raw = RawResult(accepted_steps=[], certificate={"certified": False,
+        "limits":runner.LIMITS,"metrics":{name:0. for name in runner.LIMITS}})
+    reference = weakref.ref(raw)
+    pending = [raw]
+    del raw
+    stages = []
+    def persist(path, value):
+        assert value is reference() and isinstance(value,RawResult)
+        path.write_bytes(b"numeric-sidecar")
+        stages.append("persist")
+    def readback(path, value):
+        assert reference() is None and type(value) is dict
+        assert path.read_bytes()==b"numeric-sidecar"
+        stages.append("readback")
+    def replay(prepared,value,incomplete,observer):
+        assert reference() is None and value["certificate"]["limits"]==runner.LIMITS
+        observer({"row_index":0,"elapsed_s":0.})
+        stages.append("replay")
+        return {"certified":False}
+    report=runner.run_trajectory(tmp_path,contract["case"],"baseline",{
+        "prepare":lambda:SimpleNamespace(to_dict=lambda:{"prepared":True}),
+        "run":lambda prepared,observer:pending.pop(),
+        "json_data":lambda value:json.loads(json.dumps(value)),
+        "persist_numeric":persist,"verify_numeric":readback,"replay":replay},lambda:None)
+    assert stages==["persist","readback","replay"]
+    assert report["numeric_sidecar_exact"] and report["replay_observed_rows"]==1
+
+
+def test_streaming_readback_preserves_content_and_rejects_invalid_rows(tmp_path):
+    path=tmp_path/"rows.jsonl"
+    for text in ('', '{"x":-0.0}\n{"x":[1,2]}\n', '{"x":1}\r\n{"x":2}'):
+        path.write_text(text)
+        assert runner.read_persisted_rows(path)==[json.loads(line) for line in path.read_text().splitlines()]
+    path.write_text('{"x":1}\n\n')
+    with pytest.raises(json.JSONDecodeError):
+        runner.read_persisted_rows(path)

@@ -64,6 +64,53 @@ def test_sidecar_rows_are_stacked_and_count_does_not_grow(tmp_path, pair, expect
     assert codec.verify_numeric_sidecar(path, short)["exact_key_coverage"]
 
 
+def test_sidecar_revalidates_changed_lists_without_cross_call_cache():
+    record = rows()
+    first = codec.state_sidecar_payload(record)
+    record[1]["state"]["precision_n_m3_lo"][1] = 1e-30
+    second = codec.state_sidecar_payload(record)
+    assert first["accepted_states"]["precision_n_m3_lo"][1, 1] == 0.
+    assert second["accepted_states"]["precision_n_m3_lo"][1, 1] == 1e-30
+    record[1]["state"]["precision_n_m3_lo"][1] = 1.
+    with pytest.raises(R1StateError, match="not normalized"):
+        codec.state_sidecar_payload(record)
+
+
+def test_stacked_snapshot_and_duplicate_array_values_keep_promoted_dtype():
+    record = {"schema": "R1ControlledStepV1", "accepted_steps": rows(pair=False)}
+    record["accepted_steps"][0]["state"]["n_m3"] = np.arange(4, dtype=np.int32)
+    record["accepted_steps"][1]["state"]["n_m3"] = np.arange(4, dtype=np.float32)
+    expected = np.stack([row["state"]["n_m3"] for row in record["accepted_steps"]])
+    payload = codec.state_sidecar_payload(record)
+    actual = payload["accepted_states"]["n_m3"]
+    assert actual.dtype == expected.dtype and actual.tobytes() == expected.tobytes()
+    record["accepted_state_arrays"] = {name: np.asarray([row["state"][name] for row in record["accepted_steps"]])
+                                        for name in codec.LEGACY_SNAPSHOT_FIELDS}
+    codec.state_sidecar_payload(record)
+    record["accepted_state_arrays"]["n_m3"][1, 1] += 1.
+    with pytest.raises(R1StateError, match="differ from actual rows"):
+        codec.state_sidecar_payload(record)
+
+
+def test_numeric_collector_preserves_order_shapes_and_scalar_pair_types():
+    values = {"first": np.array([1, 2], dtype=np.int32),
+              "nested": [{"skipped": "text", "tuple": (1., -0.)}, {"empty": []}],
+              "words": {"lo": -0., "hi": 1.}, "ordinary": 1., "ignored": {}}
+    arrays = codec.numeric_arrays(values)
+    assert list(arrays) == ["data.first", "data.nested.0.tuple", "data.nested.1.empty", "data.words.lo", "data.words.hi"]
+    assert arrays["data.first"].dtype == np.dtype("int32")
+    assert arrays["data.nested.0.tuple"].tobytes() == np.array([1., -0.]).tobytes()
+    assert arrays["data.words.lo"].shape == () and arrays["data.words.lo"].dtype == np.dtype("float64")
+    assert np.signbit(arrays["data.words.lo"])
+
+
+def test_stacked_shape_mismatch_remains_rejected():
+    record = rows(pair=False)
+    record[1]["state"]["positive_inventory_m2"] = [1., 2.]
+    with pytest.raises(R1StateError, match="ragged array"):
+        codec.state_sidecar_payload(record)
+
+
 @pytest.mark.parametrize("mutation", ["missing_low", "extra", "shape", "nonfinite", "changed_low", "float32", "signed_zero"])
 def test_sidecar_rejects_resealed_numeric_mutations(tmp_path, mutation):
     record = rows()

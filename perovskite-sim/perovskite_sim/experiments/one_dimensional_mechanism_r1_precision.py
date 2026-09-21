@@ -182,9 +182,10 @@ def carrier_currents_pair(system, fine, local):
         return value
     bn_forward,bn_backward=bernoulli_signed_pair(xi_n)
     bp_forward,bp_backward=bernoulli_signed_pair(xi_p)
-    jn=_CHARGE*constants["Dn"]/constants["spacing"]*stable(
+    prefactor_n,prefactor_p=system._fine_carrier_prefactors
+    jn=prefactor_n*stable(
         bn_forward*n[1:],bn_backward*n[:-1],dn)
-    jp=_CHARGE*constants["Dp"]/constants["spacing"]*stable(
+    jp=prefactor_p*stable(
         bp_forward*p[:-1],bp_backward*p[1:],dp)
     transport_n,transport_p=jn.copy(),jp.copy()
     for k,face in enumerate(system.interface_faces):
@@ -436,7 +437,15 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         if (getattr(self,"_fine_constant_identity",None) != identity
                 or set(cached) != set(inputs)
                 or any(not np.array_equal(cached[k].hi,np.asarray(v)) for k,v in inputs.items())):
-            self._fine_constants = {k: DD(v) for k,v in inputs.items()}
+            constants = {k: DD(v) for k,v in inputs.items()}
+            # These are state-independent coefficients in exactly the same
+            # multiplication/division order used by carrier_currents_pair.
+            # Construct both before publishing a refreshed cache, so an
+            # arithmetic failure cannot leave old prefactors with new inputs.
+            prefactors = (_CHARGE*constants["Dn"]/constants["spacing"],
+                          _CHARGE*constants["Dp"]/constants["spacing"])
+            self._fine_constants = constants
+            self._fine_carrier_prefactors = prefactors
             self._fine_constant_identity = identity
             self._fine_evaluation_cache = {}
         return self._fine_constants
@@ -457,15 +466,16 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         self._precision_contact_evaluation={name:result[index][[0,-1]].copy()
             for name,index in (("dqfn_V",0),("dqfp_V",1),("phi_V",2),("n_m3",3),("p_m3",4))}
         z = DD(np.asarray(coordinate, dtype=float))
+        z_phi,z_n,z_p=z[self.potential_slice],z[self.electron_slice],z[self.hole_slice]
         ref = self._fine_reference
         phi = put(ref["phi_V"], [0, -1], result[2][[0, -1]])
-        phi = put(phi, slice(1, -1), ref["phi_V"][1:-1] + constants["vt"] * z[self.potential_slice])
+        phi = put(phi, slice(1, -1), ref["phi_V"][1:-1] + constants["vt"] * z_phi)
         qn = put(ref["dqfn_V"], [0, -1], result[0][[0, -1]])
         qp = put(ref["dqfp_V"], [0, -1], result[1][[0, -1]])
-        qn = put(qn, slice(1, -1), ref["dqfn_V"][1:-1] + constants["vt"] * z[self.electron_slice])
-        qp = put(qp, slice(1, -1), ref["dqfp_V"][1:-1] + constants["vt"] * z[self.hole_slice])
-        n = put(ref["n_m3"], slice(1, -1), ref["n_m3"][1:-1] * (z[self.electron_slice] + z[self.potential_slice]).exp())
-        p = put(ref["p_m3"], slice(1, -1), ref["p_m3"][1:-1] * (z[self.hole_slice] - z[self.potential_slice]).exp())
+        qn = put(qn, slice(1, -1), ref["dqfn_V"][1:-1] + constants["vt"] * z_n)
+        qp = put(qp, slice(1, -1), ref["dqfp_V"][1:-1] + constants["vt"] * z_p)
+        n = put(ref["n_m3"], slice(1, -1), ref["n_m3"][1:-1] * (z_n + z_phi).exp())
+        p = put(ref["p_m3"], slice(1, -1), ref["p_m3"][1:-1] * (z_p - z_phi).exp())
         odds = z[self.trap_slice].expm1()
         f = ref["occupancy"]
         occupancy = f + f * (1-f) * odds / (1 + f * odds)
@@ -807,7 +817,7 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         }
         if getattr(getattr(self, "_r1_backend", None), "is_pair", False):
             evidence["schema"] = "R1EliminatedPrecisionV2"
-            evidence["shared_inputs"]["fields"] = inputs.to_dict()["fixed_inputs"]
+            evidence["shared_inputs"]["fields"] = json.loads(inputs.fixed_inputs_json)
             evidence["solve_inputs"] = inputs.to_dict()
             evidence["ion_inputs"] = ion_inputs
         return EliminatedDiagnostics(values,evidence)

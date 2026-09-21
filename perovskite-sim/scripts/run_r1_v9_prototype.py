@@ -166,11 +166,18 @@ def absolute_cost_check(cost):
     return {"passed":not reasons,"limits":ABSOLUTE_LIMITS,"failed_metrics":reasons}
 
 
+def read_persisted_rows(path):
+    """Decode the same durable rows without retaining a second whole text copy."""
+    with Path(path).open() as stream:
+        return [json.loads(line) for line in stream]
+
+
 def run_trajectory(directory, case, mode, api, source_guard):
     """The original work plus mandatory sidecar writes and actual row telemetry."""
     directory=Path(directory)
     timer=ExclusiveTimer()
-    rows, timing_rows, replay_rows = [], [], []
+    rows = []
+    replay_row_count = 0
     result, prepared, replay, failure = {}, None, None, None
     report={"execution_status":"not_started","physical_execution_started":False}
     started=time.monotonic()
@@ -200,15 +207,15 @@ def run_trajectory(directory, case, mode, api, source_guard):
                     "observer_conversion_and_persistence_s":time.monotonic()-tick,
                     "peak_rss_bytes":peak_rss_bytes(),"row_bytes":len(raw.encode()),
                     "scope":"event_interval_includes_initialization_or_tier_transition_when_applicable"}
-                timing_rows.append(item)
                 telemetry.write(canonical(item)+"\n")
                 telemetry.flush()
             last_observation=time.monotonic()
 
         def observe_replay(item):
+            nonlocal replay_row_count
             with timer.phase("replay_observer_io"):
                 saved=api["json_data"](item)
-                replay_rows.append(saved)
+                replay_row_count += 1
                 ledger.write(canonical(saved)+"\n")
                 ledger.flush()
 
@@ -229,9 +236,17 @@ def run_trajectory(directory, case, mode, api, source_guard):
             result=timed("data_conversion",lambda:api["json_data"](result)) if isinstance(result,dict) else {}
             timed("result_write",lambda:write(directory/"ResultV1.json",result))
             if result:
-                timed("numeric_sidecar_write",lambda:api["persist_numeric"](directory/"StateArraysV1.npz",raw_result))
+                try:
+                    timed("numeric_sidecar_write",lambda:api["persist_numeric"](directory/"StateArraysV1.npz",raw_result))
+                finally:
+                    # The numeric writer must see the original array dtypes.
+                    # Once persisted, only the complete JSON record is needed
+                    # for exact readback and independent equation replay.
+                    raw_result = None
                 timed("numeric_sidecar_readback",lambda:api["verify_numeric"](directory/"StateArraysV1.npz",result))
                 report["numeric_sidecar_exact"]=True
+            else:
+                raw_result = None
             if prepared is not None and result:
                 try:
                     replay=timed("replay_compute",lambda:api["replay"](
@@ -261,8 +276,7 @@ def run_trajectory(directory, case, mode, api, source_guard):
             for output in (stream,telemetry,ledger):
                 output.flush()
                 os.fsync(output.fileno())
-            persisted=timed("readback",lambda:[json.loads(line) for line in
-                (directory/"AcceptedStepsV1.jsonl").read_text().splitlines()])
+            persisted=timed("readback",lambda:read_persisted_rows(directory/"AcceptedStepsV1.jsonl"))
             report["extent"]=timed("final_validation",lambda:extent(persisted,case))
             report["certificate_check"]=timed("final_validation",lambda:certificate_check(result))
             metrics=result.get("certificate",{}).get("metrics",{})
@@ -290,7 +304,7 @@ def run_trajectory(directory, case, mode, api, source_guard):
                 "accepted_row_payload_bytes":payload,
                 "bytes_per_row":payload/len(persisted) if persisted else None}
             report["phase_timing"]=timer.report(elapsed)
-            report["replay_observed_rows"]=len(replay_rows)
+            report["replay_observed_rows"]=replay_row_count
             report["failure"]=None if failure is None else {k:failure[k] for k in ("type","message")}
     if "after_main" in api and prepared is not None and result:
         analysis_start=time.monotonic()

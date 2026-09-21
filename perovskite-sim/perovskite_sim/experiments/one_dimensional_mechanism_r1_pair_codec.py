@@ -55,7 +55,7 @@ def verification_contract():
         "scientific_scope": "one_common_state_preparation_not_full_R1_2_or_P2_qualification"}
 
 
-def validate_snapshot(record, *, require_fine=True):
+def _validated_snapshot_arrays(record, *, require_fine=True):
     if not isinstance(record, dict) or set(record) != (SNAPSHOT_FIELDS if require_fine else LEGACY_SNAPSHOT_FIELDS):
         raise R1StateError("production pair snapshot key coverage mismatch")
     arrays = {}
@@ -88,6 +88,11 @@ def validate_snapshot(record, *, require_fine=True):
                 raise R1StateError("production pair words are not normalized: " + name)
             if name in arrays and not np.array_equal(high, arrays[name]):
                 raise R1StateError("production pair high word differs from its binary64 snapshot: " + name)
+    return arrays
+
+
+def validate_snapshot(record, *, require_fine=True):
+    _validated_snapshot_arrays(record, require_fine=require_fine)
     return record
 
 
@@ -234,38 +239,48 @@ def finalize_record(record, kind="step"):
 
 def numeric_arrays(value, prefix="data", *, allow_nonfinite=False):
     result = {}
-    if isinstance(value, dict):
-        if (set(value) == {"hi", "lo"} and all(isinstance(word, (int, float, np.integer, np.floating))
-                                               and not isinstance(word, (bool, np.bool_)) for word in value.values())):
-            for name, word in value.items():
+    _collect_numeric_arrays(value, prefix, result, allow_nonfinite)
+    return result
+
+
+def _collect_numeric_arrays(item, path, result, allow_nonfinite):
+    # A module-level collector avoids both per-leaf dictionaries and a
+    # recursive closure retaining its completed array mapping until cyclic GC.
+    if isinstance(item, dict):
+        if (len(item) == 2 and "hi" in item and "lo" in item
+                and all(isinstance(word, (int, float, np.integer, np.floating))
+                        and not isinstance(word, (bool, np.bool_)) for word in item.values())):
+            for name, word in item.items():
                 array = np.asarray(word, dtype=np.float64)
                 if not allow_nonfinite and not np.isfinite(array):
-                    raise R1StateError("nonfinite production scalar pair word: " + prefix + "." + name)
-                result[prefix + "." + name] = array
-            return result
-        for name, child in value.items():
-            result.update(numeric_arrays(child, prefix + "." + str(name), allow_nonfinite=allow_nonfinite))
-    elif isinstance(value, (np.ndarray, list, tuple)):
+                    raise R1StateError("nonfinite production scalar pair word: " + path + "." + name)
+                result[path + "." + name] = array
+            return
+        for name, child in item.items():
+            _collect_numeric_arrays(child, path + "." + str(name), result, allow_nonfinite)
+    elif isinstance(item, (np.ndarray, list, tuple)):
         try:
-            array = np.asarray(value)
+            array = np.asarray(item)
         except ValueError:
             array = np.asarray([], dtype=object)
         if array.dtype.kind in ("fiuc" if allow_nonfinite else "fiu") and array.ndim > 0:
             if not allow_nonfinite and not np.all(np.isfinite(array)):
-                raise R1StateError("nonfinite production sidecar field: " + prefix)
-            result[prefix] = array
+                raise R1StateError("nonfinite production sidecar field: " + path)
+            result[path] = array
         else:
-            for index, child in enumerate(value):
-                result.update(numeric_arrays(child, prefix + "." + str(index), allow_nonfinite=allow_nonfinite))
-    elif allow_nonfinite and isinstance(value, (float, complex, np.floating, np.complexfloating)) and not np.isfinite(value):
-        result[prefix] = np.asarray(value)
-    return result
+            for index, child in enumerate(item):
+                _collect_numeric_arrays(child, path + "." + str(index), result, allow_nonfinite)
+    elif allow_nonfinite and isinstance(item, (float, complex, np.floating, np.complexfloating)) and not np.isfinite(item):
+        result[path] = np.asarray(item)
 
 
 def _stack(records, label):
-    if not records:
+    return _stack_arrays([numeric_arrays(record, prefix="") for record in records], label)
+
+
+def _stack_arrays(arrays, label):
+    if not arrays:
         return {}
-    arrays = [numeric_arrays(record, prefix="") for record in records]
     expected = set(arrays[0])
     if any(set(record) != expected for record in arrays):
         raise R1StateError("production sidecar varying field coverage: " + label)
@@ -307,9 +322,9 @@ def state_sidecar_payload(record):
         return record
     pair = schema == STEP_SCHEMA
     rows = record.get("accepted_steps", [])
-    for row in rows:
-        validate_snapshot(row["state"], require_fine=pair)
-    payload = {"accepted_states": _stack([row["state"] for row in rows], "accepted_states"),
+    accepted_states = _stack_arrays(
+        [_validated_snapshot_arrays(row["state"], require_fine=pair) for row in rows], "accepted_states")
+    payload = {"accepted_states": accepted_states,
         "row_identity": np.asarray([[row["substeps"], row["time_s"], row["dt_s"]] for row in rows]),
         "times_s": record.get("times_s", []), "voltage_V": record.get("voltage_V", [])}
     if "accepted_state_arrays" in record:
@@ -317,7 +332,8 @@ def state_sidecar_payload(record):
         if set(arrays) != (SNAPSHOT_FIELDS if pair else LEGACY_SNAPSHOT_FIELDS):
             raise R1StateError("production accepted_state_arrays key coverage mismatch")
         for name, value in arrays.items():
-            if not np.array_equal(np.asarray(value), np.asarray([row["state"][name] for row in rows])):
+            expected = accepted_states[name] if rows else np.asarray([])
+            if not np.array_equal(np.asarray(value), expected):
                 raise R1StateError("production accepted_state_arrays differ from actual rows: " + name)
     if "output_states" in record:
         if set(record["output_states"]) != (OUTPUT_FIELDS if pair else LEGACY_OUTPUT_FIELDS):
