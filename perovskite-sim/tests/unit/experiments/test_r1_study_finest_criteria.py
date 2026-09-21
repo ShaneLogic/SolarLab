@@ -88,7 +88,7 @@ def test_failed_tail_physics_rejection_propagates_before_dc(runner, study, monke
     monkeypatch.setattr(runner, "solve_controlled_dc", lambda *a, **k: pytest.fail("rejected prefix reached DC"))
     with pytest.raises(ValueError, match="physical prefix mismatch"):
         study.tail_record()
-    assert seen == [{"allow_incomplete": True}]
+    assert seen == [{"allow_incomplete": True, "backend": runner.get_backend("legacy")}]
 
 
 def _record_case(runner, study, key, conditions):
