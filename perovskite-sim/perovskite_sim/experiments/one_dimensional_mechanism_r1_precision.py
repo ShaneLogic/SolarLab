@@ -699,10 +699,72 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         return number((DD(Q)*charge[1:-1]*DD(self.widths[1:-1])).sum()
                        + (f["sheet_charge_C_m2"]-p["sheet_charge_C_m2"]).sum())
 
+    def _newton_electrostatic_residuals(self, state):
+        """Read the Poisson pair and reconstruct the two local electrostatic pairs.
+
+        These are the same physical residuals used by evaluate. Keeping this
+        temporary local pair outside ``state.fine`` preserves its fixed
+        seventeen-field representation and never changes a physical state.
+        """
+        fine = state.fine
+        local = []
+        for k, (left, right) in enumerate(zip(self.left_nodes, self.right_nodes)):
+            trace = fine["trace_potential_V"][k]
+            cl = EPS_0*self.material.eps_r[left]/self.material.iface_qss_left_distances_m[k]
+            cr = EPS_0*self.material.eps_r[right]/self.material.iface_qss_right_distances_m[k]
+            local.extend((trace[1]-trace[0]-self._prescribed_trace_jump[k],
+                          DD(cl)*(trace[0]-fine["phi_V"][left])
+                          + DD(cr)*(trace[1]-fine["phi_V"][right])-fine["sheet_charge_C_m2"][k]))
+        return fine["poisson_residual_C_m2"], cat(*local) if local else DD(np.empty(0))
+
     def newton_residual_target(self, previous, storage_scale, poisson_scale, local_scale):
-        # A newly solved high precision initial field no longer needs a
-        # deliberately inherited absolute Gauss offset in the search target.
-        return np.zeros(len(storage_scale)+len(poisson_scale)+len(local_scale))
+        """Preserve only the previous accepted state's allowed Gauss residuals.
+
+        This supplies a direction target, not a changed residual or gate.
+        The caller retains its original admissibility checks on both the
+        actual residual and this normalized previous-only target.
+        """
+        if not isinstance(previous, PrecisionState):
+            return super().newton_residual_target(previous, storage_scale, poisson_scale, local_scale)
+        poisson, local = self._newton_electrostatic_residuals(previous)
+        start, stop = len(storage_scale), len(storage_scale)+len(poisson_scale)
+        target = np.zeros(stop+len(local_scale))
+        target[start:stop] = (poisson/DD(poisson_scale)).to_float()
+        for k in range(self.interface_count):
+            rows = slice(6*k, 6*k+2)
+            target[stop+rows.start:stop+rows.stop] = (local[2*k:2*k+2]/DD(local_scale[rows])).to_float()
+        return target
+
+    def newton_direction_rhs(self, state, previous, residual, target,
+                             storage_scale, poisson_scale, local_scale):
+        """Subtract accepted-state electrostatic residuals in DD before rounding.
+
+        All dynamic and local carrier rows retain the original residual.
+        This hook never changes the residual used for acceptance, Jacobian,
+        currents, eliminated state, or physical snapshots. A different target
+        cannot silently replace the previous-state direction contract.
+        """
+        if not isinstance(state, PrecisionState) or not isinstance(previous, PrecisionState):
+            return np.asarray(residual, dtype=float)-np.asarray(target, dtype=float)
+        expected = CompensatedR1System.newton_residual_target(
+            self, previous, storage_scale, poisson_scale, local_scale)
+        if not np.array_equal(np.asarray(target), expected):
+            raise ValueError("pair Newton direction target differs from the previous accepted state")
+        before_poisson, before_local = self._newton_electrostatic_residuals(previous)
+        if not any(np.any(value.hi != 0.) or np.any(value.lo != 0.)
+                   for value in (before_poisson, before_local)):
+            # A genuinely zero prior residual must retain the original
+            # binary64 direction, including its existing rounding boundary.
+            return np.asarray(residual, dtype=float)-np.asarray(target, dtype=float)
+        current_poisson, current_local = self._newton_electrostatic_residuals(state)
+        result = np.asarray(residual, dtype=float).copy()
+        start, stop = len(storage_scale), len(storage_scale)+len(poisson_scale)
+        result[start:stop] = ((current_poisson-before_poisson)/DD(poisson_scale)).to_float()
+        for k in range(self.interface_count):
+            rows = slice(6*k, 6*k+2)
+            difference = current_local[2*k:2*k+2]-before_local[2*k:2*k+2]
+            result[stop+rows.start:stop+rows.stop] = (difference/DD(local_scale[rows])).to_float()
+        return result
 
     def independent_poisson_inputs(self, fixed_inputs, voltage, *, seed_phi=None):
         """Copy fixed inputs and preparation anchors into the isolated DTO."""

@@ -2027,7 +2027,19 @@ def _solve_step(
             target = np.asarray(target_builder(previous, storage_scale, poisson_scale, local_scale))
             if (target.shape == residual.shape and np.all(np.isfinite(target))
                     and float(np.max(np.abs(target))) <= solver_residual_limit):
-                linear_rhs = residual - target
+                direction_builder = getattr(system, "newton_direction_rhs", None)
+                if direction_builder is None:
+                    linear_rhs = residual - target
+                else:
+                    # A pair backend subtracts the two electrostatic residuals
+                    # before rounding. Only the direction is changed; norm and
+                    # every acceptance/line-search check still use residual.
+                    linear_rhs = np.asarray(direction_builder(
+                        state, previous, residual, target,
+                        storage_scale, poisson_scale, local_scale,
+                    ), dtype=float)
+                    if linear_rhs.shape != residual.shape or not np.all(np.isfinite(linear_rhs)):
+                        raise failure("Newton direction residual is invalid")
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
             try:
