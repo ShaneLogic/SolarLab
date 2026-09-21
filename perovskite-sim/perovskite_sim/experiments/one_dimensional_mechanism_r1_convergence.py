@@ -321,36 +321,126 @@ def compare_responses(quantity, left, right):
     }
 
 
-def step_current_charge_responses(record, baseline_current_A_m2, *, expected_times_s=None):
-    """Construct all regular-current and impulse-inclusive charge samples.
-
-    This adapter does not establish provenance. Its caller must verify the
-    step and same-control zero-minus baseline. Every declared time and both
-    contacts are retained; no endpoint selection or implicit interpolation
-    participates in the construction.
-    """
+def _step_current_charge_inputs(record, expected_times_s):
+    """One shared full-axis and unique-finest-row contract for both backends."""
     times = _numeric_array(record["times_s"], "step times")
     if (times.ndim != 1 or times.size < 2 or not np.all(np.isfinite(times))
             or times[0] != 0 or np.any(np.diff(times) <= 0)):
         raise ValueError("step times must include zero and increasing positive samples")
     if expected_times_s is not None and not np.array_equal(times, expected_times_s):
         raise ValueError("regular response does not cover the complete requested time axis")
-    baseline = _numeric_array(baseline_current_A_m2, "zero-minus contact baseline")
     current = _numeric_array([item["report_contact_current_A_m2"]
                               for item in record["regular_currents"]], "regular contact current")
-    if baseline.shape != (2,) or not np.all(np.isfinite(baseline)) or current.shape != (len(times), 2):
+    if current.shape != (len(times), 2):
         raise ValueError("regular current and physical contacts must align with exact output times")
     finest = max(validate_time_substeps(record["policy"]["refinement_substeps"]))
     rows = [row for row in record["accepted_steps"] if row["substeps"] == finest]
     impulse = _real_scalar(record["initial_event"]["impulse_charge_C_m2"], "impulse charge")
-    charge = []
+    integrated = []
     for time in times:
         matching = [row for row in rows if row["time_s"] == time]
         if len(matching) != 1:
             raise ValueError("integrated charge requires exactly one finest row at each output time")
-        charge.append(impulse + matching[0]["regular_integrated_charge_C_m2"] - baseline[0]*time)
+        integrated.append(matching[0]["regular_integrated_charge_C_m2"])
+    return times, current, impulse, integrated
+
+
+def step_current_charge_responses(record, baseline_current_A_m2, *, expected_times_s=None):
+    """Construct all regular-current and impulse-inclusive charge samples.
+
+    This adapter does not establish provenance. Its caller must verify the
+    step and same-control zero-minus baseline. Every declared time and both
+    contacts are retained; no endpoint selection or implicit interpolation
+    participates in the construction. Pair records require the explicit pair
+    adapter and a complete verified pair DC record.
+    """
+    if (record.get("schema") == "R1ControlledStepV2"
+            or record.get("representation") == "float64-pair-v1"):
+        raise ValueError("pair step current/charge requires the explicit pair DC baseline adapter")
+    baseline = _numeric_array(baseline_current_A_m2, "zero-minus contact baseline")
+    if baseline.shape != (2,) or not np.all(np.isfinite(baseline)):
+        raise ValueError("regular current and physical contacts must align with exact output times")
+    times, current, impulse, integrated = _step_current_charge_inputs(record, expected_times_s)
+    charge = [impulse + value - baseline[0]*time for time, value in zip(times, integrated)]
     return (R1Response(current-baseline, {"time_s": times}, ("left_contact", "right_contact")),
             R1Response(np.asarray(charge), {"time_s": times}))
+
+
+def _pair_contact_baseline(record, baseline, *, step_prepared=None, dc_prepared=None):
+    from .one_dimensional_mechanism_r1_pair_response import validate_schema
+    from .one_dimensional_mechanism_r1_pair_codec import validate_snapshot, decode_prepared, REPRESENTATION, STEP_SCHEMA
+    from .one_dimensional_mechanism_r1_state import canonical, digest, physical_preparation_identity
+    from .one_dimensional_mechanism_r1_precision import pair_words
+    from ..physics.compensated import DD, sum as dd_sum
+    if record.get("schema") != STEP_SCHEMA or record.get("representation") != REPRESENTATION:
+        raise ValueError("pair current/charge requires a matching pair step representation")
+    validate_schema(baseline, "R1ControlledDCResponseV2")
+    if baseline.get("voltage_V") != 0. or baseline.get("certified") is not True:
+        raise ValueError("pair response baseline must be certified same-control zero-bias DC")
+    from .one_dimensional_mechanism_r1_dynamics import R1DynamicsControls
+    from dataclasses import asdict
+    if (record.get("control_label") != baseline.get("control")
+            or record.get("controls") != asdict(R1DynamicsControls.from_label(baseline["control"]))):
+        raise ValueError("pair step/DC baseline control identity mismatch")
+    for key in ("intervals", "reference_sha256", "source"):
+        if key not in record or key not in baseline or canonical(record[key]) != canonical(baseline[key]):
+            raise ValueError("pair step/DC baseline identity mismatch: " + key)
+    if record.get("prepared_sha256") != baseline.get("prepared_sha256"):
+        if step_prepared is None or dc_prepared is None:
+            raise ValueError("pair step/DC baseline preparation hashes differ without both original preparations")
+        prepared_a = decode_prepared(step_prepared, representation=REPRESENTATION).to_dict()
+        prepared_b = decode_prepared(dc_prepared, representation=REPRESENTATION).to_dict()
+        if (prepared_a["sha256"] != record.get("prepared_sha256")
+                or prepared_b["sha256"] != baseline.get("prepared_sha256")
+                or canonical(physical_preparation_identity(prepared_a)) != canonical(physical_preparation_identity(prepared_b))
+                or canonical(prepared_a["source"]) != canonical(record["source"])
+                or canonical(prepared_b["source"]) != canonical(baseline["source"])):
+            raise ValueError("pair step/DC physical preparation or source identity mismatch")
+    validate_snapshot(baseline["state"])
+    if baseline.get("consumed_state_sha256") != digest(baseline["state"]):
+        raise ValueError("pair DC baseline consumed state digest mismatch")
+    def words(name):
+        value = baseline[name]
+        if not isinstance(value, dict) or set(value) != {"hi", "lo"}:
+            raise ValueError("pair DC baseline requires both high and low words: " + name)
+        high, low = _numeric_array(value["hi"], name), _numeric_array(value["lo"], name)
+        if high.shape != low.shape or not np.all(np.isfinite(high)) or not np.all(np.isfinite(low)):
+            raise ValueError("pair DC baseline words have invalid shape or finite values")
+        result = DD(high, low)
+        if not np.array_equal(result.hi, high) or not np.array_equal(result.lo, low):
+            raise ValueError("pair DC baseline words are not normalized")
+        return result
+    current, observations = words("precision_current_A_m2"), words("precision_observations")
+    if (current.ndim != 1 or current.size < 2 or observations.shape != (4, current.size)
+            or current.size != len(baseline["state"]["n_m3"])+len(baseline["state"]["occupancy"])+1
+            or len(baseline.get("physical_face_labels", ())) != current.size
+            or baseline.get("physical_face_labels", [None])[0] != "left_contact"
+            or baseline.get("physical_face_labels", [None])[-1] != "right_contact"):
+        raise ValueError("pair DC baseline physical contact shape differs")
+    if (canonical(pair_words(dd_sum(observations[:3], axis=0))) != canonical(pair_words(current))
+            or not np.array_equal(current.to_float(), baseline["current_A_m2"])
+            or float(current[0].to_float()) != baseline["terminal_current_A_m2"]):
+        raise ValueError("pair DC baseline current differs from its saved observations")
+    return current[[0, -1]]
+
+
+def pair_step_current_charge_responses(record, dc_record, *, expected_times_s=None,
+                                      step_prepared=None, dc_prepared=None):
+    """Subtract a verified pair DC baseline before rounding reported responses.
+
+    The transient regular currents, impulse and integrated charge remain their
+    original binary64 observations. This consumer retains the DC low words in
+    baseline subtraction and baseline-times-time; it does not confer new
+    precision or source provenance on those original transient observations.
+    Different timestamped preparation hashes require both original, validated
+    preparation artifacts with identical physical content and execution source.
+    """
+    from ..physics.compensated import DD
+    baseline = _pair_contact_baseline(record, dc_record, step_prepared=step_prepared, dc_prepared=dc_prepared)
+    times, current, impulse, integrated = _step_current_charge_inputs(record, expected_times_s)
+    charge = (DD(impulse) + DD(integrated) - baseline[0]*DD(times)).to_float()
+    return (R1Response((DD(current)-baseline).to_float(), {"time_s": times}, ("left_contact", "right_contact")),
+            R1Response(charge, {"time_s": times}))
 
 
 def compare_step_current_charge(left, right, left_baseline, right_baseline, *, expected_times_s=None):
@@ -362,6 +452,29 @@ def compare_step_current_charge(left, right, left_baseline, right_baseline, *, e
     return {"scope": "regular_current_and_impulse_inclusive_charge_response_comparison",
             "regular_current": current, "integrated_charge": charge,
             "baseline_contact_current_A_m2": [left_baseline, right_baseline],
+            "within_compared_budgets": current["passed"] and charge["passed"]}
+
+
+def compare_pair_step_current_charge(left, right, left_dc, right_dc, *, expected_times_s=None,
+                                     left_prepared=None, right_prepared=None,
+                                     left_dc_prepared=None, right_dc_prepared=None):
+    """Apply the original budgets to full pair-baseline-subtracted responses."""
+    left_inputs = dict(step_prepared=left_prepared, dc_prepared=left_dc_prepared)
+    right_inputs = dict(step_prepared=right_prepared, dc_prepared=right_dc_prepared)
+    a = pair_step_current_charge_responses(left, left_dc, expected_times_s=expected_times_s, **left_inputs)
+    b = pair_step_current_charge_responses(right, right_dc, expected_times_s=expected_times_s, **right_inputs)
+    current = compare_responses("regular_current_response", a[0], b[0])
+    charge = compare_responses("integrated_charge_response", a[1], b[1])
+    from .one_dimensional_mechanism_r1_precision import pair_words
+    return {"scope": "regular_current_and_impulse_inclusive_charge_response_comparison",
+            "representation": "float64-pair-v1", "regular_current": current, "integrated_charge": charge,
+            "baseline_contact_current_pair_A_m2": [pair_words(_pair_contact_baseline(left, left_dc, **left_inputs)),
+                                                  pair_words(_pair_contact_baseline(right, right_dc, **right_inputs))],
+            "baseline_applications": [{"step_prepared_sha256": record["prepared_sha256"],
+                                       "dc_prepared_sha256": dc["prepared_sha256"]}
+                                      for record, dc in ((left, left_dc), (right, right_dc))],
+            "reported_transient_observations": "original_binary64_regular_current_impulse_and_integrated_charge",
+            "subtraction": "pair_dc_baseline_and_pair_baseline_times_time_before_response_rounding",
             "within_compared_budgets": current["passed"] and charge["passed"]}
 
 
@@ -441,6 +554,7 @@ __all__ = [
     "R1ConvergenceCase", "R1Response", "convergence_cases", "base_convergence_cases",
     "observation_times", "validate_time_substeps", "compare_responses", "compare_amplitude_halving",
     "step_current_charge_responses", "compare_step_current_charge",
+    "pair_step_current_charge_responses", "compare_pair_step_current_charge",
     "validate_single_axis_comparison",
     "BASE_INTERVALS", "ALLOWED_INTERVALS", "BASE_TIME_SUBSTEPS", "ALLOWED_TIME_SUBSTEPS",
     "BASE_NONLINEAR_FACTORS", "ALLOWED_NONLINEAR_FACTORS", "AMPLITUDES_V",

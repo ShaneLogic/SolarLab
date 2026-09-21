@@ -65,7 +65,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_study_request impor
 )
 
 
-SECTIONS = ("prepare", "zero", "short", "matrix", "long", "dc", "amplitude-dc", "ac", "amplitude", "compare", "windows", "reconstruct")
+SECTIONS = ("prepare", "zero", "short", "matrix", "long", "dc", "target-dc", "amplitude-dc", "ac", "amplitude", "compare", "windows", "reconstruct")
 FREQUENCIES = np.r_[0., np.logspace(-3, 8, 45)]
 
 
@@ -220,7 +220,9 @@ class Study:
                       observation_times(first_time_s=args.first_time_s, last_time_s=args.last_time_s))
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_window import build_window_spec
         self.window_spec = build_window_spec(self.times) if self.window == "full" else None
-        self.frequencies = (np.r_[0., np.logspace(-6, 10, 65)]
+        selected_frequencies = getattr(args, "frequencies_hz", None)
+        self.frequencies = (np.asarray(selected_frequencies, dtype=float) if selected_frequencies is not None else
+                            np.r_[0., np.logspace(-6, 10, 65)]
                             if getattr(args, "extended_frequency", False) else FREQUENCIES)
         self.controls = tuple(getattr(args, "matrix_controls", ("D",)))
         self.amplitudes = tuple(getattr(args, "amplitudes", None) or AMPLITUDES_V)
@@ -243,7 +245,7 @@ class Study:
             getattr(args, "qualification_file", None), getattr(args, "qualification_sha256", None),
             result_directory=self.output)
         request = {
-            "schema": "R1PhysicsStudyRequestV5" if self.numerics.is_pair else "R1PhysicsStudyRequestV4", "run_class": self.run_class,
+            "schema": "R1PhysicsStudyRequestV6" if self.numerics.is_pair else "R1PhysicsStudyRequestV4", "run_class": self.run_class,
             "source": self.source, "runner_sha256": sha(Path(__file__)),
             "fixture_sha256": hashlib.sha256(fixture_raw).hexdigest(),
             "reference_sha256": hashlib.sha256(reference_raw).hexdigest(),
@@ -265,8 +267,10 @@ class Study:
             "matrix_scope": "base_27_plus_declared_extensions_and_control_axis_crosses",
         }
         if self.numerics.is_pair:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_response import numerical_contract
             request["representation"] = self.numerics.representation_id
-            request["pair_scope"] = "prepared_zero_transient_and_replay_only_DC_AC_not_migrated"
+            request["pair_scope"] = "explicit_pair_consumers_per_case_no_global_qualification"
+            request["response_numerics"] = numerical_contract()
         self.request = ready(request)
         if getattr(args, "plan_only", False):
             self.plan = self.make_plan(expanded_sections(args.section))
@@ -701,7 +705,7 @@ class Study:
             witness_check = verify_failure_witness(checked_read(directory, "FailureWitnessV1.json"),
                 source_commit=getattr(self, "source", {}).get("source_commit"),
                 protocol=self.failure_protocol(request), failure=failure, result=partial, persisted_rows=rows)
-        elif getattr(self, "request", {}).get("schema") in ("R1PhysicsStudyRequestV4", "R1PhysicsStudyRequestV5"):
+        elif getattr(self, "request", {}).get("schema") in ("R1PhysicsStudyRequestV4", "R1PhysicsStudyRequestV5", "R1PhysicsStudyRequestV6"):
             raise ValueError("V4 failed study case lacks its saved termination witness")
         if partial is not None and not isinstance(partial, dict):
             raise ValueError("failed scientific payload has no classified record schema")
@@ -888,6 +892,13 @@ class Study:
                               lambda directory, n=n, c=control: self.solve_dc_state(n, c, 0.))
                     self.case(f"DC/N{n}/{control}", self.dc_study_request(n, control),
                               lambda directory, n=n, c=control: self.dc_record(n, c))
+        if "target-dc" in sections:
+            amplitude = getattr(self.args, "window_amplitude", .005)
+            for n in self.grids:
+                for control in self.controls:
+                    self.case(self.target_dc_key(n, control, amplitude),
+                              self.dc_state_request(n, control, amplitude),
+                              lambda directory, n=n, c=control, a=amplitude: self.solve_dc_state(n, c, a))
         if "amplitude-dc" in sections:
             for n in self.grids:
                 for control in self.controls:
@@ -898,7 +909,7 @@ class Study:
                         "scope": "dc_endpoint_ladder_without_transient_linearity_acceptance"},
                         lambda directory, n=n, c=control: dc_amplitude_endpoint_study(
                             self.stack, n, self.binding, self.prepared(n), control=c,
-                            expected_prepared_sha256=self.prepared(n).sha256))
+                            expected_prepared_sha256=self.prepared(n).sha256, backend=self.numerics))
         if "ac" in sections:
             for n in self.grids:
                 self.case(f"AC/N{n}/D", {"intervals": n, "control": "D", "frequency_Hz": self.frequencies,
@@ -1101,10 +1112,10 @@ class Study:
     def dc_record(self, n, control):
         prepared = self.prepared(n)
         target = solve_controlled_dc(self.stack, n, self.binding, prepared, control=control, voltage_V=.005,
-                                     expected_prepared_sha256=prepared.sha256)
+                                     expected_prepared_sha256=prepared.sha256, backend=self.numerics)
         return {"target_bias": target.evidence,
                 "conductance": dc_conductance_study(self.stack, n, self.binding, prepared, control=control,
-                                                    expected_prepared_sha256=prepared.sha256)}
+                                                    expected_prepared_sha256=prepared.sha256, backend=self.numerics)}
 
     @staticmethod
     def dc_state_request(n, control, voltage):
@@ -1123,7 +1134,7 @@ class Study:
     def solve_dc_state(self, n, control, voltage):
         prepared = self.prepared(n)
         return solve_controlled_dc(self.stack, n, self.binding, prepared, control=control,
-            voltage_V=voltage, expected_prepared_sha256=prepared.sha256).evidence
+            voltage_V=voltage, expected_prepared_sha256=prepared.sha256, backend=self.numerics).evidence
 
     def target_dc(self, n, control, amplitude):
         key = self.target_dc_key(n, control, amplitude)
@@ -1131,7 +1142,7 @@ class Study:
             lambda directory: self.solve_dc_state(n, control, amplitude), dependency=True)
         if record is None:
             raise ValueError("required target DC has not been collected: " + key)
-        return restore_controlled_dc(record, self.stack, n, self.binding, self.prepared(n))
+        return restore_controlled_dc(record, self.stack, n, self.binding, self.prepared(n), backend=self.numerics)
 
     @staticmethod
     def amplitude_key(item):
@@ -1145,7 +1156,11 @@ class Study:
 
     def current_response(self, item, key):
         record = self.saved(key)
-        baseline = self.zero_dc(item.intervals, item.control).evidence["current_A_m2"][[0, -1]]
+        dc = self.zero_dc(item.intervals, item.control)
+        if self.numerics.is_pair:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import pair_step_current_charge_responses
+            return pair_step_current_charge_responses(record, dc.evidence)[0]
+        baseline = dc.evidence["current_A_m2"][[0, -1]]
         values = np.asarray([row["report_contact_current_A_m2"] for row in record["regular_currents"]])-baseline
         return R1Response(values, {"time_s": np.asarray(record["times_s"])}, ("left_contact", "right_contact"))
 
@@ -1232,8 +1247,7 @@ class Study:
     def short_comparison(self, left, right, control):
         keys = (f"Short/N{left}/{control}", f"Short/N{right}/{control}")
         a, b = (self.saved(key) for key in keys)
-        electrical = compare_step_current_charge(a, b, self.zero_dc(left, control).evidence["current_A_m2"][[0, -1]],
-                                                self.zero_dc(right, control).evidence["current_A_m2"][[0, -1]])
+        electrical = self.electrical_comparison(a, b, self.zero_dc(left, control), self.zero_dc(right, control))
         return compare_convergence_responses(spatial_responses_from_step(self.prepared(left), a),
             spatial_responses_from_step(self.prepared(right), b), axis="intervals", electrical=electrical,
             input_verifications=tuple(self.verified_cases[key][1] for key in keys))
@@ -1314,8 +1328,7 @@ class Study:
         a, b = self.saved(self.matrix_key(left)), self.saved(self.matrix_key(right))
         baseline_left = self.zero_dc(left.intervals, left.control)
         baseline_right = self.zero_dc(right.intervals, right.control)
-        electrical = compare_step_current_charge(a, b, baseline_left.evidence["current_A_m2"][[0, -1]],
-                                                baseline_right.evidence["current_A_m2"][[0, -1]])
+        electrical = self.electrical_comparison(a, b, baseline_left, baseline_right)
         axes = [field for field in ("intervals", "time_substeps", "nonlinear_factor")
                 if getattr(left, field) != getattr(right, field)]
         if len(axes) != 1:
@@ -1326,6 +1339,13 @@ class Study:
             input_verifications=(self.verified_cases[self.matrix_key(left)][1],
                                  self.verified_cases[self.matrix_key(right)][1]))
 
+    def electrical_comparison(self, left, right, left_dc, right_dc):
+        if self.numerics.is_pair:
+            from perovskite_sim.experiments.one_dimensional_mechanism_r1_convergence import compare_pair_step_current_charge
+            return compare_pair_step_current_charge(left, right, left_dc.evidence, right_dc.evidence)
+        return compare_step_current_charge(left, right, left_dc.evidence["current_A_m2"][[0, -1]],
+                                           right_dc.evidence["current_A_m2"][[0, -1]])
+
     def zero_dc(self, intervals, control):
         key = intervals, control
         if key not in self.dc_baselines:
@@ -1334,7 +1354,7 @@ class Study:
             if record is None:
                 raise ValueError("required baseline DC has not been collected")
             self.dc_baselines[key] = restore_controlled_dc(record, self.stack, intervals, self.binding,
-                                                          self.prepared(intervals))
+                                                          self.prepared(intervals), backend=self.numerics)
         return self.dc_baselines[key]
 
     def tail_record(self):
@@ -1363,7 +1383,7 @@ class Study:
         state = {**row["state"], "prepared_sha256": record["prepared_sha256"],
                  "control": record["control_label"], "voltage_V": record["amplitude_V"]}
         dc = solve_controlled_dc(self.stack, 16, self.binding, prepared, voltage_V=.005,
-                                expected_prepared_sha256=prepared.sha256)
+                                expected_prepared_sha256=prepared.sha256, backend=self.numerics)
         # A finite-step average is not the instantaneous regular current.
         # Reconstruct this saved state using its exact solver coordinates.
         if "output_states" not in record or row["time_s"] != record["times_s"][-1]:
@@ -1496,7 +1516,7 @@ class Study:
                 for axis in ("intervals", "time_substeps", "nonlinear_factor")} <= pair_coverage
             requirements["full_window_base_27_available"] = requirements.pop("full_window_base_27")
             requirements["three_axes_recorded"] = requirements.pop("three_independent_axis_comparisons")
-        summary = {"schema": "R1PhysicsStudySummaryV3" if self.numerics.is_pair else "R1PhysicsStudySummaryV2", "started_utc": self.started,
+        summary = {"schema": "R1PhysicsStudySummaryV4" if self.numerics.is_pair else "R1PhysicsStudySummaryV2", "started_utc": self.started,
                    "finished_utc": datetime.now(timezone.utc).isoformat(), "argv": sys.argv,
                    "cases": self.rows, "attempted_cases": self.attempted,
                    "attempt_count_scope": "new_attempts_in_this_invocation",
@@ -1596,10 +1616,10 @@ def scientific_checks(result):
         return None
     if result.get("schema") in ("R1FrequencyWindowReportV1", "R1FrequencyWindowReportV2"):
         return bool(result["numeric_checks_passed"])
-    if result.get("schema") == "R1DCEndpointAmplitudeStudyV1":
+    if result.get("schema") in ("R1DCEndpointAmplitudeStudyV1", "R1DCEndpointAmplitudeStudyV2"):
         return (result.get("dc_states_certified") is True and result.get("linearity_certified") is False
                 and result.get("full_transient_linearity_certified") is False)
-    if result.get("schema") == "R1ControlledDCResponseV1":
+    if result.get("schema") in ("R1ControlledDCResponseV1", "R1ControlledDCResponseV2"):
         return result.get("certified") is True
     if "double_domain_consistent" in result and "reconstruction" in result:
         return result.get("device_stage_gate", {}).get("device_qualified") is True
@@ -1873,7 +1893,9 @@ def main(argv=None):
     parser.add_argument("--max-cases", type=int, help="maximum newly started cases in this invocation")
     parser.add_argument("--formal", action="store_true", help="require the controlled source launcher")
     parser.add_argument("--backend", choices=("legacy", "pair"), default="legacy",
-                        help="explicit per-run representation; pair DC/AC consumers are not yet qualified")
+                        help="explicit per-run representation; qualification remains case-specific")
+    parser.add_argument("--frequencies-hz", type=float, nargs="+",
+                        help="explicit distinct increasing nonnegative AC samples, frozen in the study request")
     parser.add_argument("--verify", action="store_true", help="recompute archived evidence without writing it")
     parser.add_argument("--manifest-sha256", help="external root manifest anchor for formal resume/verify")
     parser.add_argument("--plan-only", action="store_true", help="write exact case requests without solving or creating results")
@@ -1918,6 +1940,11 @@ def main(argv=None):
             return 1
     if args.analysis_plan_only or args.verify_analysis:
         parser.error("analysis options require --qualify")
+    if args.frequencies_hz is not None:
+        frequencies = np.asarray(args.frequencies_hz)
+        if (not np.all(np.isfinite(frequencies)) or np.any(frequencies < 0)
+                or np.any(np.diff(frequencies) <= 0) or args.extended_frequency):
+            parser.error("explicit AC frequencies must be finite, nonnegative, increasing and cannot use --extended-frequency")
     if args.max_cases is not None and args.max_cases <= 0:
         parser.error("--max-cases must be positive")
     if args.retry_failed and not args.resume:

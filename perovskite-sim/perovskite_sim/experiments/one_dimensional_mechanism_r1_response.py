@@ -129,13 +129,8 @@ def descriptor_frequency_response(frequency_Hz, *, storage, rate, forcing,
     }
 
 
-def _require_legacy_response(*, backend=None, prepared=None, system=None, state=None):
-    """Fail before a response consumer can discard a compensated low word.
-
-    V9 migrates the transient production chain. DC inventory constraints and
-    finite-difference frequency observations have a separate numerical contract
-    and are not qualified for pair states by that migration.
-    """
+def _response_backend(*, backend=None, prepared=None, system=None, state=None):
+    """Select explicitly, rejecting pair input before any legacy conversion."""
     from .one_dimensional_mechanism_r1_backend import get_backend, backend_for
     selected = backend_for(system, backend) if system is not None else get_backend(backend)
     common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
@@ -143,8 +138,14 @@ def _require_legacy_response(*, backend=None, prepared=None, system=None, state=
         str(common.get("schema", "")).startswith("R1CommonStatePair")
         or common.get("representation") == "float64-pair-v1"
         or common.get("representation_id") == "float64-pair-v1")
-    if selected.is_pair or pair_record or hasattr(state, "fine"):
-        raise ValueError("pair DC/frequency response consumers are not migrated or qualified in V9")
+    if (pair_record or hasattr(state, "fine")) and not selected.is_pair:
+        raise ValueError("pair response requires an explicit matching backend; silent precision downgrade is forbidden")
+    if selected.is_pair:
+        if prepared is not None:
+            selected.decode_prepared(prepared)
+        if state is not None:
+            from .one_dimensional_mechanism_r1_pair_response import require_state
+            require_state(system, state)
     return selected
 
 
@@ -155,7 +156,11 @@ def physical_observations(system, state):
     are blocking. Reservoir carrier densities are pinned, hence no omitted
     endpoint carrier storage is introduced by their recombination correction.
     """
-    _require_legacy_response(system=system, state=state)
+    selected = _response_backend(system=system, state=state)
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import observations
+        values, labels = observations(system, state)
+        return values.to_float(), labels
     mat, w = system.material, system.widths
     rho, _ = system.system._bulk_space_charge_and_tangent(
         state.n, state.p, positive_ion_density_m3=state.positive,
@@ -196,6 +201,9 @@ def physical_observations(system, state):
 
 
 def _inventory_rows(system, state):
+    if _response_backend(system=system, state=state).is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import inventory_rows
+        return inventory_rows(system, state)
     rows = []
     lookup = {int(node): k for k, node in enumerate(system.positive_nodes)}
     for nodes, target in zip(system.ion_layout.positive_components, system.positive_targets):
@@ -250,6 +258,16 @@ def _dc_metrics(system, state, initial, policy):
         "frozen_ion_relative_change": 0. if system.controls.nu_I else float(np.max(np.abs(state.positive-initial.positive) / np.maximum(initial.positive, 1.))),
         "frozen_trap_absolute_change": 0. if system.controls.nu_t else float(np.max(np.abs(state.occupancy-initial.occupancy))),
     }
+    if _response_backend(system=system, state=state).is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import observations, state_difference
+        from perovskite_sim.physics.compensated import sum as dd_sum
+        fine_current = dd_sum(observations(system, state)[0][:3], axis=0)
+        metrics["inventory_relative_error"] = max(abs(row[2]) for row in _inventory_rows(system, state))
+        metrics["all_physical_face_current_spread_A_m2"] = float(np.ptp((fine_current-fine_current[0]).to_float()))
+        if not system.controls.nu_I:
+            metrics["frozen_ion_relative_change"] = float(np.max(np.abs(state_difference(state, initial, "positive")) / np.maximum(initial.positive, 1.)))
+        if not system.controls.nu_t:
+            metrics["frozen_trap_absolute_change"] = float(np.max(np.abs(state_difference(state, initial, "occupancy"))))
     limits = {
         "electron_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
         "hole_continuity_A_m2": policy.maximum_dc_continuity_bound_A_m2,
@@ -276,7 +294,7 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
     This function never calls a full-D biased solver for A-C. A converged
     nonlinear solve is distinct from numerical accuracy of a tiny DC current.
     """
-    _require_legacy_response(backend=backend, prepared=prepared)
+    selected = _response_backend(backend=backend, prepared=prepared)
     from .one_dimensional_mechanism_r1_qualification_workflow import require_collection_phase
     require_collection_phase("solve_controlled_dc")
     voltage = _finite_scalar(voltage_V, "voltage_V")
@@ -284,7 +302,8 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
     controls = R1DynamicsControls.from_label(control)
     system, initial = restore_common_state(prepared, stack, intervals, binding,
                                            controls=controls, policy=policy,
-                                           expected_prepared_sha256=expected_prepared_sha256)
+                                           expected_prepared_sha256=expected_prepared_sha256,
+                                           backend=selected)
     system, initial = system.rebase(initial)
     coordinate = system.initial_coordinate()
     history, reason = [], "newton_iteration_budget_exhausted"
@@ -326,6 +345,10 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
             break
     observations, labels = physical_observations(system, state)
     current = np.sum(observations[:3], axis=0)
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import observations as pair_observations
+        from perovskite_sim.physics.compensated import sum as dd_sum
+        current = dd_sum(pair_observations(system, state)[0][:3], axis=0).to_float()
     evidence = {
         "schema": "R1ControlledDCResponseV1", "control": controls.label,
         "voltage_V": voltage, "intervals": int(intervals),
@@ -342,6 +365,10 @@ def solve_controlled_dc(stack, intervals, binding, prepared, *, control="D",
         "certified": reason == "converged" and checks["certified"],
         "scope": "controlled_discrete_dc_equations_only",
     }
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import dc_precision_evidence, stamp
+        evidence.update(dc_precision_evidence(system, state, policy))
+        stamp(evidence)
     result = R1DCResponse(system, state, evidence)
     if not evidence["certified"]:
         raise R1ResponseError("controlled DC did not converge within fixed limits", evidence)
@@ -355,22 +382,32 @@ def restore_controlled_dc(record, stack, intervals, binding, prepared, *, policy
     receipt. Reevaluate saved physical contents here; iteration history remains
     provenance of that original solve, not a second computation.
     """
-    _require_legacy_response(backend=backend, prepared=prepared)
+    selected = _response_backend(backend=backend, prepared=prepared)
+    schema = "R1ControlledDCResponseV2" if selected.is_pair else "R1ControlledDCResponseV1"
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import validate_schema
+        validate_schema(record, schema)
     common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
-    if (record.get("schema") != "R1ControlledDCResponseV1"
+    if (record.get("schema") != schema
             or record.get("prepared_sha256") != common["sha256"]
             or record.get("reference_sha256") != binding["sha256"]
             or record.get("intervals") != intervals or record.get("certified") is not True
             or record.get("source") != common.get("source")):
         raise ValueError("saved DC identity or certification differs from verified input")
     policy = policy or r1_policy()
+    if selected.is_pair:
+        _same_response_content(record.get("response_policy"), asdict(policy), "saved_pair_dc_policy")
     controls = R1DynamicsControls.from_label(record["control"])
     system, initial = restore_common_state(prepared, stack, intervals, binding,
-        controls=controls, policy=policy, expected_prepared_sha256=common["sha256"])
+        controls=controls, policy=policy, expected_prepared_sha256=common["sha256"], backend=selected)
     system, initial = system.rebase(initial)
     state = system.evaluate(np.asarray(record["coordinate"], dtype=float), record["voltage_V"])
     observations, labels = physical_observations(system, state)
     current = np.sum(observations[:3], axis=0)
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import observations as pair_observations
+        from perovskite_sim.physics.compensated import sum as dd_sum
+        current = dd_sum(pair_observations(system, state)[0][:3], axis=0).to_float()
     expected = {
         "state": snapshot(system, state), "checks": _dc_metrics(system, state, initial, policy),
         "physical_face_labels": labels, "electron_current_A_m2": observations[0],
@@ -378,6 +415,9 @@ def restore_controlled_dc(record, stack, intervals, binding, prepared, *, policy
         "displacement_C_m2": observations[3], "current_A_m2": current,
         "terminal_current_A_m2": float(current[0]), "junction_polarity": float(system.polarity),
     }
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import dc_precision_evidence
+        expected.update(dc_precision_evidence(system, state, policy))
     _same_response_content({key: record[key] for key in expected}, expected)
     if not expected["checks"]["certified"] or record.get("stop_reason") != "converged":
         raise ValueError("saved DC does not satisfy the declared physical equations")
@@ -387,25 +427,29 @@ def restore_controlled_dc(record, stack, intervals, binding, prepared, *, policy
 def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", policy=None,
                          expected_prepared_sha256=None, backend=None):
     """Independent +/-0.1,0.05,0.025 mV steady states, without tail fitting."""
-    _require_legacy_response(backend=backend, prepared=prepared)
+    selected = _response_backend(backend=backend, prepared=prepared)
     widths = np.array([1e-4, 5e-5, 2.5e-5])
     pairs, conductance, error_indicators = [], [], []
     baseline = solve_controlled_dc(stack, intervals, binding, prepared, control=control, policy=policy,
-                                   expected_prepared_sha256=expected_prepared_sha256)
+                                   expected_prepared_sha256=expected_prepared_sha256, backend=selected)
     for h in widths:
         minus = solve_controlled_dc(stack, intervals, binding, prepared, control=control,
-                                    voltage_V=-h, policy=policy, expected_prepared_sha256=expected_prepared_sha256)
+                                    voltage_V=-h, policy=policy, expected_prepared_sha256=expected_prepared_sha256, backend=selected)
         plus = solve_controlled_dc(stack, intervals, binding, prepared, control=control,
-                                   voltage_V=h, policy=policy, expected_prepared_sha256=expected_prepared_sha256)
+                                   voltage_V=h, policy=policy, expected_prepared_sha256=expected_prepared_sha256, backend=selected)
         pairs.append({"half_width_V": h, "minus": minus.evidence, "plus": plus.evidence})
-        conductance.append((plus.evidence["terminal_current_A_m2"] - minus.evidence["terminal_current_A_m2"]) / (2*h))
+        if selected.is_pair:
+            from .one_dimensional_mechanism_r1_pair_response import terminal_current
+            conductance.append(float(((terminal_current(plus.evidence) - terminal_current(minus.evidence)) / (2*h)).to_float()))
+        else:
+            conductance.append((plus.evidence["terminal_current_A_m2"] - minus.evidence["terminal_current_A_m2"]) / (2*h))
         error_indicators.append((plus.evidence["checks"]["metrics"]["electron_continuity_A_m2"]
                                 + plus.evidence["checks"]["metrics"]["hole_continuity_A_m2"]
                                 + minus.evidence["checks"]["metrics"]["electron_continuity_A_m2"]
                                 + minus.evidence["checks"]["metrics"]["hole_continuity_A_m2"]) / (2*h))
     values = np.asarray(conductance)
     limit = 1e-8 + .01 * max(abs(values[-1]), abs(values[-2]))
-    return {
+    record = {
         "schema": "R1DCConductanceStudyV1", "control": control,
         "baseline": baseline.evidence, "pairs": pairs, "half_width_V": widths,
         "conductance_S_m2": values,
@@ -418,6 +462,10 @@ def dc_conductance_study(stack, intervals, binding, prepared, *, control="D", po
         "absolute_error_bound_S_m2": None,
         "scope": "dc_step_refinement_only_not_an_absolute_error_bound",
     }
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import stamp
+        stamp(record)
+    return record
 
 
 def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control="D", policy=None,
@@ -427,11 +475,11 @@ def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control=
     Differences of j(a)/a are endpoint diagnostics. An independent current
     uncertainty budget and the full transient are absent from this study.
     """
-    _require_legacy_response(backend=backend, prepared=prepared)
+    selected = _response_backend(backend=backend, prepared=prepared)
     amplitudes = tuple(_finite_scalar(value, "amplitude_V") for value in amplitudes_V)
     if amplitudes != AMPLITUDES_V:
         raise ValueError("DC endpoints require the complete declared amplitude ladder")
-    kwargs = dict(control=control, policy=policy, expected_prepared_sha256=expected_prepared_sha256)
+    kwargs = dict(control=control, policy=policy, expected_prepared_sha256=expected_prepared_sha256, backend=selected)
     baseline = solve_controlled_dc(stack, intervals, binding, prepared, voltage_V=0., **kwargs).evidence
     record = {"schema": "R1DCEndpointAmplitudeStudyV1", "control": baseline["control"],
               "intervals": intervals, "prepared_sha256": baseline["prepared_sha256"],
@@ -444,6 +492,9 @@ def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control=
               "full_transient_linearity_certified": False,
               "qualification_level": "dc_endpoint_diagnostic", "budget_status": "unknown",
               "scope": "independent_dc_endpoint_diagnostic_without_current_error_budget_or_transient_linearity"}
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import stamp
+        stamp(record)
     normalized = []
     for amplitude in amplitudes:
         try:
@@ -451,7 +502,11 @@ def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control=
         except R1ResponseError as exc:
             record.update(failed_amplitude_V=amplitude, failed_dc=exc.result)
             raise R1ResponseError("controlled DC amplitude endpoint did not converge", record) from exc
-        delta = endpoint["terminal_current_A_m2"]-baseline["terminal_current_A_m2"]
+        if selected.is_pair:
+            from .one_dimensional_mechanism_r1_pair_response import terminal_current
+            delta = float((terminal_current(endpoint) - terminal_current(baseline)).to_float())
+        else:
+            delta = endpoint["terminal_current_A_m2"]-baseline["terminal_current_A_m2"]
         value = delta/amplitude
         record["endpoints"].append({"amplitude_V": amplitude, "dc": endpoint,
                                     "delta_current_A_m2": delta, "normalized_response_S_m2": value})
@@ -475,6 +530,9 @@ def dc_amplitude_endpoint_study(stack, intervals, binding, prepared, *, control=
 
 def _linear_coefficients(system, state, voltage, h):
     """Direct M/A/H; central voltage derivative and physical observations."""
+    pair = _response_backend(system=system, state=state).is_pair
+    if pair:
+        from .one_dimensional_mechanism_r1_pair_response import equation_vector, observations, state_difference
     n, d = system.dimension, len(state.storage)
     mass = sparse.vstack((state.storage_jacobian, sparse.csr_matrix((n-d, n))), format="csr")
     operator = sparse.vstack((state.rate_jacobian, -state.poisson_jacobian,
@@ -488,6 +546,10 @@ def _linear_coefficients(system, state, voltage, h):
     op = physical_observations(system, plus)[0]
     om = physical_observations(system, minus)[0]
     observation_v = (op-om)/(2*h)
+    if pair:
+        b = ((equation_vector(system, plus)-equation_vector(system, minus))/(2*h)).to_float()
+        mv = np.r_[((plus.fine["storage"]-minus.fine["storage"])/(2*h)).to_float(), np.zeros(n-d)]
+        observation_v = ((observations(system, plus)[0]-observations(system, minus)[0])/(2*h)).to_float()
     observation_x = np.empty((*observation.shape, n))
     differences, unresolved_elementwise, physical_steps = [], [], []
     equation_scales = np.maximum(np.asarray(abs(operator).max(axis=1).toarray()).ravel(), 1.)
@@ -504,11 +566,19 @@ def _linear_coefficients(system, state, voltage, h):
                          float(np.max(np.abs(getattr(down, name)-getattr(state, name)))))
                for name in ("n", "p", "positive", "occupancy", "phi")},
         })
+        if pair:
+            physical_steps[-1].update({name: max(float(np.max(np.abs(state_difference(up, state, name)))),
+                                                       float(np.max(np.abs(state_difference(down, state, name)))))
+                                      for name in ("n", "p", "positive", "occupancy", "phi")})
         observation_x[..., k] = (physical_observations(system, up)[0]-physical_observations(system, down)[0])/(2*h)
+        if pair:
+            observation_x[..., k] = ((observations(system, up)[0]-observations(system, down)[0])/(2*h)).to_float()
         captures_x[..., k] = (np.asarray([s.tangent.balance.capture_flux_m2_s for s in up.local])
                               - np.asarray([s.tangent.balance.capture_flux_m2_s for s in down.local]))/(2*h)
         fd = np.r_[(up.rate-down.rate)/(2*h), -(up.poisson_residual-down.poisson_residual)/(2*h),
                    -(up.local_residual-down.local_residual)/(2*h)]
+        if pair:
+            fd = ((equation_vector(system, up)-equation_vector(system, down))/(2*h)).to_float()
         direct = operator[:, k].toarray().ravel()
         # Keep both a dimensionless equation-scaled column norm and the
         # cancellation-sensitive elementwise diagnostic. Small entries of
@@ -564,7 +634,10 @@ def assess_small_signal_response(record):
     operating state and the complex equations from the anchored inputs.
     Stored checks and eligibility booleans never participate in this result.
     """
-    if record.get("schema") != "R1ControlledSmallSignalV1":
+    if record.get("schema") == "R1ControlledSmallSignalV2":
+        from .one_dimensional_mechanism_r1_pair_response import validate_schema
+        validate_schema(record, "R1ControlledSmallSignalV2")
+    elif record.get("schema") != "R1ControlledSmallSignalV1":
         raise ValueError("unsupported small-signal response schema")
     frequency = _frequencies(record["frequency_Hz"])
     count = len(frequency)
@@ -673,7 +746,7 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
     """
     if not isinstance(dc, R1DCResponse) or not dc.evidence.get("certified"):
         raise ValueError("small signal requires a certified controlled DC result")
-    _require_legacy_response(system=dc.system, state=dc.state)
+    selected = _response_backend(system=dc.system, state=dc.state)
     frequency = _frequencies(frequency_Hz)
     steps = tuple(_finite_scalar(h, "derivative step") for h in derivative_steps)
     if steps != (1e-5, 5e-6, 2.5e-6):
@@ -682,6 +755,11 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
     # A previously computed pass flag cannot replace the present equations.
     # Reevaluate the live coordinate before using its tangents or currents.
     state = system.evaluate(dc.state.coordinate, voltage)
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import validate_schema
+        validate_schema(dc.evidence, "R1ControlledDCResponseV2")
+        _same_response_content(snapshot(system, dc.state), dc.evidence["state"], "live_dc_state")
+        _same_response_content(snapshot(system, state), dc.evidence["state"], "reevaluated_dc_state")
     current_checks = _dc_metrics(system, state, system._step_reference, r1_policy())
     if not current_checks["certified"]:
         raise R1ResponseError("AC operating state no longer satisfies controlled DC", current_checks)
@@ -802,6 +880,9 @@ def small_signal_response(dc: R1DCResponse, frequency_Hz, *, derivative_steps=(1
                                "time_reconstruction_error_budget"],
         "scope": "direct_controlled_linear_response_only",
     }
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import stamp
+        stamp(record)
     assessment = assess_small_signal_response(record)
     record.update({key: assessment[key] for key in
                    ("checks", "numerically_eligible_frequency_points", "equilibrium_dissipation_sign_observation")})
@@ -851,7 +932,9 @@ def verify_response_content(record, *, stack, intervals, binding, prepared, requ
     compared, not only a certificate. No timestamp or execution metadata is
     part of these response schemas. Replay requires the frozen runtime.
     """
-    _require_legacy_response(backend=backend, prepared=prepared)
+    selected = _response_backend(backend=backend, prepared=prepared)
+    if "representation" in request and request["representation"] != selected.representation_id:
+        raise ValueError("response request numerical representation differs")
     if request.get("intervals") != intervals or request.get("control") not in ("A", "B", "C", "D"):
         raise ValueError("response request intervals/control identity differs")
     common = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
@@ -867,8 +950,16 @@ def verify_response_content(record, *, stack, intervals, binding, prepared, requ
         policy = requested_policy
     elif asdict(policy) != asdict(requested_policy):
         raise ValueError("response policy differs from the declared request")
-    kwargs = dict(control=control, policy=policy, expected_prepared_sha256=common["sha256"])
+    kwargs = dict(control=control, policy=policy, expected_prepared_sha256=common["sha256"], backend=selected)
     schema = record.get("schema")
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import SCHEMAS, validate_schema
+        if set(record) == {"target_bias", "conductance"}:
+            validate_schema(record["target_bias"], "R1ControlledDCResponseV2")
+            validate_schema(record["conductance"], "R1DCConductanceStudyV2")
+        else:
+            validate_schema(record)
+            schema = {value: key for key, value in SCHEMAS.items()}[schema]
     if schema == "R1DCEndpointAmplitudeStudyV1":
         if request.get("operating_voltage_V") != 0. or tuple(request.get("amplitudes_V", ())) != AMPLITUDES_V:
             raise ValueError("DC endpoint request must bind the zero operating bias and declared amplitude ladder")
@@ -902,11 +993,15 @@ def verify_response_content(record, *, stack, intervals, binding, prepared, requ
     else:
         raise ValueError("unsupported response content schema")
     _same_response_content(record, expected)
-    return {"schema": "R1ResponseContentVerificationV1", "certified": bool(certified),
+    verification = {"schema": "R1ResponseContentVerificationV1", "certified": bool(certified),
             "content_matches_recomputed": True, "equations_replayed": True,
             "prepared_sha256": common["sha256"], "reference_sha256": binding["sha256"],
             "source": common.get("source"), "intervals": intervals, "control": control,
             "scope": "numeric_replay_requires_separate_source_and_preparation_verification"}
+    if selected.is_pair:
+        verification.update(schema="R1ResponseContentVerificationV2", representation=selected.representation_id,
+                            precision_state_and_observations_recomputed=True)
+    return verification
 
 
 def compare_transient_tail(dc: R1DCResponse, *, initial_state, tail_state,
@@ -920,9 +1015,9 @@ def compare_transient_tail(dc: R1DCResponse, *, initial_state, tail_state,
     """
     if not dc.evidence.get("certified"):
         raise ValueError("tail comparison requires certified same-model DC")
-    _require_legacy_response(system=dc.system, state=dc.state)
-    if any(str(key).startswith("precision_") for row in (initial_state, tail_state) for key in row):
-        raise ValueError("pair transient/DC tail comparison is not migrated or qualified in V9")
+    selected = _response_backend(system=dc.system, state=dc.state)
+    if not selected.is_pair and any(str(key).startswith("precision_") for row in (initial_state, tail_state) for key in row):
+        raise ValueError("pair transient/DC tail requires an explicit matching backend")
     for key in ("prepared_sha256", "control", "voltage_V"):
         if tail_state.get(key) != dc.evidence[key]:
             raise ValueError(f"tail/DC identity mismatch: {key}")
@@ -940,24 +1035,29 @@ def compare_transient_tail(dc: R1DCResponse, *, initial_state, tail_state,
         if tail.shape != target.shape or initial.shape != target.shape or not np.all(np.isfinite(tail)) or not np.all(np.isfinite(initial)):
             raise ValueError(f"tail/DC state shape or finite mismatch: {key}")
         arrays[key] = tail, initial, target
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_response import tail_arrays
+        _same_response_content(snapshot(dc.system, dc.state), dc.evidence["state"], "tail_dc_state")
+        arrays = tail_arrays(dc, initial_state, tail_state)
     comparisons = {}
     for key in ("n_m3", "p_m3", "trace_state_m3"):
         tail, _, target = arrays[key]
         if np.any(tail <= 0) or np.any(target <= 0):
             raise ValueError("carrier densities must be positive")
-        difference = np.abs(np.log(tail/target))
+        difference = np.abs((tail/target).log().to_float()) if selected.is_pair else np.abs(np.log(tail/target))
         comparisons[key] = {"maximum_log_difference": float(np.max(difference)),
                             "limit": .01, "agrees": bool(np.all(difference <= .01))}
     for key, absolute in (("phi_V", 5e-5), ("trace_potential_V", 5e-5), ("occupancy", 1e-7)):
         tail, initial, target = arrays[key]
-        difference = np.abs(tail-target)
-        limit = absolute+.01*np.maximum(np.abs(tail-initial), np.abs(target-initial))
+        difference = np.abs((tail-target).to_float()) if selected.is_pair else np.abs(tail-target)
+        limit = (absolute+.01*np.maximum(np.abs((tail-initial).to_float()), np.abs((target-initial).to_float()))
+                 if selected.is_pair else absolute+.01*np.maximum(np.abs(tail-initial), np.abs(target-initial)))
         comparisons[key] = {"maximum_absolute_difference": float(np.max(difference)),
                             "maximum_limit_ratio": float(np.max(difference/limit)),
                             "agrees": bool(np.all(difference <= limit))}
     tail, initial_ions, target = arrays["positive_m3"]
     scale = dc.system.material.P_ion0
-    difference = np.abs(tail-target)
+    difference = np.abs((tail-target).to_float()) if selected.is_pair else np.abs(tail-target)
     comparisons["positive_m3"] = {"maximum_scaled_difference": float(np.max(difference/np.maximum(scale, 1.))),
                                   "limit": .01, "agrees": bool(np.all(difference <= .01*scale))}
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_spatial import ConservativeIonProfile
@@ -977,22 +1077,35 @@ def compare_transient_tail(dc: R1DCResponse, *, initial_state, tail_state,
                 raise ValueError("tail active component has no ion inventory")
             result.append(first/mass)
         return np.asarray(result)
-    z, z_initial, z_dc = centroid(tail), centroid(initial_ions), centroid(target)
-    z_limit = 5e-11+.01*np.maximum(np.abs(z-z_initial), np.abs(z_dc-z_initial))
-    comparisons["ion_centroid_m"] = {"absolute_difference": np.abs(z-z_dc), "limit": z_limit,
-                                    "agrees": bool(np.all(np.abs(z-z_dc) <= z_limit)),
+    if selected.is_pair:
+        from .one_dimensional_mechanism_r1_pair_spatial import centroids_from_profile
+        z, z_initial, z_dc = (centroids_from_profile(faces, value, components, tuple(sorted(cuts)))
+                             for value in (tail, initial_ions, target))
+        difference = np.abs((z-z_dc).to_float())
+        z_limit = 5e-11+.01*np.maximum(np.abs((z-z_initial).to_float()), np.abs((z_dc-z_initial).to_float()))
+    else:
+        z, z_initial, z_dc = centroid(tail), centroid(initial_ions), centroid(target)
+        difference = np.abs(z-z_dc)
+        z_limit = 5e-11+.01*np.maximum(np.abs(z-z_initial), np.abs(z_dc-z_initial))
+    comparisons["ion_centroid_m"] = {"absolute_difference": difference, "limit": z_limit,
+                                    "agrees": bool(np.all(difference <= z_limit)),
                                     "definition": "exact first moment of conservative ion reconstruction over each active component"}
     current = _finite_scalar(tail_regular_current_A_m2, "tail_regular_current_A_m2")
     jdc = dc.evidence["terminal_current_A_m2"]
     limit = 1e-7+.005*max(abs(current), abs(jdc))
     comparisons["current_A_m2"] = {"absolute_difference": abs(current-jdc), "limit": limit,
                                    "agrees": abs(current-jdc) <= limit}
-    return {"schema": "R1TransientTailDCComparisonV1", "time_s": t,
+    record = {"schema": "R1TransientTailDCComparisonV1", "time_s": t,
             "prepared_sha256": dc.evidence["prepared_sha256"], "control": dc.evidence["control"],
             "voltage_V": dc.evidence["voltage_V"], "comparisons": comparisons,
             "all_observables_agree": all(item["agrees"] for item in comparisons.values()),
             "infinite_tail_integral_bound_F_m2": None,
             "scope": "same_grid_pointwise_tail_vs_controlled_dc_only"}
+    if selected.is_pair:
+        record.update(schema="R1TransientTailDCComparisonV2", representation=selected.representation_id,
+                      precision_state_comparison="complete_pair_snapshots_with_pair_differences_and_centroids",
+                      regular_current_input_representation="declared_binary64_reported_current")
+    return record
 
 
 def compare_reconstructed_response(reconstruction, ac, *, reconstruction_identity=None, prerequisites=None):

@@ -200,6 +200,14 @@ def sample_r1_state(prepared, state=None):
     No material builder or solver is called. The adapter checks geometry and
     representation consistency; external artifact acceptance remains separate.
     """
+    record = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
+    if isinstance(record, dict) and record.get("schema") == "R1CommonStatePairV2":
+        from .one_dimensional_mechanism_r1_pair_spatial import sample_pair_state
+        from ..physics.compensated import DD
+        return MappingProxyType({key: _readonly(value.to_float() if isinstance(value, DD) else value)
+                                 for key, value in sample_pair_state(record, state).items()})
+    if isinstance(state, Mapping) and any(key.startswith("precision_") for key in state):
+        raise ValueError("legacy spatial preparation cannot consume a pair snapshot")
     record, x, faces, bounds, positions, thermal, background, components, cuts = _geometry(prepared)
     state = record["state"] if state is None else state
     n = _array(state["n_m3"], "n_m3", shape=x.shape, positive=True)
@@ -275,6 +283,11 @@ def spatial_responses_from_step(prepared, step):
     Ion changes are (P(t)-P(0-))/P0. No amplitude division is applied to these
     §10.2 state responses. Zero time means 0+, distinct from the DC baseline.
     """
+    raw = prepared.to_dict() if hasattr(prepared, "to_dict") else prepared
+    if isinstance(raw, dict) and (raw.get("schema") == "R1CommonStatePairV2"
+                                or step.get("schema") == "R1ControlledStepV2"):
+        from .one_dimensional_mechanism_r1_pair_spatial import spatial_responses
+        return spatial_responses(raw, step)
     record = _record(prepared)
     if (step.get("schema") != "R1ControlledStepV1" or step.get("prepared_sha256") != record["sha256"]
             or step.get("reference_sha256") != record["reference_sha256"]
