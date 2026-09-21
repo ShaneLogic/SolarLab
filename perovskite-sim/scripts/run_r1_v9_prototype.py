@@ -172,9 +172,10 @@ def read_persisted_rows(path):
         return [json.loads(line) for line in stream]
 
 
-def run_trajectory(directory, case, mode, api, source_guard):
+def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=None):
     """The original work plus mandatory sidecar writes and actual row telemetry."""
     directory=Path(directory)
+    extent_check=extent if extent_check is None else extent_check
     timer=ExclusiveTimer()
     rows = []
     replay_row_count = 0
@@ -277,7 +278,7 @@ def run_trajectory(directory, case, mode, api, source_guard):
                 output.flush()
                 os.fsync(output.fileno())
             persisted=timed("readback",lambda:read_persisted_rows(directory/"AcceptedStepsV1.jsonl"))
-            report["extent"]=timed("final_validation",lambda:extent(persisted,case))
+            report["extent"]=timed("final_validation",lambda:extent_check(persisted,case))
             report["certificate_check"]=timed("final_validation",lambda:certificate_check(result))
             metrics=result.get("certificate",{}).get("metrics",{})
             report["original_metric_failures"]=[name for name,limit in LIMITS.items()

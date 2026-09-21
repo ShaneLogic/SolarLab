@@ -177,3 +177,26 @@ def test_streaming_readback_preserves_content_and_rejects_invalid_rows(tmp_path)
     path.write_text('{"x":1}\n\n')
     with pytest.raises(json.JSONDecodeError):
         runner.read_persisted_rows(path)
+
+
+def test_explicit_extent_checker_receives_durable_rows_and_controls_completion(tmp_path, contract):
+    rows = [{"substeps": 8, "time_s": 0.0, "dt_s": 0.0, "phase": "0+", "state": {}}]
+    observed = []
+    expected_report = {"accepted_rows": 1, "expected_rows": 227, "complete": False,
+                       "prefix_valid": True, "first_mismatch": None}
+    def run(prepared, observer):
+        observer(rows[0])
+        return {"accepted_steps": rows}
+    def check(actual, case):
+        assert actual == rows and actual is not rows and case is contract["case"]
+        assert actual == runner.read_persisted_rows(tmp_path / "AcceptedStepsV1.jsonl")
+        observed.append(True)
+        return expected_report
+    def fail_sidecar(*args):
+        raise OSError("bounded test stops before replay")
+    report = runner.run_trajectory(tmp_path, contract["case"], "baseline", {
+        "prepare": lambda: SimpleNamespace(to_dict=lambda: {}),
+        "json_data": lambda value: value, "run": run, "persist_numeric": fail_sidecar,
+    }, lambda: None, extent_check=check)
+    assert observed == [True] and report["extent"] is expected_report
+    assert not report["four_predicates_passed"]
