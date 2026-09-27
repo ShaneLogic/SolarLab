@@ -162,12 +162,36 @@ def validate_required_preparation(prepared, request, *, pair):
             "source_binding": "separate_clean_commit_and_runtime_guards"}
 
 
+def memory_observation_passed(summary, *, enabled):
+    """An explicitly requested diagnostic cannot qualify with missing/error data."""
+    if not enabled:
+        return True
+    record = summary.get("memory_observation", {})
+    collector = summary.get("memory_collector", {})
+    return (record.get("enabled") is True and record.get("passed") is True
+            and type(record.get("call_count")) is int and record["call_count"] > 0
+            and record.get("error") is None and collector.get("passed") is True
+            and collector.get("closed") is True
+            and type(collector.get("event_count")) is int
+            and collector.get("event_count") == record["call_count"]
+            and collector.get("open_phases") == [])
+
+
+def memory_profile_mode(summary):
+    """Legacy receipts have no optional observation; enabled costs must match."""
+    mode = summary.get("memory_profile_enabled", False)
+    if type(mode) is not bool:
+        raise ValueError("memory profile mode must be an explicit boolean")
+    return mode
+
+
 def relative_cost(current, baseline):
     if baseline is None:
         return {"applicable": False, "qualified": None, "status": "reference_only", "ratios": {}}
     identity = ("schema", "case_id", "source_commit", "source_content_sha256",
                 "request_sha256", "precision_budget_sha256", "runtime_identity")
     if (any(current.get(key) != baseline.get(key) for key in identity)
+            or memory_profile_mode(current) != memory_profile_mode(baseline)
             or baseline.get("mode") != "baseline" or not baseline.get("baseline_usable")):
         raise ValueError("cost reference is not the same-source same-request baseline")
     if not baseline.get("extent", {}).get("complete") or not current.get("extent", {}).get("complete"):
@@ -236,6 +260,7 @@ def run(args):
             raise ValueError("pair run requires its one preregistered baseline result")
         baseline = external_json(args.baseline_summary, args.baseline_sha256)
         if (not baseline.get("baseline_usable") or baseline.get("mode") != "baseline"
+                or memory_profile_mode(baseline) != getattr(args, "memory_profile", False)
                 or baseline.get("case_id") != request["case_id"]
                 or baseline.get("source_commit") != args.expected_commit
                 or baseline.get("source_content_sha256") != args.source_sha256
@@ -287,6 +312,7 @@ def run(args):
                "started_utc": datetime.now(timezone.utc).isoformat(),
                "scientifically_accepted": False, "formal_R1_2_qualification": False,
                "absolute_engineering_qualified": False,
+               "memory_profile_enabled": getattr(args, "memory_profile", False),
                "execution_source_scope": "clean_commit_bound_by_outer_receipt; internal_API_records_keep_development_identity",
                "baseline_sha256": args.baseline_sha256}
     write(output / "SummaryV1.json", summary)
@@ -378,7 +404,19 @@ def run(args):
                         output=output / "IndependentAnalysis", budget=budget,
                         replay_receipt=getattr(replay, "replay_receipt", None))
                 api["after_main"] = analyze
-            summary.update(run_trajectory(output, case, args.mode, api, guard, extent_check=extent))
+            if getattr(args, "memory_profile", False):
+                from scripts.r1_v16_memory import NativeMemoryObserver
+                observer = NativeMemoryObserver(output / "NativeMemoryPhasesV1.jsonl")
+                try:
+                    summary.update(run_trajectory(output, case, args.mode, api, guard,
+                        extent_check=extent, memory_observer=observer))
+                finally:
+                    try:
+                        observer.close()
+                    finally:
+                        summary["memory_collector"] = observer.summary()
+            else:
+                summary.update(run_trajectory(output, case, args.mode, api, guard, extent_check=extent))
         guard()
         summary["source_unchanged"] = True
     except (Exception, KeyboardInterrupt) as exc:
@@ -396,7 +434,8 @@ def run(args):
         and not summary.get("replay_error") and not summary.get("failure_witness_error")
         and summary.get("result_request_binding_passed") and summary.get("numeric_sidecar_exact")
         and summary.get("replay_completed") and summary.get("extent", {}).get("prefix_valid")
-        and summary.get("four_predicates", {}).get("observer_matches_result"))
+        and summary.get("four_predicates", {}).get("observer_matches_result")
+        and memory_observation_passed(summary, enabled=getattr(args, "memory_profile", False)))
     summary["baseline_usable"] = args.mode == "baseline" and summary["integrity_passed"]
     summary["numerical_passed"] = bool(summary["integrity_passed"] and summary.get("four_predicates_passed")
         and (args.mode == "baseline" or (summary.get("precision_records", {}).get("record_fields_present")
@@ -419,6 +458,8 @@ def main():
     parser.add_argument("--mode", choices=("baseline", "compensated"), required=True)
     parser.add_argument("--baseline-summary", type=Path)
     parser.add_argument("--baseline-sha256")
+    parser.add_argument("--memory-profile", action="store_true",
+                        help="record bounded live-root and RSS phase observations without changing physics")
     return run(parser.parse_args())
 
 

@@ -6,7 +6,7 @@ the production backend and codec; a run alone cannot grant complete P2 or R1-2.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -172,7 +172,8 @@ def read_persisted_rows(path):
         return [json.loads(line) for line in stream]
 
 
-def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=None):
+def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=None,
+                   memory_observer=None):
     """The original work plus mandatory sidecar writes and actual row telemetry."""
     directory=Path(directory)
     extent_check=extent if extent_check is None else extent_check
@@ -180,12 +181,49 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
     rows = []
     replay_row_count = 0
     result, prepared, replay, failure = {}, None, None, None
+    raw_result, persisted = None, None
     report={"execution_status":"not_started","physical_execution_started":False}
     started=time.monotonic()
     last_observation=started
+    memory_calls, memory_elapsed, memory_main_elapsed = 0, 0.0, 0.0
+    memory_error = None
+    memory_in_main = True
 
     def timed(name,call):
         return timer.call(name,call)
+
+    def memory_event(phase, event):
+        nonlocal memory_calls, memory_elapsed, memory_main_elapsed, memory_error
+        if memory_observer is None or memory_error is not None:
+            return
+        tick = time.monotonic()
+        memory_calls += 1
+        try:
+            # Pass current roots only for this call. In particular, never keep
+            # an earlier dictionary alive across raw_result's release.
+            memory_observer(phase, event, {"prepared": prepared, "raw_result": raw_result,
+                "result": result, "rows": rows, "persisted": persisted, "replay": replay})
+        except Exception as exc:
+            # Preserve the normal scientific/failure artifacts. A failed
+            # diagnostic is separately ineligible at the V12 integrity gate.
+            memory_error = error_record(exc)
+        finally:
+            elapsed = time.monotonic() - tick
+            memory_elapsed += elapsed
+            if memory_in_main:
+                memory_main_elapsed += elapsed
+
+    @contextmanager
+    def observed(phase):
+        outcome = {"failed": False}
+        memory_event(phase, "begin")
+        try:
+            yield outcome
+        except BaseException:
+            memory_event(phase, "error")
+            raise
+        else:
+            memory_event(phase, "error" if outcome["failed"] else "end")
 
     with ExitStack() as stack:
         stream=stack.enter_context((directory/"AcceptedStepsV1.jsonl").open("x"))
@@ -208,6 +246,8 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
                     "observer_conversion_and_persistence_s":time.monotonic()-tick,
                     "peak_rss_bytes":peak_rss_bytes(),"row_bytes":len(raw.encode()),
                     "scope":"event_interval_includes_initialization_or_tier_transition_when_applicable"}
+                if memory_observer is not None:
+                    item["monotonic_s"] = tick
                 telemetry.write(canonical(item)+"\n")
                 telemetry.flush()
             last_observation=time.monotonic()
@@ -223,46 +263,58 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
         try:
             timed("source_guard",source_guard)
             report.update(execution_status="preparing",physical_execution_started=True)
-            prepared=timed("prepare_compute",api["prepare"])
-            timed("preparation_write",lambda:write(directory/"PreparedV1.json",api["json_data"](prepared.to_dict())))
+            with observed("prepare"):
+                prepared=timed("prepare_compute",api["prepare"])
+            with observed("prepared_write"):
+                timed("preparation_write",lambda:write(directory/"PreparedV1.json",api["json_data"](prepared.to_dict())))
             report["execution_status"]="integrating"
-            try:
-                result=timed("integrate_compute_and_checks",lambda:api["run"](prepared,observe))
-                report["execution_status"]="completed"
-            except (Exception,KeyboardInterrupt) as exc:
-                failure=error_record(exc)
-                result=getattr(exc,"result",{})
-                report["execution_status"]="interrupted" if isinstance(exc,KeyboardInterrupt) else "failed"
+            with observed("integrate") as observation:
+                try:
+                    result=timed("integrate_compute_and_checks",lambda:api["run"](prepared,observe))
+                    report["execution_status"]="completed"
+                except (Exception,KeyboardInterrupt) as exc:
+                    failure=error_record(exc)
+                    result=getattr(exc,"result",{})
+                    report["execution_status"]="interrupted" if isinstance(exc,KeyboardInterrupt) else "failed"
+                    observation["failed"] = True
             raw_result=result
-            result=timed("data_conversion",lambda:api["json_data"](result)) if isinstance(result,dict) else {}
-            timed("result_write",lambda:write(directory/"ResultV1.json",result))
+            with observed("result_conversion"):
+                result=timed("data_conversion",lambda:api["json_data"](result)) if isinstance(result,dict) else {}
+            with observed("result_write"):
+                timed("result_write",lambda:write(directory/"ResultV1.json",result))
             if result:
                 try:
-                    timed("numeric_sidecar_write",lambda:api["persist_numeric"](directory/"StateArraysV1.npz",raw_result))
+                    with observed("numeric_write"):
+                        timed("numeric_sidecar_write",lambda:api["persist_numeric"](directory/"StateArraysV1.npz",raw_result))
                 finally:
                     # The numeric writer must see the original array dtypes.
                     # Once persisted, only the complete JSON record is needed
                     # for exact readback and independent equation replay.
-                    raw_result = None
-                timed("numeric_sidecar_readback",lambda:api["verify_numeric"](directory/"StateArraysV1.npz",result))
+                    with observed("raw_release"):
+                        raw_result = None
+                with observed("numeric_readback"):
+                    timed("numeric_sidecar_readback",lambda:api["verify_numeric"](directory/"StateArraysV1.npz",result))
                 report["numeric_sidecar_exact"]=True
             else:
                 raw_result = None
             if prepared is not None and result:
                 try:
-                    replay=timed("replay_compute",lambda:api["replay"](
-                        prepared,result,report["execution_status"]!="completed",observe_replay))
+                    with observed("replay"):
+                        replay=timed("replay_compute",lambda:api["replay"](
+                            prepared,result,report["execution_status"]!="completed",observe_replay))
                     report["replay_completed"]=True
-                    timed("replay_write",lambda:write(directory/"PhysicsReplayV1.json",api["json_data"](replay)))
-                    receipt=getattr(replay,"replay_receipt",None)
-                    if receipt is not None:
-                        timed("replay_write",lambda:write(directory/"ReplayLedgerV1.json",receipt.to_dict()))
+                    with observed("replay_write"):
+                        timed("replay_write",lambda:write(directory/"PhysicsReplayV1.json",api["json_data"](replay)))
+                        receipt=getattr(replay,"replay_receipt",None)
+                        if receipt is not None:
+                            timed("replay_write",lambda:write(directory/"ReplayLedgerV1.json",receipt.to_dict()))
                 except Exception as exc:
                     report["replay_error"]=error_record(exc)
             if failure is not None and prepared is not None and result and "failure_witness" in api:
                 try:
-                    witness=timed("failure_witness",lambda:api["failure_witness"](prepared,result,rows,failure))
-                    timed("failure_write",lambda:write(directory/"FailureWitnessV1.json",api["json_data"](witness)))
+                    with observed("failure_witness"):
+                        witness=timed("failure_witness",lambda:api["failure_witness"](prepared,result,rows,failure))
+                        timed("failure_write",lambda:write(directory/"FailureWitnessV1.json",api["json_data"](witness)))
                 except Exception as exc:
                     report["failure_witness_error"]=error_record(exc)
             timed("source_guard",source_guard)
@@ -277,20 +329,22 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
             for output in (stream,telemetry,ledger):
                 output.flush()
                 os.fsync(output.fileno())
-            persisted=timed("readback",lambda:read_persisted_rows(directory/"AcceptedStepsV1.jsonl"))
-            report["extent"]=timed("final_validation",lambda:extent_check(persisted,case))
-            report["certificate_check"]=timed("final_validation",lambda:certificate_check(result))
-            metrics=result.get("certificate",{}).get("metrics",{})
-            report["original_metric_failures"]=[name for name,limit in LIMITS.items()
-                if (type(metrics.get(name)) not in (int,float) or not math.isfinite(metrics[name])
-                    or metrics[name]<0 or metrics[name]>limit)]
-            report["precision_records"]=timed("final_validation",lambda:precision_record_check(persisted,mode))
-            report["four_predicates"]={
-                "run_completed":report["execution_status"]=="completed" and failure is None,
-                "certificate_certified":report["certificate_check"]["passed"],
-                "replay_certified":isinstance(replay,dict) and replay.get("certified") is True,
-                "observer_matches_result":persisted==result.get("accepted_steps",[]) and persisted==rows}
-            report["four_predicates_passed"]=all(report["four_predicates"].values()) and report["extent"]["complete"]
+            with observed("rows_readback"):
+                persisted=timed("readback",lambda:read_persisted_rows(directory/"AcceptedStepsV1.jsonl"))
+            with observed("final_validation"):
+                report["extent"]=timed("final_validation",lambda:extent_check(persisted,case))
+                report["certificate_check"]=timed("final_validation",lambda:certificate_check(result))
+                metrics=result.get("certificate",{}).get("metrics",{})
+                report["original_metric_failures"]=[name for name,limit in LIMITS.items()
+                    if (type(metrics.get(name)) not in (int,float) or not math.isfinite(metrics[name])
+                        or metrics[name]<0 or metrics[name]>limit)]
+                report["precision_records"]=timed("final_validation",lambda:precision_record_check(persisted,mode))
+                report["four_predicates"]={
+                    "run_completed":report["execution_status"]=="completed" and failure is None,
+                    "certificate_certified":report["certificate_check"]["passed"],
+                    "replay_certified":isinstance(replay,dict) and replay.get("certified") is True,
+                    "observer_matches_result":persisted==result.get("accepted_steps",[]) and persisted==rows}
+                report["four_predicates_passed"]=all(report["four_predicates"].values()) and report["extent"]["complete"]
             npz=(directory/"StateArraysV1.npz").stat().st_size if (directory/"StateArraysV1.npz").exists() else 0
             row_bytes=(directory/"AcceptedStepsV1.jsonl").stat().st_size
             row_sidecars={name:(directory/name).stat().st_size for name in
@@ -307,14 +361,21 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
             report["phase_timing"]=timer.report(elapsed)
             report["replay_observed_rows"]=replay_row_count
             report["failure"]=None if failure is None else {k:failure[k] for k in ("type","message")}
+    memory_in_main = False
     if "after_main" in api and prepared is not None and result:
         analysis_start=time.monotonic()
         try:
-            report["independent_analysis"]=api["after_main"](prepared,result,replay)
+            with observed("after_main"):
+                report["independent_analysis"]=api["after_main"](prepared,result,replay)
         except Exception as exc:
             report["independent_analysis"]={"passed":False,"error":error_record(exc)}
         report["independent_analysis_elapsed_s"]=time.monotonic()-analysis_start
         report["independent_analysis_cost_scope"]="additional_saved_state_analysis_outside_original_main_timer"
+    if memory_observer is not None:
+        report["memory_observation"] = {"enabled": True, "passed": memory_error is None,
+            "call_count": memory_calls, "elapsed_s": memory_elapsed,
+            "main_elapsed_s": memory_main_elapsed, "error": memory_error,
+            "cost_scope": "observer_overhead_is_included_in_measured_costs_never_subtracted"}
     return report
 
 
