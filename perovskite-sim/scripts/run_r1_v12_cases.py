@@ -319,6 +319,8 @@ def run(args):
     from perovskite_sim.experiments.one_dimensional_mechanism_r1 import build_r1_material
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_failure_reconstruction import rebuild_failure_witness
     from scripts.verify_r1_v7_precision import freeze_healthy_material
+    from scripts.r1_v23_json_writer import write_result_json
+    from scripts.r1_v23_storage_observation import persist_numeric_observed
     backend = get_backend("pair" if args.mode == "compensated" else "float64")
     stack = load_device_from_yaml(output / "SourceFixtureV1.yaml")
     binding, case = json.loads(inputs["reference"]), request["case"]
@@ -411,7 +413,9 @@ def run(args):
                 api = {"json_data": lambda v: tag_nonfinite(states.json_data(v)),
                        "prepare": prepare,
                        "run": integrate,
+                       "persist_result": write_result_json, "persist_result_observed": write_result_json,
                        "persist_numeric": persist_numeric, "verify_numeric": verify_numeric,
+                       "persist_numeric_observed": persist_numeric_observed,
                        "replay": lambda prepared, result, incomplete, observer: physics.verify_r1_step_physics(
                            stack, n, binding, prepared, result, allow_incomplete=incomplete, backend=backend,
                            row_observer=observer),

@@ -201,9 +201,9 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
         try:
             # Pass current roots only for this call. In particular, never keep
             # an earlier dictionary alive across raw_result's release.
-            memory_observer(phase, event, roots if roots is not None else {
-                "prepared": prepared, "raw_result": raw_result,
-                "result": result, "rows": rows, "persisted": persisted, "replay": replay})
+            memory_observer(phase, event, {"prepared": prepared, "raw_result": raw_result,
+                "result": result, "rows": rows, "persisted": persisted, "replay": replay,
+                **({} if roots is None else roots)})
         except Exception as exc:
             # Preserve the normal scientific/failure artifacts. A failed
             # diagnostic is separately ineligible at the V12 integrity gate.
@@ -221,7 +221,10 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
         try:
             yield outcome
         except BaseException:
-            memory_event(phase, "error")
+            try:
+                memory_event(phase, "error")
+            except BaseException:
+                pass  # An error-boundary callback cannot replace the operation error.
             raise
         else:
             memory_event(phase, "error" if outcome["failed"] else "end")
@@ -282,11 +285,27 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
             with observed("result_conversion"):
                 result=timed("data_conversion",lambda:api["json_data"](result)) if isinstance(result,dict) else {}
             with observed("result_write"):
-                timed("result_write",lambda:write(directory/"ResultV1.json",result))
+                if memory_observer is not None and "persist_result_observed" in api:
+                    write_observation=timed("result_write",lambda:api["persist_result_observed"](
+                        directory/"ResultV1.json",result,phase_observer=memory_event))
+                else:
+                    write_observation=timed("result_write",lambda:api.get("persist_result",write)(
+                        directory/"ResultV1.json",result))
+                if write_observation is not None:
+                    if (type(write_observation) is not dict
+                            or any(type(key) is not str or type(value) not in (str,int,float,bool,type(None))
+                                   or type(value) is float and not math.isfinite(value)
+                                   for key,value in write_observation.items())):
+                        raise ValueError("result writer observation must contain only finite scalar metadata")
+                    report["result_write_observation"]=write_observation
             if result:
                 try:
                     with observed("numeric_write"):
-                        timed("numeric_sidecar_write",lambda:api["persist_numeric"](directory/"StateArraysV1.npz",raw_result))
+                        if memory_observer is not None and "persist_numeric_observed" in api:
+                            timed("numeric_sidecar_write",lambda:api["persist_numeric_observed"](
+                                directory/"StateArraysV1.npz",raw_result,phase_observer=memory_event))
+                        else:
+                            timed("numeric_sidecar_write",lambda:api["persist_numeric"](directory/"StateArraysV1.npz",raw_result))
                 finally:
                     # The numeric writer must see the original array dtypes.
                     # Once persisted, only the complete JSON record is needed
