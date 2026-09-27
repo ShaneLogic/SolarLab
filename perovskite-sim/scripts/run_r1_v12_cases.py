@@ -352,144 +352,155 @@ def run(args):
 
     tail_observation = None
     try:
-        with threadpool_limits(1):
-            np.dot(np.ones((2, 2)), np.ones((2, 2)))
-            pools = threadpool_info()
-            if not pools or any(p["num_threads"] != 1 for p in pools):
-                raise ValueError("numerical libraries are not demonstrably single-threaded")
-            runtime = {"executable": sys.executable, "python": sys.version, "numpy": np.__version__,
-                       "scipy": scipy.__version__, "platform": sys.platform, "machine": platform.machine(),
-                       "host": platform.node(), "threads": {k: os.environ[k] for k in THREAD_KEYS}, "blas": pools}
-            if runtime["numpy"] != "2.1.3" or runtime["scipy"] != "1.15.3":
-                raise ValueError("runtime differs from the preregistered V9 dependency lineage")
-            if baseline is not None and baseline.get("runtime_identity") != runtime:
-                raise ValueError("baseline runtime differs")
-            summary["runtime_identity"] = runtime
-            write(output / "EnvironmentV1.json", runtime)
-
-            def persist_numeric(path, result):
-                if protocol.nonfinite_numeric_paths(result):
-                    with Path(path).open("wb") as stream:
-                        np.savez_compressed(stream, **codec.numeric_arrays(result, allow_nonfinite=True))
-                else:
-                    codec.write_numeric_sidecar(path, result)
-
-            def verify_numeric(path, result):
-                return (codec.verify_failed_numeric_sidecar if codec.contains_nonfinite_tags(result)
-                        else codec.verify_numeric_sidecar)(path, result)
-
-            step_policy = protocol.r1_policy(case["nonlinear_factor"], time_substeps=tuple(case["time_substeps"]))
-
-            def integrate(prepared, observer):
-                try:
-                    result = protocol.run_r1_step(stack, n, binding, prepared,
-                        control=case["control"], amplitude_V=case["amplitude_V"], times_s=case["times_s"],
-                        policy=step_policy, physics_evidence=True, accepted_step_observer=observer,
-                        expected_prepared_sha256=prepared.sha256, backend=backend)
-                except Exception as exc:
-                    partial = getattr(exc, "result", None)
-                    if isinstance(partial, dict):
-                        validate_result_request(states.json_data(partial), case, prepared.sha256,
-                            states.json_data(step_policy), pair=backend.is_pair)
-                        summary["result_request_binding_passed"] = True
-                    raise
-                validate_result_request(states.json_data({key: result[key] for key in (
-                    "schema", "intervals", "control_label", "amplitude_V", "times_s", "prepared_sha256",
-                    "policy", "execution_axes")}), case, prepared.sha256,
-                    states.json_data(step_policy), pair=backend.is_pair)
-                summary["result_request_binding_passed"] = True
-                return result
-
-            def prepare():
-                prepared = states.prepare_common_state(stack, n, binding,
-                    policy=protocol.r1_policy(), backend=backend)
-                summary["required_pair_preparation_identity"] = validate_required_preparation(
-                    prepared, request, pair=backend.is_pair)
-                return prepared
-
-            api = {"json_data": lambda v: tag_nonfinite(states.json_data(v)),
-                   "prepare": prepare,
-                   "run": integrate,
-                   "persist_numeric": persist_numeric, "verify_numeric": verify_numeric,
-                   "replay": lambda prepared, result, incomplete, observer: physics.verify_r1_step_physics(
-                       stack, n, binding, prepared, result, allow_incomplete=incomplete, backend=backend,
-                       row_observer=observer),
-                   "failure_witness": lambda prepared, result, rows, failure: rebuild_failure_witness(
-                       stack, n, binding, prepared, result, backend=backend)}
-            if backend.is_pair:
-                from scripts.analyze_r1_v9_prototype import analyze_records, observed_analysis_phase
-                from scripts.verify_r1_v9_precision import digest
-
-                def analyze(prepared, result, replay, *, phase_observer=None):
-                    with observed_analysis_phase(phase_observer, "analysis_prepare_conversion",
-                            prepared=prepared, result=result, rows=result["accepted_steps"], replay=replay):
-                        saved = states.json_data(prepared.to_dict())
-                    with observed_analysis_phase(phase_observer, "analysis_context_source_digest",
-                            prepared=saved, result=result, rows=result["accepted_steps"], replay=replay):
-                        source_digest = digest(result["source"])
-                    with observed_analysis_phase(phase_observer, "analysis_context_rows_digest",
-                            prepared=saved, result=result, rows=result["accepted_steps"], replay=replay):
-                        rows_digest = digest(result["accepted_steps"])
-                    return analyze_records(result["accepted_steps"], frozen, saved, result,
-                        context={"source_digest": source_digest, "prepared_sha256": saved["sha256"],
-                                 "result_sha256": result["sha256"], "saved_rows_digest": rows_digest,
-                                 "source_commit": args.expected_commit, "request_sha256": args.request_sha256},
-                        output=output / "IndependentAnalysis", budget=budget,
-                        replay_receipt=getattr(replay, "replay_receipt", None),
-                        phase_observer=phase_observer)
-                api["after_main"] = analyze
-                api["after_main_observed"] = analyze
-            if getattr(args, "memory_profile", False):
-                from scripts.r1_v16_memory import NativeMemoryObserver
-                from scripts.r1_v19_observation import TailObservation
-                observer = NativeMemoryObserver(output / "NativeMemoryPhasesV1.jsonl")
-                tail_observation = TailObservation(observer, summary)
-                summary.update(run_trajectory(output, case, args.mode, api, guard,
-                    extent_check=extent, memory_observer=observer))
-            else:
-                summary.update(run_trajectory(output, case, args.mode, api, guard, extent_check=extent))
-        with tail_observation.phase("post_analysis_source_guard") if tail_observation else nullcontext():
-            guard()
-        summary["source_unchanged"] = True
-    except (Exception, KeyboardInterrupt) as exc:
-        summary.update(execution_status="failed", runner_error=error_record(exc), four_predicates_passed=False)
-        write(output / "RunnerFailureV1.json", summary["runner_error"])
         try:
-            with tail_observation.phase("failure_source_guard") if tail_observation else nullcontext():
+            with threadpool_limits(1):
+                np.dot(np.ones((2, 2)), np.ones((2, 2)))
+                pools = threadpool_info()
+                if not pools or any(p["num_threads"] != 1 for p in pools):
+                    raise ValueError("numerical libraries are not demonstrably single-threaded")
+                runtime = {"executable": sys.executable, "python": sys.version, "numpy": np.__version__,
+                           "scipy": scipy.__version__, "platform": sys.platform, "machine": platform.machine(),
+                           "host": platform.node(), "threads": {k: os.environ[k] for k in THREAD_KEYS}, "blas": pools}
+                if runtime["numpy"] != "2.1.3" or runtime["scipy"] != "1.15.3":
+                    raise ValueError("runtime differs from the preregistered V9 dependency lineage")
+                if baseline is not None and baseline.get("runtime_identity") != runtime:
+                    raise ValueError("baseline runtime differs")
+                summary["runtime_identity"] = runtime
+                write(output / "EnvironmentV1.json", runtime)
+
+                def persist_numeric(path, result):
+                    if protocol.nonfinite_numeric_paths(result):
+                        with Path(path).open("wb") as stream:
+                            np.savez_compressed(stream, **codec.numeric_arrays(result, allow_nonfinite=True))
+                    else:
+                        codec.write_numeric_sidecar(path, result)
+
+                def verify_numeric(path, result):
+                    return (codec.verify_failed_numeric_sidecar if codec.contains_nonfinite_tags(result)
+                            else codec.verify_numeric_sidecar)(path, result)
+
+                step_policy = protocol.r1_policy(case["nonlinear_factor"], time_substeps=tuple(case["time_substeps"]))
+
+                def integrate(prepared, observer):
+                    try:
+                        result = protocol.run_r1_step(stack, n, binding, prepared,
+                            control=case["control"], amplitude_V=case["amplitude_V"], times_s=case["times_s"],
+                            policy=step_policy, physics_evidence=True, accepted_step_observer=observer,
+                            expected_prepared_sha256=prepared.sha256, backend=backend)
+                    except Exception as exc:
+                        partial = getattr(exc, "result", None)
+                        if isinstance(partial, dict):
+                            validate_result_request(states.json_data(partial), case, prepared.sha256,
+                                states.json_data(step_policy), pair=backend.is_pair)
+                            summary["result_request_binding_passed"] = True
+                        raise
+                    validate_result_request(states.json_data({key: result[key] for key in (
+                        "schema", "intervals", "control_label", "amplitude_V", "times_s", "prepared_sha256",
+                        "policy", "execution_axes")}), case, prepared.sha256,
+                        states.json_data(step_policy), pair=backend.is_pair)
+                    summary["result_request_binding_passed"] = True
+                    return result
+
+                def prepare():
+                    prepared = states.prepare_common_state(stack, n, binding,
+                        policy=protocol.r1_policy(), backend=backend)
+                    summary["required_pair_preparation_identity"] = validate_required_preparation(
+                        prepared, request, pair=backend.is_pair)
+                    return prepared
+
+                api = {"json_data": lambda v: tag_nonfinite(states.json_data(v)),
+                       "prepare": prepare,
+                       "run": integrate,
+                       "persist_numeric": persist_numeric, "verify_numeric": verify_numeric,
+                       "replay": lambda prepared, result, incomplete, observer: physics.verify_r1_step_physics(
+                           stack, n, binding, prepared, result, allow_incomplete=incomplete, backend=backend,
+                           row_observer=observer),
+                       "failure_witness": lambda prepared, result, rows, failure: rebuild_failure_witness(
+                           stack, n, binding, prepared, result, backend=backend)}
+                if backend.is_pair:
+                    from scripts.analyze_r1_v9_prototype import analyze_records, observed_analysis_phase
+                    from scripts.verify_r1_v9_precision import digest
+
+                    def analyze(prepared, result, replay, *, phase_observer=None):
+                        with observed_analysis_phase(phase_observer, "analysis_prepare_conversion",
+                                prepared=prepared, result=result, rows=result["accepted_steps"], replay=replay):
+                            saved = states.json_data(prepared.to_dict())
+                        with observed_analysis_phase(phase_observer, "analysis_context_source_digest",
+                                prepared=saved, result=result, rows=result["accepted_steps"], replay=replay):
+                            source_digest = digest(result["source"])
+                        with observed_analysis_phase(phase_observer, "analysis_context_rows_digest",
+                                prepared=saved, result=result, rows=result["accepted_steps"], replay=replay):
+                            rows_digest = digest(result["accepted_steps"])
+                        return analyze_records(result["accepted_steps"], frozen, saved, result,
+                            context={"source_digest": source_digest, "prepared_sha256": saved["sha256"],
+                                     "result_sha256": result["sha256"], "saved_rows_digest": rows_digest,
+                                     "source_commit": args.expected_commit, "request_sha256": args.request_sha256},
+                            output=output / "IndependentAnalysis", budget=budget,
+                            replay_receipt=getattr(replay, "replay_receipt", None),
+                            phase_observer=phase_observer)
+                    api["after_main"] = analyze
+                    api["after_main_observed"] = analyze
+                if getattr(args, "memory_profile", False):
+                    from scripts.r1_v16_memory import NativeMemoryObserver
+                    from scripts.r1_v19_observation import TailObservation
+                    observer = NativeMemoryObserver(output / "NativeMemoryPhasesV1.jsonl")
+                    tail_observation = TailObservation(observer, summary)
+                    summary.update(run_trajectory(output, case, args.mode, api, guard,
+                        extent_check=extent, memory_observer=observer))
+                else:
+                    summary.update(run_trajectory(output, case, args.mode, api, guard, extent_check=extent))
+            with tail_observation.phase("post_analysis_source_guard") if tail_observation else nullcontext():
                 guard()
             summary["source_unchanged"] = True
-        except (Exception, KeyboardInterrupt) as source_exc:
-            summary.update(source_unchanged=False, source_error=error_record(source_exc))
-    summary["module_function_identity"] = check_functions(functions_before)
-    update_qualification(summary, args.mode, baseline, memory_profile=getattr(args, "memory_profile", False))
-    write(output / "PhaseTimingV1.json", summary.get("phase_timing", {}))
-    if tail_observation is None:
-        finalize_manifest(output, summary, request["absolute_engineering_limits"])
-    else:
-        def finish_observation():
-            tail_observation.event("case_finalization", "end")
-            tail_observation.finish()
-            update_qualification(summary, args.mode, baseline, memory_profile=True)
+        except (Exception, KeyboardInterrupt) as exc:
+            summary.update(execution_status="failed", runner_error=error_record(exc), four_predicates_passed=False)
+            write(output / "RunnerFailureV1.json", summary["runner_error"])
+            try:
+                with tail_observation.phase("failure_source_guard") if tail_observation else nullcontext():
+                    guard()
+                summary["source_unchanged"] = True
+            except (Exception, KeyboardInterrupt) as source_exc:
+                summary.update(source_unchanged=False, source_error=error_record(source_exc))
+        summary["module_function_identity"] = check_functions(functions_before)
+        update_qualification(summary, args.mode, baseline, memory_profile=getattr(args, "memory_profile", False))
+        write(output / "PhaseTimingV1.json", summary.get("phase_timing", {}))
+        if tail_observation is None:
+            finalize_manifest(output, summary, request["absolute_engineering_limits"])
+        else:
+            def finish_observation():
+                tail_observation.event("case_finalization", "end")
+                tail_observation.finish()
+                update_qualification(summary, args.mode, baseline, memory_profile=True)
 
-        try:
-            tail_observation.event("case_finalization", "begin")
-            finalize_manifest(output, summary, request["absolute_engineering_limits"],
-                              before_final_seal=finish_observation)
-        except BaseException:
-            if not tail_observation.closed:
-                try:
-                    tail_observation.event("case_finalization", "error")
-                except BaseException:
-                    pass
+            try:
+                tail_observation.event("case_finalization", "begin")
+                finalize_manifest(output, summary, request["absolute_engineering_limits"],
+                                  before_final_seal=finish_observation)
+            except BaseException:
+                if not tail_observation.closed:
+                    try:
+                        tail_observation.event("case_finalization", "error")
+                    except BaseException:
+                        pass
+                    try:
+                        tail_observation.finish()
+                    except BaseException:
+                        pass
+                raise
+        print(json.dumps({key: summary.get(key) for key in ("case_id", "mode", "execution_status", "extent",
+            "integrity_passed", "numerical_passed", "baseline_usable", "engineering_check")}, indent=2))
+        return 0 if (summary["numerical_passed"] and summary["engineering_check"]["qualified"] is not False
+                     and summary["absolute_engineering_qualified"]) else 1
+
+    finally:
+        if tail_observation is not None and not tail_observation.closed:
+            if sys.exc_info()[0] is not None:
                 try:
                     tail_observation.finish()
                 except BaseException:
-                    pass
-            raise
-    print(json.dumps({key: summary.get(key) for key in ("case_id", "mode", "execution_status", "extent",
-        "integrity_passed", "numerical_passed", "baseline_usable", "engineering_check")}, indent=2))
-    return 0 if (summary["numerical_passed"] and summary["engineering_check"]["qualified"] is not False
-                 and summary["absolute_engineering_qualified"]) else 1
+                    pass  # Cleanup never replaces the primary error.
+            else:
+                tail_observation.finish()
 
 
 def main():

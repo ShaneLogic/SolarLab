@@ -275,7 +275,7 @@ def synthetic_case_shell(tmp_path, monkeypatch, *, guard_failure=None, observer_
     monkeypatch.setattr(freeze, 'freeze_healthy_material', lambda *args, **kwargs: {'synthetic': True})
     monkeypatch.setattr(cases, 'function_snapshot', lambda: {})
     monkeypatch.setattr(cases, 'check_functions', lambda saved: {'unchanged': True})
-    state = {'source_calls': 0, 'native': None, 'tail': None}
+    state = {'source_calls': 0, 'native': None, 'tail': None, 'close_calls': 0}
 
     def tracked_tail(observer, summary):
         state['tail'] = TailObservation(observer, summary)
@@ -316,6 +316,7 @@ def synthetic_case_shell(tmp_path, monkeypatch, *, guard_failure=None, observer_
             return super().__call__(phase, event, roots)
 
         def close(self):
+            state['close_calls'] += 1
             was_closed = self._closed
             try:
                 super().close()
@@ -460,3 +461,75 @@ def test_primary_finalization_failure_survives_close_interruption(tmp_path, monk
     assert state['tail'].summary['memory_observation']['error'] == {
         'type': 'KeyboardInterrupt', 'message': 'bounded close failure'}
     assert not state['tail'].summary['memory_observation']['passed']
+
+
+@pytest.mark.parametrize('stage,failure_type', [
+    ('PhaseTimingV1.json', OSError), ('PhaseTimingV1.json', KeyboardInterrupt),
+    ('RunnerFailureV1.json', OSError), ('RunnerFailureV1.json', KeyboardInterrupt),
+    ('check_functions', RuntimeError), ('check_functions', KeyboardInterrupt),
+    ('update_qualification', RuntimeError), ('update_qualification', KeyboardInterrupt),
+])
+def test_failure_before_manifest_scope_still_closes_the_observer(
+        tmp_path, monkeypatch, stage, failure_type):
+    args, state = synthetic_case_shell(tmp_path, monkeypatch,
+        guard_failure=ValueError if stage == 'RunnerFailureV1.json' else None)
+    message = 'original pre-finalization failure: ' + stage
+
+    def fail(*args, **kwargs):
+        raise failure_type(message)
+
+    if stage.endswith('.json'):
+        original_write = cases.write
+
+        def write(path, value):
+            if path.name == stage:
+                fail()
+            return original_write(path, value)
+
+        monkeypatch.setattr(cases, 'write', write)
+    else:
+        monkeypatch.setattr(cases, stage, fail)
+    with pytest.raises(failure_type, match=message):
+        cases.run(args)
+    assert state['close_calls'] == 1 and state['tail'].closed
+    assert state['native'].summary()['closed']
+    assert state['native'].summary()['open_phases'] == []
+    observation = state['tail'].summary['memory_observation']
+    assert observation['call_count'] == state['native'].summary()['event_count'] == len(
+        records(args.output / 'NativeMemoryPhasesV1.jsonl'))
+    assert (args.output / 'ResultV1.json').is_file()
+    assert not (args.output / 'ManifestV1.json').exists()
+
+
+@pytest.mark.parametrize('stage', [
+    'PhaseTimingV1.json', 'RunnerFailureV1.json', 'check_functions', 'update_qualification',
+])
+def test_cleanup_close_interruption_preserves_the_pre_finalization_error(
+        tmp_path, monkeypatch, stage):
+    args, state = synthetic_case_shell(tmp_path, monkeypatch, close_failure=KeyboardInterrupt,
+        guard_failure=ValueError if stage == 'RunnerFailureV1.json' else None)
+    message = 'primary before finalization: ' + stage
+
+    def fail(*args, **kwargs):
+        raise OSError(message)
+
+    if stage.endswith('.json'):
+        original_write = cases.write
+
+        def write(path, value):
+            if path.name == stage:
+                fail()
+            return original_write(path, value)
+
+        monkeypatch.setattr(cases, 'write', write)
+    else:
+        monkeypatch.setattr(cases, stage, fail)
+    with pytest.raises(OSError, match=message):
+        cases.run(args)
+    assert state['close_calls'] == 1 and state['tail'].closed
+    assert state['native'].summary()['closed']
+    assert not state['tail'].summary['memory_observation']['passed']
+    assert state['tail'].summary['memory_observation']['error'] == {
+        'type': 'KeyboardInterrupt', 'message': 'bounded close failure'}
+    assert (args.output / 'ResultV1.json').is_file()
+    assert not (args.output / 'ManifestV1.json').exists()
