@@ -16,7 +16,7 @@ ROOT_NAMES = {"prepared", "raw_result", "result", "rows", "persisted", "replay"}
 SUCCESS_PHASES = [
     "prepare", "prepared_write", "integrate", "result_conversion", "result_write",
     "numeric_write", "raw_release", "numeric_readback", "replay", "replay_write",
-    "rows_readback", "final_validation", "after_main",
+    "rows_readback", "final_validation", "rows_release", "after_main",
 ]
 SCIENCE_FILES = (
     "PreparedV1.json", "ResultV1.json", "AcceptedStepsV1.jsonl", "StateArraysV1.npz",
@@ -183,7 +183,7 @@ def test_phase_boundaries_describe_actual_native_owner_release(tmp_path):
             "prepared": roots["prepared"] is not None,
             "raw": roots["raw_result"] is not None,
             "result_type": type(roots["result"]).__name__,
-            "rows": len(roots["rows"]),
+            "rows": None if roots["rows"] is None else len(roots["rows"]),
             "persisted": None if roots["persisted"] is None else len(roots["persisted"]),
             "replay": roots["replay"] is not None,
         }
@@ -280,10 +280,11 @@ def test_observer_overhead_is_explicit_and_original_main_cost_includes_it(tmp_pa
     assert measurement["passed"]
     assert measurement["call_count"] == len(events)
     assert measurement["elapsed_s"] == len(events) * 0.25
-    main_calls = sum(phase != "after_main" for phase, _ in events)
+    main_calls = sum(phase not in {"rows_release", "after_main"} for phase, _ in events)
     assert measurement["main_elapsed_s"] == main_calls * 0.25
     assert report["cost"]["elapsed_s"] >= measurement["main_elapsed_s"]
     assert report["independent_analysis_elapsed_s"] >= 0.5
+    assert report["row_release_elapsed_s"] >= 0.5
     assert report["phase_timing"]["exclusive_sum_s"] <= report["cost"]["elapsed_s"]
 
 

@@ -362,6 +362,15 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
             report["replay_observed_rows"]=replay_row_count
             report["failure"]=None if failure is None else {k:failure[k] for k in ("type","message")}
     memory_in_main = False
+    release_start = time.monotonic()
+    with observed("rows_release"):
+        # Complete comparisons and cost accounting above still need both
+        # copies. Release only our references before independent analysis;
+        # consumers may share these lists, so never clear them in place.
+        rows = None
+        persisted = None
+    report["row_release_elapsed_s"] = time.monotonic() - release_start
+    report["row_release_cost_scope"] = "outside_original_main_timer_included_in_process_wall_time"
     if "after_main" in api and prepared is not None and result:
         analysis_start=time.monotonic()
         try:
