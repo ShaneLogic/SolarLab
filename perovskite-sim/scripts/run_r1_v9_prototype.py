@@ -192,7 +192,7 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
     def timed(name,call):
         return timer.call(name,call)
 
-    def memory_event(phase, event):
+    def memory_event(phase, event, roots=None):
         nonlocal memory_calls, memory_elapsed, memory_main_elapsed, memory_error
         if memory_observer is None or memory_error is not None:
             return
@@ -201,7 +201,8 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
         try:
             # Pass current roots only for this call. In particular, never keep
             # an earlier dictionary alive across raw_result's release.
-            memory_observer(phase, event, {"prepared": prepared, "raw_result": raw_result,
+            memory_observer(phase, event, roots if roots is not None else {
+                "prepared": prepared, "raw_result": raw_result,
                 "result": result, "rows": rows, "persisted": persisted, "replay": replay})
         except Exception as exc:
             # Preserve the normal scientific/failure artifacts. A failed
@@ -375,7 +376,11 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
         analysis_start=time.monotonic()
         try:
             with observed("after_main"):
-                report["independent_analysis"]=api["after_main"](prepared,result,replay)
+                if memory_observer is not None and "after_main_observed" in api:
+                    report["independent_analysis"]=api["after_main_observed"](
+                        prepared,result,replay,phase_observer=memory_event)
+                else:
+                    report["independent_analysis"]=api["after_main"](prepared,result,replay)
         except Exception as exc:
             report["independent_analysis"]={"passed":False,"error":error_record(exc)}
         report["independent_analysis_elapsed_s"]=time.monotonic()-analysis_start

@@ -6,6 +6,7 @@ uses the production backend, and gives incomplete references no cost ratio.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -223,7 +224,7 @@ def validate_result_request(result, case, prepared_sha256, policy, *, pair):
             raise ValueError("actual producer differs from the V12 request: " + key)
 
 
-def finalize_manifest(directory, summary, limits):
+def finalize_manifest(directory, summary, limits, *, before_final_seal=None):
     """Seal all files and check the exact case allocation, including metadata."""
     for _ in range(10):
         summary["absolute_engineering_check"] = absolute_cost(summary["cost"], limits)
@@ -234,9 +235,32 @@ def finalize_manifest(directory, summary, limits):
         write(directory / "ManifestV1.json", entries)
         size = sum(v["bytes"] for v in entries.values()) + (directory / "ManifestV1.json").stat().st_size
         if summary["cost"].get("case_artifact_bytes") == size:
+            if before_final_seal is not None:
+                callback, before_final_seal = before_final_seal, None
+                callback()
+                # The final observer event and receipt changed metadata only.
+                # Recount and reseal it after closing; never append to a seal.
+                continue
             return
         summary["cost"]["case_artifact_bytes"] = size
     raise ValueError("V12 artifact accounting did not stabilize")
+
+
+def update_qualification(summary, mode, baseline, *, memory_profile):
+    """Re-evaluate the same predicates after the observer receipt is closed."""
+    summary.setdefault("cost", {})
+    summary["integrity_passed"] = bool(summary.get("source_unchanged")
+        and summary["module_function_identity"]["unchanged"] and not summary.get("runner_error")
+        and not summary.get("replay_error") and not summary.get("failure_witness_error")
+        and summary.get("result_request_binding_passed") and summary.get("numeric_sidecar_exact")
+        and summary.get("replay_completed") and summary.get("extent", {}).get("prefix_valid")
+        and summary.get("four_predicates", {}).get("observer_matches_result")
+        and memory_observation_passed(summary, enabled=memory_profile))
+    summary["baseline_usable"] = mode == "baseline" and summary["integrity_passed"]
+    summary["numerical_passed"] = bool(summary["integrity_passed"] and summary.get("four_predicates_passed")
+        and (mode == "baseline" or (summary.get("precision_records", {}).get("record_fields_present")
+            and summary.get("independent_analysis", {}).get("passed"))))
+    summary["engineering_check"] = relative_cost(summary, baseline)
 
 
 def run(args):
@@ -326,6 +350,7 @@ def run(args):
         require_r1_checkout(project=PROJECT, formal=True, source_commit=args.expected_commit,
                             expected_source_sha256=args.source_sha256)
 
+    tail_observation = None
     try:
         with threadpool_limits(1):
             np.dot(np.ones((2, 2)), np.ones((2, 2)))
@@ -392,57 +417,75 @@ def run(args):
                    "failure_witness": lambda prepared, result, rows, failure: rebuild_failure_witness(
                        stack, n, binding, prepared, result, backend=backend)}
             if backend.is_pair:
-                from scripts.analyze_r1_v9_prototype import analyze_records
+                from scripts.analyze_r1_v9_prototype import analyze_records, observed_analysis_phase
                 from scripts.verify_r1_v9_precision import digest
 
-                def analyze(prepared, result, replay):
-                    saved = states.json_data(prepared.to_dict())
+                def analyze(prepared, result, replay, *, phase_observer=None):
+                    with observed_analysis_phase(phase_observer, "analysis_prepare_conversion",
+                            prepared=prepared, result=result, rows=result["accepted_steps"], replay=replay):
+                        saved = states.json_data(prepared.to_dict())
+                    with observed_analysis_phase(phase_observer, "analysis_context_source_digest",
+                            prepared=saved, result=result, rows=result["accepted_steps"], replay=replay):
+                        source_digest = digest(result["source"])
+                    with observed_analysis_phase(phase_observer, "analysis_context_rows_digest",
+                            prepared=saved, result=result, rows=result["accepted_steps"], replay=replay):
+                        rows_digest = digest(result["accepted_steps"])
                     return analyze_records(result["accepted_steps"], frozen, saved, result,
-                        context={"source_digest": digest(result["source"]), "prepared_sha256": saved["sha256"],
-                                 "result_sha256": result["sha256"], "saved_rows_digest": digest(result["accepted_steps"]),
+                        context={"source_digest": source_digest, "prepared_sha256": saved["sha256"],
+                                 "result_sha256": result["sha256"], "saved_rows_digest": rows_digest,
                                  "source_commit": args.expected_commit, "request_sha256": args.request_sha256},
                         output=output / "IndependentAnalysis", budget=budget,
-                        replay_receipt=getattr(replay, "replay_receipt", None))
+                        replay_receipt=getattr(replay, "replay_receipt", None),
+                        phase_observer=phase_observer)
                 api["after_main"] = analyze
+                api["after_main_observed"] = analyze
             if getattr(args, "memory_profile", False):
                 from scripts.r1_v16_memory import NativeMemoryObserver
+                from scripts.r1_v19_observation import TailObservation
                 observer = NativeMemoryObserver(output / "NativeMemoryPhasesV1.jsonl")
-                try:
-                    summary.update(run_trajectory(output, case, args.mode, api, guard,
-                        extent_check=extent, memory_observer=observer))
-                finally:
-                    try:
-                        observer.close()
-                    finally:
-                        summary["memory_collector"] = observer.summary()
+                tail_observation = TailObservation(observer, summary)
+                summary.update(run_trajectory(output, case, args.mode, api, guard,
+                    extent_check=extent, memory_observer=observer))
             else:
                 summary.update(run_trajectory(output, case, args.mode, api, guard, extent_check=extent))
-        guard()
+        with tail_observation.phase("post_analysis_source_guard") if tail_observation else nullcontext():
+            guard()
         summary["source_unchanged"] = True
     except (Exception, KeyboardInterrupt) as exc:
         summary.update(execution_status="failed", runner_error=error_record(exc), four_predicates_passed=False)
         write(output / "RunnerFailureV1.json", summary["runner_error"])
         try:
-            guard()
+            with tail_observation.phase("failure_source_guard") if tail_observation else nullcontext():
+                guard()
             summary["source_unchanged"] = True
-        except Exception as source_exc:
+        except (Exception, KeyboardInterrupt) as source_exc:
             summary.update(source_unchanged=False, source_error=error_record(source_exc))
     summary["module_function_identity"] = check_functions(functions_before)
-    summary.setdefault("cost", {})
-    summary["integrity_passed"] = bool(summary.get("source_unchanged")
-        and summary["module_function_identity"]["unchanged"] and not summary.get("runner_error")
-        and not summary.get("replay_error") and not summary.get("failure_witness_error")
-        and summary.get("result_request_binding_passed") and summary.get("numeric_sidecar_exact")
-        and summary.get("replay_completed") and summary.get("extent", {}).get("prefix_valid")
-        and summary.get("four_predicates", {}).get("observer_matches_result")
-        and memory_observation_passed(summary, enabled=getattr(args, "memory_profile", False)))
-    summary["baseline_usable"] = args.mode == "baseline" and summary["integrity_passed"]
-    summary["numerical_passed"] = bool(summary["integrity_passed"] and summary.get("four_predicates_passed")
-        and (args.mode == "baseline" or (summary.get("precision_records", {}).get("record_fields_present")
-            and summary.get("independent_analysis", {}).get("passed"))))
-    summary["engineering_check"] = relative_cost(summary, baseline)
+    update_qualification(summary, args.mode, baseline, memory_profile=getattr(args, "memory_profile", False))
     write(output / "PhaseTimingV1.json", summary.get("phase_timing", {}))
-    finalize_manifest(output, summary, request["absolute_engineering_limits"])
+    if tail_observation is None:
+        finalize_manifest(output, summary, request["absolute_engineering_limits"])
+    else:
+        def finish_observation():
+            tail_observation.event("case_finalization", "end")
+            tail_observation.finish()
+            update_qualification(summary, args.mode, baseline, memory_profile=True)
+
+        try:
+            tail_observation.event("case_finalization", "begin")
+            finalize_manifest(output, summary, request["absolute_engineering_limits"],
+                              before_final_seal=finish_observation)
+        except BaseException:
+            if not tail_observation.closed:
+                try:
+                    tail_observation.event("case_finalization", "error")
+                except BaseException:
+                    pass
+                try:
+                    tail_observation.finish()
+                except BaseException:
+                    pass
+            raise
     print(json.dumps({key: summary.get(key) for key in ("case_id", "mode", "execution_status", "extent",
         "integrity_passed", "numerical_passed", "baseline_usable", "engineering_check")}, indent=2))
     return 0 if (summary["numerical_passed"] and summary["engineering_check"]["qualified"] is not False

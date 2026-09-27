@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import time
@@ -40,30 +41,75 @@ def capability_intervals(records):
     return result
 
 
-def validate_analysis_context(rows,prepared,result,context,*,historical=False):
-    """Bind the caller's receipt context to these actual supplied inputs."""
-    if rows != result.get('accepted_steps'):
-        raise ValueError('analysis rows differ from the supplied result')
+@contextmanager
+def observed_analysis_phase(phase_observer,phase,*,prepared,result,rows,replay=None):
+    """Observe real boundaries without retaining a root mapping between them.
+
+    The caller owns diagnostic failure accounting. Observer failures propagate
+    unless an original operation exception is already in flight; that original
+    exception always wins. A runner may supply its existing sticky error sink.
+    No timings are subtracted from the analysis's ordinary wall measurement.
+    """
+    def emit(event):
+        if phase_observer is not None:
+            phase_observer(phase,event,{'prepared':prepared,'raw_result':None,
+                'result':result,'rows':rows,'persisted':None,'replay':replay})
+
+    emit('begin')
+    try:
+        yield
+    except BaseException:
+        try:
+            emit('error')
+        except BaseException:
+            # An observer must never replace a science/interrupt exception.
+            # The enclosing native observer records its own sticky failure.
+            pass
+        raise
+    else:
+        emit('end')
+
+
+def validate_analysis_context(rows,prepared,result,context,*,historical=False,phase_observer=None):
+    """Bind actual inputs; optional diagnostics do not weaken recomputation."""
+    with observed_analysis_phase(phase_observer,'analysis_context_rows_match',
+                                 prepared=prepared,result=result,rows=rows):
+        if rows != result.get('accepted_steps'):
+            raise ValueError('analysis rows differ from the supplied result')
     for name,value in (('prepared',prepared),('result',result)):
-        if value.get('sha256') != digest({k:v for k,v in value.items() if k!='sha256'}):
-            raise ValueError('analysis '+name+' content seal is invalid')
-    expected={'source_digest':digest(result['source']),'prepared_sha256':prepared['sha256'],
-              'result_sha256':result['sha256'],'saved_rows_digest':digest(rows)}
+        with observed_analysis_phase(phase_observer,'analysis_'+name+'_seal',
+                                     prepared=prepared,result=result,rows=rows):
+            if value.get('sha256') != digest({k:v for k,v in value.items() if k!='sha256'}):
+                raise ValueError('analysis '+name+' content seal is invalid')
+    with observed_analysis_phase(phase_observer,'analysis_source_digest',
+                                 prepared=prepared,result=result,rows=rows):
+        expected={'source_digest':digest(result['source']),'prepared_sha256':prepared['sha256'],
+                  'result_sha256':result['sha256']}
+    with observed_analysis_phase(phase_observer,'analysis_rows_digest',
+                                 prepared=prepared,result=result,rows=rows):
+        expected['saved_rows_digest']=digest(rows)
     if not historical and any(context.get(key)!=value for key,value in expected.items()):
         raise ValueError('analysis context does not describe the supplied source/preparation/result/rows')
     return expected
 
 
 def analyze_records(rows,frozen,prepared,result,*,context,output,budget,recomputations=None,
-                    replay_receipt=None,fixed_v8_case=False):
+                    replay_receipt=None,fixed_v8_case=False,phase_observer=None):
     """No solver is called here. Call after actual replay for production proof."""
     output=Path(output);output.mkdir(parents=True,exist_ok=False)
     validate_budget(budget)
-    actual_context=validate_analysis_context(rows,prepared,result,context,historical=fixed_v8_case)
-    initial=initial_checks(frozen,prepared,result)
+    with observed_analysis_phase(phase_observer,'analysis_context_validation',
+                                 prepared=prepared,result=result,rows=rows,replay=replay_receipt):
+        actual_context=validate_analysis_context(rows,prepared,result,context,historical=fixed_v8_case,
+                                                 phase_observer=phase_observer)
+    with observed_analysis_phase(phase_observer,'analysis_initial_checks',
+                                 prepared=prepared,result=result,rows=rows,replay=replay_receipt):
+        initial=initial_checks(frozen,prepared,result)
     upstream=result.get('initial_event',{}).get('precision_arithmetic_context',{})
     start=time.monotonic();records=[];failures=[];previous=None;states=set();anchors=regular=0
-    with (output/'RowsV1.jsonl').open('w') as stream:
+    with observed_analysis_phase(phase_observer,'analysis_row_analysis',
+                                 prepared=prepared,result=result,rows=rows,replay=replay_receipt), \
+            (output/'RowsV1.jsonl').open('w') as stream:
         for index,row in enumerate(rows):
             item={'row':index,'time_s':row['time_s'],'substeps':row['substeps'],'capability':{}}
             try:
@@ -116,8 +162,10 @@ def analyze_records(rows,frozen,prepared,result,*,context,output,budget,recomput
         'capability_intervals':capability_intervals(records),'new_trajectory_steps':0,'P2_qualified':False,
         'historical_V8_evidence':fixed_v8_case,'wall_seconds':time.monotonic()-start,
         'scope':'named_saved_record_checks_not_complete_production_or_global_error_qualification'}
-    write(output/'FailuresV1.json',failures);write(output/'ResultV1.json',report)
-    write(output/'ManifestV1.json',{p.name:{'sha256':sha(p),'bytes':p.stat().st_size} for p in output.iterdir() if p.is_file()})
+    with observed_analysis_phase(phase_observer,'analysis_report_writes',
+                                 prepared=prepared,result=result,rows=rows,replay=replay_receipt):
+        write(output/'FailuresV1.json',failures);write(output/'ResultV1.json',report)
+        write(output/'ManifestV1.json',{p.name:{'sha256':sha(p),'bytes':p.stat().st_size} for p in output.iterdir() if p.is_file()})
     return report
 
 
