@@ -73,6 +73,40 @@ def digest(value):
     return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
+def streaming_digest(value):
+    """Hash the canonical JSON bytes without materializing the complete text.
+
+    Normalization and JSON encoding match :func:`canonical`. Buffer SHA updates
+    in at most 64 KiB of ASCII JSON text; ``ensure_ascii`` retains its default
+    true value. Normalization still builds the same JSON-compatible object, and
+    the JSON encoder can itself produce a complete string token.
+    """
+    encoder = json.JSONEncoder(
+        sort_keys=True, separators=(",", ":"), allow_nan=False,
+    )
+    result = hashlib.sha256()
+    buffer = []
+    buffered_chars = 0
+    buffer_chars = 64 * 1024
+    for chunk in encoder.iterencode(json_data(value)):
+        if buffered_chars + len(chunk) > buffer_chars:
+            if buffer:
+                result.update("".join(buffer).encode("utf-8"))
+                buffer.clear()
+                buffered_chars = 0
+            # A single escaped string can exceed the buffer. Slice that token
+            # so hashing never creates another complete encoded byte copy.
+            if len(chunk) > buffer_chars:
+                for start in range(0, len(chunk), buffer_chars):
+                    result.update(chunk[start:start + buffer_chars].encode("utf-8"))
+                continue
+        buffer.append(chunk)
+        buffered_chars += len(chunk)
+    if buffer:
+        result.update("".join(buffer).encode("utf-8"))
+    return result.hexdigest()
+
+
 def execution_source():
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_checkout import current_execution_context
 

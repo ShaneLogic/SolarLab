@@ -419,6 +419,9 @@ def run(args):
                        "replay": lambda prepared, result, incomplete, observer: physics.verify_r1_step_physics(
                            stack, n, binding, prepared, result, allow_incomplete=incomplete, backend=backend,
                            row_observer=observer),
+                       "replay_observed": lambda prepared, result, incomplete, observer, *, phase_observer: physics.verify_r1_step_physics(
+                           stack, n, binding, prepared, result, allow_incomplete=incomplete, backend=backend,
+                           row_observer=observer, phase_observer=phase_observer),
                        "failure_witness": lambda prepared, result, rows, failure: rebuild_failure_witness(
                            stack, n, binding, prepared, result, backend=backend)}
                 if backend.is_pair:

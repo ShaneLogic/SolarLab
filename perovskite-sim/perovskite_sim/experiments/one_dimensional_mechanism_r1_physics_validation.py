@@ -18,7 +18,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1 import physical_ste
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import R1DynamicsControls, CURRENT_METRIC_SEMANTICS
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_independent_physics import independent_physics_row
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_state import (
-    R1PreparedState, _make_system, _preparation_policy, canonical, digest, json_data,
+    R1PreparedState, _make_system, _preparation_policy, canonical, digest, json_data, streaming_digest,
     snapshot, verify_prepared_physics,
 )
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_step import (
@@ -43,6 +43,24 @@ def _same(actual, expected, label):
     # anchored numerical implementation, not a physical error tolerance.
     if canonical(actual) != canonical(expected):
         raise R1PhysicsValidationError("physical reconstruction mismatch: " + label)
+
+
+def _replay_rows_digest(value, phase, phase_observer=None, **roots):
+    """Keep row identity exact while observing the bounded-text hash path."""
+    if phase_observer is not None:
+        phase_observer(phase, "begin", roots)
+    try:
+        result = streaming_digest(value)
+    except BaseException:
+        if phase_observer is not None:
+            try:
+                phase_observer(phase, "error", roots)
+            except BaseException:
+                pass
+        raise
+    if phase_observer is not None:
+        phase_observer(phase, "end", roots)
+    return result
 
 
 def reconstruction_context(system, state, prepared_sha256, reference_sha256):
@@ -197,7 +215,7 @@ def _level(states, observations, initial):
 
 def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
                            expected_prepared_sha256=None, allow_incomplete=False,
-                           backend=None, row_observer=None):
+                           backend=None, row_observer=None, phase_observer=None):
     """Re-evaluate a bounded complete trajectory or a saved failed prefix.
 
     The caller must separately anchor source and policy. Legacy rows without
@@ -498,8 +516,12 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         ledger = {
             "schema": "R1ActualPhysicsReplayLedgerV1", "representation": numerical.representation_id,
             "source_digest": digest(record["source"]), "prepared_sha256": prepared.sha256,
-            "result_sha256": record.get("sha256"), "saved_rows_digest": digest(rows),
-            "actual_recomputed_rows_digest": digest(all_recomputed_rows),
+            "result_sha256": record.get("sha256"),
+            "saved_rows_digest": _replay_rows_digest(rows, "replay_saved_rows_digest", phase_observer,
+                prepared=prepared, result=record, rows=rows, replay=all_recomputed_rows),
+            "actual_recomputed_rows_digest": _replay_rows_digest(all_recomputed_rows,
+                "replay_recomputed_rows_digest", phase_observer, prepared=prepared, result=record,
+                rows=rows, replay=all_recomputed_rows),
             "row_bindings_digest": digest(row_bindings), "row_bindings": row_bindings,
             "checked_row_count": consumed, "complete": complete,
             "scope": "actual_replayed_fixed_qf_poisson_and_ion_inputs_not_independence_of_shared_constitutive_laws",

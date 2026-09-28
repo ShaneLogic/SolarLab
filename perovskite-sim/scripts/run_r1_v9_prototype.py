@@ -320,8 +320,13 @@ def run_trajectory(directory, case, mode, api, source_guard, *, extent_check=Non
             if prepared is not None and result:
                 try:
                     with observed("replay"):
-                        replay=timed("replay_compute",lambda:api["replay"](
-                            prepared,result,report["execution_status"]!="completed",observe_replay))
+                        if memory_observer is not None and "replay_observed" in api:
+                            replay=timed("replay_compute",lambda:api["replay_observed"](
+                                prepared,result,report["execution_status"]!="completed",observe_replay,
+                                phase_observer=memory_event))
+                        else:
+                            replay=timed("replay_compute",lambda:api["replay"](
+                                prepared,result,report["execution_status"]!="completed",observe_replay))
                     report["replay_completed"]=True
                     with observed("replay_write"):
                         timed("replay_write",lambda:write(directory/"PhysicsReplayV1.json",api["json_data"](replay)))
