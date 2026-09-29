@@ -571,25 +571,27 @@ def _bernoulli_pair_with_derivative(
     )
 
 
+def _product_roundoff(x, y, product):
+    """Return the low product word without restricting finite input scales."""
+    if hasattr(math, "fma"):
+        return math.fma(x, y, -product)
+    # Split normalized mantissas so the splitter cannot overflow.
+    xm, xe = math.frexp(x)
+    ym, ye = math.frexp(y)
+    xs, ys = 134217729. * xm, 134217729. * ym
+    xh, yh = xs - (xs - xm), ys - (ys - ym)
+    xl, yl = xm - xh, ym - yh
+    normalized = math.ldexp(product, -(xe + ye))
+    error = ((xh * yh - normalized) + xh * yl + xl * yh) + xl * yl
+    return math.ldexp(error, xe + ye)
+
+
 def _product_difference(a, b, c, d):
     """Compensate both products in a*b-c*d, retaining Python 3.11 support."""
-    def product_error(x, y, product):
-        if hasattr(math, "fma"):
-            return math.fma(x, y, -product)
-        # Split normalized mantissas so the splitter cannot overflow.
-        xm, xe = math.frexp(x)
-        ym, ye = math.frexp(y)
-        xs, ys = 134217729. * xm, 134217729. * ym
-        xh, yh = xs - (xs - xm), ys - (ys - ym)
-        xl, yl = xm - xh, ym - yh
-        normalized = math.ldexp(product, -(xe + ye))
-        error = ((xh * yh - normalized) + xh * yl + xl * yh) + xl * yl
-        return math.ldexp(error, xe + ye)
-
     a, b, c, d = map(float, (a, b, c, d))
     first, second = a * b, c * d
-    return math.fsum((first, -second, product_error(a, b, first),
-                      -product_error(c, d, second)))
+    return math.fsum((first, -second, _product_roundoff(a, b, first),
+                      -_product_roundoff(c, d, second)))
 
 
 def _bulk_flux_and_log_jacobian(
@@ -939,6 +941,8 @@ def fixed_occupancy_trap_capture_flux_and_log_jacobian(
     The occupancy is an independent dynamic state. Consequently this tangent
     contains only the direct carrier derivatives; occupancy derivatives belong
     to the separate trap-state column of the device small-signal operator.
+    The capture difference retains product roundoff and forms ``1-f`` only
+    algebraically, so a small net capture is not lost between large terms.
     """
     state = np.asarray(state_m3, dtype=float)
     fixed = float(occupancy)
@@ -955,12 +959,46 @@ def fixed_occupancy_trap_capture_flux_and_log_jacobian(
     velocity_p = multiplier * float(physics.surface_recombination_velocity_p_m_s)
     n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
     p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
+
+    def capture_difference(density, emission_density, *, electron):
+        density, emission_density = float(density), float(emission_density)
+        if fixed == 0.0:
+            return density if electron else -emission_density
+        if fixed == 1.0:
+            return -emission_density if electron else density
+
+        # Sum n-f*n-f*n1 or f*p+f*p1-p1 without first rounding 1-f or
+        # the sum of densities. Work at a shared binary exponent: this also
+        # keeps products of subnormal densities from losing their low words,
+        # and avoids intermediate fsum overflow near the largest finite input.
+        f_mantissa, f_exponent = math.frexp(fixed)
+        terms = []
+        for value in (density, emission_density):
+            mantissa, exponent = math.frexp(value)
+            product = f_mantissa * mantissa
+            error = _product_roundoff(f_mantissa, mantissa, product)
+            terms.append(((product, exponent+f_exponent),
+                          (error, exponent+f_exponent)))
+        if electron:
+            parts = [math.frexp(density)] + [
+                (-value, exponent) for term in terms for value, exponent in term]
+        else:
+            mantissa, exponent = math.frexp(emission_density)
+            parts = [(-mantissa, exponent)] + [part for term in terms for part in term]
+        parts = [(value, exponent) for value, exponent in parts if value != 0.0]
+        if not parts:
+            return 0.0
+        common_exponent = max(exponent for _, exponent in parts)
+        normalized = math.fsum(math.ldexp(value, exponent-common_exponent)
+                               for value, exponent in parts)
+        return math.ldexp(normalized, common_exponent)
+
     capture = np.array(
         [
-            velocity_n * (state[_N_LEFT] * (1.0 - fixed) - n1[0] * fixed),
-            velocity_p * (state[_P_LEFT] * fixed - p1[0] * (1.0 - fixed)),
-            velocity_n * (state[_N_RIGHT] * (1.0 - fixed) - n1[1] * fixed),
-            velocity_p * (state[_P_RIGHT] * fixed - p1[1] * (1.0 - fixed)),
+            velocity_n * capture_difference(state[_N_LEFT], n1[0], electron=True),
+            velocity_p * capture_difference(state[_P_LEFT], p1[0], electron=False),
+            velocity_n * capture_difference(state[_N_RIGHT], n1[1], electron=True),
+            velocity_p * capture_difference(state[_P_RIGHT], p1[1], electron=False),
         ],
         dtype=float,
     )

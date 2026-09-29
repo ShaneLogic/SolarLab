@@ -11,6 +11,11 @@ from perovskite_sim.experiments.interface_defect_transient import (
 from perovskite_sim.experiments.one_dimensional_mechanism_r1 import (
     PhysicalInterfaceIonSystem,
 )
+from perovskite_sim.experiments.one_dimensional_mechanism_r1_local_carrier import (
+    assemble_r1_carrier_source, build_r1_local_states, float_local_carrier_inputs,
+    interface_carrier_conduction_pair, r1_carrier_rate_fields,
+    r1_local_carrier_jacobians, r1_reported_interface_currents, without_local_exchange,
+)
 from perovskite_sim.physics.dynamic_storage import logit_occupancy_increment
 from perovskite_sim.physics.physical_control_volume import physical_contact_displacement
 
@@ -104,6 +109,36 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         increments = np.asarray([values[self._local_block_slice(k)][2:]
                                  for k in range(self.interface_count)])
         return reference * np.exp(increments)
+
+    def _local_carrier_inputs(self, index, n, p, phi, occupancy, trace_potential,
+                              trace_log_state, *, trace_density_m3=None):
+        return float_local_carrier_inputs(self, index, n, p, phi, occupancy,
+            trace_potential, trace_log_state, trace_density_m3=trace_density_m3)
+
+    def _local_states(self, n, p, phi, occupancy, trace_potential, trace_log_state,
+                      *, trace_density_m3=None):
+        return build_r1_local_states(self, n, p, phi, occupancy, trace_potential,
+            trace_log_state, trace_density_m3=trace_density_m3)
+
+    def _source(self, n, p, phi, voltage, interface_qss):
+        source = super()._source(n, p, phi, voltage, without_local_exchange(interface_qss))
+        return assemble_r1_carrier_source(self, source, interface_qss)
+
+    def _carrier_rate_fields(self, source, transport_n, transport_p, local):
+        return r1_carrier_rate_fields(self, source, transport_n, transport_p, local)
+
+    def _local_carrier_jacobians(self, index, left, right, item, occupancy_tangent):
+        # Complete f and its logit chain are carried by this local evaluation.
+        del occupancy_tangent
+        return r1_local_carrier_jacobians(self, index, left, right, item)
+
+    def _currents(self, dqfn, dqfp, phi, n, p, local):
+        transport_n, transport_p, current_n, current_p = super()._currents(dqfn, dqfp, phi, n, p, local)
+        current_n, current_p = r1_reported_interface_currents(self, local, current_n, current_p)
+        return transport_n, transport_p, current_n, current_p
+
+    def _interface_carrier_conduction(self, item):
+        return interface_carrier_conduction_pair(self, item).to_float()
 
     def solver_current_metrics(self, state, previous, dt):
         """Keep contact-aware stopping separate from published internal spread.

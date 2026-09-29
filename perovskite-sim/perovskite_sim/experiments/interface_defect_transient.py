@@ -1073,6 +1073,12 @@ class _InterfaceTransientSystem:
             reported_p[face] = Q * balance.bulk_flux_m2_s[1]
         return transport_n, transport_p, reported_n, reported_p
 
+    def _interface_carrier_conduction(self, item: _LocalState) -> np.ndarray:
+        flux = item.tangent.balance.bulk_flux_m2_s
+        return self.polarity * Q * np.array(
+            [-flux[0] + flux[1], flux[2] - flux[3]], dtype=float
+        )
+
     def interface_current_sides(
         self,
         state: _DeviceState,
@@ -1091,15 +1097,7 @@ class _InterfaceTransientSystem:
         for index, (left, right, item) in enumerate(
             zip(self.left_nodes, self.right_nodes, state.local)
         ):
-            flux = item.tangent.balance.bulk_flux_m2_s
-            conduction[index] = (
-                self.polarity
-                * Q
-                * np.array(
-                    [-flux[0] + flux[1], flux[2] - flux[3]],
-                    dtype=float,
-                )
-            )
+            conduction[index] = self._interface_carrier_conduction(item)
             if previous is not None and dt is not None:
                 capacitance_left = (
                     EPS_0
@@ -1127,6 +1125,16 @@ class _InterfaceTransientSystem:
                     dtype=float,
                 )
         return conduction, displacement, conduction + displacement
+
+    def _carrier_rate_fields(self, source, transport_n, transport_p, local):
+        """Assemble receiving-volume and trap rates from this evaluation."""
+        divergence_n = self._divergence @ transport_n
+        divergence_p = self._divergence @ transport_p
+        rate_n = source[: self.node_count] + divergence_n / (Q * self.widths)
+        rate_p = source[self.node_count :] - divergence_p / (Q * self.widths)
+        capture = np.asarray([item.tangent.balance.capture_flux_m2_s for item in local])
+        trap_rate = capture[:, [0, 2]].sum(axis=1) - capture[:, [1, 3]].sum(axis=1)
+        return rate_n, rate_p, trap_rate
 
     def evaluate(self, coordinate: np.ndarray, voltage: float) -> _DeviceState:
         (
@@ -1157,12 +1165,9 @@ class _InterfaceTransientSystem:
             p,
             local,
         )
-        divergence_n = self._divergence @ transport_n
-        divergence_p = self._divergence @ transport_p
-        rate_n = source[: self.node_count] + divergence_n / (Q * self.widths)
-        rate_p = source[self.node_count :] - divergence_p / (Q * self.widths)
-        capture = np.asarray([item.tangent.balance.capture_flux_m2_s for item in local])
-        trap_rate = capture[:, [0, 2]].sum(axis=1) - capture[:, [1, 3]].sum(axis=1)
+        rate_n, rate_p, trap_rate = self._carrier_rate_fields(
+            source, transport_n, transport_p, local
+        )
         storage = np.r_[
             n[1:-1],
             p[1:-1],
@@ -1289,6 +1294,44 @@ class _InterfaceTransientSystem:
             chain[p_row, potential_column] = -1.0
         return chain.tocsr()
 
+    def _local_carrier_jacobians(self, index, left, right, item, occupancy_tangent):
+        """Return volume loss, trap rate and carrier algebraic derivatives.
+
+        Volume rows have the positive bulk-flux derivative divided by their
+        receiving width; the outer assembly subtracts each loss once.
+        """
+        tangent = item.tangent
+        balance = tangent.balance
+        block = self._local_block_slice(index)
+        trace_columns = slice(block.start, block.start + 2)
+        state_columns = slice(block.start + 2, block.stop)
+        bulk_chain = self._bulk_coordinate_chain(left, right)
+        bulk_flux_jacobian = (
+            sparse.csr_matrix(tangent.bulk_flux_jacobian_bulk_coordinates) @ bulk_chain
+        ).tolil()
+        bulk_flux_jacobian[:, trace_columns] += (
+            tangent.bulk_flux_jacobian_trace_potential_m2_s_V * self.thermal_voltage
+        )
+        bulk_flux_jacobian[:, state_columns] += tangent.bulk_flux_jacobian_log_state_m2_s
+        bulk_loss = sparse.vstack(
+            [bulk_flux_jacobian.getrow(i) / self.widths[node]
+             for i, node in enumerate((left, left, right, right))], format="csr"
+        )
+        capture_jacobian = sparse.lil_matrix((4, self.dimension))
+        capture_jacobian[:, state_columns] = tangent.capture_flux_jacobian_log_state_m2_s
+        capture_jacobian[:, self.trap_slice.start + index] = (
+            tangent.capture_flux_occupancy_derivative_m2_s * occupancy_tangent
+        )[:, np.newaxis]
+        trap_rate = (capture_jacobian.getrow(0) + capture_jacobian.getrow(2)
+                     - capture_jacobian.getrow(1) - capture_jacobian.getrow(3))
+        carrier = (sparse.csr_matrix(balance.jacobian_bulk_coordinates) @ bulk_chain).tolil()
+        carrier[:, trace_columns] += balance.jacobian_trace_potential_m2_s_V * self.thermal_voltage
+        carrier[:, state_columns] += balance.jacobian_log_state_m2_s
+        carrier[:, self.trap_slice.start + index] += (
+            tangent.residual_occupancy_derivative_m2_s * occupancy_tangent
+        )[:, np.newaxis]
+        return bulk_loss, trap_rate, carrier.tocsr()
+
     def _jacobians(
         self,
         phi: np.ndarray,
@@ -1357,46 +1400,16 @@ class _InterfaceTransientSystem:
         for index, (left, right, item) in enumerate(
             zip(self.left_nodes, self.right_nodes, local_states)
         ):
-            tangent = item.tangent
-            balance = tangent.balance
             block = self._local_block_slice(index)
             trace_columns = slice(block.start, block.start + 2)
-            state_columns = slice(block.start + 2, block.stop)
-            bulk_chain = self._bulk_coordinate_chain(left, right)
-
-            bulk_flux_jacobian = (
-                sparse.csr_matrix(tangent.bulk_flux_jacobian_bulk_coordinates)
-                @ bulk_chain
-            ).tolil()
-            bulk_flux_jacobian[:, trace_columns] += (
-                tangent.bulk_flux_jacobian_trace_potential_m2_s_V * self.thermal_voltage
+            bulk_loss, trap_rate, carrier_jacobian = self._local_carrier_jacobians(
+                index, left, right, item, occupancy_tangent[index]
             )
-            bulk_flux_jacobian[:, state_columns] += (
-                tangent.bulk_flux_jacobian_log_state_m2_s
-            )
-            source_n_jacobian[left] -= bulk_flux_jacobian.getrow(0) / self.widths[left]
-            source_p_jacobian[left] -= bulk_flux_jacobian.getrow(1) / self.widths[left]
-            source_n_jacobian[right] -= (
-                bulk_flux_jacobian.getrow(2) / self.widths[right]
-            )
-            source_p_jacobian[right] -= (
-                bulk_flux_jacobian.getrow(3) / self.widths[right]
-            )
-
-            capture_jacobian = sparse.lil_matrix((4, dimension))
-            capture_jacobian[:, state_columns] = (
-                tangent.capture_flux_jacobian_log_state_m2_s
-            )
-            capture_jacobian[:, self.trap_slice.start + index] = (
-                tangent.capture_flux_occupancy_derivative_m2_s
-                * occupancy_tangent[index]
-            )[:, np.newaxis]
-            trap_rate_jacobian[index] = (
-                capture_jacobian.getrow(0)
-                + capture_jacobian.getrow(2)
-                - capture_jacobian.getrow(1)
-                - capture_jacobian.getrow(3)
-            )
+            source_n_jacobian[left] -= bulk_loss.getrow(0)
+            source_p_jacobian[left] -= bulk_loss.getrow(1)
+            source_n_jacobian[right] -= bulk_loss.getrow(2)
+            source_p_jacobian[right] -= bulk_loss.getrow(3)
+            trap_rate_jacobian[index] = trap_rate
 
             row = 6 * index
             geometry, _physics, _bulk = _material_two_sided_interface_problem(
@@ -1436,16 +1449,6 @@ class _InterfaceTransientSystem:
                 self.trap_slice.start + index,
             ] = Q * self.trap_density[index] * occupancy_tangent[index]
 
-            carrier_jacobian = (
-                sparse.csr_matrix(balance.jacobian_bulk_coordinates) @ bulk_chain
-            ).tolil()
-            carrier_jacobian[:, trace_columns] += (
-                balance.jacobian_trace_potential_m2_s_V * self.thermal_voltage
-            )
-            carrier_jacobian[:, state_columns] += balance.jacobian_log_state_m2_s
-            carrier_jacobian[:, self.trap_slice.start + index] += (
-                tangent.residual_occupancy_derivative_m2_s * occupancy_tangent[index]
-            )[:, np.newaxis]
             local_jacobian[row + 2 : row + 6] = carrier_jacobian
 
         electron_local = sg_fluxes_n_jacobian(

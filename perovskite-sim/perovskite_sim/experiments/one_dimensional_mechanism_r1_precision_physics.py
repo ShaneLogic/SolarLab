@@ -26,7 +26,7 @@ SHARED_CONSTITUTIVE_DEPENDENCIES = (
     "one_dimensional_mechanism_r1_precision.carrier_currents_pair",
     "one_dimensional_mechanism_r1_precision.ion_flux_pair",
     "two_sided_interface._material_two_sided_interface_problem",
-    "two_sided_interface.fixed_occupancy_carrier_tangent_from_density",
+    "two_sided_interface_compensated.evaluate_local_carrier_pair",
     "compensated.DD",
 )
 

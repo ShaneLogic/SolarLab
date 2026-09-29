@@ -10,7 +10,6 @@ returned dictionary of physical ``DD`` arrays.
 
 from __future__ import annotations
 
-from dataclasses import replace
 import warnings
 
 import numpy as np
@@ -21,9 +20,7 @@ from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.physics.compensated import DD
 from perovskite_sim.physics.two_sided_interface import (
     EquilibriumReferencedSheetCharge,
-    InterfaceTracePotentials,
     _material_two_sided_interface_problem,
-    fixed_occupancy_carrier_tangent_from_density,
     solve_fixed_occupancy_two_sided_interface,
 )
 from perovskite_sim.solver.mol import poisson_right_boundary
@@ -208,16 +205,23 @@ def initialize_fine_reference(system) -> dict[str, DD]:
             mat, system.stack, n.hi, p.hi, phi.hi, k,
             cross_transmission=system.dark_reference.interface_transmission,
         )
-        charged = replace(geometry, fixed_sheet_charge_C_m2=float(sigma[k].to_float()))
-        trace = InterfaceTracePotentials(float(trace_left.hi), float(trace_right.hi))
         density_input = np.asarray(healthy.local[k].state_m3).copy()
         density = DD(density_input)
 
         def local_balance(values):
-            return fixed_occupancy_carrier_tangent_from_density(
-                values.hi, charged, physics, bulk, float(occupancy[k].hi), trace,
-                capture_multiplier=system.capture_multiplier, paired_bernoulli=True,
-            ).balance
+            from .one_dimensional_mechanism_r1_local_carrier import (
+                LocalCarrierInputs, evaluate_local_carrier_inputs,
+            )
+            inputs = LocalCarrierInputs(
+                values,
+                DD([trace_left.hi, trace_right.hi], [trace_left.lo, trace_right.lo]),
+                DD([n.hi[left], p.hi[left], n.hi[right], p.hi[right]],
+                   [n.lo[left], p.lo[left], n.lo[right], p.lo[right]]),
+                DD(phi.hi[[left, right]], phi.lo[[left, right]]), occupancy[k],
+            )
+            return evaluate_local_carrier_inputs(
+                system, k, geometry, physics, inputs,
+            ).production_tangent().balance
 
         balance = local_balance(density)
         norm_before = float(np.max(np.abs(balance.residual_m2_s / system.reference_local_scale[k, 2:])))
@@ -237,7 +241,7 @@ def initialize_fine_reference(system) -> dict[str, DD]:
         norm_after = float(np.max(np.abs(balance.residual_m2_s / system.reference_local_scale[k, 2:])))
         diagnostics["local_carriers"].append({
             "interface": k, "seed": "original_healthy_local_state_without_new_log_exp_round_trip",
-            "precision": "existing_binary64_constitutive_balance_on_fine_state_high_words",
+            "precision": "compensated_constitutive_balance_on_complete_fine_state_words",
             "normalized_residual_before": norm_before, "normalized_residual_after": norm_after,
             "fixed_occupancy_limit": _LOCAL_CARRIER_LIMIT, "new_solver_evaluations": evaluations,
             "re_solved": bool(evaluations),

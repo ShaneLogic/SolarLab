@@ -10,19 +10,17 @@ from __future__ import annotations
 import numpy as np
 
 from perovskite_sim.constants import EPS_0, Q
+from perovskite_sim.physics.compensated import DD
 from perovskite_sim.discretization.fe_operators import bernoulli
 from perovskite_sim.physics.ion_migration import ion_face_flux
-from perovskite_sim.physics.two_sided_interface import (
-    InterfaceTracePotentials, _material_two_sided_interface_problem,
-    fixed_occupancy_carrier_tangent_from_density,
-)
 
 SCHEMA = "R1IndependentPhysicsRowV1"
 SCOPE = "saved_state_independent_current_charge_assembly_not_full_DAE_oracle"
 SHARED_CONSTITUTIVE_DEPENDENCIES = (
     "fe_operators.bernoulli", "ion_migration.ion_face_flux",
     "two_sided_interface._material_two_sided_interface_problem",
-    "two_sided_interface.fixed_occupancy_carrier_tangent_from_density",
+    "two_sided_interface_compensated.evaluate_local_carrier_pair",
+    "compensated.DD",
 )
 METRIC_LIMITS = {
     "internal_face_current_spread_relative": 2e-6,
@@ -98,15 +96,8 @@ def _difference(forward, backward, drive):
 
 
 def _interface_balance(system, state, index):
-    geometry, physics, bulk = _material_two_sided_interface_problem(
-        system.material, system.stack, state.n, state.p, state.phi, index,
-        cross_transmission=system.dark_reference.interface_transmission)
-    local = state.local[index]
-    return fixed_occupancy_carrier_tangent_from_density(
-        local.state_m3, geometry, physics, bulk, state.occupancy[index],
-        InterfaceTracePotentials(*local.trace_potential),
-        capture_multiplier=system.controls.nu_t,
-        paired_bernoulli=getattr(system, "_step_reference", None) is not None).balance
+    from .one_dimensional_mechanism_r1_local_carrier import independent_interface_evaluation
+    return independent_interface_evaluation(system, state, index).production_tangent().balance
 
 
 def _currents(system, state):
@@ -131,13 +122,17 @@ def _currents(system, state):
             P_lim_node=mat.P_lim_node)
     ionic = Q*ion_flux
     interface = np.empty((system.interface_count, 2))
+    from .one_dimensional_mechanism_r1_local_carrier import independent_interface_evaluation
     for index, face in enumerate(system.interface_faces):
         # The fixed-occupancy carrier law depends on the supplied trace
         # potential; never consume state.local[index].tangent or its fluxes.
-        balance = _interface_balance(system, state, index)
-        flux = balance.bulk_flux_m2_s
-        electron[face], hole[face] = -Q*flux[0], Q*flux[1]
-        interface[index] = Q*np.array([-flux[0]+flux[1], flux[2]-flux[3]])+ionic[face]
+        flux = independent_interface_evaluation(system, state, index).balance["bulk_flux_m2_s"]
+        electron[face] = float((-DD(Q)*flux[0]).to_float())
+        hole[face] = float((DD(Q)*flux[1]).to_float())
+        interface[index] = [
+            float((DD(Q)*(-flux[0]+flux[1])).to_float()) + ionic[face],
+            float((DD(Q)*(flux[2]-flux[3])).to_float()) + ionic[face],
+        ]
     return electron, hole, ion_flux, interface
 
 

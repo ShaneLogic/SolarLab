@@ -714,17 +714,12 @@ class _InterfaceIonTransientSystem(_InterfaceTransientSystem):
             p,
             local,
         )
-        rate_n = source[: self.node_count] + (self._divergence @ transport_n) / (
-            Q * self.widths
-        )
-        rate_p = source[self.node_count :] - (self._divergence @ transport_p) / (
-            Q * self.widths
+        rate_n, rate_p, trap_rate = self._carrier_rate_fields(
+            source, transport_n, transport_p, local
         )
         positive_rate, negative_rate, positive_flux, negative_flux = self._ion_fields(
             phi, positive, negative,
         )
-        capture = np.asarray([item.tangent.balance.capture_flux_m2_s for item in local])
-        trap_rate = capture[:, [0, 2]].sum(axis=1) - capture[:, [1, 3]].sum(axis=1)
         storage_parts = [
             n[1:-1],
             p[1:-1],

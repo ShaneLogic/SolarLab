@@ -162,8 +162,8 @@ def ion_flux_pair(phi, population, material, spacing, *, fault="none", _terms=No
     return flux
 
 
-def carrier_currents_pair(system, fine, local):
-    """Fine bulk SG law with the original separately solved interface law."""
+def carrier_currents_pair(system, fine, local, *, interface_fluxes=None):
+    """Fine SG currents with explicit, state-owned interface particle fluxes."""
     mat = system.material
     constants = system._refresh_fine_constants()
     vt = constants["vt"]
@@ -188,11 +188,17 @@ def carrier_currents_pair(system, fine, local):
     jp=prefactor_p*stable(
         bp_forward*p[:-1],bp_backward*p[1:],dp)
     transport_n,transport_p=jn.copy(),jp.copy()
+    if interface_fluxes is None:
+        interface_fluxes = tuple(item.carrier_data.balance["bulk_flux_m2_s"] for item in local)
+    if len(interface_fluxes) != len(system.interface_faces):
+        raise ValueError("interface current inputs do not match the physical faces")
     for k,face in enumerate(system.interface_faces):
-        balance=local[k].tangent.balance
+        flux = interface_fluxes[k]
+        if not isinstance(flux, DD) or flux.shape != (4,):
+            raise TypeError("interface particle flux must retain its four DD components")
         transport_n,transport_p=put(transport_n,face,0),put(transport_p,face,0)
-        jn=put(jn,face,-Q*balance.bulk_flux_m2_s[0])
-        jp=put(jp,face,Q*balance.bulk_flux_m2_s[1])
+        jn=put(jn,face,-_CHARGE*flux[0])
+        jp=put(jp,face,_CHARGE*flux[1])
     return transport_n,transport_p,jn,jp
 
 
@@ -502,6 +508,19 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
             return self._fine_work["trace_state_m3"].hi.copy()
         return super()._trace_density_coordinates(coordinate)
 
+    def _local_carrier_inputs(self, index, n, p, phi, occupancy,
+                              trace_potential, trace_log_state, *, trace_density_m3=None):
+        if not self._fine_work:
+            return super()._local_carrier_inputs(
+                index, n, p, phi, occupancy, trace_potential, trace_log_state,
+                trace_density_m3=trace_density_m3,
+            )
+        from .one_dimensional_mechanism_r1_local_carrier import fine_local_carrier_inputs
+        return fine_local_carrier_inputs(
+            self, index, n, p, phi, occupancy, trace_potential, trace_log_state,
+            trace_density_m3=trace_density_m3, fine=self._fine_work,
+        )
+
     def _ion_coordinates(self, coordinate):
         if not hasattr(self, "_fine_reference"):
             return super()._ion_coordinates(coordinate)
@@ -543,7 +562,7 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         values=carrier_currents_pair(self,self._fine_work,local)
         self._fine_work["electron_current_A_m2"]=values[2]
         self._fine_work["hole_current_A_m2"]=values[3]
-        return tuple(value.hi.copy() for value in values)
+        return values[0], values[1], values[2].hi.copy(), values[3].hi.copy()
 
     def _poisson_pair(self, phi, n, p, positive, sigma, *, constants=None):
         c=constants if constants is not None else {
@@ -1004,19 +1023,20 @@ def finalize_initial_precision(system, before, result, *, snapshot):
 
 
 def independent_currents_pair(system, state):
-    from .one_dimensional_mechanism_r1_independent_physics import _interface_balance
-    locals_new = []
-    for k, item in enumerate(state.local):
-        balance = _interface_balance(system, state, k)
-        locals_new.append(replace(item, tangent=replace(item.tangent, balance=balance)))
-    _, _, electron, hole = carrier_currents_pair(system, state.fine, locals_new)
+    from .one_dimensional_mechanism_r1_local_carrier import independent_interface_evaluation
+    # Rebuild every interface flux from raw physical words. Neither the direct
+    # tangent nor its state-owned carrier payload enters this reconstruction.
+    fluxes = tuple(independent_interface_evaluation(system, state, k).balance["bulk_flux_m2_s"]
+                   for k in range(system.interface_count))
+    _, _, electron, hole = carrier_currents_pair(system, state.fine, (), interface_fluxes=fluxes)
     ion = (ion_flux_pair(state.fine["phi_V"], state.fine["positive_m3"], system.material,
                          np.diff(system.grid)) if system.controls.nu_I
            else DD(np.zeros(system.node_count - 1)))
     interface = np.empty((system.interface_count, 2))
     for k, face in enumerate(system.interface_faces):
-        flux = locals_new[k].tangent.balance.bulk_flux_m2_s
-        interface[k] = Q * np.array([-flux[0] + flux[1], flux[2] - flux[3]]) + Q * ion.hi[face]
+        flux = fluxes[k]
+        # Preserve the published carrier-then-ionic float output boundary.
+        interface[k] = (_CHARGE * cat(-flux[0] + flux[1], flux[2] - flux[3])).to_float() + Q * ion.hi[face]
     return electron.hi.copy(), hole.hi.copy(), ion.hi.copy(), interface
 
 
