@@ -784,6 +784,24 @@ class _InterfaceTransientSystem:
         start = self.local_slice.start + 6 * index
         return slice(start, start + 6)
 
+    def _bulk_density_coordinates(
+        self,
+        values: np.ndarray,
+        log_n: np.ndarray,
+        log_p: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        n = np.exp(log_n)
+        p = np.exp(log_p)
+        if self._step_reference is not None:
+            potential_increment = values[self.potential_slice]
+            n[1:-1] = self._step_reference.n[1:-1] * np.exp(
+                values[self.electron_slice] + potential_increment
+            )
+            p[1:-1] = self._step_reference.p[1:-1] * np.exp(
+                values[self.hole_slice] - potential_increment
+            )
+        return n, p
+
     def _coordinates(
         self,
         coordinate: np.ndarray,
@@ -825,16 +843,7 @@ class _InterfaceTransientSystem:
         limit = math.log(np.finfo(float).max)
         if np.any(log_n > limit) or np.any(log_p > limit):
             raise InterfaceDefectTransientError("carrier coordinate overflow")
-        n = np.exp(log_n)
-        p = np.exp(log_p)
-        if self._step_reference is not None:
-            potential_increment = values[self.potential_slice]
-            n[1:-1] = self._step_reference.n[1:-1] * np.exp(
-                values[self.electron_slice] + potential_increment
-            )
-            p[1:-1] = self._step_reference.p[1:-1] * np.exp(
-                values[self.hole_slice] - potential_increment
-            )
+        n, p = self._bulk_density_coordinates(values, log_n, log_p)
         if (
             not np.all(np.isfinite(n))
             or not np.all(np.isfinite(p))

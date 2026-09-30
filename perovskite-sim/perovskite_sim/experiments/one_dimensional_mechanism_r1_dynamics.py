@@ -71,6 +71,25 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
     def controls(self):
         return self._controls
 
+    def _bulk_density_coordinates(self, values, log_n, log_p):
+        if self._step_reference is None:
+            return super()._bulk_density_coordinates(values, log_n, log_p)
+        n = np.empty_like(log_n)
+        p = np.empty_like(log_p)
+        # Retain the parent checks of temporary contact densities before pinning.
+        n[[0, -1]] = np.exp(log_n[[0, -1]])
+        p[[0, -1]] = np.exp(log_p[[0, -1]])
+        potential_increment = values[self.potential_slice]
+        n[1:-1] = log_density_update(
+            self._step_reference.n[1:-1],
+            values[self.electron_slice] + potential_increment,
+        )
+        p[1:-1] = log_density_update(
+            self._step_reference.p[1:-1],
+            values[self.hole_slice] - potential_increment,
+        )
+        return n, p
+
     def _coordinates(self, coordinate, voltage):
         result = list(super()._coordinates(coordinate, voltage))
         # Pinned endpoint reservoirs have exactly fixed physical populations;

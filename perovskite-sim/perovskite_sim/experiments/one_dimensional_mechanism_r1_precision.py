@@ -19,6 +19,7 @@ from scipy.sparse.linalg import spsolve
 from perovskite_sim.constants import EPS_0, Q
 from perovskite_sim.physics.compensated import DD
 from perovskite_sim.experiments.interface_defect_ion_transient import _InterfaceIonDeviceState
+from perovskite_sim.experiments.interface_defect_transient import _InterfaceTransientSystem
 from perovskite_sim.experiments.one_dimensional_mechanism_r1_dynamics import ControlledPhysicalInterfaceIonSystem
 
 REPRESENTATION = "float64-pair-v1"
@@ -462,6 +463,12 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         # arithmetic; its finite Gauss defect is solved, never erased.
         self._fine_lift = DD(self._lift)
         self._fine_trace_lift = DD(self._trace_lift)
+
+    def _bulk_density_coordinates(self, values, log_n, log_p):
+        # Preserve the original parent evaluation before the DD reconstruction.
+        return _InterfaceTransientSystem._bulk_density_coordinates(
+            self, values, log_n, log_p
+        )
 
     def _coordinates(self, coordinate, voltage):
         result = list(super()._coordinates(coordinate, voltage))
