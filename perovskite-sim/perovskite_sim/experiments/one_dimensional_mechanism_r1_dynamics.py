@@ -16,7 +16,7 @@ from perovskite_sim.experiments.one_dimensional_mechanism_r1_local_carrier impor
     interface_carrier_conduction_pair, r1_carrier_rate_fields,
     r1_local_carrier_jacobians, r1_reported_interface_currents, without_local_exchange,
 )
-from perovskite_sim.physics.dynamic_storage import logit_occupancy_increment
+from perovskite_sim.physics.dynamic_storage import log_density_update, logit_occupancy_increment
 from perovskite_sim.physics.physical_control_volume import physical_contact_displacement
 
 
@@ -108,7 +108,7 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         reference = np.asarray([item.state_m3 for item in self._step_reference.local])
         increments = np.asarray([values[self._local_block_slice(k)][2:]
                                  for k in range(self.interface_count)])
-        return reference * np.exp(increments)
+        return log_density_update(reference, increments)
 
     def _local_carrier_inputs(self, index, n, p, phi, occupancy, trace_potential,
                               trace_log_state, *, trace_density_m3=None):

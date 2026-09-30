@@ -289,7 +289,7 @@ def test_non_r1_default_rate_hook_keeps_original_float_arithmetic():
 
 
 @pytest.mark.slow
-def test_actual_n16_state_lifetime_and_existing_snapshot_schema(pair_preparation):
+def test_actual_n16_state_lifetime_and_existing_snapshot_schema(pair_preparation, monkeypatch):
     from threadpoolctl import threadpool_limits
     from perovskite_sim.experiments import one_dimensional_mechanism_r1_state as states
     from perovskite_sim.experiments.one_dimensional_mechanism_r1_pair_codec import FINE_FIELDS, SNAPSHOT_FIELDS
@@ -302,6 +302,18 @@ def test_actual_n16_state_lifetime_and_existing_snapshot_schema(pair_preparation
         payload = a.local[0].carrier_data
         conduction = system._interface_carrier_conduction(a.local[0]).copy()
         jacobian = system._local_carrier_jacobians(0, system.left_nodes[0], system.right_nodes[0], a.local[0], 0.0)
+        from perovskite_sim.experiments.one_dimensional_mechanism_r1_precision import CompensatedR1System
+        trace_hook = CompensatedR1System._trace_density_coordinates
+        observed_hooks = []
+        def checked_trace_hook(current, coordinate):
+            assert current._fine_work
+            value = trace_hook(current, coordinate)
+            np.testing.assert_array_equal(value, current._fine_work["trace_state_m3"].hi)
+            observed_hooks.append(current)
+            return value
+        monkeypatch.setattr(CompensatedR1System, "_trace_density_coordinates", checked_trace_hook)
+        monkeypatch.setattr(ControlledPhysicalInterfaceIonSystem, "_trace_density_coordinates",
+                            lambda *args: pytest.fail("normal compensated evaluation used the float map"))
         coordinate = a.coordinate.copy()
         coordinate[system._local_block_slice(0).start+2] += 1e-8
         b = system.evaluate(coordinate, 0.0)
@@ -311,7 +323,93 @@ def test_actual_n16_state_lifetime_and_existing_snapshot_schema(pair_preparation
         again = system._local_carrier_jacobians(0, system.left_nodes[0], system.right_nodes[0], a.local[0], 0.0)
         for expected, actual in zip(jacobian, again, strict=True):
             np.testing.assert_array_equal(expected.toarray(), actual.toarray())
-        _, rebased = system.rebase(a)
+        rebased_system, rebased = system.rebase(a)
         assert rebased.local[0].carrier_data is payload
         assert replace(a.local[0], sheet_charge_C_m2=a.local[0].sheet_charge_C_m2).carrier_data is payload
         assert set(states.snapshot(system, b)) == SNAPSHOT_FIELDS
+        assert not rebased_system._fine_work
+        c = rebased_system.evaluate(np.zeros_like(coordinate), 0.)
+        assert observed_hooks == [system, rebased_system]
+        for current in (b, c):
+            for index, item in enumerate(current.local):
+                inputs = item.carrier_data.inputs.state_density
+                np.testing.assert_array_equal(inputs.hi, current.fine["trace_state_m3"].hi[index])
+                np.testing.assert_array_equal(inputs.lo, current.fine["trace_state_m3"].lo[index])
+
+
+
+def test_actual_trace_hook_maps_all_four_components_at_multiple_interfaces():
+    system = ControlledPhysicalInterfaceIonSystem.__new__(ControlledPhysicalInterfaceIonSystem)
+    system.interface_count = 2
+    system.local_slice = slice(3, 15)
+    system._step_reference = SimpleNamespace(local=(
+        SimpleNamespace(state_m3=np.array([1., 2., 3., 4.])),
+        SimpleNamespace(state_m3=np.array([5., 6., 7., 8.])),
+    ))
+    coordinate = np.zeros(15)
+    coordinate[5:9] = [0., 0., -700., 0.]
+    coordinate[11:15] = [0., -700., 0., 0.]
+    mapped = system._trace_density_coordinates(coordinate)
+    assert mapped.shape == (2, 4) and mapped.dtype == np.float64
+    np.testing.assert_array_equal(mapped[[0,0,0,1,1,1], [0,1,3,0,2,3]], [1.,2.,4.,5.,7.,8.])
+    assert 0. < mapped[0,2] < 1e-300 and 0. < mapped[1,1] < 1e-300
+    system._step_reference = None
+    assert system._trace_density_coordinates(coordinate) is None
+
+
+def test_trace_hook_words_are_preserved_by_baseline_carrier_inputs(consumer):
+    system, build = consumer
+    reference, _ = build()
+    system._step_reference = reference
+    coordinate = np.zeros(system.dimension)
+    density = system._trace_density_coordinates(coordinate)
+    inputs = system._local_carrier_inputs(0, reference.n, reference.p, reference.phi,
+        reference.occupancy, np.zeros((1,2)), np.full((1,4), 999.),
+        trace_density_m3=density)
+    np.testing.assert_array_equal(inputs.state_density.hi, density[0])
+    np.testing.assert_array_equal(inputs.state_density.lo, np.zeros(4))
+
+
+def test_compensated_trace_hook_keeps_fine_words_and_bypasses_single_word_map(consumer, monkeypatch):
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_precision import CompensatedR1System
+
+    system, build = consumer
+    state, _ = build()
+    density = np.array([[4., 6., 8., 10.]])
+    tiny = np.ldexp(1., -70)
+    system._fine_work = {
+        "n_m3": DD(state.n), "p_m3": DD(state.p), "phi_V": DD(state.phi),
+        "occupancy": DD(state.occupancy), "trace_potential_V": DD(np.zeros((1,2))),
+        "trace_state_m3": DD(density, [[tiny, -tiny, tiny, -tiny]]),
+    }
+    monkeypatch.setattr(ControlledPhysicalInterfaceIonSystem, "_trace_density_coordinates",
+                        lambda *args: pytest.fail("fine trace fell back to single-word map"))
+    mapped = CompensatedR1System._trace_density_coordinates(system, np.zeros(13))
+    inputs = CompensatedR1System._local_carrier_inputs(system, 0, state.n, state.p, state.phi,
+        state.occupancy, np.zeros((1,2)), np.full((1,4), 999.), trace_density_m3=mapped)
+    np.testing.assert_array_equal(inputs.state_density.hi, density[0])
+    np.testing.assert_array_equal(inputs.state_density.lo, [tiny, -tiny, tiny, -tiny])
+    mapped[0, 0] = 99.
+    assert system._fine_work["trace_state_m3"].hi[0, 0] == 4.
+
+
+
+def test_actual_trace_hook_preserves_independent_golden_through_baseline_inputs(consumer):
+    from tests.unit.physics.test_dynamic_storage import TRACE_MAP_REFERENCE_VECTORS
+
+    system, build = consumer
+    state, _ = build()
+    for anchor_hex, coordinate_hex, expected_hex in TRACE_MAP_REFERENCE_VECTORS:
+        anchor = np.array([float.fromhex(v) for v in anchor_hex])
+        z = np.array([float.fromhex(v) for v in coordinate_hex])
+        expected = np.array([float.fromhex(v) for v in expected_hex])
+        system._step_reference = SimpleNamespace(local=(SimpleNamespace(state_m3=anchor),))
+        coordinate = np.zeros(system.dimension)
+        coordinate[system._local_block_slice(0)][2:] = z
+        density = system._trace_density_coordinates(coordinate)
+        assert density.shape == (1, 4)
+        np.testing.assert_array_equal(density[0], expected)
+        inputs = system._local_carrier_inputs(0, state.n, state.p, state.phi,
+            state.occupancy, np.zeros((1,2)), np.full((1,4), 999.), trace_density_m3=density)
+        np.testing.assert_array_equal(inputs.state_density.hi, expected)
+        np.testing.assert_array_equal(inputs.state_density.lo, np.zeros(4))
