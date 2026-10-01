@@ -10,14 +10,13 @@ Perovskite · CIGS · c-Si
 
 <br>
 
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
 [![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com)
 [![Vite](https://img.shields.io/badge/frontend-Vite%20%2B%20TypeScript-646CFF.svg)](https://vitejs.dev)
-[![License](https://img.shields.io/badge/license-research-lightgrey.svg)](#)
 
 <br>
 
-Xuanyan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&#42;</sup> · Tongyi Zhang<sup>&#42;</sup>
+Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&#42;</sup> · Tongyi Zhang<sup>&#42;</sup>
 
 *The Hong Kong University of Science and Technology (Guangzhou)*
 
@@ -81,8 +80,8 @@ The current technical reference is the **SolarLab Technical and User Manual (202
 
 | | Capability | Details |
 |:-:|:-----------|:--------|
-| 🧮 | **Drift-diffusion core** | Scharfetter-Gummel finite-element fluxes on a tanh-clustered multilayer grid; Method-of-Lines with Radau implicit time integration |
-| ⚡ | **Poisson solve** | Pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs` (cached once per run) — ~40× faster than naive assembly |
+| 🧮 | **Drift-diffusion core** | Scharfetter-Gummel face fluxes with nonuniform control-volume continuity balances; Method-of-Lines with Radau implicit time integration |
+| ⚡ | **Poisson solve** | Finite-volume operator with pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs`, reusing the factor while grid and permittivity stay fixed |
 | 🔬 | **Mobile ions** | Finite-site modified-PNP flux with shared-site dual-ion support; legacy whole-flux regularization retained only for frozen comparisons |
 | 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface transport/recombination; signed contact potential from semiconductor work functions, explicit metals, or a legacy benchmark override |
 
@@ -105,10 +104,25 @@ The current technical reference is the **SolarLab Technical and User Manual (202
 | Tier | Physics set | Use case |
 |:-----|:------------|:---------|
 | **LEGACY** | No TE, no TMM, uniform traps, $T = 300$ K — classic IonMonger reproduction | Regression parity against published benchmarks |
-| **FAST** | All build-once upgrades on (TE, TMM, dual ions, trap profile, $T$-scaling, photon recycling); per-RHS hooks off | Default for J-V / impedance / degradation sweeps |
+| **FAST** | Permits build-once upgrades (TE, TMM, dual ions, trap profile, $T$-scaling, photon recycling); per-RHS hooks off | Selected by the SCAPS reference preset |
 | **FULL** | Widest configured hook set, including per-RHS radiative reabsorption, $\mu(E)$, and Robin contacts | Runs that require those hooks; accuracy still depends on driver support and validation |
 
 The tier is a feature ceiling, not an accuracy grade. The selected experiment driver still determines the unknowns, supported physics, and required certification checks.
+
+The Python `DeviceStack` default and `resolve_mode(None)` select **FULL**. Shipped presets override this explicitly. A permitted feature activates only when its required parameters are present; selecting FULL does not supply missing material data.
+
+### Driver Boundaries
+
+| Path | Interpretation |
+| --- | --- |
+| `transient` | Time-dependent density/ion state with Poisson solved within RHS evaluations; preserves the declared voltage history |
+| `steady_state` / `quasi_fermi` | Explicit DC solve, returned through the backend with forward = reverse and zero scan hysteresis |
+| Frequency-domain adapters | Linearize a qualified operating state; supported charge/storage/contact combinations are adapter-specific |
+| 2D default | Extrudes the electrical stack and uses frozen ionic background for the historical parity lane |
+| 2D research extensions | One positive mobile-ion species and optional two-sided interface SRH have explicit Neumann-lateral topology gates; dual mobile ions are rejected |
+| DAE research backbone | Separate residual/Jacobian models and backward-Euler reference integrators; these are not silently substituted into production experiment routes |
+
+The function named `solve_equilibrium` provides a quasi-neutral starting state; it does not by itself certify full ion-relaxed equilibrium. J-V certification is also explicit: strict mode raises on a failed local certificate, while diagnostic mode returns invalid/NaN values for failed dependent points. See the [package guide](perovskite-sim/README.md) for the detailed capability contracts.
 
 ### Experiments
 
@@ -130,9 +144,9 @@ The tier is a feature ceiling, not an accuracy grade. The selected experiment dr
 
 | | Capability | Details |
 |:-:|:-----------|:--------|
-| 📏 | **1D drift-diffusion (default)** | All experiments above run on a tanh-clustered multilayer 1D grid with the cached `MaterialArrays` hot path |
+| 📏 | **1D drift-diffusion (default)** | Supported 1D experiments use a tanh-clustered multilayer grid with the cached `MaterialArrays` hot path |
 | 🟦 | **2D Stage A (lateral-uniform)** | Tensor-product (Ny × Nx) grid with sparse 5-point Poisson, vectorised 2D Scharfetter-Gummel fluxes, periodic / Neumann lateral BCs; bootstraps from the 1D illuminated steady state and freezes ions as a static Poisson background. On a laterally-uniform stack the 2D solver reproduces the 1D J-V to within sub-mV $V_\text{oc}$, $5 \times 10^{-4}$ relative $J_\text{sc}$, and $10^{-3}$ FF — pinned by `tests/regression/test_twod_validation.py`. Available as `kind='jv_2d'` from the backend and as the **J-V Sweep (2D)** entry in the workstation experiment selector. |
-| 🟪 | **2D Stage B (microstructure)** | Vertical grain boundaries with reduced SRH lifetime $\tau_\text{GB}$ painted onto the absorber via a YAML `microstructure:` block; non-empty `Microstructure` produces a heterogeneous $(\tau_n, \tau_p)(y, x)$ on `MaterialArrays2D`. The shipped `nip_MAPbI3_singleGB` preset (one centred GB, $\tau_\text{GB}=50$ ns, width 5 nm) drops $V_\text{oc}$ by ~46 mV vs the laterally-uniform baseline — pinned to a 5–100 mV regression window in `tests/regression/test_twod_microstructure.py`. The headline `voc_grain_sweep` experiment maps $V_\text{oc}(L_g)$ over a sequence of grain sizes and is exposed as `kind='voc_grain_sweep'` from the backend / **V<sub>oc</sub>(L_g) Grain Sweep** entry in the workstation. |
+| 🟪 | **2D Stage B (microstructure)** | Vertical grain boundaries are defined through a YAML `microstructure:` block. The current operator uses exact control-volume overlap fractions to mix bulk and grain-boundary recombination rates, avoiding whole-node lifetime painting. The historical `nip_MAPbI3_singleGB` test fixture (one centred GB, $\tau_\text{GB}=50$ ns, width 5 nm) drops $V_\text{oc}$ by ~46 mV vs the laterally-uniform baseline — pinned to a 5–100 mV regression window in `tests/regression/test_twod_microstructure.py`. The headline `voc_grain_sweep` experiment maps $V_\text{oc}(L_g)$ over a sequence of grain sizes and is exposed as `kind='voc_grain_sweep'` from the backend / **V<sub>oc</sub>(L_g) Grain Sweep** entry in the workstation. |
 
 ### Tooling
 
@@ -147,48 +161,32 @@ The tier is a feature ceiling, not an accuracy grade. The selected experiment dr
 
 ## Repository Layout
 
-```
+~~~text
 SolarLab/
-├── .claude/skills/                 Domain-reference skills; not simulator runtime code
-├── .dockerignore                   Docker build-context exclusions
-├── .githooks/                      Repository hook scripts
-├── .gitignore                      Repository ignore rules
-├── docs/                           Cross-tree manuals, validation reports, plans, figures
-│   ├── manual/                     Manual source, dated PDFs, and generated figures
-│   ├── reference/                  Canonical SCAPS comparison reports
-│   ├── figures/                    Stored comparison plots
-│   ├── plans/                      Cross-tree implementation plans
-│   └── superpowers/                Historical specs, plans, and references
-├── outputs/                        Tracked example and comparison outputs
-├── perovskite-sim/                 Main simulator package
-│   ├── perovskite_sim/             Python simulation library
-│   │   ├── models/                 Device schema and configuration loading
-│   │   ├── physics/                Poisson, transport, recombination, ions, optics
-│   │   ├── discretization/         Grid and Scharfetter-Gummel operators
-│   │   ├── solver/                 Transient and nonlinear solver infrastructure
-│   │   ├── experiments/            1D, QF, spectral, transient, and tandem drivers
-│   │   ├── twod/                   Experimental 2D solver and experiments
-│   │   ├── scaps_compat/           SCAPS import and compatibility boundary
-│   │   ├── screening/              Screening workflows
-│   │   ├── sweeps/                 Parameter-sweep helpers
-│   │   ├── validation/             Grid-convergence utilities
-│   │   └── data/                   Spectra, optical constants, and references
-│   ├── backend/                    FastAPI service and SSE job dispatch
-│   ├── frontend/                   Vite + TypeScript + Plotly workstation
-│   ├── configs/                    SCAPS parity and Calado 2016 research presets
-│   ├── reproducibility/            Evidence registry and frozen P0/P1 records
-│   ├── docs/                       Package-specific technical documentation
-│   ├── scripts/                    CLI, validation, plotting, and import tools
-│   ├── tests/                      Unit, integration, regression, and validation tests
-│   ├── notebooks/                  Exploratory benchmarks
-│   └── pyproject.toml              Python package and test configuration
-├── scripts/                        Repository-level support scripts
-├── docker-compose.yml              Backend/frontend development stack
-├── DFTSimulatorPV.pptx             Project presentation artifact
-├── CLAUDE.md                       Repository guidance
-├── skills-lock.json                Skill dependency lock
-└── README.md                       This file
-```
+  docs/figures/                    Curated README and comparison figures
+  perovskite-sim/
+    perovskite_sim/                Python models, physics, discretization,
+                                  solvers, experiments, 2D, and screening
+    backend/                      FastAPI API and SSE job dispatch
+    frontend/                     Vite/TypeScript/Plotly/GoldenLayout UI
+    configs/                      Three shipped research YAMLs
+    tests/fixtures/configs/       Historical/test-only device definitions
+    reproducibility/              Schema, benchmark matrix, hashes, baselines
+    docs/                         Current package capability contracts
+    scripts/                      Experiments, imports, validation, plotting
+    tests/                        Unit, integration, regression, validation
+    notebooks/                    Exploratory workflows
+    pyproject.toml                Core package and test dependencies
+  scripts/                        Repository support utilities
+  docker-compose.yml              Backend/frontend development stack
+  CLAUDE.md                       Repository guidance and archive location
+  README.md
+~~~
+
+The dated technical manual, historical planning records, and large generated
+results are maintained outside the current source tree. The repository retains
+curated figures and active package contracts; a local output directory is not
+automatically part of the published evidence.
 
 <br>
 
@@ -198,8 +196,8 @@ SolarLab/
 
 ### Prerequisites
 
-- **Python 3.10+** (tested on 3.13)
-- **Node.js 18+** with `npm`
+- **Python 3.11+** (the package metadata requirement; focused checks below used 3.13)
+- **Node.js 22.12+** with `npm`; the locked Vite 8 engine range is `^20.19.0 || >=22.12.0`
 - A C compiler + BLAS/LAPACK (bundled with `numpy`/`scipy` wheels on most platforms)
 
 ### 1. Clone the repository
@@ -213,28 +211,26 @@ cd SolarLab
 
 ```bash
 cd perovskite-sim
-pip install -e ".[dev]"
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m pip install -r backend/requirements.txt
 ```
 
-This installs `perovskite_sim` as an editable package along with `numpy`, `scipy`, `fastapi`, `uvicorn`, `pytest`, and the dev tooling.
-
-> 💡 **Recommended:** use a virtual environment.
-> ```bash
-> python -m venv .venv && source .venv/bin/activate
-> ```
+The editable core package installs NumPy, SciPy, PyYAML, Matplotlib, and the selected test dependencies. FastAPI/Uvicorn/Pydantic are supplied by the separate backend requirements command. Installing only `.[dev]` is not sufficient to start the HTTP service.
 
 ### 3. Install frontend dependencies
 
 ```bash
 cd frontend
-npm install
+npm ci
 ```
 
 ### 4. Verify the install
 
 ```bash
 # From perovskite-sim/
-pytest                                                  # default unit + integration (~2-3 min)
+python -m pytest -q                                     # default non-slow suite
 pytest -m validation -W error::RuntimeWarning           # literature-informed lanes
 pytest -m slow -W error::RuntimeWarning                 # heavy physics suite; can exceed 1 h
 python scripts/verify_reproducibility.py --json         # registry and frozen-baseline checks
@@ -280,6 +276,8 @@ Open **<http://127.0.0.1:5173>** in your browser. The frontend defaults to
 `VITE_API_BASE`. CORS is enabled for the local development and preview flows.
 
 ### Run a simulation from Python (no UI)
+
+Run from `perovskite-sim/` with the environment activated. This is a research sweep, not a minimal installation check. Its ordinary 0-to-V_max-and-back protocol differs from the original-paper comparison script.
 
 ```python
 from perovskite_sim.models.config_loader import load_device_from_yaml
@@ -501,14 +499,16 @@ The 2D solver is an experimental extension for lateral microstructure effects, n
 | **Driver topology** | Explicit transient, direct steady-state, quasi-Fermi DC, QF frequency-domain, and 2D paths |
 | **1D grid** | Tanh-clustered multilayer grid (refined near interfaces and contacts) |
 | **2D grid** | Tensor-product lateral/vertical mesh for Stage A/B microstructure studies |
-| **Spatial** | Scharfetter-Gummel finite elements for drift-diffusion; harmonic-mean faces for Poisson |
+| **Spatial** | Exponentially fitted SG face fluxes and dual-cell continuity balances; finite-volume Poisson with harmonic-mean face permittivities |
 | **Transient** | Method of Lines with `scipy.integrate.solve_ivp` and the Radau IIA 5th-order implicit method |
 | **Steady state** | Direct density-log Newton or cancellation-safe quasi-Fermi Newton, selected explicitly |
 | **Poisson** | LAPACK `dgttrf`/`dgttrs` tridiagonal LU, pre-factored once per run |
 | **Certification** | Driver-specific residual, cell-current, all-face admittance, or lateral/vertical diagnostics |
 | **Safety cap** | `max_step` capped on every `run_transient` sub-interval to prevent Radau from accepting a giant step near flat-band |
 
-All physical data is held in **immutable frozen dataclasses** (`MaterialParams`, `LayerSpec`, `DeviceStack`, `SolverConfig`). In-place mutation is forbidden — updates use `dataclasses.replace(...)`.
+Device configuration uses **immutable frozen dataclasses** such as `MaterialParams`, `LayerSpec`, and `DeviceStack`. Update those records with `dataclasses.replace(...)`; numerical arrays and runtime caches have their own mutability rules.
+
+The production TMM-to-solver path integrates absorbed photons over each electrical control volume, then divides by its width. The point-sampled `tmm_generation` helper is for diagnostics and should not be substituted for this photon-conserving path. The standard YAML schema uses SI lengths, densities, mobilities, and currents; energy parameters such as `chi` and `Eg` are in eV. SCAPS-style YAML has a separate loader and unit conversion contract.
 
 <p align="center">
   <img src="docs/figures/SolverTopology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
@@ -687,19 +687,17 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 
 ## Shipped Device Presets
 
-`perovskite-sim/configs/` ships exactly the two research presets; the frontend
-research catalog gives them explicit names and modes. The 50 historical presets
-live in `perovskite-sim/tests/fixtures/configs/` as inputs for the regression
-suite and the 52-preset reproducibility matrix and are not served by the API.
+`perovskite-sim/configs/` currently contains **three** research YAMLs, all listed by the backend API. The frontend catalog displays `scaps_mirror_v2` and `calado2016_ion_sweep`; the older `calado2016_fig1f` remains available through the API/scripts. The current registry covers 55 configurations: 3 shipped and 52 under `tests/fixtures/configs/` (including four 2D fixtures). Fixture-only configurations are not served by the API.
 
 | Preset | Material System | Ions | Optics | Notes |
 |:-------|:----------------|:----:|:------:|:------|
 | `scaps_mirror_v2` | Glass / HTL / PVK / ETL | No | TMM | SCAPS parity study, Fast mode |
-| `calado2016_fig1f` | Calado 2016 Fig. 1f toy device | Yes | Beer-Lambert | Ion migration and hysteresis, Legacy mode |
+| `calado2016_fig1f` | Calado 2016 Fig. 1f toy device | Yes | Beer-Lambert | Original comparison lane, Legacy mode; external agreement remains partial |
+| `calado2016_ion_sweep` | Internal dense ion-sweep figure | Yes | Uniform absorber generation in the declared waveform | Frontend ion study, Full mode; internal figure regression, not original-paper reproduction |
 
 See [Research Presets](perovskite-sim/configs/README.md) for protocols and
 limitations. Older benchmark figures and records elsewhere in this README
-describe historical configurations, not additional currently shipped presets.
+describe their declared historical configurations. The new ion-sweep preset carries its own continuous waveform, preconditioning, and dark-turnaround settings; results must not be transferred between the two Calado-named protocols.
 
 <br>
 
@@ -707,11 +705,13 @@ describe historical configurations, not additional currently shipped presets.
 
 ## Testing
 
+The 2026-10-01 documentation review ran six focused modules for research-preset inventory/API round trips, SCAPS inline configuration, Calado protocol helpers, mode defaults, ionic-flux Jacobians, and solver dispatch: **77 tests passed**. This check did not rerun the full physics suite, historical grid campaigns, or external-solver comparisons quoted above.
+
 ```bash
 # From perovskite-sim/: research-preset checks
 python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
 
-# Full quick lane (unit + integration, excludes -m slow)
+# Default non-slow lane (includes applicable regression/validation tests)
 python -m pytest -q
 ```
 
@@ -724,6 +724,12 @@ python -m pytest -q
 <br>
 
 ---
+
+## Project Contact
+
+For repository maintenance and technical questions, contact Xuan-Yan Chen at
+[xchen565@connect.hkust-gz.edu.cn](mailto:xchen565@connect.hkust-gz.edu.cn).
+The contributor and corresponding-author addresses below remain separately attributed.
 
 ## References
 
@@ -740,7 +746,7 @@ python -m pytest -q
 
 **Authors**
 
-Xuanyan Chen · [xchen565@connect.hkust-gz.edu.cn](mailto:xchen565@connect.hkust-gz.edu.cn)<br>
+Xuan-Yan Chen · [xchen565@connect.hkust-gz.edu.cn](mailto:xchen565@connect.hkust-gz.edu.cn)<br>
 Longhan Zhang · [lzhang619@connect.hkust-gz.edu.cn](mailto:lzhang619@connect.hkust-gz.edu.cn)<br>
 Zecheng Gan<sup>&#42;</sup> · [zechenggan@hkust-gz.edu.cn](mailto:zechenggan@hkust-gz.edu.cn)<br>
 Chang Yan<sup>&#42;</sup> · [changyan@hkust-gz.edu.cn](mailto:changyan@hkust-gz.edu.cn)<br>

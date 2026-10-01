@@ -6,8 +6,8 @@ frontend that make up the SolarLab simulator.
 > **Start here:** the [root README](../README.md) covers installation,
 > physics, equations, UI walkthrough, and shipped presets. This file is
 > a package-level orientation to the `perovskite-sim/` subtree. The
-> [2026-08-11 technical manual](../docs/manual/SolarLabManual260811.pdf)
-> is the detailed solver, model-scope, and validation reference.
+> 2026-08-11 technical manual is distributed separately. Current solver
+> capability contracts and the evidence registry are linked below.
 
 <br>
 
@@ -15,11 +15,10 @@ frontend that make up the SolarLab simulator.
 
 ```
 perovskite-sim/
-├── .superpowers/     Historical local design/brainstorm records
 ├── perovskite_sim/   Python library: models, physics, solvers, experiments, 2D
 ├── backend/          FastAPI HTTP wrapper and SSE job dispatch
 ├── frontend/         Vite + TypeScript + Plotly workstation
-├── configs/          Shipped 1D, tandem, and 2D YAML device presets
+├── configs/          Three shipped research YAMLs; two frontend catalog entries
 ├── reproducibility/  Frozen baselines, schemas, hashes, benchmarks, P1 gaps
 ├── docs/             Package-specific model, benchmark, and implementation docs
 ├── scripts/          CLI, validation, plotting, import, and probe tools
@@ -40,9 +39,13 @@ there.
 
 ## Quick Install
 
+From this directory, use an activated Python 3.11+ environment and Node.js 22.12+ for the Vite 8 frontend. The core package and HTTP-service dependencies are separate:
+
 ```bash
-pip install -e ".[dev]"        # Python package in editable mode
-cd frontend && npm install     # frontend dependencies
+python -m pip install -e ".[dev]"
+python -m pip install -r backend/requirements.txt
+cd frontend
+npm ci
 ```
 
 <br>
@@ -53,9 +56,7 @@ cd frontend && npm install     # frontend dependencies
 python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
 ```
 
-These are the research-preset checks; `python -m pytest -q` runs the full quick
-lane. The 50 historical presets live in `tests/fixtures/configs/` as inputs for
-the regression suite and the 52-preset matrix. See [Research Presets](configs/README.md).
+These are the research-preset checks; `python -m pytest -q` runs the default non-slow suite. The current registry contains 55 configurations: 3 shipped and 52 test fixtures. See [Research Presets](configs/README.md).
 
 Transient solves retain the historical scalar absolute tolerance by default.
 For the opt-in reference-scaled policy and the required three-level tolerance
@@ -118,15 +119,15 @@ generates electron-hole pairs, and the built-in electric field separates them
 to produce current.
 
 <p align="center">
-  <img src="../docs/manual/figures/DeviceContactBoundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
+  <img src="../docs/figures/DeviceContactBoundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
 </p>
 
 <p align="center">
-  <img src="../docs/manual/figures/BandInterfaceConvention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
+  <img src="../docs/figures/BandInterfaceConvention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
 </p>
 
 <p align="center">
-  <img src="../docs/manual/figures/SolverTopology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
+  <img src="../docs/figures/SolverTopology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
 </p>
 
 No single driver contains every optional model. `transient`,
@@ -141,11 +142,9 @@ explicitly; unsupported combinations fail before the numerical solve. Likewise,
 |:-------|:----------|:----:|:------:|
 | `scaps_mirror_v2` | Glass / HTL / PVK / ETL, SCAPS partner device | No | TMM |
 | `calado2016_fig1f` | Calado 2016 Fig. 1f toy device | Yes | Beer-Lambert |
+| `calado2016_ion_sweep` | Internal dense ion-sweep figure | Yes | Uniform generation under its declared waveform |
 
-Use Fast for the SCAPS reference and Legacy for the Calado reference.
-Other configurations discussed below are historical studies whose YAML
-presets have been removed; retained solver capabilities are not additional
-bundled presets.
+Use Fast for the SCAPS reference, Legacy for the original Calado comparison, and Full for the internal ion-sweep preset. All three are API-accessible; the frontend catalog shows the SCAPS and internal ion-sweep entries. Historical configurations discussed below remain under `tests/fixtures/configs/` and are not additional shipped presets.
 
 Continuous `chi/Eg` grading changes electrical transport only by default, so
 the historical CIGS notch studies must not be interpreted as graded-optics
@@ -333,7 +332,7 @@ The exact combined slice has a source-clean 3x3 grid/tolerance certificate;
 see
 [`docs/TwodCombinedNumericalCertificate.md`](docs/TwodCombinedNumericalCertificate.md).
 
-The historical `configs/twod/` presets have been removed. The Python and
+Historical 2D presets now live under `tests/fixtures/configs/twod/`. The Python and
 backend entry points (`kind="jv_2d"` and `kind="voc_grain_sweep"`) remain
 available for explicitly defined configurations within their supported
 topologies; historical tests still require their original inputs.
@@ -904,25 +903,25 @@ not external C-V validation or a repair of the legacy endpoint-sampled path.
 
 The current evidence is intentionally split by claim. See the
 [reproducibility registry](reproducibility/README.md) for commands and the
-[2026-08-11 manual](../docs/manual/SolarLabManual260811.pdf) for the full
+2026-08-11 manual (distributed separately) for the full
 traceability matrix.
 
 <p align="center">
-  <img src="../docs/manual/figures/CsiQfConvergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
+  <img src="../docs/figures/CsiQfConvergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
 </p>
 
 This is internal convergence evidence for the restricted local QF driver, not
 external c-Si device validation and not a transient-driver certificate.
 
 <p align="center">
-  <img src="../docs/manual/figures/CboInterfaceValidation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
+  <img src="../docs/figures/CboInterfaceValidation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
 </p>
 
 The physical-interface CBO campaign passes the registered numerical grid gate
 but fails the declared SCAPS-shape gate (`certified=false`).
 
 <p align="center">
-  <img src="../docs/manual/figures/TwodScope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
+  <img src="../docs/figures/TwodScope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
 </p>
 
 The 1D/2D parity claim covers the registered interface-free, frozen-ion domain.
@@ -930,7 +929,7 @@ Mobile-ion dynamics and the 1D interface-SRH/physical-QF boundary are not part
 of that comparison.
 
 <p align="center">
-  <img src="../docs/manual/figures/Calado16Fig1fJVV1.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
+  <img src="../docs/figures/Calado16Fig1fJVV1.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
 </p>
 
 The Calado 2016 Fig 1e/1f lane (`configs/calado2016_fig1f.yaml`, the paper's
@@ -945,7 +944,7 @@ P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1 definition. The cause is open;
 the preset header records the study.
 
 <p align="center">
-  <img src="../docs/manual/figures/Calado16Fig1fScanRateV1.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
+  <img src="../docs/figures/Calado16Fig1fScanRateV1.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
 </p>
 
 A nine-rate ladder on the same preset (`scripts/plot_calado_fig1f_scan_rate.py`,

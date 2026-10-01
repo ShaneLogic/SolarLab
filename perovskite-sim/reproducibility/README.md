@@ -6,10 +6,16 @@ it loads or produces a finite J-V curve.
 
 ## Current Research Scope
 
-`scaps_mirror_v2.yaml` and `calado2016_fig1f.yaml` are the active research
-presets. The other 50 bundled presets were removed on 2026-09-05 and restored on
-2026-09-07 so that the 52-preset matrix, the numerical refinement registry, the
-P1 records and the preset-dependent tests run against their original inputs.
+The current matrix contains 55 configurations: three shipped research YAMLs
+and 52 test fixtures. The backend serves `scaps_mirror_v2.yaml`,
+`calado2016_fig1f.yaml`, and `calado2016_ion_sweep.yaml`. The frontend catalog
+shows the SCAPS reference and the newer Full-mode internal ion-sweep study;
+the earlier Legacy Calado comparison remains available to scripts and the API.
+
+Historical configurations live under `tests/fixtures/configs/` and retain
+their own hashes, protocols, and acceptance records. The internal ion-sweep
+figure is not a replacement for an original-paper validation claim. See
+[Research Presets](../configs/README.md) for the current protocol distinction.
 
 Current loading, API and protocol-helper checks are:
 
@@ -179,7 +185,7 @@ against a 0.05 external gate. The result therefore records
 The source JSON currently lives at
 `outputs/interface-cbo/scan-fermi-edge-qf-grid-40-50-60.json`, inside the
 ignored local-output tree. The README-facing rendered artifact is
-[`CboInterfaceValidation.png`](../../docs/manual/figures/CboInterfaceValidation.png).
+[`CboInterfaceValidation.png`](../../docs/figures/CboInterfaceValidation.png).
 A clean clone cannot regenerate that panel until the exact machine-readable
 result is restored; a different scan is not an acceptable substitute.
 
