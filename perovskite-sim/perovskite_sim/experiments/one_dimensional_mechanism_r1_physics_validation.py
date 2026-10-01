@@ -45,6 +45,27 @@ def _same(actual, expected, label):
         raise R1PhysicsValidationError("physical reconstruction mismatch: " + label)
 
 
+def _same_accepted_state_arrays(actual, recomputed_rows, fields):
+    """Check every replay field while retaining only its temporary array."""
+    fields = tuple(fields)
+    label = "accepted state arrays"
+    # Keep json_data's dataclass and key-stringification behavior, including
+    # collisions, outside the ordinary dictionary-of-string-fields path.
+    if (type(actual) is not dict
+            or any(type(key) is not str for key in actual)
+            or any(type(key) is not str for key in fields)):
+        _same(actual, {key: np.asarray([r["state"][key] for r in recomputed_rows])
+                       for key in fields}, label)
+        return
+    if set(actual) != set(fields):
+        raise R1PhysicsValidationError("physical reconstruction mismatch: " + label)
+    for key in fields:
+        # Infer dtype across all rows exactly as in the complete array block.
+        expected = np.asarray([r["state"][key] for r in recomputed_rows])
+        _same(actual[key], expected, label)
+        del expected
+
+
 def _replay_rows_digest(value, phase, phase_observer=None, **roots):
     """Keep row identity exact while observing the bounded-text hash path."""
     if phase_observer is not None:
@@ -444,9 +465,11 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
         output_states = numerical.output_states(initial.system, final.states)
         if "output_states" in record:
             _same(record["output_states"], output_states, "output state samples")
+        del output_states
         if "regular_currents" in record:
             currents = [regular_current_at_state(initial.system, state, policy=policy).evidence for state in final.states]
             _same(record["regular_currents"], currents, "instantaneous currents from each output state")
+            del currents
         if "finite_step_averages" in record:
             from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import AVERAGE_NOTE
             _same(record["finite_step_averages"], {
@@ -457,8 +480,7 @@ def verify_r1_step_physics(stack, intervals, binding, prepared, record, *,
     if "accepted_state_arrays" in record:
         if not rows:
             raise R1PhysicsValidationError("accepted state arrays have no reconstructed rows")
-        _same(record["accepted_state_arrays"], {key: np.asarray([r["state"][key] for r in all_recomputed_rows])
-                                              for key in rows[0]["state"]}, "accepted state arrays")
+        _same_accepted_state_arrays(record["accepted_state_arrays"], all_recomputed_rows, rows[0]["state"])
     if "charge_integral" in record:
         from perovskite_sim.experiments.one_dimensional_mechanism_r1_result_contract import CHARGE_QUADRATURE
         impulse = initial.event["impulse_charge_C_m2"]
