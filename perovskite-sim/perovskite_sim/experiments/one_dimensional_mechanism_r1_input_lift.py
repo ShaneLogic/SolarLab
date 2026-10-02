@@ -225,6 +225,12 @@ class RebasedInputLiftR1System(ControlledPhysicalInterfaceIonSystem):
         return n.hi.copy(), p.hi.copy(), trap.hi.copy()
 
     def _ion_fields(self, phi, positive, negative):
+        if self._input_lift_work is None:
+            # The inherited eliminated-operator audit supplies its independently
+            # reconstructed binary64 inputs outside a live DD evaluation.
+            # Evaluate those inputs through the original comparison operator;
+            # never borrow the previous live state's represented fields.
+            return super()._ion_fields(phi, positive, negative)
         value = self._input_lift_work
         flux = (ion_flux_pair(value["phi_V"], value["positive_m3"], self.material, np.diff(self.grid))
                 if self.controls.nu_I else DD(np.zeros(self.node_count-1)))

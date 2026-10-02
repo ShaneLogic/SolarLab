@@ -258,6 +258,21 @@ def test_original_solver_and_acceptance_limits_are_not_overridden():
     assert lift.RebasedInputLiftR1System.newton_residual_target is ControlledPhysicalInterfaceIonSystem.newton_residual_target
 
 
+def test_eliminated_ion_comparison_uses_its_own_supplied_inputs(synthetic, monkeypatch):
+    _, _, working, _, _ = synthetic
+    phi, positive = np.arange(4.)/10, np.array([1., 2., 3., 1.])
+    expected = (np.arange(4.), None, np.arange(3.), None)
+    observed = []
+    def independent(self, actual_phi, actual_positive, actual_negative):
+        observed.append((actual_phi, actual_positive, actual_negative))
+        return expected
+    monkeypatch.setattr(ControlledPhysicalInterfaceIonSystem, "_ion_fields", independent)
+    assert working._input_lift_work is None
+    assert working._ion_fields(phi, positive, None) is expected
+    assert observed[0][0] is phi and observed[0][1] is positive and observed[0][2] is None
+    assert working._input_lift_work is None
+
+
 def test_actual_inherited_evaluate_wiring_keeps_residual_inputs_and_clears_work(synthetic, monkeypatch):
     _, _, working, previous, _ = synthetic
     working.system._bulk_space_charge_and_tangent = lambda *a, **k: (np.zeros(4), np.zeros(4))
