@@ -1058,6 +1058,7 @@ class _QuasiFermiSystem:
         interface_transport_model: str = FERMI_RICHARDSON,
         interface_charge_reference_occupancy: np.ndarray | None = None,
         interface_charge_trap_density_m2: np.ndarray | None = None,
+        interface_capture_multiplier: float = 1.0,
         poisson_tolerance_V: float,
         poisson_max_iterations: int,
     ) -> None:
@@ -1071,6 +1072,12 @@ class _QuasiFermiSystem:
         self.interface_boundary = bool(interface_boundary)
         self.interface_topology = validate_interface_topology(interface_topology)
         self.interface_transmission = float(interface_transmission)
+        self.interface_capture_multiplier = float(interface_capture_multiplier)
+        if (
+            not np.isfinite(self.interface_capture_multiplier)
+            or not 0.0 <= self.interface_capture_multiplier <= 1.0
+        ):
+            raise ValueError("interface_capture_multiplier must lie in [0, 1]")
         self.interface_transport_model = validate_interface_transport_model(
             interface_transport_model
         )
@@ -1584,6 +1591,7 @@ class _QuasiFermiSystem:
             interface_transport_model=self.interface_transport_model,
             initial_state_m3=interface_seed,
             fail_on_residual=False,
+            capture_multiplier=self.interface_capture_multiplier,
         )
         factor = self.mat.poisson_factor
         raw = (

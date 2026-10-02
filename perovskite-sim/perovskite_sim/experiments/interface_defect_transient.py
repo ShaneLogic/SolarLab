@@ -63,6 +63,7 @@ from perovskite_sim.physics.two_sided_interface import (
     _material_two_sided_interface_problem,
     electrostatic_trace_residual_and_jacobian,
     fixed_occupancy_carrier_tangent,
+    fixed_occupancy_carrier_tangent_from_density,
     shared_trap_occupancy,
     solve_electrostatic_traces,
     solve_fixed_occupancy_two_sided_interface,
@@ -509,6 +510,7 @@ class _InterfaceTransientSystem:
         dynamic_dc,
         *,
         illuminated: bool,
+        capture_multiplier: float = 1.0,
     ) -> None:
         self.grid = grid
         self.stack = stack
@@ -516,6 +518,9 @@ class _InterfaceTransientSystem:
         self.dc_state = dc_state
         self.dark_reference = dark_reference
         self.illuminated = bool(illuminated)
+        self.capture_multiplier = float(capture_multiplier)
+        if not math.isfinite(self.capture_multiplier) or not 0.0 <= self.capture_multiplier <= 1.0:
+            raise ValueError("capture_multiplier must lie in [0, 1]")
         self.node_count = grid.size
         self.interior_count = grid.size - 2
         self.interface_count = len(dark_reference.trap_density_m2)
@@ -550,6 +555,7 @@ class _InterfaceTransientSystem:
             interface_transport_model=FERMI_DIRAC_RICHARDSON,
             interface_charge_reference_occupancy=self.equilibrium_occupancy,
             interface_charge_trap_density_m2=self.trap_density,
+            interface_capture_multiplier=self.capture_multiplier,
             poisson_tolerance_V=1.0e-13,
             poisson_max_iterations=100,
         )
@@ -672,6 +678,7 @@ class _InterfaceTransientSystem:
                     self.trap_density[index],
                 ),
                 initial_state_m3=canonical_seed,
+                capture_multiplier=self.capture_multiplier,
             )
             trace = local.qss.potentials
             reference_balance = fixed_occupancy_carrier_tangent(
@@ -687,6 +694,7 @@ class _InterfaceTransientSystem:
                 bulk,
                 self.reference_occupancy[index],
                 trace,
+                capture_multiplier=self.capture_multiplier,
             ).balance
             self.reference_trace_potential[index] = (
                 trace.phi_left_V,
@@ -776,6 +784,24 @@ class _InterfaceTransientSystem:
         start = self.local_slice.start + 6 * index
         return slice(start, start + 6)
 
+    def _bulk_density_coordinates(
+        self,
+        values: np.ndarray,
+        log_n: np.ndarray,
+        log_p: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        n = np.exp(log_n)
+        p = np.exp(log_p)
+        if self._step_reference is not None:
+            potential_increment = values[self.potential_slice]
+            n[1:-1] = self._step_reference.n[1:-1] * np.exp(
+                values[self.electron_slice] + potential_increment
+            )
+            p[1:-1] = self._step_reference.p[1:-1] * np.exp(
+                values[self.hole_slice] - potential_increment
+            )
+        return n, p
+
     def _coordinates(
         self,
         coordinate: np.ndarray,
@@ -817,16 +843,7 @@ class _InterfaceTransientSystem:
         limit = math.log(np.finfo(float).max)
         if np.any(log_n > limit) or np.any(log_p > limit):
             raise InterfaceDefectTransientError("carrier coordinate overflow")
-        n = np.exp(log_n)
-        p = np.exp(log_p)
-        if self._step_reference is not None:
-            potential_increment = values[self.potential_slice]
-            n[1:-1] = self._step_reference.n[1:-1] * np.exp(
-                values[self.electron_slice] + potential_increment
-            )
-            p[1:-1] = self._step_reference.p[1:-1] * np.exp(
-                values[self.hole_slice] - potential_increment
-            )
+        n, p = self._bulk_density_coordinates(values, log_n, log_p)
         if (
             not np.all(np.isfinite(n))
             or not np.all(np.isfinite(p))
@@ -893,6 +910,8 @@ class _InterfaceTransientSystem:
         occupancy: np.ndarray,
         trace_potential: np.ndarray,
         trace_log_state: np.ndarray,
+        *,
+        trace_density_m3: np.ndarray | None = None,
     ) -> tuple[tuple[_LocalState, ...], TwoSidedMaterialQSSResult]:
         states: list[_LocalState] = []
         size = 4 * self.interface_count
@@ -929,13 +948,17 @@ class _InterfaceTransientSystem:
                 charged_geometry,
                 bulk,
             )
-            tangent = fixed_occupancy_carrier_tangent(
-                trace_log_state[index],
+            tangent_function = (fixed_occupancy_carrier_tangent if trace_density_m3 is None
+                                else fixed_occupancy_carrier_tangent_from_density)
+            tangent = tangent_function(
+                trace_log_state[index] if trace_density_m3 is None else trace_density_m3[index],
                 charged_geometry,
                 physics,
                 bulk,
                 occupancy[index],
                 traces,
+                capture_multiplier=self.capture_multiplier,
+                **({"paired_bernoulli": True} if trace_density_m3 is not None else {}),
             )
             balance = tangent.balance
             base = 4 * index
@@ -978,6 +1001,10 @@ class _InterfaceTransientSystem:
             capture_flux_m2_s=capture_flux,
             occupancy=np.asarray(occupancy).copy(),
         )
+
+    def _trace_density_coordinates(self, coordinate):
+        """Default absolute-log path; research subclasses can retain increments."""
+        return None
 
     def _source(
         self,
@@ -1055,6 +1082,12 @@ class _InterfaceTransientSystem:
             reported_p[face] = Q * balance.bulk_flux_m2_s[1]
         return transport_n, transport_p, reported_n, reported_p
 
+    def _interface_carrier_conduction(self, item: _LocalState) -> np.ndarray:
+        flux = item.tangent.balance.bulk_flux_m2_s
+        return self.polarity * Q * np.array(
+            [-flux[0] + flux[1], flux[2] - flux[3]], dtype=float
+        )
+
     def interface_current_sides(
         self,
         state: _DeviceState,
@@ -1073,15 +1106,7 @@ class _InterfaceTransientSystem:
         for index, (left, right, item) in enumerate(
             zip(self.left_nodes, self.right_nodes, state.local)
         ):
-            flux = item.tangent.balance.bulk_flux_m2_s
-            conduction[index] = (
-                self.polarity
-                * Q
-                * np.array(
-                    [-flux[0] + flux[1], flux[2] - flux[3]],
-                    dtype=float,
-                )
-            )
+            conduction[index] = self._interface_carrier_conduction(item)
             if previous is not None and dt is not None:
                 capacitance_left = (
                     EPS_0
@@ -1110,6 +1135,16 @@ class _InterfaceTransientSystem:
                 )
         return conduction, displacement, conduction + displacement
 
+    def _carrier_rate_fields(self, source, transport_n, transport_p, local):
+        """Assemble receiving-volume and trap rates from this evaluation."""
+        divergence_n = self._divergence @ transport_n
+        divergence_p = self._divergence @ transport_p
+        rate_n = source[: self.node_count] + divergence_n / (Q * self.widths)
+        rate_p = source[self.node_count :] - divergence_p / (Q * self.widths)
+        capture = np.asarray([item.tangent.balance.capture_flux_m2_s for item in local])
+        trap_rate = capture[:, [0, 2]].sum(axis=1) - capture[:, [1, 3]].sum(axis=1)
+        return rate_n, rate_p, trap_rate
+
     def evaluate(self, coordinate: np.ndarray, voltage: float) -> _DeviceState:
         (
             dqfn,
@@ -1128,6 +1163,7 @@ class _InterfaceTransientSystem:
             occupancy,
             trace_potential,
             trace_log_state,
+            trace_density_m3=self._trace_density_coordinates(coordinate),
         )
         source = self._source(n, p, phi, voltage, interface_qss)
         transport_n, transport_p, current_n, current_p = self._currents(
@@ -1138,12 +1174,9 @@ class _InterfaceTransientSystem:
             p,
             local,
         )
-        divergence_n = self._divergence @ transport_n
-        divergence_p = self._divergence @ transport_p
-        rate_n = source[: self.node_count] + divergence_n / (Q * self.widths)
-        rate_p = source[self.node_count :] - divergence_p / (Q * self.widths)
-        capture = np.asarray([item.tangent.balance.capture_flux_m2_s for item in local])
-        trap_rate = capture[:, [0, 2]].sum(axis=1) - capture[:, [1, 3]].sum(axis=1)
+        rate_n, rate_p, trap_rate = self._carrier_rate_fields(
+            source, transport_n, transport_p, local
+        )
         storage = np.r_[
             n[1:-1],
             p[1:-1],
@@ -1270,6 +1303,44 @@ class _InterfaceTransientSystem:
             chain[p_row, potential_column] = -1.0
         return chain.tocsr()
 
+    def _local_carrier_jacobians(self, index, left, right, item, occupancy_tangent):
+        """Return volume loss, trap rate and carrier algebraic derivatives.
+
+        Volume rows have the positive bulk-flux derivative divided by their
+        receiving width; the outer assembly subtracts each loss once.
+        """
+        tangent = item.tangent
+        balance = tangent.balance
+        block = self._local_block_slice(index)
+        trace_columns = slice(block.start, block.start + 2)
+        state_columns = slice(block.start + 2, block.stop)
+        bulk_chain = self._bulk_coordinate_chain(left, right)
+        bulk_flux_jacobian = (
+            sparse.csr_matrix(tangent.bulk_flux_jacobian_bulk_coordinates) @ bulk_chain
+        ).tolil()
+        bulk_flux_jacobian[:, trace_columns] += (
+            tangent.bulk_flux_jacobian_trace_potential_m2_s_V * self.thermal_voltage
+        )
+        bulk_flux_jacobian[:, state_columns] += tangent.bulk_flux_jacobian_log_state_m2_s
+        bulk_loss = sparse.vstack(
+            [bulk_flux_jacobian.getrow(i) / self.widths[node]
+             for i, node in enumerate((left, left, right, right))], format="csr"
+        )
+        capture_jacobian = sparse.lil_matrix((4, self.dimension))
+        capture_jacobian[:, state_columns] = tangent.capture_flux_jacobian_log_state_m2_s
+        capture_jacobian[:, self.trap_slice.start + index] = (
+            tangent.capture_flux_occupancy_derivative_m2_s * occupancy_tangent
+        )[:, np.newaxis]
+        trap_rate = (capture_jacobian.getrow(0) + capture_jacobian.getrow(2)
+                     - capture_jacobian.getrow(1) - capture_jacobian.getrow(3))
+        carrier = (sparse.csr_matrix(balance.jacobian_bulk_coordinates) @ bulk_chain).tolil()
+        carrier[:, trace_columns] += balance.jacobian_trace_potential_m2_s_V * self.thermal_voltage
+        carrier[:, state_columns] += balance.jacobian_log_state_m2_s
+        carrier[:, self.trap_slice.start + index] += (
+            tangent.residual_occupancy_derivative_m2_s * occupancy_tangent
+        )[:, np.newaxis]
+        return bulk_loss, trap_rate, carrier.tocsr()
+
     def _jacobians(
         self,
         phi: np.ndarray,
@@ -1338,46 +1409,16 @@ class _InterfaceTransientSystem:
         for index, (left, right, item) in enumerate(
             zip(self.left_nodes, self.right_nodes, local_states)
         ):
-            tangent = item.tangent
-            balance = tangent.balance
             block = self._local_block_slice(index)
             trace_columns = slice(block.start, block.start + 2)
-            state_columns = slice(block.start + 2, block.stop)
-            bulk_chain = self._bulk_coordinate_chain(left, right)
-
-            bulk_flux_jacobian = (
-                sparse.csr_matrix(tangent.bulk_flux_jacobian_bulk_coordinates)
-                @ bulk_chain
-            ).tolil()
-            bulk_flux_jacobian[:, trace_columns] += (
-                tangent.bulk_flux_jacobian_trace_potential_m2_s_V * self.thermal_voltage
+            bulk_loss, trap_rate, carrier_jacobian = self._local_carrier_jacobians(
+                index, left, right, item, occupancy_tangent[index]
             )
-            bulk_flux_jacobian[:, state_columns] += (
-                tangent.bulk_flux_jacobian_log_state_m2_s
-            )
-            source_n_jacobian[left] -= bulk_flux_jacobian.getrow(0) / self.widths[left]
-            source_p_jacobian[left] -= bulk_flux_jacobian.getrow(1) / self.widths[left]
-            source_n_jacobian[right] -= (
-                bulk_flux_jacobian.getrow(2) / self.widths[right]
-            )
-            source_p_jacobian[right] -= (
-                bulk_flux_jacobian.getrow(3) / self.widths[right]
-            )
-
-            capture_jacobian = sparse.lil_matrix((4, dimension))
-            capture_jacobian[:, state_columns] = (
-                tangent.capture_flux_jacobian_log_state_m2_s
-            )
-            capture_jacobian[:, self.trap_slice.start + index] = (
-                tangent.capture_flux_occupancy_derivative_m2_s
-                * occupancy_tangent[index]
-            )[:, np.newaxis]
-            trap_rate_jacobian[index] = (
-                capture_jacobian.getrow(0)
-                + capture_jacobian.getrow(2)
-                - capture_jacobian.getrow(1)
-                - capture_jacobian.getrow(3)
-            )
+            source_n_jacobian[left] -= bulk_loss.getrow(0)
+            source_p_jacobian[left] -= bulk_loss.getrow(1)
+            source_n_jacobian[right] -= bulk_loss.getrow(2)
+            source_p_jacobian[right] -= bulk_loss.getrow(3)
+            trap_rate_jacobian[index] = trap_rate
 
             row = 6 * index
             geometry, _physics, _bulk = _material_two_sided_interface_problem(
@@ -1417,16 +1458,6 @@ class _InterfaceTransientSystem:
                 self.trap_slice.start + index,
             ] = Q * self.trap_density[index] * occupancy_tangent[index]
 
-            carrier_jacobian = (
-                sparse.csr_matrix(balance.jacobian_bulk_coordinates) @ bulk_chain
-            ).tolil()
-            carrier_jacobian[:, trace_columns] += (
-                balance.jacobian_trace_potential_m2_s_V * self.thermal_voltage
-            )
-            carrier_jacobian[:, state_columns] += balance.jacobian_log_state_m2_s
-            carrier_jacobian[:, self.trap_slice.start + index] += (
-                tangent.residual_occupancy_derivative_m2_s * occupancy_tangent[index]
-            )[:, np.newaxis]
             local_jacobian[row + 2 : row + 6] = carrier_jacobian
 
         electron_local = sg_fluxes_n_jacobian(
@@ -1735,6 +1766,10 @@ class _InterfaceTransientSystem:
             interface_error,
         )
 
+    def solver_current_metrics(self, state, previous, dt):
+        """Numerical stopping diagnostics; not an independent physical audit."""
+        return self.transient_current_metrics(state, previous, dt)
+
     def eliminated_operator_error(
         self,
         state: _DeviceState,
@@ -1884,6 +1919,25 @@ def _jacobian_error(
     return max(columns, default=0.0)
 
 
+def effective_newton_acceptance_settings(policy) -> dict[str, float]:
+    """Return the actual residual and closure limits consumed by Newton."""
+    return {
+        "maximum_scaled_nonlinear_residual": policy.maximum_scaled_nonlinear_residual,
+        "maximum_charge_balance_relative_error": max(
+            policy.maximum_charge_balance_relative_error,
+            _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR,
+        ),
+        "maximum_all_face_current_spread_relative": max(
+            policy.maximum_all_face_current_spread_relative,
+            _DEFAULT_MAXIMUM_ALL_FACE_CURRENT_SPREAD_RELATIVE,
+        ),
+        "maximum_two_sided_interface_total_current_relative_error": max(
+            policy.maximum_two_sided_interface_total_current_relative_error,
+            _DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR,
+        ),
+    }
+
+
 def _solve_step(
     system: _InterfaceTransientSystem,
     coordinate: np.ndarray,
@@ -1908,18 +1962,27 @@ def _solve_step(
     maximum_jacobian_error = 0.0
     maximum_nnz = 0
     nonmonotone_step_count = 0
-    solver_charge_limit = max(
-        policy.maximum_charge_balance_relative_error,
-        _DEFAULT_MAXIMUM_CHARGE_BALANCE_RELATIVE_ERROR,
-    )
-    solver_face_limit = max(
-        policy.maximum_all_face_current_spread_relative,
-        _DEFAULT_MAXIMUM_ALL_FACE_CURRENT_SPREAD_RELATIVE,
-    )
-    solver_interface_limit = max(
-        policy.maximum_two_sided_interface_total_current_relative_error,
-        _DEFAULT_MAXIMUM_INTERFACE_CURRENT_RELATIVE_ERROR,
-    )
+    acceptance_settings = effective_newton_acceptance_settings(policy)
+    solver_residual_limit = acceptance_settings["maximum_scaled_nonlinear_residual"]
+    solver_charge_limit = acceptance_settings["maximum_charge_balance_relative_error"]
+    solver_face_limit = acceptance_settings["maximum_all_face_current_spread_relative"]
+    solver_interface_limit = acceptance_settings["maximum_two_sided_interface_total_current_relative_error"]
+    def failure(message):
+        error = InterfaceDefectTransientError(message)
+        collector = getattr(system, "failure_evidence", None)
+        if collector is not None:
+            try:
+                error.result = collector(state, previous, voltage, dt, residual,
+                    storage_scale, poisson_scale, local_scale,
+                    {"iteration": iteration, "scaled_nonlinear_residual": norm,
+                     "charge_balance_relative": charge_error, "solver_current_spread_relative": face_error,
+                     "interface_current_spread_relative": interface_error,
+                     "linear_backward_error": linear_backward_error})
+            except Exception as exc:
+                error.result = {"schema": "R1NewtonFailureWitnessV1", "terminal_state_available": False,
+                    "witness_collection_error": {"type": type(exc).__name__, "message": str(exc)}}
+        return error
+    linear_backward_error = None
     for iteration in range(1, policy.maximum_newton_iterations + 1):
         residual, jacobian, state = system.residual_and_jacobian(
             trial,
@@ -1933,13 +1996,13 @@ def _solve_step(
         norm = float(np.max(np.abs(residual)))
         maximum_nnz = max(maximum_nnz, int(jacobian.nnz))
         charge_error = system.charge_balance_metrics(state, previous, dt)[1]
-        _, _, _, _, face_error, interface_error = system.transient_current_metrics(
+        _, _, _, _, face_error, interface_error = system.solver_current_metrics(
             state,
             previous,
             dt,
         )
         if (
-            norm <= policy.maximum_scaled_nonlinear_residual
+            norm <= solver_residual_limit
             and charge_error <= solver_charge_limit
             and face_error <= solver_face_limit
             and interface_error <= solver_interface_limit
@@ -1965,21 +2028,45 @@ def _solve_step(
                 maximum_nnz,
                 nonmonotone_step_count,
             )
+        linear_backward_error = None
+        # Guide an R1 step without removing a previously admissible Gauss
+        # residual through an error/dt displacement current. This changes only
+        # the search direction; every trial retains the original residual and
+        # closure tests below. Other solvers have no such direction target.
+        linear_rhs = residual
+        target_builder = getattr(system, "newton_residual_target", None)
+        if norm <= solver_residual_limit and target_builder is not None:
+            target = np.asarray(target_builder(previous, storage_scale, poisson_scale, local_scale))
+            if (target.shape == residual.shape and np.all(np.isfinite(target))
+                    and float(np.max(np.abs(target))) <= solver_residual_limit):
+                direction_builder = getattr(system, "newton_direction_rhs", None)
+                if direction_builder is None:
+                    linear_rhs = residual - target
+                else:
+                    # A pair backend subtracts the two electrostatic residuals
+                    # before rounding. Only the direction is changed; norm and
+                    # every acceptance/line-search check still use residual.
+                    linear_rhs = np.asarray(direction_builder(
+                        state, previous, residual, target,
+                        storage_scale, poisson_scale, local_scale,
+                    ), dtype=float)
+                    if linear_rhs.shape != residual.shape or not np.all(np.isfinite(linear_rhs)):
+                        raise failure("Newton direction residual is invalid")
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
             try:
-                step = np.asarray(spsolve(jacobian, -residual), dtype=float)
+                step = np.asarray(spsolve(jacobian, -linear_rhs), dtype=float)
             except (MatrixRankWarning, RuntimeError, ValueError) as exc:
-                raise InterfaceDefectTransientError(
+                raise failure(
                     f"analytic sparse Newton solve failed: {exc}"
                 ) from exc
         if step.shape != trial.shape or not np.all(np.isfinite(step)):
-            raise InterfaceDefectTransientError(
+            raise failure(
                 "analytic sparse Newton solve returned a non-finite step"
             )
-        linear_residual = np.asarray(jacobian @ step + residual, dtype=float)
+        linear_residual = np.asarray(jacobian @ step + linear_rhs, dtype=float)
         linear_scale = max(
-            float(np.max(np.abs(residual))),
+            float(np.max(np.abs(linear_rhs))),
             float(np.max(np.asarray(abs(jacobian) @ np.abs(step)))),
             np.finfo(float).tiny,
         )
@@ -2019,7 +2106,7 @@ def _solve_step(
                 _,
                 candidate_face_error,
                 candidate_interface_error,
-            ) = system.transient_current_metrics(candidate_state, previous, dt)
+            ) = system.solver_current_metrics(candidate_state, previous, dt)
             residual_improved = candidate_norm < norm * (1.0 - 1.0e-4 * damping)
             candidate_closure_error = max(
                 candidate_charge_error / solver_charge_limit,
@@ -2070,7 +2157,7 @@ def _solve_step(
                         trial = full_candidate
                         nonmonotone_step_count += 1
                         continue
-            raise InterfaceDefectTransientError(
+            raise failure(
                 "analytic sparse Newton line search stalled at iteration "
                 f"{iteration} with residual {norm:.6g}, charge closure "
                 f"{charge_error:.6g}, all-face current closure "
@@ -2078,7 +2165,7 @@ def _solve_step(
                 f"{interface_error:.6g}, linear backward error "
                 f"{linear_backward_error:.6g}"
             )
-    raise InterfaceDefectTransientError(
+    raise failure(
         "analytic sparse Newton exceeded "
         f"{policy.maximum_newton_iterations} iterations with residual {norm:.6g}, "
         f"charge closure {charge_error:.6g}, all-face current closure "
@@ -2095,18 +2182,65 @@ def _integrate_trace(
     policy: InterfaceDefectTransientPolicy,
     *,
     accepted_step_observer=None,
+    initial_state=None,
+    initial_current_metrics=None,
+    step_solver=None,
 ) -> _Trace:
-    coordinate = system.initial_coordinate()
-    initial = system.evaluate(coordinate, float(voltage[0]))
+    solve_step = _solve_step if step_solver is None else step_solver
+    coordinate = (
+        system.initial_coordinate()
+        if initial_state is None
+        else np.zeros(system.dimension, dtype=float)
+    )
+    initial = (
+        system.evaluate(coordinate, float(voltage[0]))
+        if initial_state is None
+        else replace(initial_state, coordinate=coordinate.copy())
+    )
     states: list[_DeviceState] = [initial]
     coordinates = [coordinate.copy()]
-    displacement = [np.zeros(system.node_count - 1, dtype=float)]
-    total_current = [initial.conduction.copy()]
-    (
-        initial_interface_conduction,
-        initial_interface_displacement,
-        initial_interface_total,
-    ) = system.interface_current_sides(initial)
+    if initial_current_metrics is None:
+        initial_displacement = np.zeros(system.node_count - 1, dtype=float)
+        initial_total = initial.conduction.copy()
+        (
+            initial_interface_conduction,
+            initial_interface_displacement,
+            initial_interface_total,
+        ) = system.interface_current_sides(initial)
+        initial_face_spread = initial_interface_error = 0.0
+    else:
+        (
+            initial_displacement,
+            initial_total,
+            initial_interface_conduction,
+            initial_interface_displacement,
+            initial_face_spread,
+            initial_interface_error,
+        ) = initial_current_metrics
+        validated = []
+        for name, value, shape in (
+            ("displacement", initial_displacement, (system.node_count - 1,)),
+            ("total", initial_total, (system.node_count - 1,)),
+            ("interface conduction", initial_interface_conduction, (system.interface_count, 2)),
+            ("interface displacement", initial_interface_displacement, (system.interface_count, 2)),
+        ):
+            array = np.asarray(value, dtype=float)
+            if array.shape != shape or not np.all(np.isfinite(array)):
+                raise InterfaceDefectTransientError(f"initial {name} current is invalid")
+            validated.append(array.copy())
+        (
+            initial_displacement, initial_total,
+            initial_interface_conduction, initial_interface_displacement,
+        ) = validated
+        initial_face_spread = float(initial_face_spread)
+        initial_interface_error = float(initial_interface_error)
+        if any(not math.isfinite(value) or value < 0.0 for value in (
+            initial_face_spread, initial_interface_error,
+        )):
+            raise InterfaceDefectTransientError("initial current closure metrics are invalid")
+        initial_interface_total = initial_interface_conduction + initial_interface_displacement
+    displacement = [initial_displacement]
+    total_current = [initial_total]
     interface_conduction = [initial_interface_conduction]
     interface_displacement = [initial_interface_displacement]
     interface_total_current = [initial_interface_total]
@@ -2120,8 +2254,8 @@ def _integrate_trace(
     maximum_jacobian_error = 0.0
     maximum_charge_absolute_error = 0.0
     maximum_charge_error = 0.0
-    maximum_face_spread = 0.0
-    maximum_interface_current_error = 0.0
+    maximum_face_spread = initial_face_spread
+    maximum_interface_current_error = initial_interface_error
     maximum_operator_error = system.eliminated_operator_error(
         initial,
         float(voltage[0]),
@@ -2146,8 +2280,8 @@ def _integrate_trace(
             step_system, step_previous = system.rebase(previous)
             if hasattr(step_system, "set_voltage_lift"):
                 step_system.set_voltage_lift(target_voltage, step_previous)
-            state, count, residual, jacobian_error, nnz, nonmonotone_count = (
-                _solve_step(
+            try:
+                state, count, residual, jacobian_error, nnz, nonmonotone_count = solve_step(
                     step_system,
                     np.zeros(system.dimension),
                     step_previous,
@@ -2157,7 +2291,13 @@ def _integrate_trace(
                     check_jacobian=(point == 1 and local_step == 0),
                     scaling_system=system,
                 )
-            )
+            except InterfaceDefectTransientError as exc:
+                witness = getattr(exc, "result", None)
+                if isinstance(witness, dict) and witness.get("schema") == "R1NewtonFailureWitnessV1":
+                    witness.update({"time_s": float(times[point - 1] + (local_step + 1) * dt),
+                                    "previous_time_s": float(times[point - 1] + local_step * dt),
+                                    "substeps": int(substeps)})
+                raise
             point_iterations += count
             nonmonotone_step_count += nonmonotone_count
             coordinate = coordinate + state.coordinate

@@ -1,0 +1,72 @@
+{
+  "metrics": {
+    "charge_balance_normalized": {
+      "applicability": "finite_step",
+      "comparison": "finite_and_less_equal",
+      "formula": "abs(charge_rate-(left_conduction-right_conduction))/max(abs(charge_rate),abs(left_conduction-right_conduction),max(abs(internal_conduction)),charge_scale_floor_A_m2)",
+      "limit": 1e-10,
+      "unit": "1"
+    },
+    "contact_internal_current_spread_relative": {
+      "applicability": "finite_step",
+      "comparison": "finite_and_less_equal",
+      "formula": "ptp(concat(internal_total,contact_total))/max(max(abs(concat(internal_total,contact_total))),spread_floor_A_m2)",
+      "limit": 2e-06,
+      "unit": "1"
+    },
+    "interface_current_spread_relative": {
+      "applicability": "finite_step",
+      "comparison": "finite_and_less_equal",
+      "formula": "max_over_interfaces(ptp(left_right_total)/max(max(abs(left_right_total)),spread_floor_A_m2))",
+      "limit": 2e-06,
+      "unit": "1"
+    },
+    "internal_face_current_spread_relative": {
+      "applicability": "finite_step",
+      "comparison": "finite_and_less_equal",
+      "formula": "ptp(internal_total)/max(max(abs(internal_total)),spread_floor_A_m2)",
+      "limit": 2e-06,
+      "unit": "1"
+    },
+    "inventory_relative_drift": {
+      "applicability": "all_saved_rows",
+      "comparison": "finite_and_less_equal",
+      "formula": "max_over_positive_components(abs(inventory/initial_inventory-1))",
+      "limit": 1e-10,
+      "unit": "1"
+    }
+  },
+  "normalization": {
+    "charge_scale_floor_A_m2": 1.0,
+    "spread_floor_A_m2": 1e-20
+  },
+  "notes": [
+    "No new physical threshold is approved by creating this object.",
+    "Finite-step spread metrics are inapplicable to zero-time placeholders; regular right-limit checks retain their separate derivative contract.",
+    "Readout equality and discrete conservation do not establish reference-solution accuracy."
+  ],
+  "policy_limits": {
+    "maximum_all_face_current_spread_relative": 2e-06,
+    "maximum_charge_balance_relative_error": 1e-10,
+    "maximum_ion_inventory_relative_drift": 1e-10,
+    "maximum_line_search_steps": 40,
+    "maximum_near_acceptance_nonmonotone_steps": 2,
+    "maximum_newton_iterations": 100,
+    "maximum_two_sided_interface_total_current_relative_error": 2e-06
+  },
+  "populations": {
+    "carrier_and_ion_density": "finite_strict_positive",
+    "ion_site_comparison": "strict_less",
+    "ion_site_occupancy_ceiling": 0.999,
+    "trap_occupancy": "finite_closed_interval_0_1"
+  },
+  "protocol_row_limits": {
+    "charge_balance_normalized": 1e-10,
+    "contact_internal_current_spread_relative": 2e-06,
+    "gauss_normalized": 1e-10,
+    "inventory_relative_drift": 1e-10
+  },
+  "schema": "R1PhysicalStandardV1",
+  "scope": "frozen_R1_discrete_current_charge_and_inventory_checks_not_reference_accuracy",
+  "version": 1
+}

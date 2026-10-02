@@ -571,12 +571,37 @@ def _bernoulli_pair_with_derivative(
     )
 
 
+def _product_roundoff(x, y, product):
+    """Return the low product word without restricting finite input scales."""
+    if hasattr(math, "fma"):
+        return math.fma(x, y, -product)
+    # Split normalized mantissas so the splitter cannot overflow.
+    xm, xe = math.frexp(x)
+    ym, ye = math.frexp(y)
+    xs, ys = 134217729. * xm, 134217729. * ym
+    xh, yh = xs - (xs - xm), ys - (ys - ym)
+    xl, yl = xm - xh, ym - yh
+    normalized = math.ldexp(product, -(xe + ye))
+    error = ((xh * yh - normalized) + xh * yl + xl * yh) + xl * yl
+    return math.ldexp(error, xe + ye)
+
+
+def _product_difference(a, b, c, d):
+    """Compensate both products in a*b-c*d, retaining Python 3.11 support."""
+    a, b, c, d = map(float, (a, b, c, d))
+    first, second = a * b, c * d
+    return math.fsum((first, -second, _product_roundoff(a, b, first),
+                      -_product_roundoff(c, d, second)))
+
+
 def _bulk_flux_and_log_jacobian(
     state: np.ndarray,
     traces: InterfaceTracePotentials,
     geometry: TwoSidedInterfaceGeometry,
     physics: TwoSidedInterfacePhysics,
     bulk: TwoSidedBulkState,
+    *,
+    paired_bernoulli: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_left, p_left, n_right, p_right = state
     thermal_voltage = float(physics.thermal_voltage_V)
@@ -603,6 +628,24 @@ def _bulk_flux_and_log_jacobian(
         ],
         dtype=float,
     )
+    if paired_bernoulli:
+        # B(-x)=B(x)+x avoids two independently rounded Bernoulli factors
+        # multiplying nearly equal densities. Expand about the smaller factor
+        # for either sign, otherwise a large negative x can cancel away the
+        # smaller density entirely. The SG law and its tangent are unchanged.
+        # Only R1's explicit incremental-density entry opts in.
+        small_left = b_left if xi_left >= 0. else b_minus_left
+        small_right = b_right if xi_right >= 0. else b_minus_right
+        flux = np.array([
+            k_n_left * _product_difference(small_left, bulk.n_left_m3 - n_left,
+                                            -xi_left, bulk.n_left_m3 if xi_left >= 0. else n_left),
+            k_p_left * _product_difference(small_left, bulk.p_left_m3 - p_left,
+                                            xi_left, p_left if xi_left >= 0. else bulk.p_left_m3),
+            k_n_right * _product_difference(small_right, bulk.n_right_m3 - n_right,
+                                             xi_right, n_right if xi_right >= 0. else bulk.n_right_m3),
+            k_p_right * _product_difference(small_right, bulk.p_right_m3 - p_right,
+                                             -xi_right, bulk.p_right_m3 if xi_right >= 0. else p_right),
+        ])
     jacobian = np.diag(
         [
             -k_n_left * b_left * n_left,
@@ -890,12 +933,16 @@ def fixed_occupancy_trap_capture_flux_and_log_jacobian(
     state_m3: np.ndarray,
     physics: TwoSidedInterfacePhysics,
     occupancy: float,
+    *,
+    capture_multiplier: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return trap captures and their log-density tangent at fixed occupancy.
 
     The occupancy is an independent dynamic state. Consequently this tangent
     contains only the direct carrier derivatives; occupancy derivatives belong
     to the separate trap-state column of the device small-signal operator.
+    The capture difference retains product roundoff and forms ``1-f`` only
+    algebraically, so a small net capture is not lost between large terms.
     """
     state = np.asarray(state_m3, dtype=float)
     fixed = float(occupancy)
@@ -905,16 +952,53 @@ def fixed_occupancy_trap_capture_flux_and_log_jacobian(
         raise ValueError("state_m3 must be non-negative")
     if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
         raise ValueError("occupancy must lie in [0, 1]")
-    velocity_n = float(physics.surface_recombination_velocity_n_m_s)
-    velocity_p = float(physics.surface_recombination_velocity_p_m_s)
+    multiplier = float(capture_multiplier)
+    if not math.isfinite(multiplier) or not 0.0 <= multiplier <= 1.0:
+        raise ValueError("capture_multiplier must lie in [0, 1]")
+    velocity_n = multiplier * float(physics.surface_recombination_velocity_n_m_s)
+    velocity_p = multiplier * float(physics.surface_recombination_velocity_p_m_s)
     n1 = np.array([physics.n1_left_m3, physics.n1_right_m3], dtype=float)
     p1 = np.array([physics.p1_left_m3, physics.p1_right_m3], dtype=float)
+
+    def capture_difference(density, emission_density, *, electron):
+        density, emission_density = float(density), float(emission_density)
+        if fixed == 0.0:
+            return density if electron else -emission_density
+        if fixed == 1.0:
+            return -emission_density if electron else density
+
+        # Sum n-f*n-f*n1 or f*p+f*p1-p1 without first rounding 1-f or
+        # the sum of densities. Work at a shared binary exponent: this also
+        # keeps products of subnormal densities from losing their low words,
+        # and avoids intermediate fsum overflow near the largest finite input.
+        f_mantissa, f_exponent = math.frexp(fixed)
+        terms = []
+        for value in (density, emission_density):
+            mantissa, exponent = math.frexp(value)
+            product = f_mantissa * mantissa
+            error = _product_roundoff(f_mantissa, mantissa, product)
+            terms.append(((product, exponent+f_exponent),
+                          (error, exponent+f_exponent)))
+        if electron:
+            parts = [math.frexp(density)] + [
+                (-value, exponent) for term in terms for value, exponent in term]
+        else:
+            mantissa, exponent = math.frexp(emission_density)
+            parts = [(-mantissa, exponent)] + [part for term in terms for part in term]
+        parts = [(value, exponent) for value, exponent in parts if value != 0.0]
+        if not parts:
+            return 0.0
+        common_exponent = max(exponent for _, exponent in parts)
+        normalized = math.fsum(math.ldexp(value, exponent-common_exponent)
+                               for value, exponent in parts)
+        return math.ldexp(normalized, common_exponent)
+
     capture = np.array(
         [
-            velocity_n * (state[_N_LEFT] * (1.0 - fixed) - n1[0] * fixed),
-            velocity_p * (state[_P_LEFT] * fixed - p1[0] * (1.0 - fixed)),
-            velocity_n * (state[_N_RIGHT] * (1.0 - fixed) - n1[1] * fixed),
-            velocity_p * (state[_P_RIGHT] * fixed - p1[1] * (1.0 - fixed)),
+            velocity_n * capture_difference(state[_N_LEFT], n1[0], electron=True),
+            velocity_p * capture_difference(state[_P_LEFT], p1[0], electron=False),
+            velocity_n * capture_difference(state[_N_RIGHT], n1[1], electron=True),
+            velocity_p * capture_difference(state[_P_RIGHT], p1[1], electron=False),
         ],
         dtype=float,
     )
@@ -936,6 +1020,8 @@ def fixed_occupancy_carrier_balance_and_jacobian(
     bulk: TwoSidedBulkState,
     occupancy: float,
     traces: InterfaceTracePotentials | None = None,
+    *,
+    capture_multiplier: float = 1.0,
 ) -> TwoSidedCarrierBalance:
     """Evaluate local carrier balance while holding trap occupancy explicit."""
     values = np.asarray(log_state, dtype=float)
@@ -948,12 +1034,23 @@ def fixed_occupancy_carrier_balance_and_jacobian(
     state = np.exp(values)
     if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
         raise FloatingPointError("interface trace densities left finite range")
+    return _fixed_occupancy_carrier_balance_from_density(
+        state, geometry, physics, bulk, fixed, trace_values,
+        capture_multiplier=capture_multiplier,
+    )
+
+
+def _fixed_occupancy_carrier_balance_from_density(
+    state, geometry, physics, bulk, fixed, trace_values, *, capture_multiplier,
+    paired_bernoulli=False,
+):
     (
         bulk_flux,
         bulk_jacobian,
         bulk_trace_jacobian,
         bulk_coordinate_jacobian,
-    ) = _bulk_flux_and_log_jacobian(state, trace_values, geometry, physics, bulk)
+    ) = _bulk_flux_and_log_jacobian(state, trace_values, geometry, physics, bulk,
+                                  paired_bernoulli=paired_bernoulli)
     cross_pair, cross_derivative, cross_trace_derivative, one_way_scale = (
         _cross_flux_and_log_derivatives(state, trace_values, physics)
     )
@@ -975,6 +1072,7 @@ def fixed_occupancy_carrier_balance_and_jacobian(
         state,
         physics,
         fixed,
+        capture_multiplier=capture_multiplier,
     )
     residual = bulk_flux + cross_flux - capture_flux
     return TwoSidedCarrierBalance(
@@ -997,6 +1095,8 @@ def fixed_occupancy_carrier_tangent(
     bulk: TwoSidedBulkState,
     occupancy: float,
     traces: InterfaceTracePotentials | None = None,
+    *,
+    capture_multiplier: float = 1.0,
 ) -> FixedOccupancyCarrierTangent:
     """Return the full direct tangent for an explicit-occupancy DAE block.
 
@@ -1014,6 +1114,38 @@ def fixed_occupancy_carrier_tangent(
     state = np.exp(values)
     if not np.all(np.isfinite(state)) or np.any(state <= 0.0):
         raise FloatingPointError("interface trace densities left finite range")
+    return fixed_occupancy_carrier_tangent_from_density(
+        state, geometry, physics, bulk, fixed, trace_values,
+        capture_multiplier=capture_multiplier,
+    )
+
+
+def fixed_occupancy_carrier_tangent_from_density(
+    state_m3: np.ndarray,
+    geometry: TwoSidedInterfaceGeometry,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    occupancy: float,
+    traces: InterfaceTracePotentials | None = None,
+    *,
+    capture_multiplier: float = 1.0,
+    paired_bernoulli: bool = False,
+) -> FixedOccupancyCarrierTangent:
+    """Evaluate the same log-coordinate tangent from resolved densities.
+
+    Incremental solvers use ``reference_density * exp(log_increment)``.
+    Converting that density through an absolute log and exp can erase a
+    Newton update smaller than one ULP of log(density).  This entry point
+    preserves the supplied positive density; the derivative is still with
+    respect to its logarithm and the balance equations are unchanged.
+    """
+    state = np.asarray(state_m3, dtype=float)
+    if state.shape != (_STATE_SIZE,) or not np.all(np.isfinite(state)) or np.any(state <= 0.0):
+        raise ValueError("state_m3 must contain four finite positive densities")
+    fixed = float(occupancy)
+    if not math.isfinite(fixed) or not 0.0 <= fixed <= 1.0:
+        raise ValueError("occupancy must lie in [0, 1]")
+    trace_values = traces or solve_electrostatic_traces(geometry, bulk)
     (
         _bulk_flux,
         bulk_log_jacobian,
@@ -1025,15 +1157,17 @@ def fixed_occupancy_carrier_tangent(
         geometry,
         physics,
         bulk,
+        paired_bernoulli=paired_bernoulli,
     )
     _capture_flux, capture_log_jacobian = (
         fixed_occupancy_trap_capture_flux_and_log_jacobian(
             state,
             physics,
             fixed,
+            capture_multiplier=capture_multiplier,
         )
     )
-    capture_occupancy_derivative = np.array(
+    capture_occupancy_derivative = float(capture_multiplier) * np.array(
         [
             -physics.surface_recombination_velocity_n_m_s
             * (state[_N_LEFT] + physics.n1_left_m3),
@@ -1046,13 +1180,15 @@ def fixed_occupancy_carrier_tangent(
         ],
         dtype=float,
     )
-    balance = fixed_occupancy_carrier_balance_and_jacobian(
-        values,
+    balance = _fixed_occupancy_carrier_balance_from_density(
+        state,
         geometry,
         physics,
         bulk,
         fixed,
         trace_values,
+        capture_multiplier=capture_multiplier,
+        paired_bernoulli=paired_bernoulli,
     )
     return FixedOccupancyCarrierTangent(
         balance=balance,
@@ -1517,6 +1653,7 @@ def solve_fixed_occupancy_two_sided_interface(
     residual_tolerance: float = 1.0e-9,
     max_evaluations: int = 200,
     fail_on_residual: bool = True,
+    capture_multiplier: float = 1.0,
 ) -> FixedOccupancyTwoSidedInterfaceResult:
     """Eliminate local traces at an externally supplied dynamic occupancy."""
     _validate_inputs(geometry, physics, bulk)
@@ -1570,6 +1707,7 @@ def solve_fixed_occupancy_two_sided_interface(
         bulk,
         fixed,
         traces,
+        capture_multiplier=capture_multiplier,
     )
     electron_scale = max(
         abs(seed_balance.bulk_flux_m2_s[_N_LEFT]),
@@ -1601,6 +1739,7 @@ def solve_fixed_occupancy_two_sided_interface(
                 bulk,
                 fixed,
                 traces,
+                capture_multiplier=capture_multiplier,
             ).residual_m2_s
             / row_scale
         )
@@ -1614,6 +1753,7 @@ def solve_fixed_occupancy_two_sided_interface(
                 bulk,
                 fixed,
                 traces,
+                capture_multiplier=capture_multiplier,
             ).jacobian_log_state_m2_s
             / row_scale[:, np.newaxis]
         )
@@ -1636,6 +1776,7 @@ def solve_fixed_occupancy_two_sided_interface(
         bulk,
         fixed,
         traces,
+        capture_multiplier=capture_multiplier,
     )
     normalized_carrier = float(np.max(np.abs(balance.residual_m2_s / row_scale)))
     trace_values = np.array([traces.phi_left_V, traces.phi_right_V])
@@ -2083,6 +2224,7 @@ def solve_material_fixed_occupancy_two_sided_interfaces(
     residual_tolerance: float = 1.0e-7,
     max_evaluations: int = 200,
     fail_on_residual: bool = True,
+    capture_multiplier: float = 1.0,
 ) -> FixedOccupancyMaterialInterfaceResult:
     """Eliminate all local traces at explicit shared interface occupancies."""
     from perovskite_sim.physics.interface_plane import FERMI_DIRAC_RICHARDSON
@@ -2180,6 +2322,7 @@ def solve_material_fixed_occupancy_two_sided_interfaces(
             residual_tolerance=residual_tolerance,
             max_evaluations=max_evaluations,
             fail_on_residual=fail_on_residual,
+            capture_multiplier=capture_multiplier,
         )
         qss = local.qss
         state[base : base + 4] = qss.state_m3[right_first]
@@ -2241,6 +2384,7 @@ __all__ = [
     "equilibrium_referenced_two_sided_balance",
     "fixed_occupancy_carrier_balance_and_jacobian",
     "fixed_occupancy_carrier_tangent",
+    "fixed_occupancy_carrier_tangent_from_density",
     "fixed_occupancy_trap_capture_flux_and_log_jacobian",
     "remove_shared_interface_nodes",
     "shared_trap_capture_flux",

@@ -1,0 +1,1759 @@
+{
+  "schema": "R1AdditionalFailuresV1",
+  "scope": "Four independently observed short-functional-window physical-gate failures at the two smallest registered amplitudes; not full R1-2 convergence or full-window coverage",
+  "known_failure_semantics": {
+    "waives_checks": false,
+    "skip_computation": false,
+    "changes_acceptance_thresholds": false,
+    "classification": "historical observations; current execution still runs all original checks and retains a nonzero exit on failure"
+  },
+  "evidence_sources": [
+    {
+      "path": "R1StageTwoAcceptanceV2/ReviewV1/RefutationsV1.json",
+      "sha256": "7bd34bf2bb4cefb06d058ecd3259009a5b67362a65d6fbe29596c9231d4d8c52",
+      "json_pointer": "/FailureRegistry"
+    }
+  ],
+  "known_physical_gate_failures": [
+    {
+      "case_id": "base_b_n16_factor1p0_amplitude0p0003125",
+      "coverage_id": "four_new_failures_on_short_window_amplitude_ladder",
+      "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+      "control": "B",
+      "intervals": 16,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.0003125,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "phase": "finite_step",
+      "failure": "contact_internal_current_spread_relative_exceeds_limit",
+      "failure_reasons": [
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 27,
+      "observed_time_s": 2.5750000000000002e-05,
+      "observed_dt_s": 2.4750000000000002e-05,
+      "observed_refinement_substeps": 4,
+      "observed_metric": 2.4169778930021016e-06,
+      "limit": 2e-06,
+      "observed_checks": {
+        "gauss_normalized": {
+          "applicable": true,
+          "value": 2.1636524772534106e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "charge_balance_normalized": {
+          "applicable": true,
+          "value": 3.975195499817181e-12,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "inventory_relative_drift": {
+          "applicable": true,
+          "value": 6.141753772226366e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "contact_internal_current_spread_relative": {
+          "applicable": true,
+          "value": 2.4169778930021016e-06,
+          "limit": 2e-06,
+          "passed": false,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+          "source": "finite_step"
+        },
+        "trap_storage": {
+          "applicable": true,
+          "value": 0.0,
+          "limit": 1.0,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "finite_numeric_evidence": {
+          "applicable": true,
+          "passed": true,
+          "nonfinite_numeric_paths": [],
+          "failure_reason": null,
+          "scope": "all_numeric_leaves_in_row_and_initial_event"
+        }
+      },
+      "observed_physical_record": {
+        "full_charge_C_m2": -7.967293913284109e-11,
+        "interior_charge_C_m2": 9.761783613972257e-07,
+        "rho_C_m3": [
+          -639.3685032892213,
+          -594.9679738997061,
+          -489.65092933084844,
+          -285.0354145137242,
+          0.6218522477497365,
+          286.36060942596754,
+          491.0937627494288,
+          596.4644894511249,
+          -3.254691536984702e-06,
+          -2.7534125438182114e-06,
+          -1.92620579271469e-06,
+          -1.05718643399097e-06,
+          -4.802907705280488e-07,
+          -1.8538031495458605e-07,
+          -5.3494303265523226e-08,
+          0.0
+        ],
+        "physical_displacement_C_m2": [
+          4.9636496546121315e-05,
+          4.963641687314752e-05
+        ],
+        "gauss_error_C_m2": -3.466553443151631e-17,
+        "gauss_normalized": 2.1636524772534106e-13,
+        "contact_electron_current_A_m2": [
+          -4.1434631002724467e-07,
+          -4.1437981447857e-07
+        ],
+        "contact_hole_current_A_m2": [
+          -3.049005509497121e-07,
+          -3.048670498867277e-07
+        ],
+        "contact_ion_current_A_m2": [
+          0.0,
+          0.0
+        ],
+        "contact_conduction_A_m2": [
+          -7.192468609769568e-07,
+          -7.192468643652978e-07
+        ],
+        "contact_displacement_A_m2": [
+          -4.6066190137990863e-07,
+          -4.606593296349224e-07
+        ],
+        "contact_maxwell_A_m2": [
+          -1.1799087623568653e-06,
+          -1.1799061940002202e-06
+        ],
+        "internal_maxwell_A_m2": [
+          -1.179905910543471e-06,
+          -1.1799061939457462e-06,
+          -1.1799061941315816e-06,
+          -1.1799061941334042e-06,
+          -1.179906194134506e-06,
+          -1.1799061941216392e-06,
+          -1.179906260236016e-06,
+          -1.179906194013288e-06,
+          -1.1799061940002413e-06,
+          -1.1799061940002346e-06,
+          -1.179906194000249e-06,
+          -1.1799061940002318e-06,
+          -1.1799061940002363e-06,
+          -1.1799061940002164e-06,
+          -1.1799061940002202e-06
+        ],
+        "charge_rate_A_m2": 3.978583840823336e-12,
+        "charge_balance_error_A_m2": 3.975195499817181e-12,
+        "charge_balance_normalized": 3.975195499817181e-12,
+        "contact_internal_current_spread_relative": 2.4169778930021016e-06,
+        "trap_storage_error_A_m2": 0.0,
+        "inventory_m2": 1000000000000614.2,
+        "inventory_relative_drift": 6.141753772226366e-13,
+        "trap_storage_check": {
+          "applicable": true,
+          "dt_s": 2.4750000000000002e-05,
+          "error_A_m2": 0.0,
+          "charge_error_C_m2": 0.0,
+          "storage_scale_m2": 41.13934333352998,
+          "maximum_scaled_nonlinear_residual": 0.05,
+          "nonlinear_tolerances": {
+            "storage_relative_tolerance": 1e-09,
+            "carrier_storage_atol_m3": 1.0,
+            "interface_storage_atol_m2": 1.0,
+            "ion_storage_atol_m3": 1.0,
+            "poisson_relative_tolerance": 1e-10,
+            "poisson_atol_C_m2": 1e-18,
+            "interface_algebraic_relative_tolerance": 1e-10,
+            "interface_potential_atol_V": 1e-14,
+            "interface_gauss_atol_C_m2": 1e-18,
+            "interface_flux_atol_m2_s": 1.0
+          },
+          "nonlinear_charge_budget_C_m2": 3.29562473135427e-19,
+          "newton_consistency_ratio": 0.0,
+          "newton_consistency_role": "consistency_with_existing_nonlinear_storage_tolerance",
+          "charge_balance_scale_A_m2": 1.0,
+          "charge_scale_before_floor_A_m2": 1.994636033946713e-06,
+          "charge_scale_floor_A_m2": 1.0,
+          "charge_scale_floor_active": true,
+          "charge_balance_relative_limit": 1e-10,
+          "conservation_charge_budget_C_m2": 2.475e-15,
+          "local_charge_ratio": 0.0,
+          "local_charge_role": "single_interface_application_of_existing_whole_device_charge_budget",
+          "dominant_budget": "newton",
+          "trap_dynamics_active": false,
+          "charge_error_limit_C_m2": 3.29562473135427e-19,
+          "current_error_limit_A_m2": 1.3315655480219273e-14,
+          "normalized_error": 0.0,
+          "normalized_limit": 1.0,
+          "certified": true,
+          "failure_reason": null,
+          "budget_scope": "single_interface_storage_and_whole_device_charge_budget"
+        }
+      },
+      "certificate_at_failure": {
+        "certified": false,
+        "reasons": [
+          "contact_internal_current_spread_relative_exceeds_limit"
+        ],
+        "scope": "research_r1_1_common_state_controlled_ideal_step",
+        "failed_record_index": 27,
+        "physical_checks": {
+          "checks": {
+            "gauss_normalized": {
+              "applicable": true,
+              "value": 2.1636524772534106e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "charge_balance_normalized": {
+              "applicable": true,
+              "value": 3.975195499817181e-12,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "inventory_relative_drift": {
+              "applicable": true,
+              "value": 6.141753772226366e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "contact_internal_current_spread_relative": {
+              "applicable": true,
+              "value": 2.4169778930021016e-06,
+              "limit": 2e-06,
+              "passed": false,
+              "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+              "source": "finite_step"
+            },
+            "trap_storage": {
+              "applicable": true,
+              "value": 0.0,
+              "limit": 1.0,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "finite_numeric_evidence": {
+              "applicable": true,
+              "passed": true,
+              "nonfinite_numeric_paths": [],
+              "failure_reason": null,
+              "scope": "all_numeric_leaves_in_row_and_initial_event"
+            }
+          },
+          "passed": false,
+          "reasons": [
+            "contact_internal_current_spread_relative_exceeds_limit"
+          ],
+          "nonfinite_numeric_paths": []
+        },
+        "nonfinite_numeric_paths": [],
+        "maximum_trap_storage_error_A_m2": 0.0,
+        "trap_storage": {
+          "checked_finite_step_count": 25,
+          "maximum_error_A_m2": 0.0,
+          "maximum_step_charge_error_C_m2": 0.0,
+          "maximum_normalized_error": 0.0,
+          "normalized_limit": 1.0,
+          "minimum_current_error_limit_A_m2": 3.3289138700548183e-15,
+          "maximum_current_error_limit_A_m2": 1e-10,
+          "certified": true,
+          "branch_counts": {
+            "all": {
+              "newton": 14,
+              "local_charge": 11,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap": {
+              "newton": 0,
+              "local_charge": 0,
+              "equal": 0,
+              "invalid": 0
+            },
+            "nontrivial": {
+              "newton": 0,
+              "local_charge": 0,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap_nontrivial": {
+              "newton": 0,
+              "local_charge": 0,
+              "equal": 0,
+              "invalid": 0
+            }
+          },
+          "branch_maxima": {
+            "all": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.0,
+                "maximum_local_charge_ratio": 0.0,
+                "maximum_normalized_error": 0.0
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 0.0,
+                "maximum_local_charge_ratio": 0.0,
+                "maximum_normalized_error": 0.0
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap": {
+              "newton": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap_nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            }
+          },
+          "nontrivial_definition": "finite strictly positive raw trap-storage error",
+          "charge_scale_floor_active_step_count": 25,
+          "scope": "all_finite_accepted_steps_across_all_nested_levels"
+        }
+      },
+      "confirmation": {
+        "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+        "source_content_sha256": "e8993b3ecdff6df04825241f427aa51dbf6238fec377b8080b765ba6567fede4",
+        "manifest_sha256": "ed9cb57389f0f2e90b33096ec02c3de6e45275b7a21fa9a5397d6f231a4fa036",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "run_class": "formal",
+        "evidence_revision": 4,
+        "persisted_record_count": 28,
+        "persisted_finite_step_count": 25,
+        "physical_passed_finite_step_count": 24
+      },
+      "parent_confirmation_manifest_sha256": "32a8f1cd184f4656c43e708a6388a6e69a9169a2d831609c80ab0ac6d48b0b6e",
+      "raw_evidence": {
+        "path": "outputs/r1_2_closure/ladder_failures/B_n16_f1.0_a0.0003125",
+        "original_path": "/tmp/r1acc5/refute3/sweep3/B_n16_f1.0_a0.0003125",
+        "manifest_sha256": "ed9cb57389f0f2e90b33096ec02c3de6e45275b7a21fa9a5397d6f231a4fa036",
+        "artifacts": {
+          "ExecutionSourceV1.json": {
+            "sha256": "71615be23ad25ffd5a60f07ffba67216de9c791777e79a37dc30faa31f9fea2c",
+            "bytes": 40589
+          },
+          "ProtocolV1.json": {
+            "sha256": "bc04f6bdd1f15c8b438f1158d7931a25c817533f75ec98e40cf4b81d652cb0e9",
+            "bytes": 3619
+          },
+          "CompletionV1.json": {
+            "sha256": "a48acb62505fda7594f3232a9facf074d4381fc11efd189a67485f16763f0c1e",
+            "bytes": 3541
+          },
+          "FailedResultV1.json": {
+            "sha256": "ed6eff9a241b942b4903fcec6d2d1090dd1a3d3e9fa0a6017d9900fcbf470337",
+            "bytes": 305597
+          },
+          "AcceptedStepsV1.json": {
+            "sha256": "e3e534773c8707a95a166023ac7a75dfafe7b46dd7f4fc67d9020ffb20ec6734",
+            "bytes": 262605
+          },
+          "SourceV1.zip": {
+            "sha256": "d35172d1724f0be1c82382968ebc59678a61502c338c5554a9d0974fa2445884",
+            "bytes": 5584578
+          }
+        }
+      }
+    },
+    {
+      "case_id": "base_b_n16_factor1p0_amplitude0p00015625",
+      "coverage_id": "four_new_failures_on_short_window_amplitude_ladder",
+      "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+      "control": "B",
+      "intervals": 16,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.00015625,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "phase": "finite_step",
+      "failure": "contact_internal_current_spread_relative_exceeds_limit",
+      "failure_reasons": [
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 12,
+      "observed_time_s": 5.05e-05,
+      "observed_dt_s": 4.9500000000000004e-05,
+      "observed_refinement_substeps": 2,
+      "observed_metric": 2.3391361940958168e-06,
+      "limit": 2e-06,
+      "observed_checks": {
+        "gauss_normalized": {
+          "applicable": true,
+          "value": 2.0720487262371723e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "charge_balance_normalized": {
+          "applicable": true,
+          "value": 1.820629656099344e-12,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "inventory_relative_drift": {
+          "applicable": true,
+          "value": 5.626610288800293e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "contact_internal_current_spread_relative": {
+          "applicable": true,
+          "value": 2.3391361940958168e-06,
+          "limit": 2e-06,
+          "passed": false,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+          "source": "finite_step"
+        },
+        "trap_storage": {
+          "applicable": true,
+          "value": 0.0,
+          "limit": 1.0,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "finite_numeric_evidence": {
+          "applicable": true,
+          "passed": true,
+          "nonfinite_numeric_paths": [],
+          "failure_reason": null,
+          "scope": "all_numeric_leaves_in_row_and_initial_event"
+        }
+      },
+      "observed_physical_record": {
+        "full_charge_C_m2": -7.967300676393256e-11,
+        "interior_charge_C_m2": 9.761795047357818e-07,
+        "rho_C_m3": [
+          -639.3692521259784,
+          -594.9678222393172,
+          -489.6509310694319,
+          -285.03541822246,
+          0.621848602019709,
+          286.36060532322097,
+          491.09371766453523,
+          596.4646557575478,
+          -3.2616252437804655e-06,
+          -2.758737750947265e-06,
+          -1.9291885314664544e-06,
+          -1.0582919469015892e-06,
+          -4.806313611334693e-07,
+          -1.85492940178406e-07,
+          -5.352614563452363e-08,
+          0.0
+        ],
+        "physical_displacement_C_m2": [
+          4.970567015263518e-05,
+          4.970559047959522e-05
+        ],
+        "gauss_error_C_m2": -3.31978805368666e-17,
+        "gauss_normalized": 2.0720487262371723e-13,
+        "contact_electron_current_A_m2": [
+          -2.0731498169804566e-07,
+          -2.073317475789051e-07
+        ],
+        "contact_hole_current_A_m2": [
+          -1.5254930204690546e-07,
+          -1.5253253785805424e-07
+        ],
+        "contact_ion_current_A_m2": [
+          0.0,
+          0.0
+        ],
+        "contact_conduction_A_m2": [
+          -3.5986428374495115e-07,
+          -3.5986428543695934e-07
+        ],
+        "contact_displacement_A_m2": [
+          -2.2966152003140818e-07,
+          -2.2966038822515672e-07
+        ],
+        "contact_maxwell_A_m2": [
+          -5.895258037763593e-07,
+          -5.895246736621161e-07
+        ],
+        "internal_maxwell_A_m2": [
+          -5.895244247952143e-07,
+          -5.895246733111011e-07,
+          -5.895246737213985e-07,
+          -5.895246737248473e-07,
+          -5.895246737258472e-07,
+          -5.895246737006905e-07,
+          -5.895247378771749e-07,
+          -5.895246736596286e-07,
+          -5.895246736621264e-07,
+          -5.895246736621194e-07,
+          -5.895246736621246e-07,
+          -5.895246736621166e-07,
+          -5.895246736621165e-07,
+          -5.89524673662104e-07,
+          -5.895246736621161e-07
+        ],
+        "charge_rate_A_m2": 1.822321664286126e-12,
+        "charge_balance_error_A_m2": 1.820629656099344e-12,
+        "charge_balance_normalized": 1.820629656099344e-12,
+        "contact_internal_current_spread_relative": 2.3391361940958168e-06,
+        "trap_storage_error_A_m2": 0.0,
+        "inventory_m2": 1000000000000562.6,
+        "inventory_relative_drift": 5.626610288800293e-13,
+        "trap_storage_check": {
+          "applicable": true,
+          "dt_s": 4.9500000000000004e-05,
+          "error_A_m2": 0.0,
+          "charge_error_C_m2": 0.0,
+          "storage_scale_m2": 41.13934333352998,
+          "maximum_scaled_nonlinear_residual": 0.05,
+          "nonlinear_tolerances": {
+            "storage_relative_tolerance": 1e-09,
+            "carrier_storage_atol_m3": 1.0,
+            "interface_storage_atol_m2": 1.0,
+            "ion_storage_atol_m3": 1.0,
+            "poisson_relative_tolerance": 1e-10,
+            "poisson_atol_C_m2": 1e-18,
+            "interface_algebraic_relative_tolerance": 1e-10,
+            "interface_potential_atol_V": 1e-14,
+            "interface_gauss_atol_C_m2": 1e-18,
+            "interface_flux_atol_m2_s": 1.0
+          },
+          "nonlinear_charge_budget_C_m2": 3.29562473135427e-19,
+          "newton_consistency_ratio": 0.0,
+          "newton_consistency_role": "consistency_with_existing_nonlinear_storage_tolerance",
+          "charge_balance_scale_A_m2": 1.0,
+          "charge_scale_before_floor_A_m2": 9.878837629602542e-07,
+          "charge_scale_floor_A_m2": 1.0,
+          "charge_scale_floor_active": true,
+          "charge_balance_relative_limit": 1e-10,
+          "conservation_charge_budget_C_m2": 4.95e-15,
+          "local_charge_ratio": 0.0,
+          "local_charge_role": "single_interface_application_of_existing_whole_device_charge_budget",
+          "dominant_budget": "newton",
+          "trap_dynamics_active": false,
+          "charge_error_limit_C_m2": 3.29562473135427e-19,
+          "current_error_limit_A_m2": 6.657827740109637e-15,
+          "normalized_error": 0.0,
+          "normalized_limit": 1.0,
+          "certified": true,
+          "failure_reason": null,
+          "budget_scope": "single_interface_storage_and_whole_device_charge_budget"
+        }
+      },
+      "certificate_at_failure": {
+        "certified": false,
+        "reasons": [
+          "contact_internal_current_spread_relative_exceeds_limit"
+        ],
+        "scope": "research_r1_1_common_state_controlled_ideal_step",
+        "failed_record_index": 12,
+        "physical_checks": {
+          "checks": {
+            "gauss_normalized": {
+              "applicable": true,
+              "value": 2.0720487262371723e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "charge_balance_normalized": {
+              "applicable": true,
+              "value": 1.820629656099344e-12,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "inventory_relative_drift": {
+              "applicable": true,
+              "value": 5.626610288800293e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "contact_internal_current_spread_relative": {
+              "applicable": true,
+              "value": 2.3391361940958168e-06,
+              "limit": 2e-06,
+              "passed": false,
+              "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+              "source": "finite_step"
+            },
+            "trap_storage": {
+              "applicable": true,
+              "value": 0.0,
+              "limit": 1.0,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "finite_numeric_evidence": {
+              "applicable": true,
+              "passed": true,
+              "nonfinite_numeric_paths": [],
+              "failure_reason": null,
+              "scope": "all_numeric_leaves_in_row_and_initial_event"
+            }
+          },
+          "passed": false,
+          "reasons": [
+            "contact_internal_current_spread_relative_exceeds_limit"
+          ],
+          "nonfinite_numeric_paths": []
+        },
+        "nonfinite_numeric_paths": [],
+        "maximum_trap_storage_error_A_m2": 0.0,
+        "trap_storage": {
+          "checked_finite_step_count": 11,
+          "maximum_error_A_m2": 0.0,
+          "maximum_step_charge_error_C_m2": 0.0,
+          "maximum_normalized_error": 0.0,
+          "normalized_limit": 1.0,
+          "minimum_current_error_limit_A_m2": 3.3289138700548183e-15,
+          "maximum_current_error_limit_A_m2": 1e-10,
+          "certified": true,
+          "branch_counts": {
+            "all": {
+              "newton": 8,
+              "local_charge": 3,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap": {
+              "newton": 0,
+              "local_charge": 0,
+              "equal": 0,
+              "invalid": 0
+            },
+            "nontrivial": {
+              "newton": 0,
+              "local_charge": 0,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap_nontrivial": {
+              "newton": 0,
+              "local_charge": 0,
+              "equal": 0,
+              "invalid": 0
+            }
+          },
+          "branch_maxima": {
+            "all": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.0,
+                "maximum_local_charge_ratio": 0.0,
+                "maximum_normalized_error": 0.0
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 0.0,
+                "maximum_local_charge_ratio": 0.0,
+                "maximum_normalized_error": 0.0
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap": {
+              "newton": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap_nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            }
+          },
+          "nontrivial_definition": "finite strictly positive raw trap-storage error",
+          "charge_scale_floor_active_step_count": 11,
+          "scope": "all_finite_accepted_steps_across_all_nested_levels"
+        }
+      },
+      "confirmation": {
+        "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+        "source_content_sha256": "e8993b3ecdff6df04825241f427aa51dbf6238fec377b8080b765ba6567fede4",
+        "manifest_sha256": "af2b48ba04b721a0dac6a3eb518006d1b643cc09c9d2215b8fae0a4535e088b4",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "run_class": "formal",
+        "evidence_revision": 4,
+        "persisted_record_count": 13,
+        "persisted_finite_step_count": 11,
+        "physical_passed_finite_step_count": 10
+      },
+      "parent_confirmation_manifest_sha256": "32a8f1cd184f4656c43e708a6388a6e69a9169a2d831609c80ab0ac6d48b0b6e",
+      "raw_evidence": {
+        "path": "outputs/r1_2_closure/ladder_failures/B_n16_f1.0_a0.00015625",
+        "original_path": "/tmp/r1acc5/refute3/sweep3/B_n16_f1.0_a0.00015625",
+        "manifest_sha256": "af2b48ba04b721a0dac6a3eb518006d1b643cc09c9d2215b8fae0a4535e088b4",
+        "artifacts": {
+          "ExecutionSourceV1.json": {
+            "sha256": "71615be23ad25ffd5a60f07ffba67216de9c791777e79a37dc30faa31f9fea2c",
+            "bytes": 40589
+          },
+          "ProtocolV1.json": {
+            "sha256": "a366f8cab8b92e137f9dfab16defb7422c38b876a0531a0d1ff68ebc3c807e24",
+            "bytes": 3620
+          },
+          "CompletionV1.json": {
+            "sha256": "44d92a87b58f8bbe5e873b615964f943e21597a3ce3b9b22160ae76682d486fc",
+            "bytes": 3540
+          },
+          "FailedResultV1.json": {
+            "sha256": "544068a01d356e3d2902fa197d237c68799c4c33d182095005d15991e0f9b557",
+            "bytes": 156928
+          },
+          "AcceptedStepsV1.json": {
+            "sha256": "6a79197b880b09266bbf9c80a366d9d9e553ca5647d5e4d1525f254dddff1f45",
+            "bytes": 123407
+          },
+          "SourceV1.zip": {
+            "sha256": "d35172d1724f0be1c82382968ebc59678a61502c338c5554a9d0974fa2445884",
+            "bytes": 5584578
+          }
+        }
+      }
+    },
+    {
+      "case_id": "base_d_n16_factor1p0_amplitude0p0003125",
+      "coverage_id": "four_new_failures_on_short_window_amplitude_ladder",
+      "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+      "control": "D",
+      "intervals": 16,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.0003125,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "phase": "finite_step",
+      "failure": "contact_internal_current_spread_relative_exceeds_limit",
+      "failure_reasons": [
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 27,
+      "observed_time_s": 2.5750000000000002e-05,
+      "observed_dt_s": 2.4750000000000002e-05,
+      "observed_refinement_substeps": 4,
+      "observed_metric": 2.4166196890316515e-06,
+      "limit": 2e-06,
+      "observed_checks": {
+        "gauss_normalized": {
+          "applicable": true,
+          "value": 2.1375778581307232e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "charge_balance_normalized": {
+          "applicable": true,
+          "value": 3.974755827537152e-12,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "inventory_relative_drift": {
+          "applicable": true,
+          "value": 6.141753772226366e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "contact_internal_current_spread_relative": {
+          "applicable": true,
+          "value": 2.4166196890316515e-06,
+          "limit": 2e-06,
+          "passed": false,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+          "source": "finite_step"
+        },
+        "trap_storage": {
+          "applicable": true,
+          "value": 0.03305902434178976,
+          "limit": 1.0,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "finite_numeric_evidence": {
+          "applicable": true,
+          "passed": true,
+          "nonfinite_numeric_paths": [],
+          "failure_reason": null,
+          "scope": "all_numeric_leaves_in_row_and_initial_event"
+        }
+      },
+      "observed_physical_record": {
+        "full_charge_C_m2": -7.96606255279169e-11,
+        "interior_charge_C_m2": 9.76178373710223e-07,
+        "rho_C_m3": [
+          -639.3685032888213,
+          -594.9679738996881,
+          -489.65092933083946,
+          -285.03541451371603,
+          0.6218522477573786,
+          286.3606094259762,
+          491.0937627494354,
+          596.4644894509172,
+          -3.2546968467911992e-06,
+          -2.7534169517298366e-06,
+          -1.9262087287345336e-06,
+          -1.0571878803864098e-06,
+          -4.802913311141837e-07,
+          -1.8538050390484285e-07,
+          -5.349435386120536e-08,
+          0.0
+        ],
+        "physical_displacement_C_m2": [
+          4.9636496539963955e-05,
+          4.963641687930418e-05
+        ],
+        "gauss_error_C_m2": -3.4247772976528115e-17,
+        "gauss_normalized": 2.1375778581307232e-13,
+        "contact_electron_current_A_m2": [
+          -4.1428230950595537e-07,
+          -4.1479405038268403e-07
+        ],
+        "contact_hole_current_A_m2": [
+          -3.049005816580727e-07,
+          -3.0486705019698164e-07
+        ],
+        "contact_ion_current_A_m2": [
+          0.0,
+          0.0
+        ],
+        "contact_conduction_A_m2": [
+          -7.19182891164028e-07,
+          -7.196611005796657e-07
+        ],
+        "contact_displacement_A_m2": [
+          -4.60901024896974e-07,
+          -4.604202471245022e-07
+        ],
+        "contact_maxwell_A_m2": [
+          -1.180083916061002e-06,
+          -1.1800813477041678e-06
+        ],
+        "internal_maxwell_A_m2": [
+          -1.1800810642469758e-06,
+          -1.1800813476493604e-06,
+          -1.180081347835867e-06,
+          -1.1800813478373045e-06,
+          -1.1800813478384306e-06,
+          -1.1800813478248192e-06,
+          -1.1800814139434962e-06,
+          -1.1800813477036213e-06,
+          -1.1800813477042454e-06,
+          -1.180081347704239e-06,
+          -1.1800813477042475e-06,
+          -1.1800813477042149e-06,
+          -1.1800813477041992e-06,
+          -1.1800813477041808e-06,
+          -1.1800813477041678e-06
+        ],
+        "charge_rate_A_m2": 4.821841714652046e-10,
+        "charge_balance_error_A_m2": 3.974755827537152e-12,
+        "charge_balance_normalized": 3.974755827537152e-12,
+        "contact_internal_current_spread_relative": 2.4166196890316515e-06,
+        "trap_storage_error_A_m2": 4.402025990052647e-16,
+        "inventory_m2": 1000000000000614.2,
+        "inventory_relative_drift": 6.141753772226366e-13,
+        "trap_storage_check": {
+          "applicable": true,
+          "dt_s": 2.4750000000000002e-05,
+          "error_A_m2": 4.402025990052647e-16,
+          "charge_error_C_m2": 1.0895014325380302e-20,
+          "storage_scale_m2": 41.139345236078846,
+          "maximum_scaled_nonlinear_residual": 0.05,
+          "nonlinear_tolerances": {
+            "storage_relative_tolerance": 1e-09,
+            "carrier_storage_atol_m3": 1.0,
+            "interface_storage_atol_m2": 1.0,
+            "ion_storage_atol_m3": 1.0,
+            "poisson_relative_tolerance": 1e-10,
+            "poisson_atol_C_m2": 1e-18,
+            "interface_algebraic_relative_tolerance": 1e-10,
+            "interface_potential_atol_V": 1e-14,
+            "interface_gauss_atol_C_m2": 1e-18,
+            "interface_flux_atol_m2_s": 1.0
+          },
+          "nonlinear_charge_budget_C_m2": 3.295624883765237e-19,
+          "newton_consistency_ratio": 0.03305902434178976,
+          "newton_consistency_role": "consistency_with_existing_nonlinear_storage_tolerance",
+          "charge_balance_scale_A_m2": 1.0,
+          "charge_scale_before_floor_A_m2": 1.9945721209319912e-06,
+          "charge_scale_floor_A_m2": 1.0,
+          "charge_scale_floor_active": true,
+          "charge_balance_relative_limit": 1e-10,
+          "conservation_charge_budget_C_m2": 2.475e-15,
+          "local_charge_ratio": 4.4020259900526465e-06,
+          "local_charge_role": "single_interface_application_of_existing_whole_device_charge_budget",
+          "dominant_budget": "newton",
+          "trap_dynamics_active": true,
+          "charge_error_limit_C_m2": 3.295624883765237e-19,
+          "current_error_limit_A_m2": 1.3315656096021159e-14,
+          "normalized_error": 0.03305902434178976,
+          "normalized_limit": 1.0,
+          "certified": true,
+          "failure_reason": null,
+          "budget_scope": "single_interface_storage_and_whole_device_charge_budget"
+        }
+      },
+      "certificate_at_failure": {
+        "certified": false,
+        "reasons": [
+          "contact_internal_current_spread_relative_exceeds_limit"
+        ],
+        "scope": "research_r1_1_common_state_controlled_ideal_step",
+        "failed_record_index": 27,
+        "physical_checks": {
+          "checks": {
+            "gauss_normalized": {
+              "applicable": true,
+              "value": 2.1375778581307232e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "charge_balance_normalized": {
+              "applicable": true,
+              "value": 3.974755827537152e-12,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "inventory_relative_drift": {
+              "applicable": true,
+              "value": 6.141753772226366e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "contact_internal_current_spread_relative": {
+              "applicable": true,
+              "value": 2.4166196890316515e-06,
+              "limit": 2e-06,
+              "passed": false,
+              "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+              "source": "finite_step"
+            },
+            "trap_storage": {
+              "applicable": true,
+              "value": 0.03305902434178976,
+              "limit": 1.0,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "finite_numeric_evidence": {
+              "applicable": true,
+              "passed": true,
+              "nonfinite_numeric_paths": [],
+              "failure_reason": null,
+              "scope": "all_numeric_leaves_in_row_and_initial_event"
+            }
+          },
+          "passed": false,
+          "reasons": [
+            "contact_internal_current_spread_relative_exceeds_limit"
+          ],
+          "nonfinite_numeric_paths": []
+        },
+        "nonfinite_numeric_paths": [],
+        "maximum_trap_storage_error_A_m2": 4.402025990052647e-16,
+        "trap_storage": {
+          "checked_finite_step_count": 25,
+          "maximum_error_A_m2": 4.402025990052647e-16,
+          "maximum_step_charge_error_C_m2": 1.0895014325380302e-20,
+          "maximum_normalized_error": 0.03305902434178976,
+          "normalized_limit": 1.0,
+          "minimum_current_error_limit_A_m2": 3.3289144858978896e-15,
+          "maximum_current_error_limit_A_m2": 1e-10,
+          "certified": true,
+          "branch_counts": {
+            "all": {
+              "newton": 14,
+              "local_charge": 11,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap": {
+              "newton": 14,
+              "local_charge": 11,
+              "equal": 0,
+              "invalid": 0
+            },
+            "nontrivial": {
+              "newton": 14,
+              "local_charge": 11,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap_nontrivial": {
+              "newton": 14,
+              "local_charge": 11,
+              "equal": 0,
+              "invalid": 0
+            }
+          },
+          "branch_maxima": {
+            "all": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.03305902434178976,
+                "maximum_local_charge_ratio": 4.4020259900526465e-06,
+                "maximum_normalized_error": 0.03305902434178976
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 2.1159720057645897e-10,
+                "maximum_local_charge_ratio": 3.0993109658134175e-10,
+                "maximum_normalized_error": 3.0993109658134175e-10
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.03305902434178976,
+                "maximum_local_charge_ratio": 4.4020259900526465e-06,
+                "maximum_normalized_error": 0.03305902434178976
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 2.1159720057645897e-10,
+                "maximum_local_charge_ratio": 3.0993109658134175e-10,
+                "maximum_normalized_error": 3.0993109658134175e-10
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.03305902434178976,
+                "maximum_local_charge_ratio": 4.4020259900526465e-06,
+                "maximum_normalized_error": 0.03305902434178976
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 2.1159720057645897e-10,
+                "maximum_local_charge_ratio": 3.0993109658134175e-10,
+                "maximum_normalized_error": 3.0993109658134175e-10
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap_nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.03305902434178976,
+                "maximum_local_charge_ratio": 4.4020259900526465e-06,
+                "maximum_normalized_error": 0.03305902434178976
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 2.1159720057645897e-10,
+                "maximum_local_charge_ratio": 3.0993109658134175e-10,
+                "maximum_normalized_error": 3.0993109658134175e-10
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            }
+          },
+          "nontrivial_definition": "finite strictly positive raw trap-storage error",
+          "charge_scale_floor_active_step_count": 25,
+          "scope": "all_finite_accepted_steps_across_all_nested_levels"
+        }
+      },
+      "confirmation": {
+        "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+        "source_content_sha256": "e8993b3ecdff6df04825241f427aa51dbf6238fec377b8080b765ba6567fede4",
+        "manifest_sha256": "4097d85e3b200e388b776c0476016cd9dacc1de9508c3ae6b756aeaed11b0600",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "run_class": "formal",
+        "evidence_revision": 4,
+        "persisted_record_count": 28,
+        "persisted_finite_step_count": 25,
+        "physical_passed_finite_step_count": 24
+      },
+      "parent_confirmation_manifest_sha256": "32a8f1cd184f4656c43e708a6388a6e69a9169a2d831609c80ab0ac6d48b0b6e",
+      "raw_evidence": {
+        "path": "outputs/r1_2_closure/ladder_failures/D_n16_f1.0_a0.0003125",
+        "original_path": "/tmp/r1acc5/refute3/sweep3/D_n16_f1.0_a0.0003125",
+        "manifest_sha256": "4097d85e3b200e388b776c0476016cd9dacc1de9508c3ae6b756aeaed11b0600",
+        "artifacts": {
+          "ExecutionSourceV1.json": {
+            "sha256": "71615be23ad25ffd5a60f07ffba67216de9c791777e79a37dc30faa31f9fea2c",
+            "bytes": 40589
+          },
+          "ProtocolV1.json": {
+            "sha256": "4ab28c51b51f2418b7ff5e1a7c932ecc1f59d9e77b313fd9b4def915a1a4ed4c",
+            "bytes": 3619
+          },
+          "CompletionV1.json": {
+            "sha256": "11aebaf3c17ad4d5f7134158712bdff4d2d2889b280a73e407e444ef831fe736",
+            "bytes": 3541
+          },
+          "FailedResultV1.json": {
+            "sha256": "d1e1bb03d1144541d2659eb66833ab1cee5d36bebb1d70fcd6cb22dbc4191581",
+            "bytes": 311514
+          },
+          "AcceptedStepsV1.json": {
+            "sha256": "76c8f4673e9d44ba70ec16f1a7d1593b6cde5a53706ffd9a199e3ef00627c7d3",
+            "bytes": 267987
+          },
+          "SourceV1.zip": {
+            "sha256": "d35172d1724f0be1c82382968ebc59678a61502c338c5554a9d0974fa2445884",
+            "bytes": 5584578
+          }
+        }
+      }
+    },
+    {
+      "case_id": "base_d_n16_factor1p0_amplitude0p00015625",
+      "coverage_id": "four_new_failures_on_short_window_amplitude_ladder",
+      "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+      "control": "D",
+      "intervals": 16,
+      "nonlinear_factor": 1.0,
+      "amplitude_V": 0.00015625,
+      "times_s": [
+        0.0,
+        1e-09,
+        1e-08,
+        1e-06,
+        0.0001
+      ],
+      "refinement_substeps": [
+        1,
+        2,
+        4
+      ],
+      "phase": "finite_step",
+      "failure": "contact_internal_current_spread_relative_exceeds_limit",
+      "failure_reasons": [
+        "contact_internal_current_spread_relative_exceeds_limit"
+      ],
+      "observed_record_index": 12,
+      "observed_time_s": 5.05e-05,
+      "observed_dt_s": 4.9500000000000004e-05,
+      "observed_refinement_substeps": 2,
+      "observed_metric": 2.338788966732179e-06,
+      "limit": 2e-06,
+      "observed_checks": {
+        "gauss_normalized": {
+          "applicable": true,
+          "value": 2.1069465626162402e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "charge_balance_normalized": {
+          "applicable": true,
+          "value": 1.8204096308912963e-12,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "inventory_relative_drift": {
+          "applicable": true,
+          "value": 5.624389842751043e-13,
+          "limit": 1e-10,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "contact_internal_current_spread_relative": {
+          "applicable": true,
+          "value": 2.338788966732179e-06,
+          "limit": 2e-06,
+          "passed": false,
+          "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+          "source": "finite_step"
+        },
+        "trap_storage": {
+          "applicable": true,
+          "value": 0.033122588700645446,
+          "limit": 1.0,
+          "passed": true,
+          "failure_reason": null,
+          "source": "finite_step"
+        },
+        "finite_numeric_evidence": {
+          "applicable": true,
+          "passed": true,
+          "nonfinite_numeric_paths": [],
+          "failure_reason": null,
+          "scope": "all_numeric_leaves_in_row_and_initial_event"
+        }
+      },
+      "observed_physical_record": {
+        "full_charge_C_m2": -7.966092284613413e-11,
+        "interior_charge_C_m2": 9.761795168185749e-07,
+        "rho_C_m3": [
+          -639.3692521252425,
+          -594.9678222392685,
+          -489.6509310694144,
+          -285.03541822244387,
+          0.6218486020351219,
+          286.36060532323705,
+          491.09371766454535,
+          596.4646557571463,
+          -3.2616279051988886e-06,
+          -2.7587399598984514e-06,
+          -1.9291900022521406e-06,
+          -1.0582926710811876e-06,
+          -4.806316416764597e-07,
+          -1.854930347132537e-07,
+          -5.352617094555222e-08,
+          0.0
+        ],
+        "physical_displacement_C_m2": [
+          4.97056701465922e-05,
+          4.97055904856356e-05
+        ],
+        "gauss_error_C_m2": -3.3757005517103576e-17,
+        "gauss_normalized": 2.1069465626162402e-13,
+        "contact_electron_current_A_m2": [
+          -2.072828701719179e-07,
+          -2.0753893771243502e-07
+        ],
+        "contact_hole_current_A_m2": [
+          -1.5254931741882813e-07,
+          -1.5253253800643208e-07
+        ],
+        "contact_ion_current_A_m2": [
+          0.0,
+          0.0
+        ],
+        "contact_conduction_A_m2": [
+          -3.5983218759074604e-07,
+          -3.600714757188671e-07
+        ],
+        "contact_displacement_A_m2": [
+          -2.297811833118608e-07,
+          -2.2954076506931157e-07
+        ],
+        "contact_maxwell_A_m2": [
+          -5.896133709026068e-07,
+          -5.896122407881786e-07
+        ],
+        "internal_maxwell_A_m2": [
+          -5.896119919213603e-07,
+          -5.896122404374751e-07,
+          -5.896122408475322e-07,
+          -5.896122408504482e-07,
+          -5.89612240851941e-07,
+          -5.896122408265783e-07,
+          -5.896123050048062e-07,
+          -5.896122408016126e-07,
+          -5.896122407882522e-07,
+          -5.89612240788238e-07,
+          -5.896122407882389e-07,
+          -5.89612240788208e-07,
+          -5.896122407881945e-07,
+          -5.89612240788191e-07,
+          -5.896122407881786e-07
+        ],
+        "charge_rate_A_m2": 2.4110853775194893e-10,
+        "charge_balance_error_A_m2": 1.8204096308912963e-12,
+        "charge_balance_normalized": 1.8204096308912963e-12,
+        "contact_internal_current_spread_relative": 2.338788966732179e-06,
+        "trap_storage_error_A_m2": 2.205245102962157e-16,
+        "inventory_m2": 1000000000000562.5,
+        "inventory_relative_drift": 5.624389842751043e-13,
+        "trap_storage_check": {
+          "applicable": true,
+          "dt_s": 4.9500000000000004e-05,
+          "error_A_m2": 2.205245102962157e-16,
+          "charge_error_C_m2": 1.0915963259662677e-20,
+          "storage_scale_m2": 41.13934714307956,
+          "maximum_scaled_nonlinear_residual": 0.05,
+          "nonlinear_tolerances": {
+            "storage_relative_tolerance": 1e-09,
+            "carrier_storage_atol_m3": 1.0,
+            "interface_storage_atol_m2": 1.0,
+            "ion_storage_atol_m3": 1.0,
+            "poisson_relative_tolerance": 1e-10,
+            "poisson_atol_C_m2": 1e-18,
+            "interface_algebraic_relative_tolerance": 1e-10,
+            "interface_potential_atol_V": 1e-14,
+            "interface_gauss_atol_C_m2": 1e-18,
+            "interface_flux_atol_m2_s": 1.0
+          },
+          "nonlinear_charge_budget_C_m2": 3.295625036532837e-19,
+          "newton_consistency_ratio": 0.033122588700645446,
+          "newton_consistency_role": "consistency_with_existing_nonlinear_storage_tolerance",
+          "charge_balance_scale_A_m2": 1.0,
+          "charge_scale_before_floor_A_m2": 9.878517216942553e-07,
+          "charge_scale_floor_A_m2": 1.0,
+          "charge_scale_floor_active": true,
+          "charge_balance_relative_limit": 1e-10,
+          "conservation_charge_budget_C_m2": 4.95e-15,
+          "local_charge_ratio": 2.205245102962157e-06,
+          "local_charge_role": "single_interface_application_of_existing_whole_device_charge_budget",
+          "dominant_budget": "newton",
+          "trap_dynamics_active": true,
+          "charge_error_limit_C_m2": 3.295625036532837e-19,
+          "current_error_limit_A_m2": 6.657828356631993e-15,
+          "normalized_error": 0.033122588700645446,
+          "normalized_limit": 1.0,
+          "certified": true,
+          "failure_reason": null,
+          "budget_scope": "single_interface_storage_and_whole_device_charge_budget"
+        }
+      },
+      "certificate_at_failure": {
+        "certified": false,
+        "reasons": [
+          "contact_internal_current_spread_relative_exceeds_limit"
+        ],
+        "scope": "research_r1_1_common_state_controlled_ideal_step",
+        "failed_record_index": 12,
+        "physical_checks": {
+          "checks": {
+            "gauss_normalized": {
+              "applicable": true,
+              "value": 2.1069465626162402e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "charge_balance_normalized": {
+              "applicable": true,
+              "value": 1.8204096308912963e-12,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "inventory_relative_drift": {
+              "applicable": true,
+              "value": 5.624389842751043e-13,
+              "limit": 1e-10,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "contact_internal_current_spread_relative": {
+              "applicable": true,
+              "value": 2.338788966732179e-06,
+              "limit": 2e-06,
+              "passed": false,
+              "failure_reason": "contact_internal_current_spread_relative_exceeds_limit",
+              "source": "finite_step"
+            },
+            "trap_storage": {
+              "applicable": true,
+              "value": 0.033122588700645446,
+              "limit": 1.0,
+              "passed": true,
+              "failure_reason": null,
+              "source": "finite_step"
+            },
+            "finite_numeric_evidence": {
+              "applicable": true,
+              "passed": true,
+              "nonfinite_numeric_paths": [],
+              "failure_reason": null,
+              "scope": "all_numeric_leaves_in_row_and_initial_event"
+            }
+          },
+          "passed": false,
+          "reasons": [
+            "contact_internal_current_spread_relative_exceeds_limit"
+          ],
+          "nonfinite_numeric_paths": []
+        },
+        "nonfinite_numeric_paths": [],
+        "maximum_trap_storage_error_A_m2": 2.205245102962157e-16,
+        "trap_storage": {
+          "checked_finite_step_count": 11,
+          "maximum_error_A_m2": 2.205245102962157e-16,
+          "maximum_step_charge_error_C_m2": 1.0915963259662677e-20,
+          "maximum_normalized_error": 0.033122588700645446,
+          "normalized_limit": 1.0,
+          "minimum_current_error_limit_A_m2": 3.3289144865840476e-15,
+          "maximum_current_error_limit_A_m2": 1e-10,
+          "certified": true,
+          "branch_counts": {
+            "all": {
+              "newton": 8,
+              "local_charge": 3,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap": {
+              "newton": 8,
+              "local_charge": 3,
+              "equal": 0,
+              "invalid": 0
+            },
+            "nontrivial": {
+              "newton": 8,
+              "local_charge": 3,
+              "equal": 0,
+              "invalid": 0
+            },
+            "active_trap_nontrivial": {
+              "newton": 8,
+              "local_charge": 3,
+              "equal": 0,
+              "invalid": 0
+            }
+          },
+          "branch_maxima": {
+            "all": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.033122588700645446,
+                "maximum_local_charge_ratio": 2.205245102962157e-06,
+                "maximum_normalized_error": 0.033122588700645446
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 8.694245541744264e-13,
+                "maximum_local_charge_ratio": 5.7305941255731575e-12,
+                "maximum_normalized_error": 5.7305941255731575e-12
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.033122588700645446,
+                "maximum_local_charge_ratio": 2.205245102962157e-06,
+                "maximum_normalized_error": 0.033122588700645446
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 8.694245541744264e-13,
+                "maximum_local_charge_ratio": 5.7305941255731575e-12,
+                "maximum_normalized_error": 5.7305941255731575e-12
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.033122588700645446,
+                "maximum_local_charge_ratio": 2.205245102962157e-06,
+                "maximum_normalized_error": 0.033122588700645446
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 8.694245541744264e-13,
+                "maximum_local_charge_ratio": 5.7305941255731575e-12,
+                "maximum_normalized_error": 5.7305941255731575e-12
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            },
+            "active_trap_nontrivial": {
+              "newton": {
+                "maximum_newton_consistency_ratio": 0.033122588700645446,
+                "maximum_local_charge_ratio": 2.205245102962157e-06,
+                "maximum_normalized_error": 0.033122588700645446
+              },
+              "local_charge": {
+                "maximum_newton_consistency_ratio": 8.694245541744264e-13,
+                "maximum_local_charge_ratio": 5.7305941255731575e-12,
+                "maximum_normalized_error": 5.7305941255731575e-12
+              },
+              "equal": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              },
+              "invalid": {
+                "maximum_newton_consistency_ratio": null,
+                "maximum_local_charge_ratio": null,
+                "maximum_normalized_error": null
+              }
+            }
+          },
+          "nontrivial_definition": "finite strictly positive raw trap-storage error",
+          "charge_scale_floor_active_step_count": 11,
+          "scope": "all_finite_accepted_steps_across_all_nested_levels"
+        }
+      },
+      "confirmation": {
+        "observed_source_commit": "97d9ef3141c9fb433d534e8f769223ecfaaff6d2",
+        "source_content_sha256": "e8993b3ecdff6df04825241f427aa51dbf6238fec377b8080b765ba6567fede4",
+        "manifest_sha256": "c488461d2704b9a6314a1b214eadd18bf428a99d62b704956c01b4be53cd6863",
+        "failure_message": "R1 row failed physical gates: contact_internal_current_spread_relative_exceeds_limit",
+        "run_class": "formal",
+        "evidence_revision": 4,
+        "persisted_record_count": 13,
+        "persisted_finite_step_count": 11,
+        "physical_passed_finite_step_count": 10
+      },
+      "parent_confirmation_manifest_sha256": "32a8f1cd184f4656c43e708a6388a6e69a9169a2d831609c80ab0ac6d48b0b6e",
+      "raw_evidence": {
+        "path": "outputs/r1_2_closure/ladder_failures/D_n16_f1.0_a0.00015625",
+        "original_path": "/tmp/r1acc5/refute3/sweep3/D_n16_f1.0_a0.00015625",
+        "manifest_sha256": "c488461d2704b9a6314a1b214eadd18bf428a99d62b704956c01b4be53cd6863",
+        "artifacts": {
+          "ExecutionSourceV1.json": {
+            "sha256": "71615be23ad25ffd5a60f07ffba67216de9c791777e79a37dc30faa31f9fea2c",
+            "bytes": 40589
+          },
+          "ProtocolV1.json": {
+            "sha256": "cc5eecc96c93a613c1c38d4bb7c3baf5b7a501a129b41ecc31416d9dcfe1a4d0",
+            "bytes": 3620
+          },
+          "CompletionV1.json": {
+            "sha256": "f8de1f5f952552005eaa6ee7f9dcd4b898a52dcd4ae2811500f8b6b08a9719e7",
+            "bytes": 3542
+          },
+          "FailedResultV1.json": {
+            "sha256": "6f553363bba9cd08e844ba0d787df57373f00abfee793074745e45f5686d3b48",
+            "bytes": 159996
+          },
+          "AcceptedStepsV1.json": {
+            "sha256": "2dfe62bb717704da7d086605e8eddddfd5d91c38635355928a9d4cfbd2e1640a",
+            "bytes": 125913
+          },
+          "SourceV1.zip": {
+            "sha256": "d35172d1724f0be1c82382968ebc59678a61502c338c5554a9d0974fa2445884",
+            "bytes": 5584578
+          }
+        }
+      }
+    }
+  ]
+}

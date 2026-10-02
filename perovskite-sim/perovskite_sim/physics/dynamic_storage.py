@@ -36,6 +36,47 @@ def log_density_increment(
     return result
 
 
+def log_density_update(
+    previous_density: object,
+    log_coordinate_increment: object,
+) -> np.ndarray:
+    """Map a log increment to a positive density in single-word float64.
+
+    Near zero, add the resolved density increment to its reference. Outside
+    that fixed neighborhood, multiplication by exp avoids cancellation for
+    large negative increments. This does not promise universal correct rounding.
+    """
+    previous = np.asarray(previous_density, dtype=float)
+    increment = np.asarray(log_coordinate_increment, dtype=float)
+    if previous.shape != increment.shape:
+        raise DynamicStorageIncrementError(
+            "density and log-coordinate increments must have the same shape"
+        )
+    if (
+        not np.all(np.isfinite(previous))
+        or np.any(previous <= 0.0)
+        or not np.all(np.isfinite(increment))
+    ):
+        raise DynamicStorageIncrementError(
+            "density updates require positive finite density and finite coordinates"
+        )
+    near = np.abs(increment) <= 0.5
+    result = np.empty_like(previous)
+    intermediate = np.zeros_like(previous)
+    change = np.zeros_like(previous)
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        if np.any(near):
+            np.expm1(increment, out=intermediate, where=near)
+            np.multiply(previous, intermediate, out=change, where=near)
+            np.add(previous, change, out=result, where=near)
+        if np.any(~near):
+            np.exp(increment, out=intermediate, where=~near)
+            np.multiply(previous, intermediate, out=result, where=~near)
+    if not np.all(np.isfinite(result)) or np.any(result <= 0.0):
+        raise DynamicStorageIncrementError("density update is not positive and finite")
+    return result
+
+
 def logit_occupancy_increment(
     previous_occupancy: object,
     logit_coordinate_increment: object,
@@ -72,5 +113,6 @@ def logit_occupancy_increment(
 __all__ = [
     "DynamicStorageIncrementError",
     "log_density_increment",
+    "log_density_update",
     "logit_occupancy_increment",
 ]

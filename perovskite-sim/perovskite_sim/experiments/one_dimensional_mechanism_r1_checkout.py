@@ -1,0 +1,551 @@
+"""Content-bound R1 snapshots; trusted startup and approval remain separate."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+import difflib
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import shutil
+import tempfile
+from types import MappingProxyType
+from typing import Mapping
+import zipfile
+
+
+PROJECT_RELATIVE_PATH = "perovskite-sim"
+STUDY_INPUT_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json"
+ADDITIONAL_FAILURES_V2_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV2.json"
+PHYSICAL_STANDARD_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1PhysicalStandardV1.json"
+EXECUTION_STANDARD_RELATIVE_PATH = "reproducibility/OneDimensionalMechanismR1ExecutionStandardV1.json"
+_CHECKOUT_MODULE = "perovskite_sim/experiments/one_dimensional_mechanism_r1_checkout.py"
+_RUNNER = "scripts/run_one_dimensional_mechanism_r1_stage_one.py"
+_LAUNCHER = "scripts/run_one_dimensional_mechanism_r1_controlled.py"
+_ANCHORS = (
+    _CHECKOUT_MODULE,
+    _RUNNER,
+    _LAUNCHER,
+    "scripts/run_one_dimensional_mechanism_r1.py",
+    "scripts/run_one_dimensional_mechanism_r0.py",
+    STUDY_INPUT_RELATIVE_PATH,
+    "docs/OneDimensionalMechanismR1DynamicsV1.md",
+    "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
+)
+LEGACY_SOURCE_ANCHORS = _ANCHORS
+# One registry owns snapshot coverage, pins, and exported names. New R1
+# declarations must be classified here before a controlled checkout can run.
+R1_DECLARATIONS = {
+    EXECUTION_STANDARD_RELATIVE_PATH: ("execution_machine", "ExecutionStandardV1.json", "056895bfd60f8385daeda1b7c5d79786b9240918b3dbdfdb7d17657ac32d37bc"),
+    PHYSICAL_STANDARD_RELATIVE_PATH: ("acceptance_machine", "PhysicalStandardV1.json", "c918c3c3a4205e6e7cfc507f788ce0e308378a317f6ada6d3bb3862272d9d739"),
+    "docs/OneDimensionalMechanismR1QualificationV1.md": ("acceptance", "QualificationV1.md", "33a57053266f5efdb949177a3a175aa26f2d6bd65d9d54c768469d087946f218"),
+    "docs/OneDimensionalMechanismR1CurrentChecksV3.md": ("acceptance", "CurrentChecksV3.md", "5c51a874b2ca68e46c7431154481a733ed97086d2a666b41e03bc7a6a14c3cb6"),
+    "docs/OneDimensionalMechanismR1DynamicsV1.md": ("execution", "ExecutionContractV1.md", "7ff99d96a49010b7ea44d9be86d9df40fca664fbdbcff0735fc00d9c4e8f784e"),
+    "docs/OneDimensionalMechanismR1AdmittanceV1.md": ("reference", "AdmittanceV1.md", "c8a9132ed3fceb839e30c1c0b4cd46ed3b62f4f3ee93226418624748df7424f1"),
+    "docs/OneDimensionalMechanismR1GeometryV1.md": ("reference", "GeometryV1.md", "a00221bb11e111465e6164151351f0fe9c70c753d8d4958a6cbf1a22d743e6ee"),
+    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV1.md": ("superseded", "OperatorCriterionDecisionV1.md", "5593dfb1cf96893261932d5167d48ea104baf42425494feb9677c7e34d3c577b"),
+    "docs/OneDimensionalMechanismR1OperatorCriterionDecisionV2.md": ("superseded", "OperatorCriterionDecisionV2.md", "659acb61ad5c457626300bf980b7b2208d67779a2691fbdb14d628dc6aec96e6"),
+    "docs/OneDimensionalMechanismR1EvidenceV5.md": ("historical", "EvidenceV5.md", "f4855d46ef1861d54daa8959e1d047bd31b764d72dc6b25c1b38505452264a1f"),
+    "docs/OneDimensionalMechanismR1PhysicsProtocolV1.md": ("acceptance", "PhysicsProtocolV1.md", "db790c70b18ae6090f925051a46468f4d178dea534197ab3c7a95de0d8c25d67"),
+    "docs/OneDimensionalMechanismR1ResponseV1.md": ("acceptance", "ResponseV1.md", "f0f161d763d53c8a42a622379229dbb24688dc5164325980bb57384b716bbbdb"),
+    "docs/OneDimensionalMechanismR1SpatialV1.md": ("acceptance", "SpatialV1.md", "a56f3c22744b3f18dd5659f3b7883ac424b91f85b57c6b17cb359ecd62eba7bb"),
+    'docs/OneDimensionalMechanismR1StudyRequestV1.md': ("execution", "StudyRequestContractV1.md", '912c9a6c26b2ae31555838c4365b52cd0c8e8b8325c8cbbe1ed665aa7fae2e6a'),
+
+    "docs/InterfaceDefectTransientIncrementContract.md": ("method", "IncrementContractV1.md", "d379bdc36255836e54fbb2a4f736ba3e8a2f6acb2d0fac16a6fd5e0baa048e30"),
+    "docs/OneDimensionalMechanismR0ProtocolV1.md": ("historical", "R0ProtocolV1.md", "62c736f7d7512d20b7ddbdcf9fb276452014b7f98a287e669ff95e31be2e7726"),
+    "docs/OneDimensionalMechanismR1EvidenceBoundariesV3.md": ("evidence", "EvidenceBoundariesV3.md", "c54b1bdabbaa912fada0a12de8a22617f9b8aa247b0fb5f926fa4010e3c8b12d"),
+}
+REQUIRED_SOURCE_ANCHORS = (
+    *_ANCHORS,
+    "scripts/run_one_dimensional_mechanism_r1_physics_study.py",
+    "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json",
+    ADDITIONAL_FAILURES_V2_RELATIVE_PATH,
+    *(name for name in R1_DECLARATIONS if name not in _ANCHORS),
+    "tests/fixtures/OneDimensionalMechanismR1ReferenceBindingV1.json",
+    PHYSICAL_STANDARD_RELATIVE_PATH,
+    "scripts/inspect_one_dimensional_mechanism_r1_history.py",
+)
+# This registry governs supported data reads, regardless of directory or
+# extension. Adding an entry is a source change, not runtime self-approval.
+R1_SOURCE_DEPENDENCIES = {
+    **{name: "declaration:" + role for name, (role, _, _) in R1_DECLARATIONS.items()},
+    STUDY_INPUT_RELATIVE_PATH: "study_input",
+    "tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml": "fixture",
+    "tests/fixtures/OneDimensionalMechanismR1ReferenceBindingV1.json": "reference",
+    "reproducibility/OneDimensionalMechanismR1AdditionalFailuresV1.json": "historical_observations",
+    ADDITIONAL_FAILURES_V2_RELATIVE_PATH: "historical_observations",
+    PHYSICAL_STANDARD_RELATIVE_PATH: "physical_standard",
+    EXECUTION_STANDARD_RELATIVE_PATH: "execution_standard",
+}
+_CURRENT_CONTEXT = None
+
+
+class R1CheckoutError(ValueError):
+    """Formal R1 execution lacks the required tracked-checkout provenance."""
+
+
+@dataclass(frozen=True)
+class R1CheckoutContext:
+    root: Path
+    project: Path
+    commit: str
+    tracked_paths: tuple[str, ...]
+    required_sources: dict[str, dict[str, str | int]]
+    dirty: dict[str, bool]
+    run_class: str = "development"
+    source_commit: str | None = None
+    source_content_sha256: str | None = None
+    content_mismatches: tuple[str, ...] = ()
+    runtime: dict | None = None
+    _source_bytes: Mapping[str, bytes] = field(default_factory=dict, repr=False, compare=False)
+    _source_changes: bytes = field(default=b"", repr=False, compare=False)
+    _dependency_roles: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
+    _read_dependencies: dict = field(default_factory=dict, repr=False, compare=False)
+
+    @property
+    def study_input(self):
+        return self.project / STUDY_INPUT_RELATIVE_PATH
+
+    def read_bytes(self, path, *, role=None):
+        """Read a classified frozen dependency; never reopen a disk input.
+
+        This is the supported source/data interface, not an arbitrary Python
+        sandbox. An optional role must match the frozen registry entry.
+        """
+        path = Path(path)
+        if not path.is_absolute():
+            path = (self.root if path.parts[:1] == (PROJECT_RELATIVE_PATH,) else self.project) / path
+        try:
+            name = Path(os.path.abspath(path)).relative_to(self.root).as_posix()
+            relative = name.removeprefix(PROJECT_RELATIVE_PATH + "/")
+            roles = self._dependency_roles or R1_SOURCE_DEPENDENCIES
+            classification = roles.get(relative)
+            if classification is None and relative.endswith(".py") and name in self.required_sources:
+                classification = "execution_source"
+            if classification is None:
+                raise R1CheckoutError("R1 source read requires dependency classification: " + relative)
+            if role is not None and role != classification:
+                raise R1CheckoutError("R1 source dependency role mismatch: " + relative)
+            raw = self._source_bytes[name]
+            if classification != "execution_source":
+                self._read_dependencies[relative] = {"role": classification, **_identity(raw)}
+            return raw
+        except R1CheckoutError:
+            raise
+        except (ValueError, KeyError) as exc:
+            raise R1CheckoutError(f"path is absent from the frozen R1 source snapshot: {path}") from exc
+
+    def package_source_hashes(self):
+        prefix = PROJECT_RELATIVE_PATH + "/perovskite_sim/"
+        return {name[len(prefix):]: hashlib.sha256(raw).hexdigest()
+                for name, raw in sorted(self._source_bytes.items())
+                if name.startswith(prefix) and name.endswith(".py")}
+
+    def to_dict(self):
+        return {
+            "schema": "R1ExecutionSourceV2",
+            "repository_root": str(self.root),
+            "project_relative_path": PROJECT_RELATIVE_PATH,
+            "observed_commit": self.commit,
+            "source_commit": self.source_commit,
+            "source_content_sha256": self.source_content_sha256,
+            "run_class": self.run_class,
+            "dirty": dict(self.dirty),
+            "dirty_note": "Git status is advisory; required-source content is compared separately",
+            "status_scope": "advisory working-tree observation at capture",
+            "required_source_snapshot_matches_commit": not self.content_mismatches,
+            "archived_source_is_commit_snapshot": self.run_class == "formal",
+            "required_source_content_mismatches": list(self.content_mismatches),
+            "tracked_path_count": len(self.tracked_paths),
+            "required_sources": {name: dict(entry) for name, entry in self.required_sources.items()},
+            "runtime": self.runtime,
+            "scope": ("caller-anchored committed source snapshot; approval is separate"
+                      if self.run_class == "formal" else
+                      "development source snapshot; no controlled execution or independent approval asserted"),
+        }
+
+
+def current_execution_context():
+    """The trusted startup path installs this object directly, not through env."""
+    return _CURRENT_CONTEXT
+
+
+def declaration_coverage(source_bytes):
+    """Find R1 declarations without treating every imported library doc as a contract.
+
+    R1 entry points, R1 modules and the shared increment implementation are
+    the declared evidence readers. Literal document references in their code
+    or docstrings count, including subdirectories and non-R1 filenames.
+    Dynamic reads through the frozen context are checked again by read_bytes.
+    This is a contract-coverage rule, not a sandbox for arbitrary source code.
+    """
+    prefix = PROJECT_RELATIVE_PATH + "/"
+    declared = set()
+    for name, raw in source_bytes.items():
+        relative = name.removeprefix(prefix)
+        if relative in R1_DECLARATIONS and not relative.endswith(".md"):
+            declared.add(relative)
+        if relative.startswith("docs/") and Path(relative).name.startswith("OneDimensionalMechanismR1") and relative.endswith(".md"):
+            declared.add(relative)
+        reader = (
+            relative.startswith("scripts/run_one_dimensional_mechanism_r1")
+            or relative == "scripts/run_one_dimensional_mechanism_r0.py"
+            or (relative.startswith("perovskite_sim/experiments/")
+                and Path(relative).name.startswith("one_dimensional_mechanism_r1"))
+            or relative == "perovskite_sim/experiments/interface_defect_transient.py"
+        )
+        if reader and relative.endswith(".py"):
+            declared.update(re.findall(r"docs/[A-Za-z0-9_./-]+\.md", raw.decode("utf-8")))
+    return declared
+
+
+def _install_controlled_context(context, runtime):
+    global _CURRENT_CONTEXT
+    if not (sys.flags.isolated and sys.flags.no_site):
+        raise R1CheckoutError("controlled R1 execution must start with Python -I -S")
+    if not isinstance(context, R1CheckoutContext) or context.run_class != "formal":
+        raise R1CheckoutError("controlled startup requires a committed source context")
+    if _CURRENT_CONTEXT is not None:
+        raise R1CheckoutError("a controlled R1 context is already installed")
+    # Arbitrary replacement of Python objects or the launcher is not the threat
+    # model. There is deliberately no environment-variable authorization token.
+    _CURRENT_CONTEXT = replace(context, runtime=dict(runtime))
+    return _CURRENT_CONTEXT
+
+
+def git_environment():
+    """Ignore ambient redirects, config paths and object replacement refs."""
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    environment.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": os.devnull,
+                        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_NO_REPLACE_OBJECTS": "1",
+                        "GIT_OPTIONAL_LOCKS": "0"})
+    return environment
+
+
+def _git(directory, *arguments, input=None):
+    executable = shutil.which("git", path=os.defpath)
+    if executable is None:
+        raise R1CheckoutError("R1 research execution requires Git and a source checkout")
+    try:
+        completed = subprocess.run(
+            [executable, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull,
+             "-c", "core.excludesFile=" + os.devnull, "-C", str(directory), *arguments],
+            input=input, capture_output=True, check=False, env=git_environment(),
+        )
+    except OSError as exc:
+        raise R1CheckoutError("R1 research execution requires Git and a source checkout") from exc
+    if completed.returncode:
+        raise R1CheckoutError(
+            "R1 research execution requires a Git checkout with its tracked study input; "
+            "package-only and wheel installations are not formal execution contexts"
+        )
+    return completed.stdout
+
+
+def _commit_tree(root, commit):
+    entries = {}
+    for entry in _git(root, "ls-tree", "-r", "-z", "--full-tree", commit).split(b"\0"):
+        if entry:
+            metadata, name = entry.split(b"\t", 1)
+            entries[name.decode("utf-8")] = tuple(metadata.decode("ascii").split())
+    return entries
+
+
+def _commit_bytes(root, tree):
+    objects = list(dict.fromkeys(oid for mode, kind, oid in tree.values()
+                                if kind == "blob" and mode in ("100644", "100755")))
+    raw = _git(root, "cat-file", "--batch", input=("\n".join(objects) + "\n").encode())
+    blobs, cursor = {}, 0
+    for expected in objects:
+        end = raw.index(b"\n", cursor)
+        oid, kind, length = raw[cursor:end].decode("ascii").split()
+        length = int(length)
+        if oid != expected or kind != "blob":
+            raise R1CheckoutError("Git returned an unexpected source object")
+        cursor = end + 1
+        blobs[oid] = raw[cursor:cursor + length]
+        if len(blobs[oid]) != length or raw[cursor + length:cursor + length + 1] != b"\n":
+            raise R1CheckoutError("Git source object is truncated")
+        cursor += length + 1
+    return {name: blobs[oid] for name, (mode, kind, oid) in tree.items()
+            if kind == "blob" and mode in ("100644", "100755")}
+
+
+def _identity(raw):
+    return {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+
+def source_content_digest(entries):
+    """Canonical digest of the required repo-relative {sha256, bytes} map."""
+    return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _source_patch(original, captured):
+    pieces = []
+    for name in sorted(set(original) | set(captured)):
+        before, after = original.get(name, b""), captured.get(name, b"")
+        if before != after:
+            try:
+                pieces.extend(difflib.unified_diff(
+                    before.decode("utf-8").splitlines(keepends=True),
+                    after.decode("utf-8").splitlines(keepends=True),
+                    fromfile="a/" + name, tofile="b/" + name))
+            except UnicodeDecodeError:
+                pieces.append(f"Binary source differs: {name}\n")
+    return "".join(pieces).encode("utf-8")
+
+
+def _file_identity(path):
+    raw = path.read_bytes()
+    return {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+
+def _same_file(actual, expected):
+    try:
+        actual = Path(actual)
+        expected = Path(expected)
+        return actual.resolve() == expected.resolve() and actual.samefile(expected)
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _require_exact_path(actual, expected, label):
+    if not _same_file(actual, expected):
+        raise R1CheckoutError(f"{label} must use the expected tracked checkout path: {expected}")
+
+
+def _require_import_origins(project, tracked):
+    for name, module in tuple(sys.modules.items()):
+        if module is None or not (name == "perovskite_sim" or name.startswith("perovskite_sim.")):
+            continue
+        module_path = project.joinpath(*name.split("."))
+        package_paths = getattr(module, "__path__", None)
+        expected = module_path / "__init__.py" if package_paths is not None else module_path.with_suffix(".py")
+        actual = getattr(module, "__file__", None)
+        if not _same_file(actual, expected):
+            raise R1CheckoutError(f"unexpected imported package origin: {name}")
+        relative = expected.relative_to(project.parent).as_posix()
+        if relative not in tracked:
+            raise R1CheckoutError(f"imported package source is not tracked: {relative}")
+        if package_paths is not None:
+            paths = tuple(package_paths)
+            if len(paths) != 1 or not _same_file(paths[0], expected.parent):
+                raise R1CheckoutError(f"unexpected imported package search path: {name}")
+    for name in ("run_one_dimensional_mechanism_r1", "run_one_dimensional_mechanism_r0"):
+        module = sys.modules.get(name)
+        if module is not None:
+            _require_exact_path(getattr(module, "__file__", None), project / "scripts" / (name + ".py"), name)
+
+
+def require_r1_checkout(*, project=None, runner=None, formal=False, source_commit=None,
+                        expected_source_sha256=None):
+    """Capture development bytes or check content against a caller's commit.
+
+    Formal CLI output additionally requires controlled startup. New development
+    files must be declared to Git (intent-to-add is sufficient). Neither Git
+    index flags nor status authorize formal content or imply approval.
+    """
+    active = current_execution_context()
+    if active is not None:
+        if project is not None and Path(project).resolve() != active.project:
+            raise R1CheckoutError("project differs from the controlled source snapshot")
+        if runner is not None and Path(runner).resolve() != active.project / _RUNNER:
+            raise R1CheckoutError("runner differs from the controlled source snapshot")
+        if source_commit is not None and source_commit != active.source_commit:
+            raise R1CheckoutError("source commit differs from the controlled source snapshot")
+        if expected_source_sha256 is not None and expected_source_sha256 != active.source_content_sha256:
+            raise R1CheckoutError("source content differs from the caller anchor")
+        return active
+    module_file = Path(__file__).resolve()
+    root = Path(_git(module_file.parent, "rev-parse", "--show-toplevel").decode().strip()).resolve()
+    expected_project = root / PROJECT_RELATIVE_PATH
+    _require_exact_path(module_file, expected_project / _CHECKOUT_MODULE, "R1 checkout helper")
+    if expected_project.is_symlink() or not expected_project.resolve().is_relative_to(root):
+        raise R1CheckoutError("R1 project must be a physical directory in its tracked checkout")
+    if project is not None:
+        _require_exact_path(project, expected_project, "R1 project")
+    if runner is not None:
+        _require_exact_path(runner, expected_project / _RUNNER, "R1 runner")
+    head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    if source_commit is not None and (
+        not isinstance(source_commit, str) or len(source_commit) not in (40, 64)
+        or any(c not in "0123456789abcdef" for c in source_commit)
+    ):
+        raise R1CheckoutError("caller source commit must be a full lowercase Git object id")
+    if formal and source_commit is None:
+        raise R1CheckoutError("formal R1 execution requires an explicit caller source commit")
+    selected = source_commit or head
+    if formal and selected != head:
+        raise R1CheckoutError("checkout HEAD differs from the caller source commit")
+    tree = _commit_tree(root, selected)
+    committed = _commit_bytes(root, tree)
+    tracked = set(tree) if formal else {
+        value for value in _git(root, "ls-files", "--cached", "--full-name", "-z").decode().split("\0")
+        if value
+    }
+    package = expected_project / "perovskite_sim"
+    package_sources = set(package.rglob("*.py"))
+    prefix = PROJECT_RELATIVE_PATH + "/perovskite_sim/"
+    package_sources.update(root / name for name in committed
+                           if name.startswith(prefix) and name.endswith(".py"))
+    if not package_sources:
+        raise R1CheckoutError("R1 checkout has no package source coverage")
+    declaration_sources = dict(committed)
+    for path in [*package_sources, *(expected_project / name for name in REQUIRED_SOURCE_ANCHORS),
+                 *(expected_project / "docs").rglob("OneDimensionalMechanismR1*.md")]:
+        if path.is_file():
+            declaration_sources[path.relative_to(root).as_posix()] = path.read_bytes()
+    declaration_paths = declaration_coverage(declaration_sources)
+    if declaration_paths != set(R1_DECLARATIONS):
+        raise R1CheckoutError("R1 declaration registry coverage mismatch: " +
+                              ", ".join(sorted(declaration_paths ^ set(R1_DECLARATIONS))))
+    required_paths = (set(package_sources) | {expected_project / name for name in REQUIRED_SOURCE_ANCHORS}
+                      | {expected_project / name for name in R1_SOURCE_DEPENDENCIES})
+    required, disk = {}, {}
+    for path in sorted(required_paths):
+        relative = path.relative_to(root).as_posix()
+        if relative not in tracked or not path.is_file():
+            raise R1CheckoutError(f"required R1 execution source is not a tracked file: {relative}")
+        if path.is_symlink() or not path.resolve().is_relative_to(expected_project):
+            raise R1CheckoutError(f"R1 execution source escapes its canonical checkout path: {relative}")
+        disk[relative] = path.read_bytes()
+        required[relative] = _identity(disk[relative])
+    mismatches = tuple(name for name in sorted(required) if committed.get(name) != disk[name])
+    if formal and mismatches:
+        raise R1CheckoutError("required R1 source differs from caller commit blob: " + ", ".join(mismatches))
+    content_sha256 = source_content_digest(required)
+    if expected_source_sha256 is not None and content_sha256 != expected_source_sha256:
+        raise R1CheckoutError("required R1 source content differs from the caller SHA-256 anchor")
+    _require_import_origins(expected_project, tracked)
+    status = _git(root, "status", "--porcelain=v1", "--untracked-files=normal").decode().splitlines()
+    dirty = {
+        "staged": any(line[:1] not in (" ", "?") for line in status),
+        "unstaged": any(line[1:2] not in (" ", "?") for line in status),
+        "untracked": any(line.startswith("?? ") for line in status),
+    }
+    if formal:
+        captured, patch = committed, b""
+    else:
+        captured = {name: (root / name).read_bytes() for name in sorted(tracked)
+                    if (root / name).is_file() and not (root / name).is_symlink()}
+        captured.update(disk)
+        patch = _source_patch(committed, captured)
+        dirty["unstaged"] = bool(patch) or dirty["unstaged"]
+    return R1CheckoutContext(
+        root, expected_project, head, tuple(sorted(tracked)), required, dirty,
+        "formal" if formal else "development", selected, content_sha256, mismatches,
+        _source_bytes=MappingProxyType(dict(captured)), _source_changes=patch,
+        _dependency_roles=MappingProxyType(dict(R1_SOURCE_DEPENDENCIES)),
+    )
+
+
+def _atomic_bytes(path, raw):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".r1-source-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(raw)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def record_frozen_source(output, context):
+    """Save the captured/compiled byte map, without reopening disk sources."""
+    if not isinstance(context, R1CheckoutContext) or not context._source_bytes:
+        raise R1CheckoutError("a frozen source context is required")
+    output = Path(output)
+    entries = {name: _identity(raw) for name, raw in sorted(context._source_bytes.items())}
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=output, prefix=".r1-source-", delete=False) as stream:
+            temporary = Path(stream.name)
+            with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name, raw in sorted(context._source_bytes.items()):
+                    info = zipfile.ZipInfo(name)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    archive.writestr(info, raw)
+        os.replace(temporary, output / "SourceV1.zip")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    _atomic_bytes(output / "SourceManifestV1.json", (json.dumps(entries, indent=2) + "\n").encode())
+    _atomic_bytes(output / "SourceChangesV1.patch", context._source_changes)
+    _atomic_bytes(output / "ExecutionSourceV1.json", (json.dumps(context.to_dict(), indent=2) + "\n").encode())
+    validate_source_coverage(output, context)
+    return context
+
+
+def record_source_reads(output, context):
+    """Seal the supported data reads at completion, outside source identity.
+
+    Source identity is fixed before execution. This receipt reports reads made
+    by the trusted execution path; it cannot attest arbitrary external I/O.
+    """
+    if not isinstance(context, R1CheckoutContext) or not context._source_bytes:
+        raise R1CheckoutError("a frozen source context is required")
+    registry = {}
+    for relative, role in sorted((context._dependency_roles or R1_SOURCE_DEPENDENCIES).items()):
+        name = PROJECT_RELATIVE_PATH + "/" + relative
+        if name not in context.required_sources or name not in context._source_bytes:
+            raise R1CheckoutError("registered dependency lacks source coverage: " + relative)
+        registry[relative] = {"role": role, **_identity(context._source_bytes[name])}
+    report = {"schema": "R1SourceReadsV1", "source_commit": context.source_commit,
+              "registry": registry, "reads": dict(sorted(context._read_dependencies.items())),
+              "scope": "supported_frozen_data_reads; not_arbitrary_external_IO"}
+    _atomic_bytes(Path(output) / "SourceReadsV1.json", (json.dumps(report, indent=2) + "\n").encode())
+    return report
+
+
+def validate_source_coverage(output, context):
+    """Match captured evidence to the frozen required execution bytes."""
+    if not isinstance(context, R1CheckoutContext):
+        raise TypeError("context must come from require_r1_checkout")
+    if not context.required_sources:
+        raise R1CheckoutError("R1 checkout context has no required source coverage")
+    output = Path(output)
+    manifest_path = output / "SourceManifestV1.json"
+    try:
+        entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise R1CheckoutError("R1 source manifest is missing or invalid") from exc
+    if not isinstance(entries, dict) or not entries:
+        raise R1CheckoutError("R1 source manifest must be a nonempty object")
+    missing = set(context.required_sources) - entries.keys()
+    if missing:
+        raise R1CheckoutError("source coverage lacks required execution sources: " + ", ".join(sorted(missing)))
+    try:
+        with zipfile.ZipFile(output / "SourceV1.zip") as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)) or set(names) != set(entries):
+                raise R1CheckoutError("source archive and manifest coverage differ")
+            for name, expected in context.required_sources.items():
+                if entries[name] != expected:
+                    raise R1CheckoutError(f"source manifest identity mismatch: {name}")
+                if context._source_bytes and _identity(context._source_bytes[name]) != expected:
+                    raise R1CheckoutError(f"frozen execution source identity mismatch: {name}")
+                info = archive.getinfo(name)
+                if info.file_size != expected["bytes"]:
+                    raise R1CheckoutError(f"source archive identity mismatch: {name}")
+                if hashlib.sha256(archive.read(name)).hexdigest() != expected["sha256"]:
+                    raise R1CheckoutError(f"source archive identity mismatch: {name}")
+    except (OSError, zipfile.BadZipFile, KeyError) as exc:
+        raise R1CheckoutError("R1 source archive is missing or invalid") from exc
+    return {
+        "source_manifest_sha256": _file_identity(manifest_path)["sha256"],
+        "source_file_count": len(entries),
+        "required_execution_source_count": len(context.required_sources),
+        "certified": True,
+        "scope": "captured bytes match the frozen source snapshot; approval is separate",
+    }
+
+
+__all__ = ["R1CheckoutError", "R1CheckoutContext", "git_environment", "require_r1_checkout",
+           "current_execution_context", "record_frozen_source", "record_source_reads", "validate_source_coverage",
+           "R1_SOURCE_DEPENDENCIES", "PHYSICAL_STANDARD_RELATIVE_PATH",
+           "REQUIRED_SOURCE_ANCHORS", "source_content_digest"]
