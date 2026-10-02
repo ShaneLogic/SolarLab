@@ -4,6 +4,7 @@ from decimal import Decimal, localcontext
 import hashlib
 import json
 from types import SimpleNamespace
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -111,22 +112,24 @@ def synthetic(monkeypatch):
     monkeypatch.setattr(local, "_material_two_sided_interface_problem", problem)
     working, saved = lift.from_saved_step(system, previous)
 
-    def evaluate(z):
+    def evaluate(z, *, active=None, prior=None):
         """Exercise the actual operator hooks on a bounded synthetic layout."""
-        qn, qp, phi, n, p, occupancy, trace, logs = working._coordinates(z, 0.)
-        positive, _ = working._ion_coordinates(z)
-        states, aggregate = working._local_states(n, p, phi, occupancy, trace, logs,
-            trace_density_m3=working._trace_density_coordinates(z))
-        source = working._source(n, p, phi, 0., aggregate)
-        tn, tp, jn, jp = working._currents(qn, qp, phi, n, p, states)
-        working._carrier_rate_fields(source, tn, tp, states)
-        irate, _, iflux, _ = working._ion_fields(phi, positive, None)
-        skeleton = replace(previous, coordinate=z.copy(), dqfn=qn, dqfp=qp, phi=phi, n=n, p=p,
+        operator = working if active is None else active
+        reference = previous if prior is None else prior
+        qn, qp, phi, n, p, occupancy, trace, logs = operator._coordinates(z, 0.)
+        positive, _ = operator._ion_coordinates(z)
+        states, aggregate = operator._local_states(n, p, phi, occupancy, trace, logs,
+            trace_density_m3=operator._trace_density_coordinates(z))
+        source = operator._source(n, p, phi, 0., aggregate)
+        tn, tp, jn, jp = operator._currents(qn, qp, phi, n, p, states)
+        operator._carrier_rate_fields(source, tn, tp, states)
+        irate, _, iflux, _ = operator._ion_fields(phi, positive, None)
+        skeleton = replace(reference, coordinate=z.copy(), dqfn=qn, dqfp=qp, phi=phi, n=n, p=p,
             occupancy=occupancy, local=states, positive=positive, positive_rate=irate,
             positive_flux=iflux, current_n=jn, current_p=jp, positive_current=Q*iflux,
             carrier_conduction=jn+jp, conduction=jn+jp+Q*iflux)
-        result = working._with_step_electrostatics(skeleton)
-        working._input_lift_work = None
+        result = operator._with_step_electrostatics(skeleton)
+        operator._input_lift_work = None
         return result, source, aggregate
     return system, previous, working, saved, evaluate
 
@@ -148,8 +151,6 @@ def test_adapter_retains_saved_inputs_without_evaluation_or_aliasing(synthetic, 
         state.input_lift["n_m3"] = DD(0.)
     with pytest.raises(ValueError):
         state.input_lift["n_m3"].lo[0] = 1.
-    with pytest.raises(TypeError, match="one explicitly restored step"):
-        working.rebase(saved)
     with pytest.raises(TypeError):
         lift.from_saved_step(working, saved)
 
@@ -303,3 +304,133 @@ def test_adapter_rejects_unhandled_density_dependent_generation(synthetic):
     original.system.source_mat.has_radiative_reabsorption = True
     with pytest.raises(ValueError, match="radiative reabsorption"):
         lift.from_saved_step(original, previous)
+
+
+def test_accepted_rebase_keeps_every_word_identity_and_fixed_scales(synthetic, monkeypatch):
+    _, _, working, _, evaluate = synthetic
+    z = np.arange(15)*2.**-63
+    accepted, _, _ = evaluate(z)
+    words, old_identity = lift._words(accepted.input_lift), accepted.coordinate_reference_identity
+    monkeypatch.setattr(ControlledPhysicalInterfaceIonSystem, "evaluate",
+                        lambda *a: pytest.fail("accepted rebase evaluated physics"))
+    rebased, previous = working.rebase(accepted)
+    assert rebased is not working and previous is not accepted
+    assert rebased._step_reference is previous
+    assert lift._words(previous.input_lift) == words
+    assert lift._words(accepted.input_lift) == words
+    assert accepted.coordinate_reference_identity == old_identity
+    np.testing.assert_array_equal(accepted.coordinate, z)
+    np.testing.assert_array_equal(previous.coordinate, 0.)
+    expected_identity = lift._identity({name: accepted.input_lift[name] for name in lift.PRIMARY_FIELDS})
+    assert previous.coordinate_reference_identity == expected_identity != old_identity
+    assert rebased._input_lift_reference_identity == expected_identity
+    assert rebased.reference_n is working.reference_n
+    assert rebased.reference_p is working.reference_p
+    assert rebased.reference_local_scale is working.reference_local_scale
+    assert rebased.thermal_voltage == working.thermal_voltage
+    previous.phi[1] += 1.
+    assert accepted.phi[1] != previous.phi[1]
+    assert rebased.input_lift_contract["initialization_evaluations"] == 0
+
+
+def test_consecutive_rebases_accumulate_low_inputs_without_rounding(synthetic):
+    _, _, working, saved, evaluate = synthetic
+    first_z, second_z = np.zeros(15), np.zeros(15)
+    first_z[[0, 7, 11]], second_z[[0, 7, 11]] = 2.**-60, 3*2.**-61
+    first, _, _ = evaluate(first_z)
+    next_system, local_first = working.rebase(first)
+    second, _, _ = evaluate(second_z, active=next_system, prior=local_first)
+    final_system, local_second = next_system.rebase(second)
+    zero, _, _ = evaluate(np.zeros(15), active=final_system, prior=local_second)
+    for name in lift.PRIMARY_FIELDS:
+        np.testing.assert_array_equal(zero.input_lift[name].hi, second.input_lift[name].hi)
+        np.testing.assert_array_equal(zero.input_lift[name].lo, second.input_lift[name].lo)
+    with localcontext() as context:
+        context.prec = 90
+        exponent = sum(decimal(z[0])+decimal(z[7]) for z in (first_z, second_z))
+        expected_n = decimal(saved.n[1])*exponent.exp()
+        expected_phi = decimal(saved.phi[1])+decimal(working.thermal_voltage)*sum(decimal(z[7]) for z in (first_z, second_z))
+        assert abs(represented(second.input_lift["n_m3"][1])-expected_n) < Decimal("1e-30")
+        assert abs(represented(second.input_lift["phi_V"][1])-expected_phi) < Decimal("1e-32")
+    assert second.input_lift["n_m3"].lo[1] != first.input_lift["n_m3"].lo[1]
+    np.testing.assert_array_equal(second.n, saved.n)
+    np.testing.assert_array_equal(final_system.storage_increment(zero, local_second), 0.)
+
+
+def test_rebase_retains_incremental_electrostatic_low_anchors(synthetic):
+    _, _, working, _, evaluate = synthetic
+    accepted, _, _ = evaluate(np.zeros(15))
+    values = dict(accepted.input_lift)
+    values["poisson_residual_C_m2"] = DD([1., 2.], [2.**-60, -2.**-61])
+    values["local_residual"] = lift.put(values["local_residual"], slice(0, 2), DD([3., 4.], [2.**-61, -2.**-62]))
+    accepted = replace(accepted, input_lift=MappingProxyType(values),
+        poisson_residual=values["poisson_residual_C_m2"].hi.copy(),
+        local_residual=values["local_residual"].hi.copy())
+    rebased, previous = working.rebase(accepted)
+    state, _, _ = evaluate(np.zeros(15), active=rebased, prior=previous)
+    for name, selection in (("poisson_residual_C_m2", slice(None)), ("local_residual", slice(0, 2))):
+        np.testing.assert_array_equal(state.input_lift[name][selection].hi, values[name][selection].hi)
+        np.testing.assert_array_equal(state.input_lift[name][selection].lo, values[name][selection].lo)
+    z = np.zeros(15)
+    z[7] = 2.**-61
+    changed, _, _ = evaluate(z, active=rebased, prior=previous)
+    dphi = changed.input_lift["phi_V"]-previous.input_lift["phi_V"]
+    delta = changed.input_lift["storage"]-previous.input_lift["storage"]
+    rho = DD(Q)*(delta[2:4]-delta[:2])
+    expected = values["poisson_residual_C_m2"]+lift.diff(lift.diff(dphi))+rho
+    np.testing.assert_array_equal(changed.input_lift["poisson_residual_C_m2"].hi, expected.hi)
+    np.testing.assert_array_equal(changed.input_lift["poisson_residual_C_m2"].lo, expected.lo)
+
+
+def test_rebase_drops_old_voltage_lift_and_builds_from_new_reference(synthetic, monkeypatch):
+    from perovskite_sim.solver import mol
+    _, _, working, _, evaluate = synthetic
+    accepted, _, _ = evaluate(np.zeros(15))
+    working._lift, working._trace_lift = np.ones(4), np.ones((1, 2))
+    working._lift_displacement, working._lift_free_residual = 4., True
+    rebased, previous = working.rebase(accepted)
+    for name in ("_lift", "_trace_lift", "_lift_displacement", "_lift_free_residual"):
+        assert not hasattr(rebased, name)
+    monkeypatch.setattr(mol, "poisson_right_boundary", lambda material, voltage: .5+voltage)
+    rebased.set_voltage_lift(.125, previous)
+    np.testing.assert_array_equal(rebased._lift, .125*np.arange(4)/3)
+    assert rebased._lift[-1] == .125
+    next_system, next_previous = rebased.rebase(previous)
+    next_system.set_voltage_lift(0., next_previous)
+    np.testing.assert_array_equal(next_system._lift, 0.)
+    np.testing.assert_array_equal(next_system._trace_lift, 0.)
+    np.testing.assert_array_equal(working._lift, 1.)
+
+
+def test_explicit_constructor_lifts_baseline_seed_without_solving(synthetic, monkeypatch):
+    original, previous, _, _, _ = synthetic
+    monkeypatch.setattr(ControlledPhysicalInterfaceIonSystem, "evaluate", lambda *a: pytest.fail("constructor solved"))
+    system = lift.RebasedInputLiftR1System(original, previous)
+    saved = system._step_reference
+    assert isinstance(saved, lift.InputLiftState)
+    assert system.input_lift_contract["scope"] == "accepted_state_continuation"
+    assert system.input_lift_contract["seed_representation"] == "float64-baseline"
+    assert not hasattr(system, "_lift")
+    for name in lift.PRIMARY_FIELDS:
+        np.testing.assert_array_equal(saved.input_lift[name].lo, 0.)
+    assert original._step_reference is previous
+    with pytest.raises(TypeError, match="cannot replace"):
+        system.rebase(previous)
+
+
+def test_continuation_rejects_incoherent_or_incomplete_accepted_state(synthetic):
+    _, _, working, _, evaluate = synthetic
+    accepted, _, _ = evaluate(np.zeros(15))
+    with pytest.raises(ValueError, match="disagrees"):
+        working.rebase(replace(accepted, n=accepted.n+1.))
+    incomplete = dict(accepted.input_lift)
+    del incomplete["poisson_residual_C_m2"]
+    with pytest.raises(ValueError, match="poisson_residual_C_m2"):
+        working.rebase(replace(accepted, input_lift=MappingProxyType(incomplete)))
+    working._input_lift_work = dict(accepted.input_lift)
+    with pytest.raises(RuntimeError, match="in progress"):
+        working.rebase(accepted)
+    working._input_lift_work = None
+    working.system.source_mat.carrier_params = {"carrier_statistics": "fermi_dirac"}
+    with pytest.raises(ValueError, match="Maxwell-Boltzmann"):
+        working.rebase(accepted)

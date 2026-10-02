@@ -1,8 +1,9 @@
-"""Explicit frozen-step prototype retaining rebased inputs before local DD.
+"""Explicit accepted-state operator retaining rebased inputs before local DD.
 
 This is a numerical representation experiment, not the production pair backend.
 ``from_saved_step`` copies an already restored, rebased binary64 system/state;
-it performs no evaluation, initialization, DC solve or nonlinear correction.
+``from_accepted_state`` starts the next reference from its represented words.
+Neither performs evaluation, initialization, a DC solve or nonlinear correction.
 The original Newton step and acceptance policy remain the caller's responsibility.
 
 Primary fields are lifted directly from the saved binary64 reference and the
@@ -114,15 +115,21 @@ def _recombination(system, n, p):
 
 
 class RebasedInputLiftR1System(ControlledPhysicalInterfaceIonSystem):
-    """Opt-in one-step operator; construction and trajectory rebasing are blocked."""
+    """Opt-in operator initialized from an explicit, already accepted state.
+
+    Construction establishes a zero-coordinate reference and does not solve or
+    certify the supplied state. The caller retains the original scaling system
+    and chooses the next voltage through ``set_voltage_lift`` before stepping.
+    """
 
     operator_representation = REPRESENTATION
 
-    def __init__(self, *args, **kwargs):
-        raise TypeError("use from_saved_step with an already restored baseline step")
+    def __init__(self, system, previous):
+        working, _ = from_accepted_state(system, previous)
+        self.__dict__.update(working.__dict__)
 
     def rebase(self, previous):
-        raise TypeError("input-lift prototype is scoped to one explicitly restored step")
+        return from_accepted_state(self, previous)
 
     def evaluate(self, coordinate, voltage):
         if self._input_lift_work is not None:
@@ -240,7 +247,7 @@ class RebasedInputLiftR1System(ControlledPhysicalInterfaceIonSystem):
         dphi = value["phi_V"]-primary_inputs(previous)["phi_V"]
         if hasattr(self, "_lift"):
             dphi = dphi-DD(self._lift)
-        poisson = DD(previous.poisson_residual)+diff(DD(self.material.poisson_factor.C)*diff(dphi))
+        poisson = primary_inputs(previous)["poisson_residual_C_m2"]+diff(DD(self.material.poisson_factor.C)*diff(dphi))
         poisson = poisson+rho[1:-1]*DD(self.material.poisson_factor.h_cell)
         local_rows = []
         for index, (left, right, item) in enumerate(zip(self.left_nodes, self.right_nodes, state.local)):
@@ -251,7 +258,7 @@ class RebasedInputLiftR1System(ControlledPhysicalInterfaceIonSystem):
             if hasattr(self, "_trace_lift"):
                 trace = trace-DD(self._trace_lift[index])
             cl, cr = self._trace_capacitances(index)
-            before = DD(previous.local_residual[6*index:6*index+2])
+            before = primary_inputs(previous)["local_residual"][6*index:6*index+2]
             electrostatic = before+cat(trace[1]-trace[0], DD(cl)*(trace[0]-dphi[left])
                                       +DD(cr)*(trace[1]-dphi[right])+DD(Q)*occupied[index])
             local_rows.append(cat(electrostatic, carrier_data(item).balance["residual_m2_s"]))
@@ -354,14 +361,8 @@ class RebasedInputLiftR1System(ControlledPhysicalInterfaceIonSystem):
                 "scaled_residual_vector": residual.tolist(), "diagnostics": diagnostics}
 
 
-def from_saved_step(system, previous):
-    """Adapt an already rebased baseline step, without any physical evaluation."""
-    if type(system) is not ControlledPhysicalInterfaceIonSystem:
-        raise TypeError("input lift accepts only the explicit restored baseline system")
-    if system._step_reference is not previous or np.any(previous.coordinate != 0):
-        raise ValueError("input lift requires the exact zero-coordinate restored step reference")
-    if getattr(previous, "fine", None) is not None or hasattr(previous, "input_lift"):
-        raise TypeError("a fine or already lifted state cannot be relabeled as a binary64 seed")
+def _require_supported_model(system, previous):
+    """Shared opt-in model boundary for the original and continuous adapters."""
     mat = system.material
     if (mat.has_dual_ions or not mat.ion_steric_diffusion_only or system.negative_nodes.size
             or previous.negative is not None):
@@ -378,6 +379,21 @@ def from_saved_step(system, previous):
     if (getattr(source, "has_selective_contacts", False) or params.get("het_recomb_despike", 0.) != 0.
             or getattr(source, "has_radiative_reabsorption", False)):
         raise ValueError("input lift requires pinned contacts, unmodified bulk recombination densities and no radiative reabsorption")
+
+
+def from_saved_step(system, previous):
+    """Adapt an already rebased baseline step, without any physical evaluation.
+
+    This original entry point retains an already prepared voltage lift. For a
+    new accepted-state reference use ``from_accepted_state`` instead.
+    """
+    if type(system) is not ControlledPhysicalInterfaceIonSystem:
+        raise TypeError("input lift accepts only the explicit restored baseline system")
+    if system._step_reference is not previous or np.any(previous.coordinate != 0):
+        raise ValueError("input lift requires the exact zero-coordinate restored step reference")
+    if getattr(previous, "fine", None) is not None or hasattr(previous, "input_lift"):
+        raise TypeError("a fine or already lifted state cannot be relabeled as a binary64 seed")
+    _require_supported_model(system, previous)
     primary = {name: DD(getattr(previous, attribute)) for name, attribute in
                (("n_m3", "n"), ("p_m3", "p"), ("phi_V", "phi"), ("dqfn_V", "dqfn"),
                 ("dqfp_V", "dqfp"), ("occupancy", "occupancy"), ("positive_m3", "positive"))}
@@ -411,8 +427,119 @@ def from_saved_step(system, previous):
     return working, saved
 
 
+def _accepted_values(system, previous):
+    """Require coherent public primary views without replacing represented words."""
+    value = primary_inputs(previous)
+    if any(not isinstance(item, DD) for item in value.values()):
+        raise ValueError("every represented input-lift field must be DD")
+    node, interface = system.node_count, system.interface_count
+    storage_count = 2*system.interior_count+interface+system.positive_nodes.size
+    shapes = {name: (node,) for name in ("n_m3", "p_m3", "phi_V", "dqfn_V", "dqfp_V", "positive_m3")}
+    shapes.update(occupancy=(interface,), trace_potential_V=(interface, 2),
+                  trace_state_m3=(interface, 4), storage=(storage_count,), rate=(storage_count,),
+                  sheet_charge_C_m2=(interface,), poisson_residual_C_m2=(system.interior_count,),
+                  local_residual=(6*interface,), electron_current_A_m2=(node-1,),
+                  hole_current_A_m2=(node-1,), positive_flux_m2_s=(node-1,),
+                  positive_rate_m3_s=(node,))
+    for name, shape in shapes.items():
+        if name not in value or value[name].shape != shape:
+            raise ValueError(f"accepted input-lift field {name} must have shape {shape}")
+    public = {"n_m3": previous.n, "p_m3": previous.p, "phi_V": previous.phi,
+              "dqfn_V": previous.dqfn, "dqfp_V": previous.dqfp,
+              "occupancy": previous.occupancy, "positive_m3": previous.positive,
+              "trace_potential_V": np.asarray([item.trace_potential for item in previous.local]),
+              "trace_state_m3": np.asarray([item.state_m3 for item in previous.local]),
+              "poisson_residual_C_m2": previous.poisson_residual,
+              "local_residual": previous.local_residual, "storage": previous.storage,
+              "rate": previous.rate, "sheet_charge_C_m2": previous.sheet_charge,
+              "electron_current_A_m2": previous.current_n, "hole_current_A_m2": previous.current_p,
+              "positive_flux_m2_s": previous.positive_flux, "positive_rate_m3_s": previous.positive_rate}
+    for name, array in public.items():
+        if not np.array_equal(value[name].hi, array):
+            raise ValueError(f"accepted input-lift field {name} disagrees with its public high words")
+    assembled = {"storage": _storage(system, value),
+                 "sheet_charge_C_m2": -DD(Q)*DD(system.trap_density)*(value["occupancy"]-DD(system.equilibrium_occupancy))}
+    for name, actual in assembled.items():
+        if not (np.array_equal(actual.hi, value[name].hi) and np.array_equal(actual.lo, value[name].lo)):
+            raise ValueError(f"accepted {name} is inconsistent with the primary words")
+    if any(np.any(value[name].hi <= 0.) for name in ("n_m3", "p_m3", "trace_state_m3")):
+        raise ValueError("accepted carrier and trace densities must remain positive")
+    if np.any((value["occupancy"].hi <= 0.) | (value["occupancy"].hi >= 1.)):
+        raise ValueError("accepted interface occupancy must remain in (0, 1)")
+    coordinate = np.asarray(previous.coordinate)
+    if coordinate.shape != (system.dimension,) or not np.isfinite(coordinate).all():
+        raise ValueError("accepted coordinate must be a finite vector of system dimension")
+    return value
+
+
+def from_accepted_state(system, previous):
+    """Create the next zero-coordinate reference, preserving every saved DD word.
+
+    A binary64 seed is explicitly lifted once. An already lifted state is never
+    reconstructed from its rounded public arrays: primary, storage and saved
+    incremental electrostatic anchors all retain their high and low words.
+    Acceptance remains the caller's responsibility; this is not a cold start,
+    a backend relabeling or a nonlinear correction.
+    """
+    if type(system) not in (ControlledPhysicalInterfaceIonSystem, RebasedInputLiftR1System):
+        raise TypeError("accepted input lift requires an explicit baseline or input-lift system")
+    if not isinstance(previous, _InterfaceIonDeviceState) or getattr(previous, "fine", None) is not None:
+        raise TypeError("accepted input lift requires a baseline or InputLiftState, not a pair state")
+    if getattr(system, "_input_lift_work", None) is not None:
+        raise RuntimeError("cannot rebase an input-lift evaluation in progress")
+    _require_supported_model(system, previous)
+    lifted = isinstance(previous, InputLiftState)
+    if not lifted and type(system) is not ControlledPhysicalInterfaceIonSystem:
+        raise TypeError("an input-lift trajectory cannot replace its accepted state with binary64")
+    if not lifted and hasattr(previous, "input_lift"):
+        raise TypeError("unrecognized represented state cannot be relabeled as a binary64 seed")
+    value = _accepted_values(system, previous) if lifted else None
+    # Invoke the existing physical/ion rebasing implementation directly. It
+    # resets the Newton coordinate and high-word reference views, retaining
+    # the original carrier/local error scales and inventory targets.
+    working, local = ControlledPhysicalInterfaceIonSystem.rebase(system, previous)
+    for name in ("_lift", "_trace_lift", "_lift_displacement", "_lift_free_residual"):
+        working.__dict__.pop(name, None)
+    if not lifted:
+        working, local = from_saved_step(working, local)
+        value = local.input_lift
+        local.storage = value["storage"].hi.copy()
+        local.sheet_charge = value["sheet_charge_C_m2"].hi.copy()
+    else:
+        # The mutable public views are copied so the new reference cannot be
+        # changed by later callers retaining the accepted state's arrays.
+        local = InputLiftState(**{f.name: copy.deepcopy(getattr(local, f.name))
+                                  for f in fields(_InterfaceIonDeviceState)},
+                               input_lift=MappingProxyType({key: item.copy() for key, item in value.items()}))
+        working.__class__ = RebasedInputLiftR1System
+    primary = {name: value[name].copy() for name in PRIMARY_FIELDS}
+    identity = _identity(primary)
+    local.coordinate_reference_identity = identity
+    working._step_reference = local
+    working._input_lift_reference = MappingProxyType(primary)
+    working._input_lift_reference_identity = identity
+    working._input_lift_work = None
+    # Rebind copied public references as well. DD fields themselves own
+    # immutable storage, so sharing their words cannot alter either state.
+    working.dqfn_dc, working.dqfp_dc = local.dqfn, local.dqfp
+    working.reference_phi, working.reference_positive = local.phi, local.positive
+    working.reference_negative = local.negative
+    working.reference_trace_potential = np.asarray([item.trace_potential for item in local.local])
+    working.reference_trace_log_state = np.log(np.asarray([item.state_m3 for item in local.local]))
+    working.input_lift_contract = MappingProxyType({
+        "operator_representation": REPRESENTATION,
+        "seed_representation": REPRESENTATION if lifted else "float64-baseline",
+        "scope": "accepted_state_continuation", "reference_identity": identity,
+        "previous_coordinate_reference_identity": getattr(previous, "coordinate_reference_identity", None),
+        "initialization_evaluations": 0, "saved_primary_words": "exact_high_and_low_words",
+        "previous_derived_fields": "saved_high_and_low_words_preserved",
+        "voltage_lift": "cleared_for_next_target", "fixed_error_scales": "retained",
+        "bulk_jacobian": "existing_binary64_sparse_approximation", "newton_solver": "original_solve_step"})
+    return working, local
+
+
 def snapshot(system, state):
-    """Explicit prototype record; never emits the full-pair or baseline label."""
+    """Explicit represented-state record; never emits a pair or baseline label."""
     from .one_dimensional_mechanism_r1_state import _snapshot_legacy
     return {"schema": "R1InputLiftStateV1", "operator_representation": REPRESENTATION,
             "coordinate_reference_identity": state.coordinate_reference_identity,
@@ -446,4 +573,4 @@ def independent_physics_row(system, state, previous, dt, *, reported=None):
 
 
 __all__ = ["REPRESENTATION", "PRIMARY_FIELDS", "InputLiftState", "RebasedInputLiftR1System",
-           "from_saved_step", "primary_inputs", "snapshot", "independent_currents", "independent_physics_row"]
+           "from_saved_step", "from_accepted_state", "primary_inputs", "snapshot", "independent_currents", "independent_physics_row"]
