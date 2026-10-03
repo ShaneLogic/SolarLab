@@ -146,6 +146,20 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
 
     def _ion_fields(self, phi, positive, negative):
         if self.controls.nu_I:
+            if (type(self) is ControlledPhysicalInterfaceIonSystem
+                    and negative is None and not self.material.has_dual_ions
+                    and self.material.ion_steric_diffusion_only):
+                from perovskite_sim.physics.compensated import DD
+                from .one_dimensional_mechanism_r1_precision import cat, diff, ion_flux_pair
+                # These are the actual one-word physical inputs. DD only
+                # retains intermediate SG/FV cancellation; no coordinate,
+                # reference-root or persistent state low words enter here.
+                flux = ion_flux_pair(DD(np.asarray(phi, dtype=float)),
+                    DD(np.asarray(positive, dtype=float)), self.material, np.diff(self.grid))
+                rate = -diff(cat(0., flux, 0.))/DD(self.widths)
+                return rate.to_float(), None, flux.to_float(), None
+            # Keep the original super path for pair/input-lift initialization
+            # and for models outside this fixed positive-ion steric scope.
             return super()._ion_fields(phi, positive, negative)
         return (
             np.zeros_like(positive),

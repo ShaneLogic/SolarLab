@@ -22,6 +22,10 @@ SHARED_CONSTITUTIVE_DEPENDENCIES = (
     "two_sided_interface_compensated.evaluate_local_carrier_pair",
     "compensated.DD",
 )
+STABLE_BASELINE_ION_DEPENDENCY = (
+    "one_dimensional_mechanism_r1_global_reference."
+    "evaluate_independent_saved_high_ion_transport"
+)
 METRIC_LIMITS = {
     "internal_face_current_spread_relative": 2e-6,
     "contact_internal_current_spread_relative": 2e-6,
@@ -100,6 +104,13 @@ def _interface_balance(system, state, index):
     return independent_interface_evaluation(system, state, index).production_tangent().balance
 
 
+def _uses_stable_baseline_ion_transport(system):
+    from .one_dimensional_mechanism_r1_dynamics import ControlledPhysicalInterfaceIonSystem
+    return (type(system) is ControlledPhysicalInterfaceIonSystem
+            and not system.material.has_dual_ions
+            and system.material.ion_steric_diffusion_only)
+
+
 def _currents(system, state):
     from .one_dimensional_mechanism_r1_backend import backend_for
     if backend_for(system).is_pair:
@@ -117,9 +128,23 @@ def _currents(system, state):
         bernoulli(xi_p)*state.p[:-1], bernoulli(-xi_p)*state.p[1:], drive_p)
     ion_flux = np.zeros_like(spacing)
     if system.controls.nu_I:
-        ion_flux = ion_face_flux(state.phi, state.positive, spacing, mat.D_ion_face,
-            vt, mat.P_lim_face, steric_diffusion_only=mat.ion_steric_diffusion_only,
-            P_lim_node=mat.P_lim_node)
+        if _uses_stable_baseline_ion_transport(system):
+            from .one_dimensional_mechanism_r1_global_reference import (
+                evaluate_independent_saved_high_ion_transport,
+            )
+            # Reconstruct from the saved physical high words, with a separate
+            # SG/FV implementation and independently assembled cell widths.
+            # Neither a production flux nor an eliminated potential is input.
+            flux, _ = evaluate_independent_saved_high_ion_transport(
+                phi_V=state.phi, positive_m3=state.positive,
+                capacity_m3=mat.P_lim_node, diffusion_m2_s=mat.D_ion_face,
+                grid_spacing_m=spacing, control_volume_width_m=_volumes(system),
+                thermal_voltage_V=mat.V_T_device)
+            ion_flux = flux.to_float()
+        else:
+            ion_flux = ion_face_flux(state.phi, state.positive, spacing, mat.D_ion_face,
+                vt, mat.P_lim_face, steric_diffusion_only=mat.ion_steric_diffusion_only,
+                P_lim_node=mat.P_lim_node)
     ionic = Q*ion_flux
     interface = np.empty((system.interface_count, 2))
     from .one_dimensional_mechanism_r1_local_carrier import independent_interface_evaluation
@@ -212,6 +237,9 @@ def shared_constitutive_dependencies(system):
     if backend_for(system).is_pair:
         from .one_dimensional_mechanism_r1_precision_physics import SHARED_CONSTITUTIVE_DEPENDENCIES as dependencies
         return dependencies
+    if _uses_stable_baseline_ion_transport(system):
+        return tuple(item for item in SHARED_CONSTITUTIVE_DEPENDENCIES
+                     if item != "ion_migration.ion_face_flux") + (STABLE_BASELINE_ION_DEPENDENCY,)
     return SHARED_CONSTITUTIVE_DEPENDENCIES
 
 
@@ -300,6 +328,6 @@ def _legacy_independent_physics_row(system, state, previous, dt, *, reported=Non
                 "passed":key in reported and bool(np.array_equal(reported[key],expected))}
     reasons=[name for name,check in checks.items() if check["applicable"] and check["passed"] is not True]
     return _json({"schema":SCHEMA,"scope":SCOPE,"finite_step":finite,
-        "shared_constitutive_dependencies":SHARED_CONSTITUTIVE_DEPENDENCIES,
+        "shared_constitutive_dependencies":shared_constitutive_dependencies(system),
         "arrays":arrays,"metrics":metrics,"limits":METRIC_LIMITS,"checks":checks,
         "reasons":reasons,"passed":not reasons,"assessment":_assessment(checks)})

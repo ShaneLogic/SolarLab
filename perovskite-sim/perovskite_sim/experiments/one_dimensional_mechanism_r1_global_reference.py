@@ -251,13 +251,58 @@ def evaluate_independent_ion_transport(inputs, phi, *, fault="none"):
         raise TypeError("independent transport requires isolated inputs and DD potential")
     f, a, enabled = _decode(inputs)
     _pair(_words(phi), f["positive_m3"].shape, "transport potential")
+    return _independent_sg_fv(phi, f["positive_m3"], a, enabled, fault)
+
+
+def evaluate_independent_saved_high_ion_transport(*, phi_V, positive_m3,
+        capacity_m3, diffusion_m2_s, grid_spacing_m, control_volume_width_m,
+        thermal_voltage_V, enabled=True, boundary_flux_m2_s=None, fault="none"):
+    """Evaluate the saved baseline words without any live-system access.
+
+    The SG/FV accumulator is DD; each input remains exactly its saved binary64
+    value. The caller explicitly rounds the returned flux/rate to binary64 at
+    its output boundary. In particular this helper cannot import a potential
+    low word from a hidden state or independently solved Poisson root.
+    """
+    values = (phi_V, positive_m3, capacity_m3, diffusion_m2_s, grid_spacing_m,
+              control_volume_width_m, thermal_voltage_V, boundary_flux_m2_s)
+    if any(isinstance(value, DD) for value in values):
+        raise TypeError("saved-high transport accepts binary64 inputs, not DD words")
+    shape = np.asarray(phi_V).shape
+    if len(shape) != 1 or shape[0] < 2:
+        raise ValueError("saved-high transport requires at least two nodes")
+    if type(enabled) is not bool:
+        raise TypeError("saved-high transport enabled must be bool")
+    face_shape = (shape[0]-1,)
+    phi = DD(_array(phi_V, shape, "saved potential"))
+    population = DD(_array(positive_m3, shape, "saved positive population"))
+    a = {
+        "ion_capacity_m3": DD(_array(capacity_m3, shape, "saved capacity")),
+        "ion_diffusion_m2_s": DD(_array(diffusion_m2_s, face_shape, "saved diffusion")),
+        "grid_spacing_m": DD(_array(grid_spacing_m, face_shape, "saved spacing")),
+        "control_volume_width_m": DD(_array(control_volume_width_m, shape, "saved widths")),
+        "ion_thermal_voltage_V": DD(_array(thermal_voltage_V, (), "saved thermal voltage")),
+        "boundary_flux_m2_s": DD(_array(np.zeros(2) if boundary_flux_m2_s is None
+                                        else boundary_flux_m2_s, (2,), "saved boundary flux")),
+    }
+    for key in ("ion_capacity_m3", "grid_spacing_m", "control_volume_width_m", "ion_thermal_voltage_V"):
+        if np.any(a[key].hi <= 0):
+            raise ValueError(f"saved-high transport {key} must be positive")
+    if np.any(a["ion_diffusion_m2_s"].hi < 0) or np.any(population.hi < 0):
+        raise ValueError("saved-high transport diffusion and population must be nonnegative")
+    if np.any(population/a["ion_capacity_m3"] >= .999):
+        raise ValueError("saved-high transport reached the original ion site bound")
+    return _independent_sg_fv(phi, population, a, enabled, fault)
+
+
+def _independent_sg_fv(phi, population, a, enabled, fault):
+    """Isolated constitutive arithmetic shared by the two owned input DTOs."""
     if fault not in {"none", "thermal_voltage", "drift_sign", "diffusion", "omit_ion", "single_face_sign"}:
         raise ValueError("unknown implementation fault")
     diffusion = a["ion_diffusion_m2_s"]*(1.01 if fault == "diffusion" else 1)
     flux = DD(np.zeros(diffusion.shape))
     active = diffusion.hi > 0
     if enabled and np.any(active):
-        population = f["positive_m3"]
         chemical = -(DD(1)-population/a["ion_capacity_m3"]).log()
         vt = a["ion_thermal_voltage_V"]*(1.01 if fault == "thermal_voltage" else 1)
         sign = -1 if fault == "drift_sign" else 1
@@ -314,24 +359,89 @@ def baseline_eliminated_operator_diagnostics(system, state, voltage, legacy_valu
              (("dqfn_V", "dqfn"), ("dqfp_V", "dqfp"), ("positive_m3", "positive"), ("occupancy", "occupancy"))}
     inputs = make_global_ion_reference_inputs(system, fixed, legacy_values["potential"]["eliminated"], voltage)
     fields, receipt = solve_global_ion_reference(inputs)
+    # The independent constraint retains its full root. The baseline SG input
+    # is, however, one binary64 word just like the actual direct state. Round
+    # exactly once here, before the nonlinear constitutive evaluation; never
+    # select an adjacent float by inspecting a direct output.
+    constraint_phi = fields["phi_V"]
+    constitutive_phi = DD(constraint_phi.to_float())
+    flux, rate = evaluate_independent_ion_transport(inputs, constitutive_phi)
+    rounded_fields = {"positive_flux_m2_s": flux, "positive_rate_m3_s": rate}
+    cross_representation = {}
+    historical = _legacy_binary64_ion_comparisons(system, state, legacy_values)
     values = dict(legacy_values)
     for name, attribute, field in (("positive_ion_flux", "positive_flux", "positive_flux_m2_s"),
                                    ("positive_ion_rate", "positive_rate", "positive_rate_m3_s")):
         old = legacy_values[name]
         left = np.asarray(getattr(state, attribute), dtype=float).copy()
-        right = fields[field].hi.copy()
+        right = rounded_fields[field].to_float()
         if not np.array_equal(left, old["direct"]):
             raise ValueError("baseline ion diagnostic differs from its actual direct state")
         floor = float(old["normalization_floor"])
-        left_max = float(np.max(np.abs(left), initial=0.))
-        right_max = float(np.max(np.abs(right), initial=0.))
-        scale = max(left_max, right_max, floor)
-        delta = left-right
-        absolute = float(np.max(np.abs(delta), initial=0.))
-        values[name] = {**old, "direct": left, "eliminated": right, "difference": delta,
-                        "direct_maximum_absolute": left_max, "eliminated_maximum_absolute": right_max,
-                        "maximum_absolute_difference": absolute, "normalization_scale": scale,
-                        "floor_active": max(left_max, right_max) < floor, "relative_error": absolute/scale,
-                        "legacy_binary64": old}
+        values[name] = {**old, **_comparison(left, right, floor),
+                        "legacy_binary64": historical[name]}
+        # These DD differences expose the actual error against the full root;
+        # they are evidence, not additional or substituted original channels.
+        cross_representation[name] = {
+            "direct_vs_full_DD": _full_root_comparison(left, fields[field], floor),
+            "rounded_reference_vs_full_DD": _full_root_comparison(right, fields[field], floor),
+            "legacy_binary64_direct_vs_full_DD": _full_root_comparison(
+                historical[name]["direct"], fields[field], historical[name]["normalization_floor"]),
+        }
+    receipt["representation_boundary"] = {
+        "backend": "float64-baseline",
+        "rounding": "one_binary64_round_to_nearest_ties_to_even_before_SG",
+        "constraint_phi_V": _words(constraint_phi),
+        "constitutive_phi_V": _words(constitutive_phi),
+        "constitutive_minus_constraint_phi_V": _words(constitutive_phi-constraint_phi),
+        "full_DD_transport": {key: _words(fields[key]) for key in rounded_fields},
+        "same_word_transport": {key: _words(value) for key, value in rounded_fields.items()},
+        "cross_representation_comparisons": cross_representation,
+        "original_gate_uses": "actual_direct_high_minus_same_word_reference_high",
+        "cross_representation_role": "diagnostic_only_not_original_gate_channels",
+    }
     values["positive_ion_rate"]["independent_reference"] = receipt
     return values
+
+
+def _comparison(left, right, floor, *, difference=None):
+    left, right = np.asarray(left, dtype=float), np.asarray(right, dtype=float)
+    left_max = float(np.max(np.abs(left), initial=0.))
+    right_max = float(np.max(np.abs(right), initial=0.))
+    scale = max(left_max, right_max, float(floor))
+    delta = left-right if difference is None else np.asarray(difference, dtype=float)
+    absolute = float(np.max(np.abs(delta), initial=0.))
+    return {"direct": left.copy(), "eliminated": right.copy(), "difference": delta.copy(),
+            "direct_maximum_absolute": left_max, "eliminated_maximum_absolute": right_max,
+            "maximum_absolute_difference": absolute, "normalization_floor": float(floor),
+            "normalization_scale": scale, "floor_active": max(left_max, right_max) < floor,
+            "relative_error": absolute/scale}
+
+
+def _full_root_comparison(high_values, full_values, floor):
+    value = _comparison(high_values, full_values.to_float(), floor,
+                        difference=(DD(high_values)-full_values).to_float())
+    return {**{key: item.tolist() if isinstance(item, np.ndarray) else item
+               for key, item in value.items()},
+            "difference_arithmetic": "DD(high_values)-full_DD_values",
+            "diagnostic_original_limit": 1e-6,
+            "within_original_limit": value["relative_error"] <= 1e-6}
+
+
+def _legacy_binary64_ion_comparisons(system, state, previous_values):
+    """Retain the pre-stabilization binary64 law under its truthful label."""
+    from .interface_defect_ion_transient import _InterfaceIonTransientSystem
+    if system.controls.nu_I:
+        direct_rate, _, direct_flux, _ = _InterfaceIonTransientSystem._ion_fields(
+            system, state.phi, state.positive, state.negative)
+        other_rate, _, other_flux, _ = _InterfaceIonTransientSystem._ion_fields(
+            system, previous_values["potential"]["eliminated"], state.positive, state.negative)
+    else:
+        direct_rate = other_rate = np.zeros_like(state.positive)
+        direct_flux = other_flux = np.zeros(system.node_count-1)
+    # The historical rate floor was set by the historical direct rate itself.
+    rate_floor = max(float(np.max(np.abs(direct_rate), initial=0.)), 1.)
+    return {
+        "positive_ion_flux": _comparison(direct_flux, other_flux, 1.),
+        "positive_ion_rate": _comparison(direct_rate, other_rate, rate_floor),
+    }
