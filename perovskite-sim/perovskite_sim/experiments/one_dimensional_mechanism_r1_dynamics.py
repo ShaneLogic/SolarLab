@@ -264,6 +264,35 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
             )
         return target
 
+    def newton_direction_rhs(self, state, previous, residual, target,
+                             storage_scale, poisson_scale, local_scale):
+        """Align the baseline direction with stable storage/current increments.
+
+        Absolute physical rows, their Jacobian and every acceptance condition
+        remain unchanged. Only the electrostatic search-direction rows use
+        the increment defect. The supplied target must still be the original
+        physical target bound to the previous state.
+        """
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return np.asarray(residual, dtype=float) - np.asarray(target, dtype=float)
+        expected = ControlledPhysicalInterfaceIonSystem.newton_residual_target(
+            self, previous, storage_scale, poisson_scale, local_scale)
+        if not np.array_equal(np.asarray(target), expected):
+            raise ValueError("baseline Newton direction target differs from the previous accepted state")
+        from .one_dimensional_mechanism_r1_baseline_electrostatics import (
+            baseline_incremental_electrostatic_defect,
+        )
+        rows = baseline_incremental_electrostatic_defect(self, state, previous)
+        result = np.asarray(residual, dtype=float).copy()
+        start, stop = len(storage_scale), len(storage_scale) + len(poisson_scale)
+        result[start:stop] = rows.poisson_residual_C_m2 / poisson_scale
+        for index in range(self.interface_count):
+            local_rows = slice(6 * index, 6 * index + 2)
+            result[stop + local_rows.start:stop + local_rows.stop] = (
+                rows.local_electrostatic_residual[2 * index:2 * index + 2]
+                / local_scale[local_rows])
+        return result
+
     def failure_evidence(self, state, previous, voltage, dt, residual, storage_scale,
                          poisson_scale, local_scale, diagnostics):
         """Retain the actual failed Newton iterate without changing its verdict."""

@@ -81,6 +81,57 @@ def baseline_physical_electrostatic_rows(system, state):
     return BaselineElectrostaticRows(poisson.to_float(), local, sheet.to_float())
 
 
+def baseline_incremental_electrostatic_defect(system, state, previous):
+    """Return the Gauss defect of the same increments used by current closure.
+
+    This is a search-direction quantity, never the live physical residual.
+    Stable storage increments need not equal subtraction of rounded primary
+    populations. Likewise, use the coordinate difference and the complete
+    represented voltage lift instead of subtracting two rounded potentials.
+    No saved previous residual or assumption of exactly harmonic lift enters
+    the defect. DD only accumulates these binary64 increment expressions.
+    """
+    storage = system.storage_increment(state, previous)
+    rho_increment = system._increment_charge_density(storage)
+    occupied = storage[2 * system.interior_count:
+                       2 * system.interior_count + system.interface_count]
+    sheet = -DD(Q) * DD(occupied)
+    # The base helper retains the actual two contact differences. Add every
+    # interior lift value explicitly, independent of the temporary flag used
+    # by the inherited interface-current evaluation, without mutating it.
+    potential = _InterfaceTransientSystem.potential_increment(system, state, previous)
+    lifted = hasattr(system, "_lift")
+    if lifted:
+        potential[1:-1] += system._lift[1:-1]
+    potential = DD(potential)
+    factor = system.material.poisson_factor
+    poisson = (_diff(DD(factor.C) * _diff(potential))
+               + DD(rho_increment[1:-1]) * DD(factor.h_cell))
+    coordinate_increment = state.coordinate - previous.coordinate
+    local = np.empty(2 * system.interface_count)
+    for index, (left, right) in enumerate(zip(system.left_nodes, system.right_nodes)):
+        weight_left, weight_right = system._sheet_weights(index)
+        poisson = _put(poisson, left - 1,
+                       poisson[left - 1] + DD(weight_left) * sheet[index])
+        poisson = _put(poisson, right - 1,
+                       poisson[right - 1] + DD(weight_right) * sheet[index])
+        trace = system.thermal_voltage * coordinate_increment[
+            system._local_block_slice(index)][:2]
+        if lifted:
+            trace = trace + system._trace_lift[index]
+        trace = DD(trace)
+        capacitance_left = (EPS_0 * system.material.eps_r[left]
+                            / system.material.iface_qss_left_distances_m[index])
+        capacitance_right = (EPS_0 * system.material.eps_r[right]
+                             / system.material.iface_qss_right_distances_m[index])
+        local[2 * index] = (trace[1] - trace[0]).to_float().item()
+        local[2 * index + 1] = (
+            DD(capacitance_left) * (trace[0] - potential[left])
+            + DD(capacitance_right) * (trace[1] - potential[right])
+            - sheet[index]).to_float().item()
+    return BaselineElectrostaticRows(poisson.to_float(), local, sheet.to_float())
+
+
 def baseline_electrostatic_diagnostics(system, state, previous=None):
     """Reconstruct the old incremental rows as evidence, without mutating state.
 
