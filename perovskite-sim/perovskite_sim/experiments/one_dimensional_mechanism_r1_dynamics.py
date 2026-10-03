@@ -1,6 +1,6 @@
 """Explicit A-D rate controls for the R1 physical-volume research operator."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy import sparse
@@ -110,6 +110,40 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         result[5] = occupancy
         return tuple(result)
 
+    def _with_step_electrostatics(self, state):
+        # Pair and input-lift have their own state representations and absolute
+        # rows. Even their pre-initialization super() fallback stays unchanged.
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return super()._with_step_electrostatics(state)
+        from .one_dimensional_mechanism_r1_baseline_electrostatics import (
+            baseline_physical_electrostatic_rows,
+        )
+        rows = baseline_physical_electrostatic_rows(self, state)
+        # Retain the conventional absolute assembly as separate evidence.
+        # Historical incremental rows are available through the pure diagnostic
+        # helper; they no longer replace physical Gauss rows in the live state.
+        state.direct_poisson_residual = state.poisson_residual.copy()
+        state.poisson_residual = rows.poisson_residual_C_m2
+        state.sheet_charge = rows.sheet_charge_C_m2
+        state.local_residual = state.local_residual.copy()
+        local = []
+        for index, item in enumerate(state.local):
+            electrostatic = rows.local_electrostatic_residual[2 * index:2 * index + 2]
+            state.local_residual[6 * index:6 * index + 2] = electrostatic
+            local.append(replace(item, electrostatic_residual=electrostatic.copy(),
+                                 sheet_charge_C_m2=float(state.sheet_charge[index])))
+        state.local = tuple(local)
+        return state
+
+    def eliminated_operator_diagnostics(self, state, voltage):
+        values = super().eliminated_operator_diagnostics(state, voltage)
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return values
+        from .one_dimensional_mechanism_r1_global_reference import (
+            baseline_eliminated_operator_diagnostics,
+        )
+        return baseline_eliminated_operator_diagnostics(self, state, voltage, values)
+
     def _ion_fields(self, phi, positive, negative):
         if self.controls.nu_I:
             return super()._ion_fields(phi, positive, negative)
@@ -190,14 +224,29 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         The caller still accepts only the original absolute residual, charge
         balance and every current-closure condition, with unchanged limits.
         """
+        poisson = previous.poisson_residual
+        local = previous.local_residual
+        if type(self) is ControlledPhysicalInterfaceIonSystem:
+            from .one_dimensional_mechanism_r1_baseline_electrostatics import (
+                baseline_physical_electrostatic_rows,
+            )
+            # The same previous physical state defines the retained error in
+            # both the direction and live absolute rows. A historical saved
+            # incremental residual must not become a different Gauss target.
+            rows = baseline_physical_electrostatic_rows(self, previous)
+            poisson = rows.poisson_residual_C_m2
+            local = previous.local_residual.copy()
+            for index in range(self.interface_count):
+                local[6 * index:6 * index + 2] = (
+                    rows.local_electrostatic_residual[2 * index:2 * index + 2])
         target = np.zeros(len(storage_scale) + len(poisson_scale) + len(local_scale))
         start = len(storage_scale)
-        target[start:start + len(poisson_scale)] = previous.poisson_residual / poisson_scale
+        target[start:start + len(poisson_scale)] = poisson / poisson_scale
         start += len(poisson_scale)
         for index in range(self.interface_count):
             rows = slice(6 * index, 6 * index + 2)
             target[start + rows.start:start + rows.stop] = (
-                previous.local_residual[rows] / local_scale[rows]
+                local[rows] / local_scale[rows]
             )
         return target
 
