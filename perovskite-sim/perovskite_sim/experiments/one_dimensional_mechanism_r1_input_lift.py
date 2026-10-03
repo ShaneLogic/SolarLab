@@ -11,8 +11,10 @@ binary64 Newton coordinates. Local carrier balances and their analytic chain,
 SG carrier/ion fluxes, storage, charge and displacement consume these same words.
 The existing bulk sparse Jacobian remains a binary64 approximation. Bulk source
 assembly retains its existing rounding and receives an explicit low-input SRH/
-radiative/Auger correction. The baseline incremental Gauss reference and its
-harmonic-lift convention remain unchanged. No full-pair preparation is claimed.
+radiative/Auger correction. Electrostatic rows use a canonical full DD physical
+assembly. The independently assembled predecessor and stable increments remain
+diagnostic evidence, including the actual voltage lift. No full-pair preparation
+is claimed.
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ from perovskite_sim.physics.compensated import DD
 from .interface_defect_ion_transient import _InterfaceIonDeviceState
 from .interface_defect_transient import InterfaceDefectTransientError
 from .one_dimensional_mechanism_r1_dynamics import ControlledPhysicalInterfaceIonSystem
+from . import one_dimensional_mechanism_r1_local_carrier as local_carrier
 from .one_dimensional_mechanism_r1_local_carrier import (
     assemble_r1_carrier_source, carrier_data, evaluate_interface_from_fine,
     fine_local_carrier_inputs, without_local_exchange,
@@ -62,6 +65,7 @@ class InputLiftState(_InterfaceIonDeviceState):
     input_lift: object = field(default_factory=lambda: MappingProxyType({}))
     coordinate_reference_identity: str = ""
     operator_representation: str = REPRESENTATION
+    electrostatic_diagnostics: object = field(default_factory=lambda: MappingProxyType({}))
 
 
 def primary_inputs(state):
@@ -77,6 +81,110 @@ def _storage(system, value):
     return cat(value["n_m3"][1:-1], value["p_m3"][1:-1],
                DD(system.trap_density)*value["occupancy"],
                value["positive_m3"][system.positive_nodes])
+
+
+def _electrostatic_sources(system, previous):
+    """Freeze the coefficients used by the original physical Poisson assembly.
+
+    The interface builder supplies the uncharged geometry, including prescribed
+    jumps and fixed charge. Neither saved residuals nor current trial fields are
+    used to infer a missing material coefficient.
+    """
+    _require_supported_model(system, previous)
+    value, mat = primary_inputs(previous), system.material
+    node, interface = system.node_count, system.interface_count
+    left, right = np.asarray(system.left_nodes), np.asarray(system.right_nodes)
+    if (system.interior_count != node-2 or left.shape != (interface,)
+            or right.shape != (interface,) or np.any(left < 1)
+            or np.any(right >= node-1) or np.any(right != left+1)):
+        raise ValueError("physical electrostatic reference requires adjacent interior interface reservoirs")
+    for owner in (mat, system.system.source_mat):
+        if any(getattr(owner, name, None) is not None for name in
+               ("monovalent_bulk_defects", "multivalent_bulk_defects", "frozen_metastable_defects")):
+            raise ValueError("physical electrostatic reference does not support additional charged bulk defects")
+
+    def coefficient(name, array, shape, *, positive=False):
+        array = np.asarray(array, dtype=float)
+        if (array.shape != shape or not np.isfinite(array).all()
+                or (positive and np.any(array <= 0.))):
+            raise ValueError(f"physical electrostatic coefficient {name} must have finite shape {shape}")
+        return DD(array)
+
+    try:
+        geometry = [local_carrier._material_two_sided_interface_problem(
+            mat, system.stack, value["n_m3"].hi, value["p_m3"].hi, value["phi_V"].hi,
+            k, cross_transmission=system.dark_reference.interface_transmission)[0]
+            for k in range(interface)]
+        if any(g.fixed_sheet_charge_C_m2 != 0. or g.potential_jump_right_minus_left_V != 0.
+               for g in geometry):
+            raise ValueError("input lift supports the frozen zero-static-sheet, zero-jump geometry only")
+        capacitances = [[EPS_0*g.eps_r_left/g.left_distance_m,
+                         EPS_0*g.eps_r_right/g.right_distance_m] for g in geometry]
+        sources = {
+            "poisson_capacitance_F_m2": coefficient("C", mat.poisson_factor.C, (node-1,), positive=True),
+            "poisson_width_m": coefficient("h_cell", mat.poisson_factor.h_cell, (node-2,), positive=True),
+            "N_D_m3": coefficient("N_D", mat.N_D, (node,)),
+            "N_A_m3": coefficient("N_A", mat.N_A, (node,)),
+            "ion_background_m3": coefficient("P_ion0", mat.P_ion0, (node,)),
+            "trap_density_m2": coefficient("trap_density", system.trap_density, (interface,)),
+            "equilibrium_occupancy": coefficient("equilibrium_occupancy", system.equilibrium_occupancy, (interface,)),
+            "trace_capacitances_F_m2": coefficient("trace_capacitances", capacitances, (interface, 2), positive=True),
+            "trace_jump_V": coefficient("trace_jump", [g.potential_jump_right_minus_left_V for g in geometry], (interface,)),
+            "static_sheet_charge_C_m2": coefficient("static_sheet_charge", [g.fixed_sheet_charge_C_m2 for g in geometry], (interface,)),
+            "sheet_weights": coefficient("sheet_weights", [system._sheet_weights(k) for k in range(interface)], (interface, 2)),
+            "left_nodes": DD(left), "right_nodes": DD(right), "q_C": DD(Q),
+        }
+    except (AttributeError, IndexError, TypeError, ZeroDivisionError) as error:
+        raise ValueError("physical electrostatic reference requires complete material and interface geometry") from error
+    return MappingProxyType(sources)
+
+
+def _physical_electrostatic_rows(system, value, sources):
+    """Canonical DD order, shared by live rows and independent references."""
+    phi, trace = value["phi_V"], value["trace_potential_V"]
+    charge = sources["q_C"]
+    rho = charge*(value["p_m3"]-value["n_m3"]+sources["N_D_m3"]-sources["N_A_m3"]
+                  +value["positive_m3"]-sources["ion_background_m3"])
+    sheet = -charge*sources["trap_density_m2"]*(value["occupancy"]-sources["equilibrium_occupancy"])
+    poisson = diff(sources["poisson_capacitance_F_m2"]*diff(phi))+rho[1:-1]*sources["poisson_width_m"]
+    rows = []
+    for k, (left, right) in enumerate(zip(system.left_nodes, system.right_nodes)):
+        wl, wr = sources["sheet_weights"][k, 0], sources["sheet_weights"][k, 1]
+        poisson = put(poisson, left-1, poisson[left-1]+wl*sheet[k])
+        poisson = put(poisson, right-1, poisson[right-1]+wr*sheet[k])
+        cl, cr = sources["trace_capacitances_F_m2"][k, 0], sources["trace_capacitances_F_m2"][k, 1]
+        rows.append(cat(trace[k, 1]-trace[k, 0]-sources["trace_jump_V"][k],
+                        cl*(trace[k, 0]-phi[left])+cr*(trace[k, 1]-phi[right])
+                        -sources["static_sheet_charge_C_m2"][k]-sheet[k]))
+    return poisson, cat(*rows)
+
+
+def _assemble_physical_electrostatic_reference(system, previous, sources):
+    value = primary_inputs(previous)
+    poisson, local = _physical_electrostatic_rows(system, value, sources)
+    saved_local = cat(*(value["local_residual"][6*k:6*k+2] for k in range(system.interface_count)))
+    saved_poisson = value["poisson_residual_C_m2"].copy()
+    return MappingProxyType({
+        "schema": "R1InputLiftPhysicalElectrostaticReferenceV1",
+        "reference_identity": _identity({name: value[name] for name in PRIMARY_FIELDS}),
+        "source_coefficients_identity": _identity(sources), "source_coefficients": sources,
+        "poisson_residual_C_m2": poisson, "local_electrostatic_residual": local,
+        "historical_poisson_residual_C_m2": saved_poisson,
+        "historical_local_electrostatic_residual": saved_local,
+        "poisson_anchor_correction_C_m2": poisson-saved_poisson,
+        "local_anchor_correction": local-saved_local,
+    })
+
+
+def physical_electrostatic_reference(system, previous):
+    """Read-only full DD electrostatics from one supplied state's primary words.
+
+    This pure helper needs the material/layout attributes used above, but no
+    initialized Newton system, trial evaluation, solve, or cached residual.
+    Historical residual words are returned only as diagnostic evidence.
+    """
+    return _assemble_physical_electrostatic_reference(
+        system, previous, _electrostatic_sources(system, previous))
 
 
 def _recombination(system, n, p):
@@ -240,42 +348,67 @@ class RebasedInputLiftR1System(ControlledPhysicalInterfaceIonSystem):
 
     def _with_step_electrostatics(self, state):
         value, previous = dict(self._input_lift_work), self._step_reference
+        before = primary_inputs(previous)
+        sources = _electrostatic_sources(self, previous)
+        # Primary DD fields and coefficient copies are immutable. The identity
+        # also covers the historical evidence, so replacing a predecessor or
+        # changing a source coefficient cannot reuse a stale baseline.
+        reference_identity = _identity({name: before[name] for name in
+            (*PRIMARY_FIELDS, "poisson_residual_C_m2", "local_residual")})
+        cache_key = (id(previous), reference_identity, _identity(sources))
+        cached = getattr(self, "_input_lift_electrostatic_cache", None)
+        if cached is None or cached[0] != cache_key:
+            reference = _assemble_physical_electrostatic_reference(self, previous, sources)
+            self._input_lift_electrostatic_cache = (cache_key, reference)
+        else:
+            reference = cached[1]
         value["storage"] = _storage(self, value)
         value["rate"] = cat(value["carrier_rate"], value["positive_rate_m3_s"][self.positive_nodes])
         value["sheet_charge_C_m2"] = -DD(Q)*DD(self.trap_density)*(value["occupancy"]-DD(self.equilibrium_occupancy))
-        delta = value["storage"]-primary_inputs(previous)["storage"]
+        delta = value["storage"]-before["storage"]
         count = self.interior_count
         rho = put(DD(np.zeros(self.node_count)), slice(1, -1), DD(Q)*(delta[count:2*count]-delta[:count]))
         ion_start = 2*count+self.interface_count
         rho = put(rho, self.positive_nodes, rho[self.positive_nodes]+DD(Q)*delta[ion_start:])
         occupied = delta[2*count:ion_start]
-        # Same baseline increment equations and exact harmonic-lift convention.
-        dphi = value["phi_V"]-primary_inputs(previous)["phi_V"]
-        if hasattr(self, "_lift"):
-            dphi = dphi-DD(self._lift)
-        poisson = primary_inputs(previous)["poisson_residual_C_m2"]+diff(DD(self.material.poisson_factor.C)*diff(dphi))
-        poisson = poisson+rho[1:-1]*DD(self.material.poisson_factor.h_cell)
+        # The complete represented voltage difference includes the lift. Its
+        # sampled binary64 values need not be exactly harmonic in DD arithmetic.
+        dphi = value["phi_V"]-before["phi_V"]
+        poisson = reference["poisson_residual_C_m2"]+diff(sources["poisson_capacitance_F_m2"]*diff(dphi))
+        poisson = poisson+rho[1:-1]*sources["poisson_width_m"]
         local_rows = []
         for index, (left, right, item) in enumerate(zip(self.left_nodes, self.right_nodes, state.local)):
-            wl, wr = self._sheet_weights(index)
-            poisson = put(poisson, left-1, poisson[left-1]-DD(wl)*DD(Q)*occupied[index])
-            poisson = put(poisson, right-1, poisson[right-1]-DD(wr)*DD(Q)*occupied[index])
-            trace = value["trace_potential_V"][index]-primary_inputs(previous)["trace_potential_V"][index]
-            if hasattr(self, "_trace_lift"):
-                trace = trace-DD(self._trace_lift[index])
-            cl, cr = self._trace_capacitances(index)
-            before = primary_inputs(previous)["local_residual"][6*index:6*index+2]
-            electrostatic = before+cat(trace[1]-trace[0], DD(cl)*(trace[0]-dphi[left])
-                                      +DD(cr)*(trace[1]-dphi[right])+DD(Q)*occupied[index])
+            wl, wr = sources["sheet_weights"][index, 0], sources["sheet_weights"][index, 1]
+            poisson = put(poisson, left-1, poisson[left-1]-wl*DD(Q)*occupied[index])
+            poisson = put(poisson, right-1, poisson[right-1]-wr*DD(Q)*occupied[index])
+            trace = value["trace_potential_V"][index]-before["trace_potential_V"][index]
+            cl, cr = sources["trace_capacitances_F_m2"][index, 0], sources["trace_capacitances_F_m2"][index, 1]
+            baseline = reference["local_electrostatic_residual"][2*index:2*index+2]
+            electrostatic = baseline+cat(trace[1]-trace[0], cl*(trace[0]-dphi[left])
+                                      +cr*(trace[1]-dphi[right])+DD(Q)*occupied[index])
             local_rows.append(cat(electrostatic, carrier_data(item).balance["residual_m2_s"]))
-        value["poisson_residual_C_m2"], value["local_residual"] = poisson, cat(*local_rows)
+        # Canonical full rows make the saved DD words reproducible after a
+        # zero-coordinate rebase/checkpoint restore. Stable increments can
+        # differ from this canonical association by DD rounding, so retain
+        # them as state-owned evidence rather than a different live equation.
+        canonical_poisson, canonical_local = _physical_electrostatic_rows(self, value, sources)
+        incremental_local = cat(*(row[:2] for row in local_rows))
+        value["poisson_residual_C_m2"] = canonical_poisson
+        value["local_residual"] = cat(*(cat(canonical_local[2*k:2*k+2], row[2:])
+                                        for k, row in enumerate(local_rows)))
+        diagnostics = MappingProxyType({"reference": reference,
+            "incremental_poisson_residual_C_m2": poisson,
+            "incremental_local_electrostatic_residual": incremental_local,
+            "canonical_minus_incremental_poisson_C_m2": canonical_poisson-poisson,
+            "canonical_minus_incremental_local": canonical_local-incremental_local})
         result = InputLiftState(**{f.name: getattr(state, f.name) for f in fields(_InterfaceIonDeviceState)},
                                 input_lift=MappingProxyType(value),
-                                coordinate_reference_identity=self._input_lift_reference_identity)
+                                coordinate_reference_identity=self._input_lift_reference_identity,
+                                electrostatic_diagnostics=diagnostics)
         result.storage, result.rate = value["storage"].hi.copy(), value["rate"].hi.copy()
         result.sheet_charge = value["sheet_charge_C_m2"].hi.copy()
         result.direct_poisson_residual = state.poisson_residual.copy()
-        result.poisson_residual, result.local_residual = poisson.hi.copy(), value["local_residual"].hi.copy()
+        result.poisson_residual, result.local_residual = canonical_poisson.hi.copy(), value["local_residual"].hi.copy()
         result.local = tuple(replace(item, electrostatic_residual=result.local_residual[6*k:6*k+2].copy(),
                                      sheet_charge_C_m2=float(result.sheet_charge[k])) for k, item in enumerate(state.local))
         return result
@@ -421,6 +554,7 @@ def from_saved_step(system, previous):
     working._input_lift_reference = MappingProxyType(primary)
     working._input_lift_reference_identity = identity
     working._input_lift_work = None
+    working._input_lift_electrostatic_cache = None
     working._step_reference = saved
     working.input_lift_contract = MappingProxyType({"operator_representation": REPRESENTATION,
         "seed_representation": "float64-baseline", "scope": "one_restored_step",
@@ -428,6 +562,8 @@ def from_saved_step(system, previous):
         "bulk_jacobian": "existing_binary64_sparse_approximation", "newton_solver": "original_solve_step",
         "saved_primary_words": "exact_binary64_values_with_zero_low_words",
         "previous_derived_fields": "storage_and_sheet_recomputed_from_primary_words; saved_public_arrays_unchanged",
+        "electrostatic_rows": "canonical_full_primary_dd_physics_with_represented_lift",
+        "electrostatic_reference": "full_predecessor_physics_and_historical_residual_retained_as_diagnostics",
         "storage_high_matches_saved": bool(np.array_equal(value["storage"].hi, previous.storage)),
         "sheet_charge_high_matches_saved": bool(np.array_equal(value["sheet_charge_C_m2"].hi, previous.sheet_charge))})
     return working, saved
@@ -483,7 +619,8 @@ def from_accepted_state(system, previous):
 
     A binary64 seed is explicitly lifted once. An already lifted state is never
     reconstructed from its rounded public arrays: primary, storage and saved
-    incremental electrostatic anchors all retain their high and low words.
+    electrostatic residual evidence all retain their high and low words. The
+    next live evaluation independently rebuilds its physical reference.
     Acceptance remains the caller's responsibility; this is not a cold start,
     a backend relabeling or a nonlinear correction.
     """
@@ -525,6 +662,7 @@ def from_accepted_state(system, previous):
     working._input_lift_reference = MappingProxyType(primary)
     working._input_lift_reference_identity = identity
     working._input_lift_work = None
+    working._input_lift_electrostatic_cache = None
     # Rebind copied public references as well. DD fields themselves own
     # immutable storage, so sharing their words cannot alter either state.
     working.dqfn_dc, working.dqfp_dc = local.dqfn, local.dqfp
@@ -539,6 +677,8 @@ def from_accepted_state(system, previous):
         "previous_coordinate_reference_identity": getattr(previous, "coordinate_reference_identity", None),
         "initialization_evaluations": 0, "saved_primary_words": "exact_high_and_low_words",
         "previous_derived_fields": "saved_high_and_low_words_preserved",
+        "electrostatic_rows": "canonical_full_primary_dd_physics_with_represented_lift",
+        "electrostatic_reference": "full_predecessor_physics_and_historical_residual_retained_as_diagnostics",
         "voltage_lift": "cleared_for_next_target", "fixed_error_scales": "retained",
         "bulk_jacobian": "existing_binary64_sparse_approximation", "newton_solver": "original_solve_step"})
     return working, local

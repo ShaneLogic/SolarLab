@@ -62,6 +62,7 @@ def synthetic(monkeypatch):
         eps_r=np.ones(4), iface_qss_left_distances_m=np.array([EPS_0]),
         iface_qss_right_distances_m=np.array([EPS_0]),
         iface_qss_interface_positions_m=np.array([1.5]), P_ion0=np.ones(4),
+        N_D=np.zeros(4), N_A=np.zeros(4),
         poisson_factor=SimpleNamespace(C=np.ones(3), h_cell=np.ones(2)))
     system.system = SimpleNamespace(source_mat=source, reference_edge_drop_n=np.zeros(3),
                                     reference_edge_drop_p=np.zeros(3))
@@ -100,7 +101,8 @@ def synthetic(monkeypatch):
     table = {"eta": [-40., 20.], "log_half": [-40., 20.]}
     digest = hashlib.sha256(json.dumps(table, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     monkeypatch.setattr(local, "default_fd_table", lambda: (table, digest))
-    geometry = TwoSidedInterfaceGeometry(1., 1., 1., 1.)
+    geometry = TwoSidedInterfaceGeometry(left_distance_m=EPS_0, right_distance_m=EPS_0,
+                                        eps_r_left=1., eps_r_right=1.)
     physics = TwoSidedInterfacePhysics(thermal_voltage_V=.25, temperature_K=1.,
         D_n_left_m2_s=1., D_p_left_m2_s=1., D_n_right_m2_s=1., D_p_right_m2_s=1.,
         N_C_left_m3=1024., N_V_left_m3=1024., N_C_right_m3=1024., N_V_right_m3=1024.,
@@ -372,7 +374,7 @@ def test_consecutive_rebases_accumulate_low_inputs_without_rounding(synthetic):
     np.testing.assert_array_equal(final_system.storage_increment(zero, local_second), 0.)
 
 
-def test_rebase_retains_incremental_electrostatic_low_anchors(synthetic):
+def test_rebase_keeps_historical_anchors_but_evaluates_physical_electrostatics(synthetic):
     _, _, working, _, evaluate = synthetic
     accepted, _, _ = evaluate(np.zeros(15))
     values = dict(accepted.input_lift)
@@ -384,17 +386,18 @@ def test_rebase_retains_incremental_electrostatic_low_anchors(synthetic):
     rebased, previous = working.rebase(accepted)
     state, _, _ = evaluate(np.zeros(15), active=rebased, prior=previous)
     for name, selection in (("poisson_residual_C_m2", slice(None)), ("local_residual", slice(0, 2))):
-        np.testing.assert_array_equal(state.input_lift[name][selection].hi, values[name][selection].hi)
-        np.testing.assert_array_equal(state.input_lift[name][selection].lo, values[name][selection].lo)
+        np.testing.assert_array_equal(previous.input_lift[name][selection].hi, values[name][selection].hi)
+        np.testing.assert_array_equal(previous.input_lift[name][selection].lo, values[name][selection].lo)
+        assert not np.array_equal(state.input_lift[name][selection].hi, values[name][selection].hi)
     z = np.zeros(15)
     z[7] = 2.**-61
     changed, _, _ = evaluate(z, active=rebased, prior=previous)
     dphi = changed.input_lift["phi_V"]-previous.input_lift["phi_V"]
     delta = changed.input_lift["storage"]-previous.input_lift["storage"]
     rho = DD(Q)*(delta[2:4]-delta[:2])
-    expected = values["poisson_residual_C_m2"]+lift.diff(lift.diff(dphi))+rho
-    np.testing.assert_array_equal(changed.input_lift["poisson_residual_C_m2"].hi, expected.hi)
-    np.testing.assert_array_equal(changed.input_lift["poisson_residual_C_m2"].lo, expected.lo)
+    expected = state.input_lift["poisson_residual_C_m2"]+lift.diff(lift.diff(dphi))+rho
+    np.testing.assert_allclose((changed.input_lift["poisson_residual_C_m2"]-expected).to_float(),
+                               0., rtol=0., atol=1e-30)
 
 
 def test_rebase_drops_old_voltage_lift_and_builds_from_new_reference(synthetic, monkeypatch):

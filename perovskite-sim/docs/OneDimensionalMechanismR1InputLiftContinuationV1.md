@@ -5,8 +5,8 @@ explicit accepted state. This is an accepted-state continuation API; the
 default baseline/pair protocol and cold-start preparation remain separate.
 
 `from_accepted_state(system, previous)` creates a zero-coordinate reference.
-It preserves all represented high/low words, including the incremental Gauss
-residual anchors. It clears the preceding voltage lift; `advance_step` builds
+It preserves all represented high/low words, including historical Gauss
+residual evidence. It clears the preceding voltage lift; `advance_step` builds
 the next lift from the next prescribed voltage. No nonlinear correction occurs
 when creating the reference.
 
@@ -45,3 +45,32 @@ step. This does not establish cold-start, the full protocol Jacobian and
 eliminated-operator checks, 4/8/16 refinement, relative resource cost, or 100 s
 qualification. Existing short-matrix and dependency evidence is not new-source
 qualification for this representation.
+
+## Physical electrostatic residual correction
+
+The V42 implementation evaluates Poisson and the two interface electrostatic
+rows directly from the complete represented DD primary fields, in one
+canonical arithmetic order. A copied historical residual is no longer treated
+as the physical value of the predecessor's Gauss operator. The predecessor's
+physical residual is assembled separately; its difference from the saved
+historical residual and the stable incremental calculation remain diagnostic
+evidence. Actual represented voltage-lift values are included, without assuming
+their sampled Laplacian is bitwise zero.
+
+`physical_electrostatic_reference(system, previous)` reconstructs that physical
+reference without initialization, a Newton step or mutation of the supplied
+state. Source coefficients and predecessor identities bind the cache. This
+bounded path currently requires the frozen zero-static-sheet, zero-prescribed-
+jump interface model; unsupported sources are rejected. Newton thresholds,
+the original eliminated comparison and independent physical gates are unchanged.
+
+Canonical live residuals also preserve exact zero-coordinate rebase and
+checkpoint replay. Historical checkpoints containing the old biased residuals
+can fail strict restoration under the corrected source; they must remain
+historical evidence, not be silently migrated or relabelled accepted.
+
+V42 validation covers manufactured cases, checkpoint/rebase regressions and
+fixed-state constraint solves at the saved V40 step13/14 inputs, compared with
+independent Decimal references. Corrected potential, carrier density and trace
+values are local algebraic results. They are not accepted coupled time steps,
+and do not authorize resuming an old trajectory or claim 100 s qualification.
