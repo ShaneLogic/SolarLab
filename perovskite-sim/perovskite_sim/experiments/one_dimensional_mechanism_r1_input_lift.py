@@ -346,6 +346,63 @@ class RebasedInputLiftR1System(ControlledPhysicalInterfaceIonSystem):
         value["positive_flux_m2_s"], value["positive_rate_m3_s"] = flux, rate
         return rate.hi.copy(), None, flux.hi.copy(), None
 
+    def eliminated_operator_diagnostics(self, state, voltage):
+        """Compare represented ions with an independent full-input reference.
+
+        The legacy binary64 evaluation remains intact as historical diagnostic
+        evidence and supplies only the independent Poisson seed. Its rounded
+        ion inputs are insufficient near equilibrium. The new ion reference
+        solves the absolute physical constraint from a frozen coordinate
+        definition and fixed QF/ion/occupancy words, without trial phi, n/p,
+        fluxes, rates or saved residuals. All original reductions and floors
+        remain unchanged; other comparison channels retain the legacy result.
+        """
+        values = super().eliminated_operator_diagnostics(state, voltage)
+        if not isinstance(state, InputLiftState):
+            return values
+        from .one_dimensional_mechanism_r1_input_lift_reference import (
+            make_inputs, solve_rebased_ion_reference,
+        )
+        primary = primary_inputs(state)
+        fixed = {name: primary[name] for name in
+                 ("dqfn_V", "dqfp_V", "positive_m3", "occupancy")}
+        inputs = make_inputs(self, fixed, values["potential"]["eliminated"], voltage)
+        solved, receipt = solve_rebased_ion_reference(inputs)
+        evidence = {
+            "schema": "R1InputLiftIonReferenceV1", "inputs": inputs.to_dict(),
+            "solve": receipt, "fields": _words(solved),
+            "fields_sha256": _identity(solved),
+            "scope": "independent_absolute_fixed_QF_constraint_at_frozen_coordinate_origin",
+            "legacy_binary64_accuracy_qualified": False,
+            "trial_physical_outputs_used_as_reference_inputs": False,
+        }
+        for name, field_name in (("positive_ion_flux", "positive_flux_m2_s"),
+                                 ("positive_ion_rate", "positive_rate_m3_s")):
+            old = values[name]
+            left, right = primary[field_name].hi.copy(), solved[field_name].hi.copy()
+            if not np.array_equal(left, old["direct"]):
+                raise ValueError("direct ion public view differs from represented state")
+            floor = float(old["normalization_floor"])
+            left_max = float(np.max(np.abs(left), initial=0.))
+            right_max = float(np.max(np.abs(right), initial=0.))
+            scale = max(left_max, right_max, floor)
+            difference = left-right
+            absolute = float(np.max(np.abs(difference), initial=0.))
+            values[name] = {
+                "direct": left, "eliminated": right, "difference": difference,
+                "maximum_absolute_difference": absolute,
+                "direct_maximum_absolute": left_max, "eliminated_maximum_absolute": right_max,
+                "normalization_floor": floor, "normalization_scale": scale,
+                "floor_active": max(left_max, right_max) < floor,
+                "relative_error": self._relative(left, right, floor), "unit": old["unit"],
+                "legacy_binary64": old,
+                "reference_fields_sha256": evidence["fields_sha256"],
+            }
+        # Save the complete common reference once, not separately for both
+        # channels. Ordinary JSON readers retain it with the rate component.
+        values["positive_ion_rate"]["independent_reference"] = evidence
+        return values
+
     def _with_step_electrostatics(self, state):
         value, previous = dict(self._input_lift_work), self._step_reference
         before = primary_inputs(previous)

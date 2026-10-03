@@ -74,3 +74,30 @@ fixed-state constraint solves at the saved V40 step13/14 inputs, compared with
 independent Decimal references. Corrected potential, carrier density and trace
 values are local algebraic results. They are not accepted coupled time steps,
 and do not authorize resuming an old trajectory or claim 100 s qualification.
+
+## Independent ion elimination reference
+
+The V45 ion comparison retains the full high/low words of the fixed electron
+and hole quasi-Fermi inputs, positive-ion populations and trap occupancy. Its
+independent absolute Poisson solve uses the frozen, pre-trial coordinate origin
+to define the rebased carrier relation. That origin is an input definition;
+the current trial potential, carrier populations, fluxes, rates and historical
+residuals are not reference inputs. This verifies the rebased input problem,
+not the global cold-start quasi-Fermi relation.
+
+The independent reference assembles absolute Poisson charge and computes the
+steric Scharfetter-Gummel flux and finite-volume rate in DD arithmetic. It
+does not call the live ion-flux implementation. The same call's independently
+eliminated binary64 potential supplies only the initial guess. A bounded
+12-correction solve must converge below the existing 1e-28 V correction limit.
+The reference supports the frozen single-positive-ion, zero-static-sheet,
+zero-prescribed-jump model and rejects unsupported inputs.
+
+Only the positive-ion flux and rate reference channels change. The original
+public high-word difference, normalization floor, maximum reduction and 1e-6
+acceptance threshold are preserved. The other eleven channels and the original
+binary64 ion comparisons remain evidence. The saved ion-rate channel contains
+the copied reference inputs, independently solved fields, residual and hashes.
+This precision correction changes no live physical equation, Newton policy,
+time grid, checkpoint representation or resource budget. Passing a fixed-state
+reference check does not establish 100 s trajectory or refinement qualification.
