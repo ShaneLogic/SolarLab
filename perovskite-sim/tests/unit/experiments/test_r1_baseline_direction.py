@@ -357,3 +357,119 @@ def test_other_representations_do_not_opt_into_block_eligibility():
             np.array([1., .001, .001, .001, 1., 1., 1., 1.]),
             np.ones(1), np.ones(1), np.ones(6), .05,
         )
+
+
+@pytest.fixture
+def saved_rounding_plateau():
+    """Physical input words from V51 step183 and its independent90-digit map."""
+    from perovskite_sim.physics.compensated import DD
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_local_carrier import LocalCarrierInputs
+    system = object.__new__(ControlledPhysicalInterfaceIonSystem)
+    system.interface_count, system.dimension, system.local_slice = 1, 8, slice(2, 8)
+    prior = np.array([426553352160.8516, 12860858403125.174, 20359987442608.58, 269571123661.34625])
+    physical = np.array([426553316933.3458, 12860859470328.885, 20359985758903.273, 269571146004.40952])
+    coordinate = np.array([0., 0., 0., 0., -8.258640350134947e-8,
+                          8.298074924213027e-8, -8.269677863459569e-8, 8.288373780211396e-8])
+    system._step_reference = SimpleNamespace(local=(SimpleNamespace(state_m3=prior),))
+    inputs = LocalCarrierInputs(DD(physical), DD([-.04, -.04]), DD([1e13]*4), DD([-.03, -.05]), DD(.3))
+    state = SimpleNamespace(local=(SimpleNamespace(state_m3=physical, carrier_data=SimpleNamespace(inputs=inputs)),))
+    direction = np.zeros(8)
+    direction[6] = -1.6630467471892938e-16
+    residual = np.array([0., 0., 0., -.0005853996324785957, .0008771895101745378,
+                         -.02327462924450598, -.05058861742649522, -.0004622540839152896])
+    return system, state, coordinate, direction, residual, (np.ones(1), np.ones(1), np.ones(6))
+
+
+def test_representable_neighbor_preserves_float64_fields_and_moves_only_algebraic_density(saved_rounding_plateau):
+    system, state, coordinate, direction, residual, scales = saved_rounding_plateau
+    saved_coordinate, saved_physical = coordinate.copy(), state.local[0].state_m3.copy()
+    candidate = system.representable_line_search_candidate(
+        state, state, coordinate, direction, residual, *scales, .05)
+    assert candidate is not None
+    assert np.flatnonzero(candidate != coordinate).tolist() == [6]
+    mapped = system._trace_density_coordinates(candidate)
+    expected = saved_physical.copy()
+    expected[2] = 20359985758903.27  # One representable density below the failed nR.
+    np.testing.assert_array_equal(mapped, [expected])
+    assert mapped.dtype == np.float64
+    np.testing.assert_array_equal(coordinate, saved_coordinate)
+    np.testing.assert_array_equal(state.local[0].state_m3, saved_physical)
+    np.testing.assert_array_equal(system._trace_density_coordinates(np.zeros(8)),
+                                  [system._step_reference.local[0].state_m3])
+
+
+@pytest.mark.parametrize("reason", ["large_direction", "tiny_direction", "zero_direction", "other_residual", "bulk_dominant",
+                                   "already_converged", "not_a_plateau", "forward_map_mismatch"])
+def test_representable_candidate_fails_closed_outside_local_plateau(saved_rounding_plateau, reason):
+    from dataclasses import replace
+    from perovskite_sim.physics.compensated import DD
+    system, state, coordinate, direction, residual, scales = saved_rounding_plateau
+    rejected = state
+    if reason == "large_direction":
+        direction[6] = -1e-4
+    elif reason == "tiny_direction":
+        direction[6] *= .001
+    elif reason == "zero_direction":
+        direction[6] = 0.
+    elif reason == "other_residual":
+        residual[5] = .06
+    elif reason == "bulk_dominant":
+        residual[0] = .1
+    elif reason == "already_converged":
+        residual[6] = -.049
+    elif reason == "not_a_plateau":
+        inputs = replace(state.local[0].carrier_data.inputs, bulk_potential=DD([-.03, -.049]))
+        rejected = SimpleNamespace(local=(SimpleNamespace(carrier_data=SimpleNamespace(inputs=inputs)),))
+    else:
+        system._trace_density_coordinates = lambda z: np.array([state.local[0].state_m3])
+    assert system.representable_line_search_candidate(
+        state, rejected, coordinate, direction, residual, *scales, .05) is None
+
+
+def test_representable_candidate_is_not_inherited_by_other_backends():
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_input_lift import RebasedInputLiftR1System
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_precision import CompensatedR1System
+    for kind in (RebasedInputLiftR1System, CompensatedR1System):
+        system = object.__new__(kind)
+        assert system.representable_line_search_candidate(*([None]*9)) is None
+
+
+@pytest.mark.parametrize("blocked_by", [None, "residual", "charge", "face", "interface"])
+def test_native_line_search_counts_local_candidate_in_original_budget_and_enforces_all_gates(blocked_by):
+    """Small control-flow fixture; no device preparation or scientific time step."""
+    from dataclasses import replace
+    from scipy.sparse import eye
+    from perovskite_sim.experiments.interface_defect_transient import (
+        InterfaceDefectTransientPolicy, InterfaceDefectTransientError, _solve_step,
+    )
+    evaluated, proposed = [], []
+    def evaluate(z, *args):
+        recovered = z[0] == 1.
+        norm = .02 if recovered and blocked_by != "residual" else .06
+        state = SimpleNamespace(coordinate=z.copy(), recovered=recovered, storage=np.ones(1))
+        evaluated.append(z.copy())
+        return np.array([norm, 0.]), eye(2, format="csr"), state
+    def propose(*args):
+        proposed.append(True)
+        return np.array([1., 0.])
+    def charge(state, *args):
+        return (0., 1. if state.recovered and blocked_by == "charge" else 0.)
+    def currents(state, *args):
+        return (0., 0., 0., 0., 1. if state.recovered and blocked_by == "face" else 0.,
+                1. if state.recovered and blocked_by == "interface" else 0.)
+    system = SimpleNamespace(storage_scale=lambda *a: np.ones(1), poisson_scale=lambda *a: np.empty(0),
+        local_algebraic_scale=lambda *a: np.ones(1), residual_and_jacobian=evaluate,
+        representable_line_search_candidate=propose, charge_balance_metrics=charge,
+        solver_current_metrics=currents)
+    previous = SimpleNamespace(storage=np.ones(1))
+    policy = replace(InterfaceDefectTransientPolicy(), maximum_newton_iterations=2,
+                     maximum_line_search_steps=40, maximum_scaled_nonlinear_residual=.05)
+    if blocked_by is None:
+        answer = _solve_step(system, np.zeros(2), previous, .005, 1., policy, check_jacobian=False)
+        assert answer[0].coordinate[0] == 1. and answer[2] == .02
+        assert len(evaluated) == 4  # initial, rejected direction, local candidate, accepted check
+    else:
+        with pytest.raises(InterfaceDefectTransientError, match="line search stalled"):
+            _solve_step(system, np.zeros(2), previous, .005, 1., policy, check_jacobian=False)
+        assert len(evaluated) == 41  # one Newton evaluation plus exactly40 candidate slots
+    assert len(proposed) == 1
