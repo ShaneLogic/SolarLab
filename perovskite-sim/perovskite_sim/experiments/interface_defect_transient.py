@@ -2035,7 +2035,13 @@ def _solve_step(
         # closure tests below. Other solvers have no such direction target.
         linear_rhs = residual
         target_builder = getattr(system, "newton_residual_target", None)
-        if norm <= solver_residual_limit and target_builder is not None:
+        direction_eligible = norm <= solver_residual_limit
+        eligibility = getattr(system, "newton_direction_eligible", None)
+        if not direction_eligible and target_builder is not None and eligibility is not None:
+            direction_eligible = eligibility(
+                residual, storage_scale, poisson_scale, local_scale, solver_residual_limit,
+            )
+        if direction_eligible and target_builder is not None:
             target = np.asarray(target_builder(previous, storage_scale, poisson_scale, local_scale))
             if (target.shape == residual.shape and np.all(np.isfinite(target))
                     and float(np.max(np.abs(target))) <= solver_residual_limit):

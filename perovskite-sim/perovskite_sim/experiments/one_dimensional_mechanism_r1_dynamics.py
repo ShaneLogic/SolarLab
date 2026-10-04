@@ -264,6 +264,29 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
             )
         return target
 
+    def newton_direction_eligible(self, residual, storage_scale, poisson_scale,
+                                  local_scale, residual_limit):
+        """Keep admissible electrostatic rows on their stable increment path.
+
+        Carrier or storage residuals still need Newton correction, but must
+        not switch admissible Gauss rows back to an absolute-error direction.
+        The caller separately verifies the previous target and retains every
+        original absolute-residual and current-closure acceptance condition.
+        Other representations retain the original global-norm eligibility.
+        """
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return False
+        residual = np.asarray(residual)
+        start, stop = len(storage_scale), len(storage_scale) + len(poisson_scale)
+        if (residual.shape != (stop + len(local_scale),)
+                or len(local_scale) != 6 * self.interface_count
+                or not np.all(np.isfinite(residual))
+                or not np.isfinite(residual_limit) or residual_limit <= 0.):
+            return False
+        local = residual[stop:].reshape(self.interface_count, 6)
+        return bool(np.all(np.abs(residual[start:stop]) <= residual_limit)
+                    and np.all(np.abs(local[:, :2]) <= residual_limit))
+
     def newton_direction_rhs(self, state, previous, residual, target,
                              storage_scale, poisson_scale, local_scale):
         """Align the baseline direction with stable storage/current increments.

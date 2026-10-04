@@ -306,3 +306,54 @@ def test_other_modes_keep_existing_override_and_residual_minus_target_fallback(m
         actual = system.newton_direction_rhs(SimpleNamespace(), SimpleNamespace(), residual, target,
                                             np.ones(2), np.ones(1), np.ones(6))
         np.testing.assert_array_equal(actual, residual - target)
+
+
+@pytest.mark.parametrize("row", [0, 8, 10, 15, 22, 23, 24, 25, 28, 29, 30, 31])
+def test_large_dynamic_or_carrier_residual_does_not_disable_electrostatic_direction(direction_case, row):
+    system, _, _, residual, scales = direction_case
+    residual[row] = .059875780181397324
+    before = residual.copy()
+    assert system.newton_direction_eligible(residual, *scales, .05)
+    np.testing.assert_array_equal(residual, before)
+
+
+@pytest.mark.parametrize("row", [16, 17, 18, 19, 20, 21, 26, 27])
+def test_each_electrostatic_row_must_meet_the_original_limit(direction_case, row):
+    system, _, _, residual, scales = direction_case
+    residual[24] = .059875780181397324
+    residual[row] = -.05
+    assert system.newton_direction_eligible(residual, *scales, .05)
+    residual[row] = np.nextafter(-.05, -np.inf)
+    assert not system.newton_direction_eligible(residual, *scales, .05)
+
+
+@pytest.mark.parametrize("invalid", ["nan_carrier", "inf_poisson", "shape", "local_shape", "nan_limit"])
+def test_invalid_direction_eligibility_inputs_fail_closed(direction_case, invalid):
+    system, _, _, residual, scales = direction_case
+    limit = .05
+    if invalid == "nan_carrier":
+        residual[24] = np.nan
+    elif invalid == "inf_poisson":
+        residual[16] = np.inf
+    elif invalid == "shape":
+        residual = residual[:-1]
+    elif invalid == "local_shape":
+        scales = (*scales[:2], scales[2][:-1])
+    else:
+        limit = np.nan
+    assert not system.newton_direction_eligible(residual, *scales, limit)
+
+
+def test_other_representations_do_not_opt_into_block_eligibility():
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_input_lift import RebasedInputLiftR1System
+    from perovskite_sim.experiments.one_dimensional_mechanism_r1_precision import CompensatedR1System
+
+    class OtherSystem(ControlledPhysicalInterfaceIonSystem):
+        pass
+
+    for kind in (OtherSystem, RebasedInputLiftR1System, CompensatedR1System):
+        system = object.__new__(kind)
+        assert not system.newton_direction_eligible(
+            np.array([1., .001, .001, .001, 1., 1., 1., 1.]),
+            np.ones(1), np.ones(1), np.ones(6), .05,
+        )
