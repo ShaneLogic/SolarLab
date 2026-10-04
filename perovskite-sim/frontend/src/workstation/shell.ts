@@ -183,7 +183,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     if (active) {
       devicePanel?.setConfig(active.config)
       experimentPane?.updateDevice()
-      consoleHandle.setPhysics(tierLabel(active.tier), tierPhysicsSummary(active.tier))
+      consoleHandle.setPhysics(tierLabel(active.tier), tierPhysicsSummary(active.tier, active.config))
     }
   }
 
@@ -218,7 +218,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   // --- physics indicator for the initially-active device ---
   const initialActive = workspace.devices.find(d => d.id === workspace.activeDeviceId)
   if (initialActive) {
-    consoleHandle.setPhysics(tierLabel(initialActive.tier), tierPhysicsSummary(initialActive.tier))
+    consoleHandle.setPhysics(tierLabel(initialActive.tier), tierPhysicsSummary(initialActive.tier, initialActive.config))
   }
 
   // --- Golden Layout ---
@@ -249,7 +249,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         experimentPane?.updateDevice(reason === 'preset')
         saveWorkspace(workspace)
         refreshTree()
-        consoleHandle.setPhysics(tierLabel(updated.tier), tierPhysicsSummary(updated.tier))
+        consoleHandle.setPhysics(tierLabel(updated.tier), tierPhysicsSummary(updated.tier, updated.config))
       })
     })
   })

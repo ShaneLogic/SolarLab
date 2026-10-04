@@ -13,6 +13,7 @@ import { openAddLayerDialog } from './stack/add-layer-dialog'
 import { openSaveAsDialog } from './stack/save-as-dialog'
 import { isLayerBuilderEnabled } from './workstation/tier-gating'
 import { presetLabel, researchPresetEntries } from './preset-catalog'
+import { mountScapsReferenceControls } from './scaps-reference-controls'
 import type {
   DeviceConfig,
   LayerTemplate,
@@ -41,7 +42,7 @@ export function computeTmmBadge(
   config: DeviceConfig,
   tier: SimulationModeName | undefined,
 ): string {
-  if (tier !== 'full') return ''
+  if (tier !== 'full' || config.device.optical_model !== 'tmm') return ''
   const tmmLayers = config.layers.filter(l =>
     (l.optical_material != null && l.optical_material !== '')
     || (
@@ -73,6 +74,7 @@ export async function mountDevicePanel(
           <button class="btn btn-ghost" id="${tabId}-reset">Reset</button>
         </div>
       </div>
+      <div id="${tabId}-reference" hidden></div>
       <div id="${tabId}-visualizer"></div><div id="${tabId}-editor"></div>
     </div>`
 
@@ -90,6 +92,10 @@ export async function mountDevicePanel(
   let selectedLayerIdx = 0
   let templates: Record<string, LayerTemplate> = {}
   const listeners: Array<(c: DeviceConfig, reason: 'edit' | 'preset') => void> = []
+  const referenceControls = mountScapsReferenceControls(
+    root.querySelector<HTMLElement>(`#${tabId}-reference`)!,
+    config => applyConfig(config, true),
+  )
 
   try {
     const materials = await fetchOpticalMaterials()
@@ -277,6 +283,7 @@ export async function mountDevicePanel(
 
   function rerender(): void {
     if (!current) return
+    referenceControls.update(current)
     tier = current.device.mode ?? fallbackTier
     builderOn = isLayerBuilderEnabled(tier)
     visualizerEl.hidden = !builderOn

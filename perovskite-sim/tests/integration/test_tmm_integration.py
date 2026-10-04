@@ -29,7 +29,7 @@ def stack_tmm(stack_beer_lambert):
         new_params = replace(layer.params,
                              optical_material=material_map[layer.name])
         new_layers.append(replace(layer, params=new_params))
-    return replace(stack_beer_lambert, layers=new_layers)
+    return replace(stack_beer_lambert, layers=new_layers, optical_model="tmm")
 
 
 def _build_grid(stack, N=40):

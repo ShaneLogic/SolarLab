@@ -21,7 +21,7 @@ function makeDevice(
   microstructure?: unknown,
 ): DeviceConfig {
   const cfg: DeviceConfig = {
-    device: { V_bi: 1.0, Phi: 1e21, mode: tier, ...overrides },
+    device: { V_bi: 1.0, Phi: 1e21, mode: tier, optical_model: 'tmm', ...overrides },
     layers,
   }
   if (microstructure !== undefined) {
@@ -31,6 +31,11 @@ function makeDevice(
 }
 
 describe('describeActivePhysics', () => {
+  it('does not advertise TMM or recycling for the default Beer-Lambert model', () => {
+    const config = makeDevice('full')
+    delete config.device.optical_model
+    expect(describeActivePhysics(config)).toBe('Active physics: baseline 2D drift-diffusion')
+  })
   it('returns the baseline sentinel for a LEGACY device with no extras', () => {
     expect(describeActivePhysics(makeDevice('legacy'))).toBe(
       'Active physics: baseline 2D drift-diffusion',

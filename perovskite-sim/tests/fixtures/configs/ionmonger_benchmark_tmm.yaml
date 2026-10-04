@@ -19,6 +19,7 @@
 #
 # Reference: Courtier et al. 2019, DOI 10.1039/C8EE01576G, set (b).
 device:
+  optical_model: tmm
   V_bi: 0.86   # Boltzmann-limit V_bi from compute_V_bi on the chi/Eg below.
                # The original ionmonger_benchmark.yaml uses 1.10 V to match
                # the IonMonger paper's degenerate-doping convention, but

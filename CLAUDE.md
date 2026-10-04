@@ -55,6 +55,15 @@ references inside text files with bare-word patterns (see `RenameMapFull.md` for
 
 ## Archived documents (outside the repo)
 
+Research optics default (2026-09-09): use Beer-Lambert for new tests and
+studies, independent of the electrical tier. SCAPS reproduction uses
+`optical_model: beer_lambert_spectral`; scalar-alpha studies use
+`beer_lambert`. TMM is an explicit historical/test opt-in, not an automatic
+Fast/Full upgrade. Preserve named historical TMM and prescribed-generation
+fixtures; never relabel their results. See
+`perovskite-sim/docs/BeerLambertReferenceProtocolV1.md` for the shared frontend
+and report protocol and optical evidence limits.
+
 Since 2026-09-07 the repo holds only code, tests, configs, the physics contract
 docs under `perovskite-sim/docs/`, and the README figures. Everything else lives in
 the iCloud folder `~/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/`

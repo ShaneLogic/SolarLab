@@ -134,6 +134,7 @@ def test_built_in_potential_modes_preserve_only_inert_frozen_fields():
             "interface_charge_rebaseline_acknowledged",
             "graded_optics",
             "tunnelling_channels",
+            "optical_model",
         }
     }
     # semantic_sha256 keeps the retired autoloop lever key in DeviceStack
@@ -172,6 +173,7 @@ def test_parked_interface_charge_defaults_preserve_historical_hash():
             "interface_charge_rebaseline_acknowledged",
             "graded_optics",
             "tunnelling_channels",
+            "optical_model",
         }
     }
     # semantic_sha256 keeps the retired autoloop lever key in DeviceStack

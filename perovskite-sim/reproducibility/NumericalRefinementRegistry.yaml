@@ -14,7 +14,7 @@ lanes:
   scaps-mirror-frozen-ion-ss:
     claim_level: internal-numerical-candidate
     config: tests/fixtures/configs/scaps_mirror.yaml
-    config_sha256: 7ad4968d9c8249b76ca4e649d41c39e26727f6818cb81a15fe75f6b74b11b881
+    config_sha256: 5fe6de8c145ab9345e6c414ce5961d3f65cf7157c094593071d4abadc12de5d8
     executor: perovskite_sim.validation.refinement_executors:run_frozen_ion_steady_jv
     executor_version: v2
     grid:
@@ -1299,7 +1299,7 @@ lanes:
   interface-recombination-charge-off:
     claim_level: internal-numerical-candidate
     config: tests/fixtures/configs/interface_charge_reference.yaml
-    config_sha256: 300f57a256dc764995b916a55b98b642ecd8244eccd2ca456624d9521e0e2705
+    config_sha256: 39bd1b7fe1846e22eef3d350c4b06c5a9809e4e1079e5c1951be5fc74c224216
     executor: perovskite_sim.validation.refinement_executors:run_interface_recombination_charge_off
     executor_version: v3
     grid:
@@ -2849,7 +2849,7 @@ lanes:
   cigs-graded-optics-v1:
     claim_level: internal-numerical-candidate
     config: tests/fixtures/configs/cigs_graded_optics.yaml
-    config_sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
+    config_sha256: bb597d8440b616ccb0adfc5c436078880c7b23f21f0f330ece53e422b6a1d75a
     executor: perovskite_sim.validation.cigs_optics_refinement:run_cigs_graded_optics_refinement
     executor_version: v1
     grid:
@@ -2896,7 +2896,7 @@ lanes:
   interface-srh-identifiability-synthetic-v1:
     claim_level: internal-numerical-candidate
     config: configs/scaps_mirror_v2.yaml
-    config_sha256: 5500c9485f6a9518430511019546933277cdc3274fd3a005182394f39d2fcf67
+    config_sha256: b753f6e2f98d83af8ad52e2713d118a3104c676119919e40f301e194131ad61c
     executor: perovskite_sim.validation.identifiability_refinement:run_interface_srh_identifiability_refinement
     executor_version: v1
     grid:

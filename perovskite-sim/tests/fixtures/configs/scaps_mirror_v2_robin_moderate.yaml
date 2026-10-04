@@ -11,6 +11,7 @@
 # unphysical 2.1 V branch under v2 schema.
 
 device:
+  optical_model: tmm
   V_bi: 1.30
   Phi: 2.5e21
   mode: full         # FULL tier required for use_selective_contacts to engage

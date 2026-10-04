@@ -20,6 +20,7 @@ simulation_hints:
     Kramers-Kronig refinement; do not use as a measured device calibration.
 
 device:
+  optical_model: tmm
   V_bi: 1.1546666460693205
   Phi: 2.5e21
   band_grading: true

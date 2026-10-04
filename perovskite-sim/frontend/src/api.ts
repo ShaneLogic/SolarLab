@@ -35,6 +35,23 @@ export async function getConfig(name: string): Promise<DeviceConfig> {
   return data.config as DeviceConfig
 }
 
+export interface ScapsReferenceCatalog {
+  sweeps: Record<string, { title: string; unit: string; points: Array<{ x: number }> }>
+}
+
+export async function getScapsReferenceCatalog(): Promise<ScapsReferenceCatalog> {
+  const res = await fetch(`${BASE}/api/reference-studies/scaps-beer-lambert`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+  return await res.json() as ScapsReferenceCatalog
+}
+
+export async function getScapsReferencePoint(sweep: string, value: number): Promise<DeviceConfig> {
+  const query = new URLSearchParams({ sweep, value: String(value) })
+  const res = await fetch(`${BASE}/api/reference-studies/scaps-beer-lambert?${query}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+  return (await res.json()).config as DeviceConfig
+}
+
 export async function fetchOpticalMaterials(): Promise<string[]> {
   const res = await fetch(`${BASE}/api/optical-materials`)
   if (!res.ok) throw new Error(`fetchOpticalMaterials failed: ${res.status}`)

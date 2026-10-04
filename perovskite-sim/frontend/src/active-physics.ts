@@ -99,18 +99,19 @@ export function resolveTierFlags(tier: SimulationModeName): TierFlags {
  * permits, whereas ``describeActivePhysics`` additionally requires the config
  * to supply each feature's parameters.
  */
-export function tierPhysicsSummary(tier: SimulationModeName): string {
+export function tierPhysicsSummary(tier: SimulationModeName, device?: DeviceConfig): string {
   const f = resolveTierFlags(tier)
+  const tmm = f.use_tmm_optics && (device === undefined || device.device.optical_model === 'tmm')
   const parts: string[] = [
     f.use_thermionic_emission ? 'band offsets · TE' : 'flat bands',
-    f.use_tmm_optics ? 'TMM' : 'Beer-Lambert',
+    tmm ? 'TMM' : 'Beer-Lambert',
     f.use_dual_ions ? 'dual ions' : 'single ion',
     f.use_trap_profile ? 'trap profile' : 'uniform τ',
     f.use_temperature_scaling ? 'T-scaling' : 'T=300K',
   ]
   // Extras appended only when on, so the string stays short for LEGACY.
-  if (f.use_photon_recycling) parts.push('photon recycling')
-  if (f.use_radiative_reabsorption) parts.push('PR reabsorption')
+  if (f.use_photon_recycling && tmm) parts.push('photon recycling')
+  if (f.use_radiative_reabsorption && tmm) parts.push('PR reabsorption')
   if (f.use_field_dependent_mobility) parts.push('μ(E)')
   if (f.use_selective_contacts) parts.push('Robin contacts')
   return parts.join(' · ')
@@ -205,13 +206,14 @@ export function describeActivePhysics(device: DeviceConfig): string {
   }
 
   // Optics
-  if (flags.use_radiative_reabsorption) {
+  const tmm = flags.use_tmm_optics && device.device.optical_model === 'tmm'
+  if (flags.use_radiative_reabsorption && tmm) {
     fragments.push('Reabsorption')
   }
-  if (flags.use_photon_recycling) {
+  if (flags.use_photon_recycling && tmm) {
     fragments.push('Photon recycling')
   }
-  if (flags.use_tmm_optics && hasTmmOptics(device)) {
+  if (tmm && hasTmmOptics(device)) {
     fragments.push('TMM')
   }
 

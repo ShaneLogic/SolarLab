@@ -22,6 +22,7 @@ function cigsDevice(active: boolean): DeviceConfig {
       V_bi: 1,
       Phi: 1e21,
       mode: 'full',
+      optical_model: 'tmm',
       band_grading: active,
       graded_optics: active,
     },

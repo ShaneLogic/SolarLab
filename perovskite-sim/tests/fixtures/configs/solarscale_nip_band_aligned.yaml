@@ -12,6 +12,7 @@
 # optical_material remains the MAPbI3 baseline placeholder until a later
 # provenance-labeled optical workflow supplies material-specific n,k files.
 device:
+  optical_model: tmm
   V_bi: 0.79
   Phi: 2.5e21
   mode: fast

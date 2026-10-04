@@ -301,6 +301,7 @@ function escapeHtml(s: string): string {
 }
 
 interface NumAttrOpts {
+  disabled?: boolean
   /** Hint shown when the input is empty — used for "0 / disabled" sentinels. */
   placeholder?: string
   /** Native HTML5 tooltip surfaced on hover. */
@@ -309,8 +310,9 @@ interface NumAttrOpts {
 
 function numAttr(id: string, value: unknown, opts?: NumAttrOpts): string {
   const placeholderAttr = opts?.placeholder ? ` placeholder="${escapeHtml(opts.placeholder)}"` : ''
-  const titleAttr = opts?.title ? ` title="${escapeHtml(opts.title)}"` : ''
-  return `<input type="text" class="num-input" id="${id}" ${numberInputAttributes(value)} spellcheck="false"${placeholderAttr}${titleAttr}>`
+  const title = opts?.title ?? (typeof value === 'number' ? String(value) : '')
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
+  return `<input type="text" class="num-input" id="${id}" ${numberInputAttributes(value)} spellcheck="false"${placeholderAttr}${titleAttr}${opts?.disabled ? ' disabled' : ''}>`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -825,9 +827,11 @@ function renderBulkDefectEditor(
 function renderOpticalMaterialSelect(layerIdx: number, currentValue: string | null | undefined): string {
   const id = `layer-${layerIdx}-optical_material`
   const selectedNone = currentValue == null || currentValue === '' ? ' selected' : ''
-  const opts = [`<option value=""${selectedNone}>(none — Beer-Lambert)</option>`]
+  const available = currentValue && !opticalMaterialOptions.includes(currentValue)
+    ? [currentValue, ...opticalMaterialOptions] : opticalMaterialOptions
+  const opts = [`<option value=""${selectedNone}>(none - scalar alpha)</option>`]
     .concat(
-      opticalMaterialOptions.map(m => {
+      available.map(m => {
         const safe = escapeHtml(m)
         const sel = currentValue === m ? ' selected' : ''
         return `<option value="${safe}"${sel}>${safe}</option>`
@@ -1165,6 +1169,14 @@ export function renderDeviceEditor(
             <span class="param-label"><span class="sym">Mode</span></span>
             <select class="num-input" id="dev-mode">${renderModeOptions(currentMode)}</select>
           </label>${tField}
+          <label class="param">
+            <span class="param-label"><span class="sym">Generation model</span></span>
+            <select class="num-input" id="dev-optical-model">
+              <option value="beer_lambert"${(config.device.optical_model ?? 'beer_lambert') === 'beer_lambert' ? ' selected' : ''}>Beer-Lambert (alpha, Phi)</option>
+              <option value="beer_lambert_spectral"${config.device.optical_model === 'beer_lambert_spectral' ? ' selected' : ''}>Beer-Lambert (AM1.5G)</option>
+              <option value="tmm"${config.device.optical_model === 'tmm' ? ' selected' : ''}>TMM (explicit opt-in)</option>
+            </select>
+          </label>
           <label class="param" title="Select the physical source of the Poisson built-in potential">
             <span class="param-label"><span class="sym">Built-in potential</span></span>
             <select class="num-input" id="dev-vbi-mode">${renderBuiltInPotentialOptions(builtInPotentialMode)}</select>
@@ -1183,7 +1195,7 @@ export function renderDeviceEditor(
           </label>
           <label class="param">
             <span class="param-label"><span class="sym"><i>Φ</i></span><span class="unit">m⁻²·s⁻¹</span></span>
-            ${numAttr('dev-Phi', config.device.Phi)}
+            ${numAttr('dev-Phi', config.device.Phi, { disabled: (config.device.optical_model ?? 'beer_lambert') !== 'beer_lambert', title: 'Incident flux for scalar Beer-Lambert. AM1.5G spectral models use the supplied one-sun spectrum.' })}
           </label>
         </div>
       </div>`
@@ -1213,6 +1225,10 @@ export function renderDeviceEditor(
       <div class="layer-list">${layerHtml}</div>
     </div>`
   const potentialSelect = container.querySelector<HTMLSelectElement>('#dev-vbi-mode')
+  container.querySelector<HTMLSelectElement>('#dev-optical-model')?.addEventListener('change', event => {
+    const flux = container.querySelector<HTMLInputElement>('#dev-Phi')
+    if (flux) flux.disabled = (event.target as HTMLSelectElement).value !== 'beer_lambert'
+  })
   const syncPotentialFields = (): void => {
     const selected = potentialSelect?.value
     container.querySelectorAll<HTMLElement>('[data-vbi-mode]').forEach(field => {
@@ -2055,6 +2071,7 @@ export function readDeviceEditor(
       interfaces,
       T,
       mode,
+      optical_model: parseText('dev-optical-model', original.device.optical_model ?? 'beer_lambert') as DeviceConfig['device']['optical_model'],
       // Stage B(c.1) Robin contacts. Read by ID matching the renderRobin-
       // Contacts panel; when the panel is not rendered (non-FULL tier or
       // single-layer drill-down) ``parseNumOrNull`` returns the

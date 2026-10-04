@@ -2640,12 +2640,17 @@ def build_material_arrays(
     )
     junction_polarity = -1.0 if V_bi_bc < 0.0 else 1.0
 
-    # TMM optical generation: computed when the active mode enables TMM.
-    # Legacy mode falls back to Beer-Lambert; fast mode keeps TMM enabled.
+    # Optical selection is independent of the electrical tier. TMM remains
+    # an explicit option under its historical capability ceiling.
     # When photon recycling is also active we capture the spectral
     # absorbance A(x, λ) returned by TMM so we can derive a per-absorber
     # escape probability and scale B_rad by (1 − P_esc) in place.
-    if sim_mode.use_tmm_optics:
+    if stack.optical_model == "beer_lambert_spectral":
+        from perovskite_sim.physics.beer_lambert_spectral import spectral_beer_lambert_generation
+
+        G_optical = spectral_beer_lambert_generation(x, stack)
+        tmm_info = None
+    elif stack.optical_model == "tmm" and sim_mode.use_tmm_optics:
         if sim_mode.use_photon_recycling:
             G_optical, tmm_info = _compute_tmm_generation(
                 x, stack, return_absorbance=True,

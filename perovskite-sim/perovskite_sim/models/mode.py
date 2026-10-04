@@ -1,6 +1,9 @@
 """Simulation mode resolution.
 
 Three tiered modes control which physics upgrades are active at runtime.
+Optical flags are capability ceilings only: TMM additionally requires an
+explicit ``DeviceStack.optical_model="tmm"``. Beer-Lambert is the device
+default and does not require a change of electrical tier.
 All three tiers act as a **ceiling** — they enable a feature only when the
 configuration actually provides the required parameters (e.g. FULL does not
 build the TMM generation profile unless at least one layer supplies tabulated

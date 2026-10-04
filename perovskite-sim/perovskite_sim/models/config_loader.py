@@ -519,6 +519,7 @@ def load_device_from_yaml(path: str) -> DeviceStack:
         layers=layers,
         **built_in_potential_fields_from_device_dict(dev),
         Phi=_f(dev.get("Phi", 2.5e21)),
+        optical_model=str(dev.get("optical_model", "beer_lambert")),
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,
         jv_solver_policy=str(dev.get("jv_solver_policy", "general")),

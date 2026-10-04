@@ -14,6 +14,7 @@
 # see perovskite_sim/data/nk/NiOx.csv commit message for sources). Prior
 # versions of this preset used a constant n_optical=2.2 fallback.
 device:
+  optical_model: tmm
   V_bi: 1.05   # Boltzmann-limit V_bi from compute_V_bi on NiOx/MAPbI3/PCBM
                # band data below. Must stay consistent with chi/Eg on the
                # contacts or the Poisson BC disagrees with the Fermi-level

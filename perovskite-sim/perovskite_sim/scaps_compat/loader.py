@@ -164,6 +164,7 @@ def load_scaps_yaml(path: str | Path) -> DeviceStack:
         **built_in_potential_fields_from_device_dict(dev),
         **interface_charge_fields_from_device_dict(dev),
         Phi=float(dev["Phi"]),
+        optical_model=str(dev.get("optical_model", "beer_lambert")),
         mode=str(dev["mode"]),
         T=float(dev.get("T", 300.0)),
         interfaces=interfaces,

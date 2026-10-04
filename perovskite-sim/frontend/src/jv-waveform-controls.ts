@@ -100,6 +100,15 @@ export function mountJVWaveformControls(
         return
       }
       if (mode.value === 'standard') standardValues = readShared()
+      if (!defaults.waveform) {
+        mode.value = 'standard'
+        setNumberInputValue(shared.rate, defaults.v_rate, 'scientific')
+        setNumberInputValue(shared.maximum, defaults.V_max, 'scientific')
+        setNumberInputValue(shared.points, defaults.n_points, 'integer')
+        standardValues = readShared()
+        syncVisibility()
+        return
+      }
       mode.value = 'continuous'
       setNumberInputValue(shared.rate, defaults.v_rate, 'scientific')
       setNumberInputValue(shared.maximum, defaults.V_max, 'scientific')
@@ -116,8 +125,8 @@ export function mountJVWaveformControls(
       if (waveform.uniform_generation_rate_m3_s !== null) {
         setNumberInputValue(input('G'), waveform.uniform_generation_rate_m3_s)
       }
-      setNumberInputValue(input('rtol'), defaults.waveform_controls.rtol)
-      setNumberInputValue(input('atol'), defaults.waveform_controls.atol_m3)
+      setNumberInputValue(input('rtol'), defaults.waveform_controls?.rtol ?? 1e-4)
+      setNumberInputValue(input('atol'), defaults.waveform_controls?.atol_m3 ?? 100)
       syncVisibility()
     },
     setEnabled(enabled: boolean) {

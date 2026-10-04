@@ -44,6 +44,15 @@ device:
   V_bi: 1.30
   Phi: 2.5e21
   mode: fast
+  optical_model: beer_lambert_spectral
+
+simulation_hints:
+  reference_study: scaps_beer_lambert_v1
+  jv_sweep:
+    N_grid: 30
+    n_points: 40
+    v_rate: 5.0
+    V_max: 1.6
 
 layers:
   # Phase E10.1 — glass front substrate (optical-only, role:substrate filtered

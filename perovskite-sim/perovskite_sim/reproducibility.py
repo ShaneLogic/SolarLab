@@ -63,6 +63,19 @@ def _canonical(value: Any) -> Any:
             # Retain the retired, inactive field only in historical semantic
             # fingerprints. It is no longer a device option or solver hook.
             mapping["autoloop_generated_lever"] = False
+            from perovskite_sim.models.mode import resolve_mode
+            from perovskite_sim.physics.optical_stack import has_wavelength_resolved_optics
+
+            historical_tmm = (
+                resolve_mode(value.mode).use_tmm_optics
+                and has_wavelength_resolved_optics(value)
+            )
+            current_tmm = value.optical_model == "tmm" and historical_tmm
+            # Preserve frozen identities only when the actual optical branch
+            # is unchanged. Spectral BL and a real TMM -> scalar BL switch
+            # always retain the new selector in the fingerprint.
+            if value.optical_model != "beer_lambert_spectral" and current_tmm == historical_tmm:
+                mapping.pop("optical_model", None)
         # Optional fields added after the P0 freeze must not churn every
         # historical semantic hash when they are jointly absent and therefore
         # behaviorally inert. Populated grid tuples remain part of the hash.

@@ -199,12 +199,14 @@ export interface JVSweepDefaults {
   n_points: number
   v_rate: number
   V_max: number
-  waveform: JVWaveform
-  waveform_controls: { rtol: number; atol_m3: number }
+  waveform?: JVWaveform
+  waveform_controls?: { rtol: number; atol_m3: number }
 }
 
 export interface DeviceConfig {
   simulation_hints?: {
+    reference_study?: string
+    reference_point?: { sweep: string; value: number; scope?: 'high_doping_extrapolation' }
     min_N_grid?: number
     notes?: string
     jv_sweep?: JVSweepDefaults
@@ -241,6 +243,7 @@ export interface DeviceConfig {
     interface_defects?: Array<InterfaceDefectFields | null>
     T?: number
     mode?: SimulationModeName
+    optical_model?: 'beer_lambert' | 'beer_lambert_spectral' | 'tmm'
     // Stage B(c.1) Robin / selective contacts — optional, FULL-tier-only.
     // The naming convention here matches the YAML schema (left = HTL side =
     // 2D top, right = ETL side = 2D bottom). Frontend UI labels these as

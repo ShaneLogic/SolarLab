@@ -17,6 +17,7 @@
 # than a constant conduction-band offset.
 #
 device:
+  optical_model: tmm
   # Hetero-interface SRH, FULL-layer aligned: one slot per internal interface
   # of `layers`, substrate included. This stack is
   # glass / spiro_HTL / absorber / TiO2_ETL, so:

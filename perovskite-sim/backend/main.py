@@ -109,22 +109,23 @@ def _describe_active_physics(stack) -> str:
     """
     mode_name = str(getattr(stack, "mode", "full")).lower()
     mode = resolve_mode(mode_name)
+    tmm_active = stack.optical_model == "tmm" and mode.use_tmm_optics
     # Drive every label fragment off the mode flags so the indicator can't
     # silently drift from the physics that actually ran. Missing labels
     # (e.g. PR when use_photon_recycling is False) are left out rather than
     # rendered as "no PR" to keep the string short.
     parts: list[str] = [
         "band offsets · TE" if mode.use_thermionic_emission else "flat bands",
-        "TMM" if mode.use_tmm_optics else "Beer-Lambert",
+        "TMM" if tmm_active else "Beer-Lambert",
         "dual ions" if mode.use_dual_ions else "single ion",
         "trap profile" if mode.use_trap_profile else "uniform τ",
         "T-scaling" if mode.use_temperature_scaling else "T=300K",
     ]
     # Phase 3.x extras appended only when on, so the label stays short for
     # LEGACY / FAST and expands only for FULL or custom modes that opt in.
-    if mode.use_photon_recycling:
+    if mode.use_photon_recycling and tmm_active:
         parts.append("photon recycling")
-    if mode.use_radiative_reabsorption:
+    if mode.use_radiative_reabsorption and tmm_active:
         parts.append("PR reabsorption")
     if mode.use_field_dependent_mobility:
         parts.append("μ(E)")
@@ -261,6 +262,7 @@ def stack_from_dict(cfg: dict) -> DeviceStack:
         layers=tuple(layers),
         **built_in_potential_fields_from_device_dict(dev),
         Phi=float(dev.get("Phi", 2.5e21)),
+        optical_model=str(dev.get("optical_model", "beer_lambert")),
         grid_interval_weights=grid_interval_weights,
         grid_alphas=grid_alphas,
         jv_solver_policy=str(dev.get("jv_solver_policy", "general")),
@@ -387,6 +389,7 @@ def _stack_to_config_dict(stack: DeviceStack) -> dict:
     device = {
         "mode": str(stack.mode),
         "Phi": stack.Phi,
+        "optical_model": stack.optical_model,
         "T": stack.T,
         "interfaces": [list(p) for p in stack.interfaces],
         "interface_defects": interface_defects,
@@ -469,8 +472,42 @@ def _config_dict_from_path(path: str) -> dict:
         cfg = yaml.safe_load(f)
     if _is_scaps_schema(cfg):
         from perovskite_sim.scaps_compat import load_scaps_yaml
-        return _stack_to_config_dict(load_scaps_yaml(path))
+        converted = _stack_to_config_dict(load_scaps_yaml(path))
+        if "simulation_hints" in cfg:
+            converted["simulation_hints"] = cfg["simulation_hints"]
+        return converted
     return cfg
+
+
+def scaps_beer_lambert_reference(sweep: str | None = None, value: float | None = None):
+    """Load report inputs, without running or substituting a simulation."""
+    from perovskite_sim.validation.scaps_beer_lambert import (
+        apply_reference_point, reference_catalog,
+    )
+
+    try:
+        catalog = reference_catalog()
+        if sweep is None:
+            return catalog
+        if value is None:
+            raise ValueError("value is required with sweep")
+        config = _config_dict_from_path(resolve_config_path("scaps_mirror_v2.yaml"))
+        stack = apply_reference_point(stack_from_dict(config), sweep, value)
+        resolved = _stack_to_config_dict(stack)
+        resolved["simulation_hints"] = {
+            **config["simulation_hints"],
+            "reference_point": {"sweep": sweep, "value": value},
+        }
+        workbook_max = catalog["sweeps"][sweep].get("workbook_max")
+        if workbook_max is not None and value > workbook_max:
+            resolved["simulation_hints"]["reference_point"]["scope"] = "high_doping_extrapolation"
+            resolved["simulation_hints"]["jv_sweep"] = {
+                **resolved["simulation_hints"]["jv_sweep"], "N_grid": 90,
+            }
+            resolved["simulation_hints"]["min_N_grid"] = 90
+        return {"config": resolved}
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _load_stack(config_path: Optional[str], device: Optional[dict]) -> DeviceStack:
@@ -637,6 +674,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.get("/api/reference-studies/scaps-beer-lambert")(scaps_beer_lambert_reference)
 
 
 @app.get("/api/configs")

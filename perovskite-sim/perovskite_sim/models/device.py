@@ -400,7 +400,13 @@ class DeviceStack:
     # band_grading so electrical and optical properties share one coordinate.
     graded_optics: bool = False
 
+    # Independent from the electrical physics tier. Historical optical
+    # regressions must request TMM explicitly; new studies default to BL.
+    optical_model: str = "beer_lambert"
+
     def __post_init__(self):
+        if self.optical_model not in ("beer_lambert", "beer_lambert_spectral", "tmm"):
+            raise ValueError("optical_model must be beer_lambert, beer_lambert_spectral, or tmm")
         object.__setattr__(self, "layers", tuple(self.layers))
         object.__setattr__(
             self, "grid_interval_weights", tuple(self.grid_interval_weights)

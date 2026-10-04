@@ -8,6 +8,7 @@
 # Compare against moderate (1e3 / 1e1) and Dirichlet baseline.
 
 device:
+  optical_model: tmm
   V_bi: 1.30
   Phi: 2.5e21
   mode: full

@@ -14,6 +14,7 @@
 #   Saliba et al. JPCL 2016 (FA-Cs chi / Eg)
 #   Lin et al. Nature 2019 (tandem architecture, absorber thicknesses)
 device:
+  optical_model: tmm
   # Wide-gap (1.77 eV) top sub-cell. With contact chi/Eg still at 0 the
   # band-offset path falls back to this manual value, which caps V_oc. Lin
   # 2019 reports 1.216 V on the reverse-scan top sub-cell, so the manual

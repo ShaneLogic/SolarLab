@@ -13,6 +13,7 @@
 # as ohmic selective layers; only the absorber is driven to the radiative
 # limit.
 device:
+  optical_model: tmm
   V_bi: 0.79
   Phi: 2.5e21
 layers:

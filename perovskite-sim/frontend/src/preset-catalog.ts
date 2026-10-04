@@ -20,7 +20,7 @@ export const RESEARCH_PRESETS: ReadonlyArray<{
       mechanisms: [
         'Electron and hole transport; no mobile ions',
         'Band offsets; bulk and interface SRH recombination',
-        'TMM photogeneration; radiative and Auger recombination',
+        'Beer-Lambert photogeneration (AM1.5G); radiative and Auger recombination',
       ],
       evidence: 'Calibrated SCAPS comparison; validation is target-specific.',
     },

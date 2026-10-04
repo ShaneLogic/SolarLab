@@ -7,6 +7,7 @@
 # contact-consistent semiconductor work-function boundary supplies the dark
 # reference. Passing this config does not claim SCAPS parity.
 device:
+  optical_model: tmm
   built_in_potential_mode: semiconductor_work_function
   interface_charge_closure: "off"
   interface_charge_rebaseline_acknowledged: true

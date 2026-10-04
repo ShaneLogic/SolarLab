@@ -143,13 +143,13 @@ def _low_doping_etl_stack(*, metal_reservoir: bool):
         SweepPoint("p", "nd", "1e10", {"etl_doping_cm3": 1e10}),
     )
     return _frozen_ion(dataclasses.replace(
-        base, dos_band_potentials=True, flat_band_contacts=True,
+        base, optical_model="tmm", dos_band_potentials=True, flat_band_contacts=True,
         flat_band_metal_contacts=metal_reservoir))
 
 
 @pytest.mark.slow
 def test_low_doping_etl_metal_reservoir_brackets_physical_voc():
-    """The shipped metal-reservoir BC closes the old no-crossing branch.
+    """The historical TMM metal-reservoir BC closes the old no-crossing branch.
 
     The SCAPS value is a calibrated comparison, not a holdout prediction: the
     contact barrier in this preset is itself a model parameter.  This gate

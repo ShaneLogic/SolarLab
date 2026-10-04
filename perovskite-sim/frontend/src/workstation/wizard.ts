@@ -32,7 +32,7 @@ const TIER_CARDS: Array<{
   { tier: 'legacy', title: 'Legacy', subtitle: 'Isothermal baseline',
     bullets: ['Single-ion transport', 'Material parameters at 300 K', 'Scalar or prescribed photogeneration'] },
   { tier: 'fast', title: 'Fast', subtitle: 'Optoelectronic extensions',
-    bullets: ['TMM and thermionic transport', 'Two ion species; trap profiles', 'Temperature scaling; photon recycling'] },
+    bullets: ['Thermionic interface transport', 'Two ion species; trap profiles', 'Temperature scaling; optional optical extensions'] },
   { tier: 'full', title: 'Full', subtitle: 'Fast + constitutive extensions',
     bullets: ['Radiative reabsorption source', 'Field-dependent carrier mobility', 'Finite-rate carrier exchange (Robin)'] },
 ]

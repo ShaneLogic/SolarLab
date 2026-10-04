@@ -21,6 +21,7 @@
 # matches SCAPS' ion-frozen absorber.
 
 device:
+  optical_model: tmm
   # V_bi = WF(HTL) - WF(ETL) where WF = chi + (E_F - E_C). For SCAPS HTL
   # (N_A=1e18 on N_V=2.5e20) and ETL (N_D=1e18 on N_C=8e19) this gives:
   #   WF(HTL) = chi + Eg - kT*ln(N_V/N_A) = 2.40 + 3.25 - 0.143 = 5.51 eV

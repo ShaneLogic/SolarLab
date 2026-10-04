@@ -6,7 +6,7 @@ schema_registry: reproducibility/SchemaRegistry.yaml
 numerical_refinement_registry:
   path: reproducibility/NumericalRefinementRegistry.yaml
   schema: numerical-refinement-registry-v1
-  sha256: b808fb2c7e44b282fe5e8a7d55a8f23a12101451104c6c639e2991fec34a2dff
+  sha256: 4480aa7471f825084e791701e11d537e511b180b89a0c2737e34007f3218f8f9
 reference_environment:
   os: Darwin 25.6.0 arm64
   python: 3.13.5
@@ -1167,6 +1167,7 @@ benchmarks:
     limitations:
       - the metal-reservoir contact barrier is a calibrated model parameter
       - the 60 mV SCAPS comparison window is not an independent holdout validation
+      - this historical boundary regression explicitly selects TMM; the shipped SCAPS research entry now uses spectral Beer-Lambert
   degenerate-pn-internal-closure:
     kind: internal
     status: pass
@@ -1686,7 +1687,7 @@ configs:
       - foundation-physical-homojunction-reference
       - foundation-mobile-ion-reference
   - path: tests/fixtures/configs/cigs_graded_optics.yaml
-    sha256: 9539deb2d0883838c9dac42dd95aae41eafb109e9d83205c3273fbd8df0e0fbd
+    sha256: bb597d8440b616ccb0adfc5c436078880c7b23f21f0f330ece53e422b6a1d75a
     semantic_sha256: a78884b0074063e50076ac6f2382bd199375e034d263ad76261fd4f83a7a185f
     schema: standard-device-v1
     status: certified
@@ -1707,7 +1708,7 @@ configs:
     status: partial
     benchmarks: [loader-contract, driftfusion-physical-regression]
   - path: tests/fixtures/configs/driftfusion_benchmark_tmm.yaml
-    sha256: bf0a186c772f5aadff9cfc1c4471534945e9849f42bea75f8097859f4c7350ce
+    sha256: 05a8ec159c71a0b78d6279d6a3cced047807d7bed286a52c472cb82939ff1ff5
     semantic_sha256: 2f15646716953357b501486e520370b3893283ae744757a920f2156837daead5
     schema: standard-device-v1
     status: load_only
@@ -1783,7 +1784,7 @@ configs:
     status: load_only
     benchmarks: [loader-contract]
   - path: tests/fixtures/configs/interface_charge_reference.yaml
-    sha256: 300f57a256dc764995b916a55b98b642ecd8244eccd2ca456624d9521e0e2705
+    sha256: 39bd1b7fe1846e22eef3d350c4b06c5a9809e4e1079e5c1951be5fc74c224216
     semantic_sha256: 1fd48e611f337e1c1a44801bd8dac3947d437b2e908f77ef35bbf980e24a46de
     schema: scaps-device-v1
     status: partial
@@ -1822,7 +1823,7 @@ configs:
       - ionmonger-residual-ss-mesh
       - phase1-refinement-contract
   - path: tests/fixtures/configs/ionmonger_benchmark_tmm.yaml
-    sha256: 09728fba308a206b3bdcd0874fdfc1775ac125dcfa42d10f70e9db8887c46fea
+    sha256: c3c778760ddbef7db8c49c915266afc6b30f6d6eba9a766de20a421350528a70
     semantic_sha256: 27e852381c1f7586fdb05bd73f587b6e9f64e4be2de95f649825dcabe4d78822
     schema: standard-device-v1
     status: partial
@@ -1843,19 +1844,19 @@ configs:
       - phase1-refinement-contract
       - external-series-shunt-dc-internal-closure
   - path: tests/fixtures/configs/nip_MAPbI3_tmm.yaml
-    sha256: 4624f6923ffc10fbd401ce37702250f72b558d3e4ecdbd5d8e766ab84e21b1b2
+    sha256: 10340cf9e69df45e773037e02ec528d7192b04d2f7bc4487b239d41aaec9514c
     semantic_sha256: 5ea55c1257834ab7f7dd10a867c2b78aea03ee2691936281b227ee833e59571a
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, tmm-jsc-regression]
   - path: tests/fixtures/configs/nip_SnPb_1p22.yaml
-    sha256: 2b5271f1c0f943074ea8de647e0e57c1d456e43f785e6123eb73d616c3e11c1d
+    sha256: 5ade8997de81bcc7b9a12cb94982c9ccb432455420ad4d0402bddf504e6dd3f1
     semantic_sha256: a89144913a27f5be6ee7f3324635083826a42bd615beb4ba357bf136a5bb8735
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, lin2019-tandem]
   - path: tests/fixtures/configs/nip_wideGap_FACs_1p77.yaml
-    sha256: 063c10f521a9943bd63728687ca383b2693ae437071aaedbeb98cdbe26e96147
+    sha256: 78d0831a6ff820c68345ee51a192c2d5939bbffcd13e45cd678220c46e3abf1b
     semantic_sha256: 33ad11f46832f2e7d905cae548df4f8e7c1d6de7f5239a628b52fabff6b83075
     schema: standard-device-v1
     status: partial
@@ -1867,13 +1868,13 @@ configs:
     status: load_only
     benchmarks: [loader-contract]
   - path: tests/fixtures/configs/pin_MAPbI3_tmm.yaml
-    sha256: 984b5f8bb9858994a1100de70896fc4a9474b43ef1857d633beb14f75a9a22df
+    sha256: a6f8c90e685a762782752d0902f94befa85507c125dab6bbf618206e051e6b6f
     semantic_sha256: f8deb3537112aa80dcfdad8559ed93c3ac049aae9e3ffbe602ab8b0fdeb0302f
     schema: standard-device-v1
     status: partial
     benchmarks: [loader-contract, tmm-jsc-regression]
   - path: tests/fixtures/configs/radiative_limit.yaml
-    sha256: 8d529e4321fb1bb3c32d1d516946aa768f641982d4ab6e12059c46fa5e1fb8c9
+    sha256: 869e3af9fc9a3ca051c29b595634107bb3c7ff4b97bee3a8d7333113d84e56e8
     semantic_sha256: 8895f94d65240a44caf0db78839a3f21802d54f73148214fc9bd69e0901d42ed
     schema: standard-device-v1
     status: partial
@@ -1918,25 +1919,25 @@ configs:
     status: partial
     benchmarks: [loader-contract, charged-explicit-defect-internal-closure]
   - path: tests/fixtures/configs/scaps_mirror.yaml
-    sha256: 7ad4968d9c8249b76ca4e649d41c39e26727f6818cb81a15fe75f6b74b11b881
+    sha256: 5fe6de8c145ab9345e6c414ce5961d3f65cf7157c094593071d4abadc12de5d8
     semantic_sha256: bbda4b58f4844ce6e1e4bcf99e44ee873603ad1c5d5f7ad939faacc5973b7713
     schema: scaps-device-v1
     status: partial
     benchmarks: [loader-contract, scaps-cbo-trend, phase1-refinement-contract]
   - path: configs/scaps_mirror_v2.yaml
-    sha256: 5500c9485f6a9518430511019546933277cdc3274fd3a005182394f39d2fcf67
-    semantic_sha256: 813580bccbe13cdf78d203910b0c4eb31583bfdf779c8b7703f94ba823755071
+    sha256: b753f6e2f98d83af8ad52e2713d118a3104c676119919e40f301e194131ad61c
+    semantic_sha256: 709b2ae41b9a093e78c580f9b2a9816294d0a1c63ba324a87426597ba9d76407
     schema: scaps-device-v1
     status: partial
     benchmarks: [loader-contract, scaps-low-doping-etl-boundary, phase1-refinement-contract]
   - path: tests/fixtures/configs/scaps_mirror_v2_robin_moderate.yaml
-    sha256: 2d0d25a59802cac9c85f2b4a84ee49f9b42100fe0f87cb00f647462b475a0f95
+    sha256: 2afb2be7eb22dc47e0bed2eebd348f30948e7094b301974acca6cac9cde5f490
     semantic_sha256: 8ee02c3a6099628d35d854b2a09fa5ca72f828c5d15132d9947dcf5d51f3d8f9
     schema: scaps-device-v1
     status: load_only
     benchmarks: [loader-contract]
   - path: tests/fixtures/configs/scaps_mirror_v2_robin_strong.yaml
-    sha256: 2b35b8e0a8efdc1e3432dc55b00f03b6f6bcf53d43e699502ef3c903152057ee
+    sha256: d19ceafd299792361d593e8f2f5c3a14ffd02c80c046d710a664a6ce40b01658
     semantic_sha256: 8cda10e0c9dfded05c280089afced25baabea2332168f15ad955644949c95921
     schema: scaps-device-v1
     status: load_only
@@ -1948,13 +1949,13 @@ configs:
     status: demo
     benchmarks: [loader-contract]
   - path: tests/fixtures/configs/solarscale_nip_band_aligned.yaml
-    sha256: 8b0d9cadfb1d198cf32ea647c95ed25fa38928d8b2f5770bcf49902114402088
+    sha256: c41a5d968aebc1aceef763dfa802cb2ba855b9fc4d2b0b0d7e3524b3ddbf3c0a
     semantic_sha256: 498a4753dfbfd6b213a517eb095ea139401c0cdf8fda2ec2abf5e5d0d45bb65f
     schema: standard-device-v1
     status: load_only
     benchmarks: [loader-contract]
   - path: tests/fixtures/configs/solarscale_nip_band_aligned_iface.yaml
-    sha256: 538fed52f0d40123ecc1b8a4c1391616f9f35a93637157f3374e90fc8f43c344
+    sha256: 6b1b63dac24bbd36dd5bf489ed7ff9e1dc1622f9ce149495d368520ed1973cfe
     semantic_sha256: 9c2bf332f1ae352693b44a2c829e803b3d14be2636ddbbba6597871d417ced1c
     schema: standard-device-v1
     status: demo
