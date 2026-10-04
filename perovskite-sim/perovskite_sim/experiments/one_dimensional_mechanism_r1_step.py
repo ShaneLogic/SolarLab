@@ -24,6 +24,9 @@ from perovskite_sim.solver.mol import poisson_right_boundary
 
 _GAUSS_CHARGE_SCALE = Q * 1e15
 _GAUSS_LIMIT = 1e-10
+_PAIR_FIXED_POPULATION_FIELDS = (
+    "n_m3", "p_m3", "positive_m3", "occupancy", "sheet_charge_C_m2",
+)
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,34 @@ def _fail(message: str, evidence: dict[str, Any] | None = None) -> None:
 
 def _json_array(value: Any) -> Any:
     return None if value is None else np.asarray(value).tolist()
+
+
+def _pair_word_snapshot(fine) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Copy primary pair words before a call that may rebase the state.
+
+    Public binary64 arrays cannot establish identity of a compensated state.
+    Copies also prevent an in-place mutation from changing both sides of the
+    comparison. Derived currents and residuals are deliberately not frozen.
+    """
+    from .one_dimensional_mechanism_r1_precision import REFERENCE_FIELDS
+
+    return {
+        field: (fine[field].hi.copy(), fine[field].lo.copy())
+        for field in (*REFERENCE_FIELDS, "sheet_charge_C_m2")
+    }
+
+
+def _check_pair_word_identity(before, fine, *, stage, fields=None) -> None:
+    """Require each physical hi/lo word to survive the specified operation."""
+    for field in before if fields is None else fields:
+        current = fine.get(field)
+        for index, word in enumerate(("hi", "lo")):
+            actual = getattr(current, word, None)
+            if actual is None or not np.array_equal(before[field][index], actual):
+                _fail(f"R1-1 pair {stage} changed {field}.{word}", {
+                    "stage": stage, "field": field, "word": word,
+                    "requirement": "exact_primary_pair_word_identity",
+                })
 
 
 def _electrostatics(system, state) -> dict[str, Any]:
@@ -403,7 +434,11 @@ def build_initial_step(system, zero_minus_state, voltage_after: float, *, policy
         raise ValueError("R1-1 initial step requires physical control volumes")
     before = zero_minus_state
     voltage_before = float((poisson_right_boundary(system.material, 0.) - before.phi[-1]) / system.polarity)
+    minus_words = _pair_word_snapshot(before.fine) if numerical.is_pair else None
     working, local_before = system.rebase(before)
+    if minus_words is not None:
+        _check_pair_word_identity(minus_words, before.fine, stage="zero_minus_rebase_input")
+        _check_pair_word_identity(minus_words, local_before.fine, stage="zero_minus_rebase")
     working.set_voltage_lift(voltage_after, local_before)
     coordinate, correction = _fixed_population_electrostatic_correction(working, voltage_after)
     zero_plus, iterations, norm = _solve_local_carriers(working, voltage_after, policy, coordinate)
@@ -412,6 +447,9 @@ def build_initial_step(system, zero_minus_state, voltage_after: float, *, policy
         old, new = getattr(before, field), getattr(zero_plus, field)
         if (old is None) != (new is None) or (old is not None and not np.array_equal(old, new)):
             _fail(f"R1-1 ideal step changed dynamic population or charge: {field}")
+    if minus_words is not None:
+        _check_pair_word_identity(minus_words, zero_plus.fine,
+            stage="fixed_population_voltage_jump", fields=_PAIR_FIXED_POPULATION_FIELDS)
     minus_record = _state_record(system, before, voltage_before, "0-")
     plus_record = _state_record(working, zero_plus, voltage_after, "0+")
     algebraic = _check_algebraic(working, zero_plus, policy)
@@ -428,13 +466,20 @@ def build_initial_step(system, zero_minus_state, voltage_after: float, *, policy
         })
     # Rebase once more and remove the old voltage lift. Otherwise the zero
     # coordinate would apply the voltage jump for a second time on integration.
-    integration_system, _ = working.rebase(zero_plus)
+    plus_words = _pair_word_snapshot(zero_plus.fine) if numerical.is_pair else None
+    integration_system, rebased_plus = working.rebase(zero_plus)
+    if plus_words is not None:
+        _check_pair_word_identity(plus_words, zero_plus.fine, stage="zero_plus_rebase_input")
+        _check_pair_word_identity(plus_words, rebased_plus.fine, stage="zero_plus_rebase")
     integration_system.set_voltage_lift(voltage_after, zero_plus)
     integration_state = integration_system.evaluate(np.zeros(system.dimension), voltage_after)
     for field in ("n", "p", "positive", "negative", "occupancy", "phi", "sheet_charge"):
         old, new = getattr(zero_plus, field), getattr(integration_state, field)
         if (old is None) != (new is None) or (old is not None and not np.array_equal(old, new)):
             _fail(f"R1-1 rebasing changed the prepared right-limit state: {field}")
+    if plus_words is not None:
+        _check_pair_word_identity(plus_words, integration_state.fine,
+            stage="zero_plus_zero_coordinate_restore")
     current = regular_current_at_state(
         integration_system, integration_state, policy=policy,
         require_relative_closure=voltage_after != voltage_before,

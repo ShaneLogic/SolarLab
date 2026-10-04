@@ -848,34 +848,41 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
         values = super().eliminated_operator_diagnostics(state, voltage)
         if not isinstance(state, PrecisionState):
             return values
-        inputs = self.independent_poisson_inputs(
-            {key: state.fine[key] for key in _INDEPENDENT_FIXED_FIELDS},
-            voltage, seed_phi=values["potential"]["eliminated"])
+        from .one_dimensional_mechanism_r1_global_reference import (
+            FIXED_FIELDS, evaluate_independent_ion_transport, make_global_ion_reference_inputs,
+        )
+        boundary = self._ion_boundary_flux()
+        reference = make_global_ion_reference_inputs(
+            self, {key: state.fine[key] for key in FIXED_FIELDS},
+            values["potential"]["eliminated"], voltage, boundary_flux=boundary)
+        # V2 retains its original isolated Poisson DTO and binding schema.
+        # Its sheet is now rebuilt from fixed occupancy, never copied from
+        # the direct state's derived sheet field.
+        inputs = reference.poisson_inputs
         eliminated, solve = solve_independent_poisson(inputs)
         constraint_phi = eliminated["phi_V"]
         phi = self._eliminated_flux_potential(constraint_phi)
-        flux = (ion_flux_pair(phi,state.fine["positive_m3"],self.material,np.diff(self.grid),fault=self.precision_fault)
-                if self.controls.nu_I else DD(np.zeros(self.node_count-1)))
-        boundary = self._ion_boundary_flux()
-        rate = -diff(cat(boundary[0],flux,boundary[1]))/DD(self.widths)
+        flux, rate = evaluate_independent_ion_transport(reference, phi, fault=self.precision_fault)
         for name,direct,other in (("positive_ion_flux",state.fine["positive_flux_m2_s"],flux),
                                   ("positive_ion_rate",state.fine["positive_rate_m3_s"],rate)):
+            legacy = values[name]
             delta = (direct-other).to_float()
             left,right=direct.to_float(),other.to_float()
-            floor=float(values[name]["normalization_floor"])
+            floor=float(legacy["normalization_floor"])
             peak=max(float(np.max(np.abs(left),initial=0.)),float(np.max(np.abs(right),initial=0.)))
             scale=max(peak,floor)
             absolute=float(np.max(np.abs(delta),initial=0.))
-            values[name].update(direct=left,eliminated=right,difference=delta,
+            values[name] = dict(legacy, direct=left,eliminated=right,difference=delta,
                 direct_maximum_absolute=float(np.max(np.abs(left),initial=0.)),
                 eliminated_maximum_absolute=float(np.max(np.abs(right),initial=0.)),
                 maximum_absolute_difference=absolute,normalization_floor=floor,normalization_scale=scale,
-                floor_active=peak<floor,relative_error=absolute/scale)
+                floor_active=peak<floor,relative_error=absolute/scale,legacy_binary64=legacy)
+        sheet_words = json.loads(inputs.fixed_inputs_json)["sheet_charge_C_m2"]
         exported = {**eliminated, "phi_V": phi,
             "constraint_phi_V": constraint_phi,
             "dqfn_V": state.fine["dqfn_V"], "dqfp_V": state.fine["dqfp_V"],
             "positive_m3": state.fine["positive_m3"], "occupancy": state.fine["occupancy"],
-            "sheet_charge_C_m2": state.fine["sheet_charge_C_m2"],
+            "sheet_charge_C_m2": DD(sheet_words["hi"], sheet_words["lo"]),
             "positive_flux_m2_s": flux, "positive_rate_m3_s": rate,
             "boundary_flux_m2_s": boundary,
         }
@@ -902,6 +909,14 @@ class CompensatedR1System(ControlledPhysicalInterfaceIonSystem):
             "potential_roles": {"phi_V":"actual_ion_constitutive_input",
                                 "constraint_phi_V":"independent_poisson_solution_for_n_and_p"},
             "trace_state_scope": "not_claimed_as_an_independent_fine_trace_carrier_solve",
+            "global_ion_reference": {
+                "schema": "R1GlobalIonReferenceEvidenceV1", "inputs": reference.to_dict(),
+                "inputs_sha256": digest(reference.to_dict()),
+                "carrier_mapping": "original_global_phi0_log_n0_log_p0",
+                "used_direct_sheet_charge": False, "used_rebased_population_origin": False,
+                "ion_constitutive_implementation": "independent_DD_SG_and_explicit_boundary_FV_divergence",
+                "sheet_source": "recomputed_from_fixed_occupancy_and_original_coefficients",
+            },
         }
         if getattr(getattr(self, "_r1_backend", None), "is_pair", False):
             evidence["schema"] = "R1EliminatedPrecisionV2"

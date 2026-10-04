@@ -1,6 +1,6 @@
 """Explicit A-D rate controls for the R1 physical-volume research operator."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy import sparse
@@ -110,8 +110,56 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         result[5] = occupancy
         return tuple(result)
 
+    def _with_step_electrostatics(self, state):
+        # Pair and input-lift have their own state representations and absolute
+        # rows. Even their pre-initialization super() fallback stays unchanged.
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return super()._with_step_electrostatics(state)
+        from .one_dimensional_mechanism_r1_baseline_electrostatics import (
+            baseline_physical_electrostatic_rows,
+        )
+        rows = baseline_physical_electrostatic_rows(self, state)
+        # Retain the conventional absolute assembly as separate evidence.
+        # Historical incremental rows are available through the pure diagnostic
+        # helper; they no longer replace physical Gauss rows in the live state.
+        state.direct_poisson_residual = state.poisson_residual.copy()
+        state.poisson_residual = rows.poisson_residual_C_m2
+        state.sheet_charge = rows.sheet_charge_C_m2
+        state.local_residual = state.local_residual.copy()
+        local = []
+        for index, item in enumerate(state.local):
+            electrostatic = rows.local_electrostatic_residual[2 * index:2 * index + 2]
+            state.local_residual[6 * index:6 * index + 2] = electrostatic
+            local.append(replace(item, electrostatic_residual=electrostatic.copy(),
+                                 sheet_charge_C_m2=float(state.sheet_charge[index])))
+        state.local = tuple(local)
+        return state
+
+    def eliminated_operator_diagnostics(self, state, voltage):
+        values = super().eliminated_operator_diagnostics(state, voltage)
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return values
+        from .one_dimensional_mechanism_r1_global_reference import (
+            baseline_eliminated_operator_diagnostics,
+        )
+        return baseline_eliminated_operator_diagnostics(self, state, voltage, values)
+
     def _ion_fields(self, phi, positive, negative):
         if self.controls.nu_I:
+            if (type(self) is ControlledPhysicalInterfaceIonSystem
+                    and negative is None and not self.material.has_dual_ions
+                    and self.material.ion_steric_diffusion_only):
+                from perovskite_sim.physics.compensated import DD
+                from .one_dimensional_mechanism_r1_precision import cat, diff, ion_flux_pair
+                # These are the actual one-word physical inputs. DD only
+                # retains intermediate SG/FV cancellation; no coordinate,
+                # reference-root or persistent state low words enter here.
+                flux = ion_flux_pair(DD(np.asarray(phi, dtype=float)),
+                    DD(np.asarray(positive, dtype=float)), self.material, np.diff(self.grid))
+                rate = -diff(cat(0., flux, 0.))/DD(self.widths)
+                return rate.to_float(), None, flux.to_float(), None
+            # Keep the original super path for pair/input-lift initialization
+            # and for models outside this fixed positive-ion steric scope.
             return super()._ion_fields(phi, positive, negative)
         return (
             np.zeros_like(positive),
@@ -190,16 +238,152 @@ class ControlledPhysicalInterfaceIonSystem(PhysicalInterfaceIonSystem):
         The caller still accepts only the original absolute residual, charge
         balance and every current-closure condition, with unchanged limits.
         """
+        poisson = previous.poisson_residual
+        local = previous.local_residual
+        if type(self) is ControlledPhysicalInterfaceIonSystem:
+            from .one_dimensional_mechanism_r1_baseline_electrostatics import (
+                baseline_physical_electrostatic_rows,
+            )
+            # The same previous physical state defines the retained error in
+            # both the direction and live absolute rows. A historical saved
+            # incremental residual must not become a different Gauss target.
+            rows = baseline_physical_electrostatic_rows(self, previous)
+            poisson = rows.poisson_residual_C_m2
+            local = previous.local_residual.copy()
+            for index in range(self.interface_count):
+                local[6 * index:6 * index + 2] = (
+                    rows.local_electrostatic_residual[2 * index:2 * index + 2])
         target = np.zeros(len(storage_scale) + len(poisson_scale) + len(local_scale))
         start = len(storage_scale)
-        target[start:start + len(poisson_scale)] = previous.poisson_residual / poisson_scale
+        target[start:start + len(poisson_scale)] = poisson / poisson_scale
         start += len(poisson_scale)
         for index in range(self.interface_count):
             rows = slice(6 * index, 6 * index + 2)
             target[start + rows.start:start + rows.stop] = (
-                previous.local_residual[rows] / local_scale[rows]
+                local[rows] / local_scale[rows]
             )
         return target
+
+    def newton_direction_eligible(self, residual, storage_scale, poisson_scale,
+                                  local_scale, residual_limit):
+        """Keep admissible electrostatic rows on their stable increment path.
+
+        Carrier or storage residuals still need Newton correction, but must
+        not switch admissible Gauss rows back to an absolute-error direction.
+        The caller separately verifies the previous target and retains every
+        original absolute-residual and current-closure acceptance condition.
+        Other representations retain the original global-norm eligibility.
+        """
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return False
+        residual = np.asarray(residual)
+        start, stop = len(storage_scale), len(storage_scale) + len(poisson_scale)
+        if (residual.shape != (stop + len(local_scale),)
+                or len(local_scale) != 6 * self.interface_count
+                or not np.all(np.isfinite(residual))
+                or not np.isfinite(residual_limit) or residual_limit <= 0.):
+            return False
+        local = residual[stop:].reshape(self.interface_count, 6)
+        return bool(np.all(np.abs(residual[start:stop]) <= residual_limit)
+                    and np.all(np.abs(local[:, :2]) <= residual_limit))
+
+    def newton_direction_rhs(self, state, previous, residual, target,
+                             storage_scale, poisson_scale, local_scale):
+        """Align the baseline direction with stable storage/current increments.
+
+        Absolute physical rows, their Jacobian and every acceptance condition
+        remain unchanged. Only the electrostatic search-direction rows use
+        the increment defect. The supplied target must still be the original
+        physical target bound to the previous state.
+        """
+        if type(self) is not ControlledPhysicalInterfaceIonSystem:
+            return np.asarray(residual, dtype=float) - np.asarray(target, dtype=float)
+        expected = ControlledPhysicalInterfaceIonSystem.newton_residual_target(
+            self, previous, storage_scale, poisson_scale, local_scale)
+        if not np.array_equal(np.asarray(target), expected):
+            raise ValueError("baseline Newton direction target differs from the previous accepted state")
+        from .one_dimensional_mechanism_r1_baseline_electrostatics import (
+            baseline_incremental_electrostatic_defect,
+        )
+        rows = baseline_incremental_electrostatic_defect(self, state, previous)
+        result = np.asarray(residual, dtype=float).copy()
+        start, stop = len(storage_scale), len(storage_scale) + len(poisson_scale)
+        result[start:stop] = rows.poisson_residual_C_m2 / poisson_scale
+        for index in range(self.interface_count):
+            local_rows = slice(6 * index, 6 * index + 2)
+            result[stop + local_rows.start:stop + local_rows.stop] = (
+                rows.local_electrostatic_residual[2 * index:2 * index + 2]
+                / local_scale[local_rows])
+        return result
+
+    def representable_line_search_candidate(self, state, rejected_state, coordinate,
+                                             direction, residual, storage_scale,
+                                             poisson_scale, local_scale, residual_limit):
+        """Propose one adjacent float64 trace density after a physical plateau.
+
+        Only the dominant local carrier coordinate can move. The ordinary
+        forward map must reproduce that one-word neighbor exactly, leaving
+        every other trace density unchanged. The caller spends a remaining
+        line-search slot and requires full original convergence plus descent.
+        No state field, dynamic population, or residual is overwritten here.
+        """
+        if (type(self) is not ControlledPhysicalInterfaceIonSystem
+                or self._step_reference is None or self.interface_count != 1):
+            return None
+        residual = np.asarray(residual, dtype=float)
+        coordinate = np.asarray(coordinate, dtype=float)
+        direction = np.asarray(direction, dtype=float)
+        stop = len(storage_scale) + len(poisson_scale)
+        if (residual.shape != (stop + len(local_scale),)
+                or len(local_scale) != 6 or coordinate.shape != (self.dimension,)
+                or direction.shape != coordinate.shape
+                or not all(np.all(np.isfinite(v)) for v in (residual, coordinate, direction))
+                or not np.isfinite(residual_limit) or residual_limit <= 0.):
+            return None
+        row = int(np.argmax(np.abs(residual)))
+        component = row - stop - 2
+        if (component not in range(4) or abs(residual[row]) <= residual_limit
+                or np.any(np.abs(np.delete(residual, row)) > residual_limit)):
+            return None
+        current_inputs = state.local[0].carrier_data.inputs
+        rejected_inputs = rejected_state.local[0].carrier_data.inputs
+        for name in ("state_density", "trace_potential", "bulk_density", "bulk_potential", "occupancy"):
+            before, after = getattr(current_inputs, name), getattr(rejected_inputs, name)
+            if not (np.array_equal(before.hi, after.hi) and np.array_equal(before.lo, after.lo)):
+                return None
+        column = self._local_block_slice(0).start + 2 + component
+        density = float(state.local[0].state_m3[component])
+        change = float(direction[column])
+        if not np.isfinite(density) or density <= 0. or change == 0.:
+            return None
+        target_density = np.nextafter(density, np.inf if change > 0. else -np.inf)
+        if not np.isfinite(target_density) or target_density <= 0.:
+            return None
+        gap = abs(target_density - density)
+        with np.errstate(over="ignore", invalid="ignore"):
+            density_change = density * np.expm1(change)
+        if (not np.isfinite(density_change)
+                or not .5 * gap <= abs(density_change) <= 2. * gap):
+            return None
+        reference = float(self._step_reference.local[0].state_m3[component])
+        if not np.isfinite(reference) or reference <= 0.:
+            return None
+        # The two densities are close at a rounding plateau. Stable log1p
+        # preserves their relative difference; the forward check is binding.
+        relative_change = (target_density - reference) / reference
+        if not np.isfinite(relative_change) or abs(relative_change) > .5:
+            return None
+        candidate = coordinate.copy()
+        candidate[column] = np.log1p(relative_change)
+        if (not np.isfinite(candidate[column])
+                or (candidate[column] - coordinate[column]) * change <= 0.
+                or abs(candidate[column] - coordinate[column]) > 2. * abs(change)):
+            return None
+        expected = np.asarray([state.local[0].state_m3]).copy()
+        expected[0, component] = target_density
+        if not np.array_equal(self._trace_density_coordinates(candidate), expected):
+            return None
+        return candidate
 
     def failure_evidence(self, state, previous, voltage, dt, residual, storage_scale,
                          poisson_scale, local_scale, diagnostics):

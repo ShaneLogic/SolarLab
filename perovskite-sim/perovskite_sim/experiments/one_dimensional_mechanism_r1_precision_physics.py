@@ -54,7 +54,19 @@ def independent_physics_row_pair(system, state, previous, dt, *, reported=None):
     """
     if not hasattr(state, "fine"):
         return _LEGACY_ROW(system, state, previous, dt, reported=reported)
-    f = _fine_inputs(state)
+    return _independent_physics_row_dd(system, state, previous, dt, reported=reported,
+        fields_of=_fine_inputs, currents=finite._currents,
+        dependencies=SHARED_CONSTITUTIVE_DEPENDENCIES)
+
+
+def _independent_physics_row_dd(system, state, previous, dt, *, reported,
+                               fields_of, currents, dependencies):
+    """Pure assembly shared by explicit DD input representations, without solves.
+
+    Callbacks select the primary fields and independently recompute currents;
+    this function does not choose a backend or initialize a physical state.
+    """
+    f = fields_of(state)
     is_finite = previous is not None
     if is_finite != bool(dt > 0.0) or not np.isfinite(dt):
         raise ValueError("independent physics requires a positive dt exactly for finite steps")
@@ -62,7 +74,7 @@ def independent_physics_row_pair(system, state, previous, dt, *, reported=None):
         raise ValueError("independent R1 assembly requires the declared positive-ion model")
     widths = finite._volumes(system)
     spacing = np.diff(system.grid)
-    electron, hole, ion_flux, interface_conduction = finite._currents(system, state)
+    electron, hole, ion_flux, interface_conduction = currents(system, state)
     conduction = electron + hole + Q * ion_flux
     internal_displacement = np.zeros_like(conduction)
     contact_displacement = np.zeros(2)
@@ -70,7 +82,7 @@ def independent_physics_row_pair(system, state, previous, dt, *, reported=None):
     charge_rate = 0.0
 
     if is_finite:
-        p = _fine_inputs(previous)
+        p = fields_of(previous)
         dn = f["n_m3"] - p["n_m3"]
         dp = f["p_m3"] - p["p_m3"]
         dion = f["positive_m3"] - p["positive_m3"]
@@ -171,7 +183,7 @@ def independent_physics_row_pair(system, state, previous, dt, *, reported=None):
                if check["applicable"] and check["passed"] is not True]
     return finite._json({
         "schema": finite.SCHEMA, "scope": finite.SCOPE, "finite_step": is_finite,
-        "shared_constitutive_dependencies": SHARED_CONSTITUTIVE_DEPENDENCIES,
+        "shared_constitutive_dependencies": dependencies,
         "arrays": arrays, "metrics": metrics, "limits": finite.METRIC_LIMITS,
         "checks": checks, "reasons": reasons, "passed": not reasons,
         "assessment": finite._assessment(checks),

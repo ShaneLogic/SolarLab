@@ -242,11 +242,14 @@ def _make_system(stack, grid, material, dc, reference, controls, policy, *, cano
         dynamic_interface_occupancy=dc.interface_occupancy, V_app=0.0,
     )
     if canonicalize:
-        # Match the existing public D embedding once, during preparation.
-        # Import never replaces recorded populations with a new QF evaluation.
-        dc = replace(dc, electron_density_m3=value.y[:grid.size].copy(),
-                     hole_density_m3=value.y[grid.size:2*grid.size].copy(),
-                     potential_V=value.phi.copy())
+        from .one_dimensional_mechanism_r1_baseline_initial import canonicalize_baseline_initial_dc
+        # Canonicalize only the new zero-minus preparation. Import retains its
+        # recorded binary64 populations and potential without this solve.
+        dc = canonicalize_baseline_initial_dc(
+            charge_off, material, qf, dc, value,
+            equilibrium_occupancy=np.asarray(reference["f_ref"]),
+            trap_density_m2=microscopic.trap_density_m2,
+        )
     # Local algebraic solves may be repeated on import, but the supplied
     # dynamic populations and electrostatic state must never be re-prepared.
     dynamic = SimpleNamespace(

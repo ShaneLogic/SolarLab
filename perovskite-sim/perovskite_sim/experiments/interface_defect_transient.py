@@ -2035,7 +2035,13 @@ def _solve_step(
         # closure tests below. Other solvers have no such direction target.
         linear_rhs = residual
         target_builder = getattr(system, "newton_residual_target", None)
-        if norm <= solver_residual_limit and target_builder is not None:
+        direction_eligible = norm <= solver_residual_limit
+        eligibility = getattr(system, "newton_direction_eligible", None)
+        if not direction_eligible and target_builder is not None and eligibility is not None:
+            direction_eligible = eligibility(
+                residual, storage_scale, poisson_scale, local_scale, solver_residual_limit,
+            )
+        if direction_eligible and target_builder is not None:
             target = np.asarray(target_builder(previous, storage_scale, poisson_scale, local_scale))
             if (target.shape == residual.shape and np.all(np.isfinite(target))
                     and float(np.max(np.abs(target))) <= solver_residual_limit):
@@ -2078,8 +2084,13 @@ def _solve_step(
             face_error / solver_face_limit,
             interface_error / solver_interface_limit,
         )
-        for _ in range(policy.maximum_line_search_steps):
-            candidate = trial + damping * step
+        representable_builder = getattr(system, "representable_line_search_candidate", None)
+        representable_candidate = None
+        representable_attempted = False
+        for search_index in range(policy.maximum_line_search_steps):
+            representable = representable_candidate is not None
+            candidate = representable_candidate if representable else trial + damping * step
+            representable_candidate = None
             try:
                 candidate_residual, _, candidate_state = system.residual_and_jacobian(
                     candidate,
@@ -2091,7 +2102,8 @@ def _solve_step(
                     local_scale,
                 )
             except (InterfaceDefectTransientError, ValueError, FloatingPointError):
-                damping *= 0.5
+                if not representable:
+                    damping *= 0.5
                 continue
             candidate_norm = float(np.max(np.abs(candidate_residual)))
             candidate_charge_error = system.charge_balance_metrics(
@@ -2107,7 +2119,8 @@ def _solve_step(
                 candidate_face_error,
                 candidate_interface_error,
             ) = system.solver_current_metrics(candidate_state, previous, dt)
-            residual_improved = candidate_norm < norm * (1.0 - 1.0e-4 * damping)
+            descent_fraction = 1.0 if representable else damping
+            residual_improved = candidate_norm < norm * (1.0 - 1.0e-4 * descent_fraction)
             candidate_closure_error = max(
                 candidate_charge_error / solver_charge_limit,
                 candidate_face_error / solver_face_limit,
@@ -2122,11 +2135,30 @@ def _solve_step(
                     < closure_error * (1.0 - 1.0e-4 * damping)
                 )
             )
-            if residual_improved or closure_improved:
+            candidate_accepted = residual_improved or closure_improved
+            if representable:
+                candidate_accepted = (residual_improved and candidate_norm <= solver_residual_limit
+                                      and candidate_closure_error <= 1.0)
+            if candidate_accepted:
                 trial = candidate
                 accepted = True
                 break
-            damping *= 0.5
+            if (not representable and not representable_attempted
+                    and representable_builder is not None
+                    and search_index + 1 < policy.maximum_line_search_steps
+                    and closure_error <= 1.0):
+                proposed = representable_builder(
+                    state, candidate_state, trial, step, residual,
+                    storage_scale, poisson_scale, local_scale, solver_residual_limit,
+                )
+                if proposed is not None:
+                    proposed = np.asarray(proposed, dtype=float)
+                    if proposed.shape != trial.shape or not np.all(np.isfinite(proposed)):
+                        raise failure("representable line-search candidate is invalid")
+                    representable_candidate = proposed
+                    representable_attempted = True
+            if not representable:
+                damping *= 0.5
         if not accepted:
             if (
                 nonmonotone_step_count
