@@ -315,6 +315,51 @@ class PrimitiveExpansion:
         raise TypeError("implicit primitive projection is forbidden")
 
 
+@dataclass(frozen=True)
+class PrimitiveDifference:
+    """Exact local difference of two four-word endpoints, without reduction.
+
+    There are exactly two operands and at most 2 x 4 signed source words per
+    component. Operands cannot themselves be differences, so neither memory
+    nor arithmetic arity grows with the number of accepted steps. Consumers
+    contract these words together before the existing physical DD projection.
+    """
+
+    current: PrimitiveExpansion
+    previous: PrimitiveExpansion
+
+    def __post_init__(self):
+        if (type(self.current) is not PrimitiveExpansion
+                or type(self.previous) is not PrimitiveExpansion
+                or self.current.shape != self.previous.shape):
+            raise ContractError("primitive_difference_requires_two_endpoints")
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.current.shape
+
+    def immutable_copy(self) -> PrimitiveDifference:
+        return self
+
+    def take_flat(self, indices: ArrayLike) -> PrimitiveDifference:
+        return PrimitiveDifference(self.current.take_flat(indices), self.previous.take_flat(indices))
+
+    def is_zero(self) -> bool:
+        components = self.current.words + tuple(-word for word in self.previous.words)
+        return all(_binary_sum_is_zero([float(word.ravel()[i]) for word in components])
+                   for i in range(self.current.high.size))
+
+    def identity_bytes(self) -> bytes:
+        return (b"paired-endpoint-difference-v1:"+self.current.identity_bytes()
+                +b":minus:"+self.previous.identity_bytes())
+
+    def __array__(self, dtype=None, copy=None):
+        raise TypeError("implicit primitive difference projection is forbidden")
+
+    def __float__(self):
+        raise TypeError("implicit primitive difference projection is forbidden")
+
+
 def _exact_primitive_sum(left, right) -> PrimitiveExpansion:
     left, right = PrimitiveExpansion.from_value(left), PrimitiveExpansion.from_value(right)
     if left.shape != right.shape:
@@ -327,7 +372,7 @@ def _exact_primitive_difference(left, right) -> PrimitiveExpansion:
     return _exact_primitive_sum(left, PrimitiveExpansion._owned(tuple(-word for word in right.words)))
 
 
-def _linear_map_sum(terms: tuple[tuple[float, DD | PrimitiveExpansion], ...]) -> DD:
+def _linear_map_sum(terms: tuple[tuple[float, DD | PrimitiveExpansion | PrimitiveDifference], ...]) -> DD:
     """One bounded map contraction, with DD products preserved before summing.
 
     Each coefficient is an exact binary64 map parameter. Multiplying its
@@ -345,7 +390,12 @@ def _linear_map_sum(terms: tuple[tuple[float, DD | PrimitiveExpansion], ...]) ->
         if coefficient == 0.0:
             continue
         multiplier = None if coefficient in (-1.0, 1.0) else DD(coefficient)
-        for word in value.words if isinstance(value, PrimitiveExpansion) else (value.hi, value.lo):
+        # A local difference remains two bounded endpoint operands until this
+        # final contraction; do not normalize it into a four-word primitive.
+        words = (value.current.words+tuple(-word for word in value.previous.words)
+                 if isinstance(value, PrimitiveDifference) else value.words
+                 if isinstance(value, PrimitiveExpansion) else (value.hi, value.lo))
+        for word in words:
             if not np.any(word):
                 continue
             # Multiplication by +/-1 is exact for every finite source word.
@@ -376,7 +426,8 @@ class MappedAuthority:
     """Bounded root plus primitive map; projected words never replace the root.
 
     Only the relative linear/log/logit maps and the named R1 lift are supported.
-    Primitive composition must be exact in four words. Transcendental physical
+    Endpoint composition must be exact in four words; v5 affine transitions
+    retain two endpoints when their local difference is wider. Transcendental physical
     evaluations retain the existing DD domain and require observable-specific
     qualification; absolute projections carry no generic sign certificate.
     """
@@ -392,7 +443,7 @@ class MappedAuthority:
     map_name: str = "relative-fields"
     parameters: Mapping[str, float] = field(default_factory=dict)
     previous_primitives: Mapping[str, PrimitiveExpansion] | None = None
-    local_primitives: Mapping[str, PrimitiveExpansion] | None = None
+    local_primitives: Mapping[str, PrimitiveExpansion | PrimitiveDifference] | None = None
     previous_authority_identity: str | None = None
     previous_point_identity: str | None = None
     coordinate_kind: str = "local"
@@ -421,7 +472,9 @@ class MappedAuthority:
         for name in ("primitives", "previous_primitives", "local_primitives"):
             values = getattr(self, name)
             if values is not None:
-                object.__setattr__(self, name, MappingProxyType({key: PrimitiveExpansion.from_value(value)
+                object.__setattr__(self, name, MappingProxyType({key: value if name == "local_primitives"
+                                                               and type(value) is PrimitiveDifference
+                                                               else PrimitiveExpansion.from_value(value)
                                                                for key, value in sorted(values.items())}))
         parameters = dict(self.parameters)
         if self.map_name == "relative-fields":
@@ -471,10 +524,22 @@ class MappedAuthority:
             if (set(self.local_primitives) != set(expected) or set(self.previous_primitives) != set(expected)
                     or not self.previous_authority_identity or not self.previous_point_identity):
                 raise ContractError("incomplete_authority_transition")
+            paired = [type(value) is PrimitiveDifference for value in self.local_primitives.values()]
+            if any(paired) and (not all(paired) or self.coordinate_kind != "fixed-reference"):
+                raise ContractError("paired_transition_requires_affine_endpoints")
             for key in expected:
-                composed = _exact_primitive_sum(self.previous_primitives[key], self.local_primitives[key])
-                if composed.identity_bytes() != self.primitives[key].identity_bytes():
-                    raise ContractError("authority_transition_mismatch")
+                local = self.local_primitives[key]
+                if isinstance(local, PrimitiveDifference):
+                    if (local.shape != expected[key]
+                            or local.current.identity_bytes() != self.primitives[key].identity_bytes()
+                            or local.previous.identity_bytes() != self.previous_primitives[key].identity_bytes()):
+                        raise ContractError("authority_transition_mismatch")
+                else:
+                    # Preserve the exact historical v3/v4 normalization and
+                    # identity check when decoding their four-word deltas.
+                    composed = _exact_primitive_sum(self.previous_primitives[key], local)
+                    if composed.identity_bytes() != self.primitives[key].identity_bytes():
+                        raise ContractError("authority_transition_mismatch")
             for name in ("previous_primitives", "local_primitives"):
                 object.__setattr__(self, name, MappingProxyType({key: value.immutable_copy()
                                                                for key, value in sorted(getattr(self, name).items())}))
@@ -632,7 +697,7 @@ class MappedAuthority:
                 raise ContractError("trial_predecessor_reference_mismatch")
             self._compatible(authority)
 
-    def _temporal_primitives(self, left: StateView) -> Mapping[str, PrimitiveExpansion]:
+    def _temporal_primitives(self, left: StateView) -> Mapping[str, PrimitiveExpansion | PrimitiveDifference]:
         if left.authority.identity == self.identity:
             return {key: PrimitiveExpansion.from_value(np.zeros(value.shape))
                     for key, value in self.primitives.items()}
@@ -828,6 +893,12 @@ class MappedAuthority:
                    "composition_policy": "exact-four-word-primitives-v1"}
         if self.coordinate_kind == "fixed-reference":
             payload["schema"] = "solarlab.state-authority.v4"
+            # Empty layouts have no paired operands: retain their canonical
+            # legacy v4 identity even when trial's requested policy is paired.
+            if self.local_primitives and all(type(value) is PrimitiveDifference
+                                             for value in self.local_primitives.values()):
+                payload["schema"] = "solarlab.state-authority.v5"
+                payload["composition_policy"] = "four-word-endpoints-paired-transition-v1"
             payload["coordinate_contract"] = {"kind": "fixed-reference-affine-v1",
                                                "solver_projection": "first-word",
                                                "reference": encode_point(self.fixed_reference)}
@@ -836,7 +907,8 @@ class MappedAuthority:
                 "previous_authority": self.previous_authority_identity,
                 "previous_point": self.previous_point_identity,
                 "previous_primitives": {key: _primitive_payload(value) for key, value in self.previous_primitives.items()},
-                "local_primitives": {key: _primitive_payload(value) for key, value in self.local_primitives.items()}}
+                "local_primitives": {key: _difference_payload(value) if isinstance(value, PrimitiveDifference)
+                                     else _primitive_payload(value) for key, value in self.local_primitives.items()}}
         return payload
 
 
@@ -1015,7 +1087,8 @@ class RelativeCoordinates:
         return right, StateIncrement.from_points(anchor, right)
 
     def trial(self, reference: Point, cumulative_increment: ArrayLike | DoubleArray | PrimitiveExpansion,
-              time: float, inputs: ArrayLike = (), *, predecessor: Point | None = None
+              time: float, inputs: ArrayLike = (), *, predecessor: Point | None = None,
+              transition_representation: str = "paired-endpoints-v1"
               ) -> tuple[Point, StateIncrement]:
         """Affine physical trial at a fixed reference, with an actual predecessor.
 
@@ -1023,7 +1096,11 @@ class RelativeCoordinates:
         complete input words remain authoritative and are serialized. Local
         predecessor differences are distinct from these fixed coordinates.
         Existing advance() continues to expose local increments as Point.y.
+        The explicit four-word mode is for faithful historical v4 restoration;
+        it retains the original capacity rejection rather than rewriting it.
         """
+        if transition_representation not in {"paired-endpoints-v1", "four-word-v1"}:
+            raise ContractError("unknown_affine_transition_representation")
         if any(mode != "linear" for mode in self.modes.values()):
             raise ContractError("affine_trial_requires_linear_reference")
         if not isinstance(reference, Point) or reference.state.layout.identity != self.layout.identity:
@@ -1061,7 +1138,9 @@ class RelativeCoordinates:
             offset = self.layout.offsets[spec.id]
             value = cumulative.take_flat(np.arange(offset.start, offset.stop, dtype=np.intp)).reshape(spec.shape)
             current[spec.id] = _exact_primitive_sum(base[spec.id], value)
-            local[spec.id] = _exact_primitive_difference(current[spec.id], old[spec.id])
+            local[spec.id] = (PrimitiveDifference(current[spec.id], old[spec.id])
+                              if transition_representation == "paired-endpoints-v1" else
+                              _exact_primitive_difference(current[spec.id], old[spec.id]))
         # Use the authority's canonical cumulative words for the solver view.
         # In particular, a valid input -0 has canonical physical remainder +0;
         # the exact byte binding below remains strict rather than using allclose.
@@ -1180,6 +1259,20 @@ def _primitive_payload(value: PrimitiveExpansion) -> dict[str, Any]:
             "words": [[float(x).hex() for x in word.ravel()] for word in value.words]}
 
 
+def _difference_payload(value: PrimitiveDifference) -> dict[str, Any]:
+    return {"shape": list(value.shape), "precision": "paired-endpoint-difference-v1",
+            "current": _primitive_payload(value.current), "previous": _primitive_payload(value.previous)}
+
+
+def _decode_difference(payload: Mapping[str, Any], shape: tuple[int, ...]) -> PrimitiveDifference:
+    if (set(payload) != {"shape", "precision", "current", "previous"}
+            or payload["shape"] != list(shape)
+            or payload["precision"] != "paired-endpoint-difference-v1"):
+        raise ContractError("precision_codec_primitive_difference")
+    return PrimitiveDifference(_decode_primitive(payload["current"], shape),
+                               _decode_primitive(payload["previous"], shape))
+
+
 def _decode_primitive(payload: Mapping[str, Any], shape: tuple[int, ...]) -> PrimitiveExpansion:
     if (set(payload) != {"shape", "precision", "words"} or payload["shape"] != list(shape)
             or payload["precision"] != "input-expansion4-v1" or len(payload["words"]) != 4
@@ -1259,7 +1352,8 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
             "time", "inputs", "coordinates", "reference", "composition_policy", "transition"}
     fixed_reference = None
     kind = "local"
-    if payload.get("schema") == "solarlab.state-authority.v4":
+    paired = payload.get("schema") == "solarlab.state-authority.v5"
+    if payload.get("schema") in {"solarlab.state-authority.v4", "solarlab.state-authority.v5"}:
         keys.add("coordinate_contract")
         contract = payload.get("coordinate_contract", {})
         if (set(contract) != {"kind", "solver_projection", "reference"}
@@ -1268,9 +1362,10 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
             raise ContractError("precision_codec_coordinate_meaning")
         fixed_reference = decode_point(contract["reference"], layout)
         kind = "fixed-reference"
-    if (set(payload) != keys or payload["schema"] not in {"solarlab.state-authority.v3", "solarlab.state-authority.v4"}
+    policy = "four-word-endpoints-paired-transition-v1" if paired else "exact-four-word-primitives-v1"
+    if (set(payload) != keys or payload["schema"] not in {"solarlab.state-authority.v3", "solarlab.state-authority.v4", "solarlab.state-authority.v5"}
             or payload["layout"] != layout.identity or payload["version"] != 1
-            or payload["composition_policy"] != "exact-four-word-primitives-v1"):
+            or payload["composition_policy"] != policy):
         raise ContractError("precision_codec_authority_schema")
     shapes = {spec.id: spec.shape for spec in layout.variables}
     if set(payload["anchor"]) != set(shapes) or set(payload["modes"]) != set(shapes):
@@ -1290,13 +1385,21 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
             raise ContractError("authority_primitive_roles_mismatch")
         return {key: _decode_primitive(values[key], shape) for key, shape in primitive_shapes.items()}
     primitives = decode_primitives(payload["primitives"])
+    if paired and not primitives:
+        raise ContractError("precision_codec_empty_paired_transition")
     previous, local, previous_identity, previous_point = None, None, None, None
     if payload["transition"] is not None:
         transition = payload["transition"]
         if set(transition) != {"previous_authority", "previous_point", "previous_primitives", "local_primitives"}:
             raise ContractError("incomplete_authority_transition")
         previous = decode_primitives(transition["previous_primitives"])
-        local = decode_primitives(transition["local_primitives"])
+        if paired:
+            if set(transition["local_primitives"]) != set(primitive_shapes):
+                raise ContractError("authority_primitive_roles_mismatch")
+            local = {key: _decode_difference(transition["local_primitives"][key], shape)
+                     for key, shape in primitive_shapes.items()}
+        else:
+            local = decode_primitives(transition["local_primitives"])
         previous_identity = transition["previous_authority"]
         previous_point = transition["previous_point"]
     return MappedAuthority(layout, anchor, payload["modes"], primitives, float.fromhex(payload["time"]),

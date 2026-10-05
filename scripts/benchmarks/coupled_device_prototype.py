@@ -788,12 +788,16 @@ class AffineCoupledSlab(CoupledSlab):
     def point(self, fields, time=0.0, inputs=(0.0, 0.0)) -> Point:
         raise ContractError("affine_device_requires_explicit_reference_trial")
 
-    def trial(self, cumulative_increment, time=0.0, inputs=(0.0, 0.0), *, predecessor=None):
+    def trial(self, cumulative_increment, time=0.0, inputs=(0.0, 0.0), *, predecessor=None,
+              transition_representation="four-word-v1"):
+        # This original remainder prototype also restores v1affine histories.
+        # The versioned voltage map explicitly selects paired transitions.
         builder = getattr(self.coordinates, "trial", None)
         if builder is None:
             raise ContractError("public_fixed_reference_trial_unavailable")
         return builder(self.reference, cumulative_increment, time, inputs,
-                       predecessor=self.reference if predecessor is None else predecessor)
+                       predecessor=self.reference if predecessor is None else predecessor,
+                       transition_representation=transition_representation)
 
     def field(self, point: Point, name: str):
         from scripts.benchmarks.precision_prototype import DoubleArray
@@ -1343,7 +1347,8 @@ class AffineDeviceHistory:
             for word in sample["cumulative_primitive_words_hex"]])
         point, increment = self.model.coordinates.trial(
             reference, primitive, float.fromhex(sample["time_hex"]),
-            [float.fromhex(x) for x in sample["input_hex"]], predecessor=predecessor)
+            [float.fromhex(x) for x in sample["input_hex"]], predecessor=predecessor,
+            transition_representation="four-word-v1")
         if point.identity != sample.get("point_identity"):
             raise ContractError("history_restored_identity_mismatch")
         rate = np.array([float.fromhex(x) for x in sample["physical_ydot_hex"]])
@@ -2579,7 +2584,8 @@ class AffineVoltageMap(ImmutableArrays):
 
     def trial(self, z, time, inputs, *, predecessor=None):
         primitive = self.physical_primitive(z, inputs)
-        return self.model.trial(primitive, time, inputs, predecessor=predecessor)
+        return self.model.trial(primitive, time, inputs, predecessor=predecessor,
+                                transition_representation="paired-endpoints-v1")
 
 
 def voltage_lift_rate_projection(model: AffineCoupledSlab, primitive) -> dict:
@@ -2735,21 +2741,27 @@ class VoltageLiftHistory:
         self.reference_digest = digest(self.reference_record)
 
     def build_sample(self, z, time, inputs, predecessor, zdot, input_rate, *,
-                     origin="algebraic_probe", event_side="continuous"):
+                     origin="algebraic_probe", event_side="continuous",
+                     transition_representation="paired-endpoints-v1"):
         if origin not in {"algebraic_probe", "native", "interpolant", "stop_output",
                            "endpoint_restore", "segment_initial"}:
             raise ContractError("unknown_derivative_origin")
         if event_side not in {"continuous", "left", "right"}:
             raise ContractError("unknown_event_side")
+        if transition_representation not in {"paired-endpoints-v1", "four-word-v1"}:
+            raise ContractError("unknown_affine_transition_representation")
         z, zdot = frozen_array(z), frozen_array(zdot)
         inputs, input_rate = frozen_array(inputs), frozen_array(input_rate)
         physical = self.mapping.physical_primitive(z, inputs)
         rate = self.mapping.physical_rate(zdot, input_rate)
-        point, increment = self.mapping.model.trial(physical, time, inputs, predecessor=predecessor)
+        point, increment = self.mapping.model.trial(
+            physical, time, inputs, predecessor=predecessor,
+            transition_representation=transition_representation)
         self.mapping.model.validate(point)
         words = lambda value: [[float(x).hex() for x in word] for word in value.words]
         record = {
-            "schema": "solarlab.voltage-lift-sample.v1",
+            "schema": ("solarlab.voltage-lift-sample.v2" if transition_representation == "paired-endpoints-v1"
+                       else "solarlab.voltage-lift-sample.v1"),
             "map_identity": self.mapping.identity,
             "physical_model_identity": self.mapping.model_identity,
             "reference_digest": self.reference_digest,
@@ -2767,13 +2779,18 @@ class VoltageLiftHistory:
             "physical_rate_frame": "direct-map-push-forward-v1",
             "reference_embedded": False,
         }
+        if transition_representation == "paired-endpoints-v1":
+            record["transition_representation"] = transition_representation
         return point, increment, rate, record
 
     def restore(self, reference_record, record, predecessor):
         from scripts.benchmarks.precision_prototype import decode_point
 
+        version = record.get("schema")
+        transition = "four-word-v1" if version == "solarlab.voltage-lift-sample.v1" else "paired-endpoints-v1"
         if (digest(reference_record) != self.reference_digest
-                or record.get("schema") != "solarlab.voltage-lift-sample.v1"
+                or version not in {"solarlab.voltage-lift-sample.v1", "solarlab.voltage-lift-sample.v2"}
+                or version == "solarlab.voltage-lift-sample.v2" and record.get("transition_representation") != transition
                 or record.get("map_identity") != self.mapping.identity
                 or record.get("reference_digest") != self.reference_digest
                 or record.get("predecessor_identity") != predecessor.identity):
@@ -2786,7 +2803,8 @@ class VoltageLiftHistory:
             [float.fromhex(v) for v in record["inputs_hex"]], predecessor,
             [float.fromhex(v) for v in record["raw_solver_zdot_hex"]],
             [float.fromhex(v) for v in record["input_rates_hex"]],
-            origin=record["origin"], event_side=record["event_side"])
+            origin=record["origin"], event_side=record["event_side"],
+            transition_representation=transition)
         if digest(rebuilt) != digest(record):
             raise ContractError("voltage_lift_history_word_mismatch")
         return point, increment, rate, frozen_array([float.fromhex(v) for v in record["input_rates_hex"]])
