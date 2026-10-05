@@ -104,6 +104,7 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_ports.py -k 'not test_rc_ida_trajectory_and_every_native_interval'
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/refactor/test_hysteresis_current_bounds.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/refactor/test_scaps_reference.py
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m unittest discover -s tests/refactor -p test_reference_map.py
 
   packages:
     runs-on: ubuntu-24.04

@@ -9224,6 +9224,14 @@
     ]
   },
   "capability_reconciliation": {
+    "comparison_map": {
+      "path": "reproducibility/RefactorComparisonMapV1.json",
+      "sha256": "56a2188f487914de469899fb5b60c12b4a6cae818b5967cb14044bdf1f80ec43",
+      "schema": "solarlab.refactor_comparison_map.v1",
+      "status": "planning_map_with_explicit_blocked_prospective_comparisons",
+      "validator": "scripts/benchmarks/reference_map.py",
+      "scope": "Source-bound original gate/assertion links and explicitly blocked prospective obligations; no new scientific qualification."
+    },
     "method": "Use the P00-02 published index/graph and registered contracts; no source recrawl or simulator execution",
     "coverage_index": {
       "root": "repository",
