@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Callable, Iterable, Mapping, Protocol
+from typing import Any, Callable, Iterable, Mapping, Protocol
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -49,14 +49,27 @@ def integer_indices(value: ArrayLike) -> NDArray[np.intp]:
     return np.asarray(raw, dtype=np.intp)
 
 
+class ImmutableArrays:
+    """Expose fresh array views so callers cannot mutate owned shape or dtype.
+
+    Frozen bytes protect values; a separate view header also protects metadata.
+    Subclasses freeze their stored arrays during construction. Returning a view
+    preserves normal NumPy access and dataclass construction/replace semantics.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        value = object.__getattribute__(self, name)
+        return value.view() if isinstance(value, np.ndarray) else value
+
+
 @dataclass(frozen=True)
 class Unit:
-    """SI exponents (length, time, charge, particle number); no implicit scale."""
+    """Dimensions (length, time, charge, number, mass, temperature); no scale."""
 
-    powers: tuple[int, int, int, int]
+    powers: tuple[int, int, int, int, int, int]
 
     def __post_init__(self) -> None:
-        if len(self.powers) != 4 or any(type(x) is not int for x in self.powers):
+        if len(self.powers) != 6 or any(type(x) is not int for x in self.powers):
             raise ContractError("invalid_unit")
 
     def __mul__(self, other: Unit) -> Unit:
@@ -66,12 +79,15 @@ class Unit:
         return Unit(tuple(a - b for a, b in zip(self.powers, other.powers)))
 
 
-ONE = Unit((0, 0, 0, 0))
-SECOND = Unit((0, 1, 0, 0))
-VOLUME = Unit((3, 0, 0, 0))
-AREA = Unit((2, 0, 0, 0))
-PARTICLE = Unit((0, 0, 0, 1))
-COULOMB = Unit((0, 0, 1, 0))
+ONE = Unit((0, 0, 0, 0, 0, 0))
+SECOND = Unit((0, 1, 0, 0, 0, 0))
+LENGTH = Unit((1, 0, 0, 0, 0, 0))
+VOLUME = Unit((3, 0, 0, 0, 0, 0))
+AREA = Unit((2, 0, 0, 0, 0, 0))
+PARTICLE = Unit((0, 0, 0, 1, 0, 0))
+COULOMB = Unit((0, 0, 1, 0, 0, 0))
+VOLT = Unit((2, -2, -1, 0, 1, 0))
+KELVIN = Unit((0, 0, 0, 0, 0, 1))
 
 
 @dataclass(frozen=True)
@@ -176,7 +192,7 @@ class PhysicalArray(Protocol):
 
 
 @dataclass(frozen=True)
-class FloatArray:
+class FloatArray(ImmutableArrays):
     values: Vector
 
     def __post_init__(self) -> None:
@@ -239,7 +255,7 @@ class StateView:
 
 
 @dataclass(frozen=True)
-class Point:
+class Point(ImmutableArrays):
     time: float
     y: Vector
     inputs: Vector
@@ -250,6 +266,7 @@ class Point:
     def __post_init__(self) -> None:
         if not np.isfinite(self.time) or not self.coordinate_reference:
             raise ContractError("invalid_point")
+        object.__setattr__(self, "time", float(self.time))
         object.__setattr__(self, "y", frozen_array(self.y))
         object.__setattr__(self, "inputs", frozen_array(self.inputs))
         if self.y.ndim != 1 or self.inputs.ndim != 1:
@@ -318,7 +335,7 @@ class LinearCoordinates:
 
 
 @dataclass(frozen=True)
-class Geometry:
+class Geometry(ImmutableArrays):
     volumes: Vector
     pairs: NDArray[np.int64]
     face_measures: Vector
@@ -349,7 +366,7 @@ class Geometry:
 class Contribution:
     id: str
     support: str
-    values: Vector
+    values: ArrayLike | PhysicalArray
     unit: Unit
 
 
@@ -373,16 +390,59 @@ class SurfaceCharge(Contribution):
     pass
 
 
+class AssemblyArithmetic(Protocol):
+    """Array operations supplied by a precision backend, with no physics imports.
+
+    ``array`` checks finite values; every operation preserves the representation.
+    ``freeze`` returns owned immutable storage. Geometry and support validation
+    remain the responsibility of TermSink rather than the injected backend.
+    """
+
+    def array(self, value: ArrayLike | PhysicalArray) -> Any: ...
+    def zeros(self, shape: tuple[int, ...]) -> Any: ...
+    def weighted(self, value: Any, weights: Vector) -> Any: ...
+    def add(self, left: Any, right: Any) -> Any: ...
+    def scatter_add(self, target: Any, indices: NDArray[np.intp], value: Any) -> Any: ...
+    def freeze(self, value: Any) -> Any: ...
+
+
+class FloatArithmetic:
+    """The product binary64 implementation of the assembly arithmetic contract."""
+
+    def array(self, value: ArrayLike | PhysicalArray) -> Vector:
+        if isinstance(value, FloatArray):
+            value = value.values
+        return frozen_array(value)
+
+    def zeros(self, shape: tuple[int, ...]) -> Vector:
+        return np.zeros(shape)
+
+    def weighted(self, value: Vector, weights: Vector) -> Vector:
+        return value * weights
+
+    def add(self, left: Vector, right: Vector) -> Vector:
+        return left + right
+
+    def scatter_add(self, target: Vector, indices: NDArray[np.intp], value: Vector) -> Vector:
+        np.add.at(target, indices, value)
+        return target
+
+    def freeze(self, value: Vector) -> Vector:
+        return frozen_array(value)
+
+
 class TermSink:
     """Typed unweighted contributions; geometry is applied here exactly once."""
 
-    def __init__(self, layout: Layout, equation_id: str, geometry: Geometry):
+    def __init__(self, layout: Layout, equation_id: str, geometry: Geometry,
+                 arithmetic: AssemblyArithmetic | None = None):
         equations = {x.id: x for x in layout.equations}
         if equation_id not in equations:
             raise ContractError("unknown_equation")
         self.equation = equations[equation_id]
         self.supports = {x.id: x for x in layout.supports}
         self.geometry = geometry
+        self.arithmetic = arithmetic if arithmetic is not None else FloatArithmetic()
         for support_id, location, shape in (
             (geometry.cell_support, "cell", geometry.volumes.shape),
             (geometry.face_support, "face", geometry.face_measures.shape),
@@ -391,7 +451,7 @@ class TermSink:
             if support is None or support.location != location or support.shape != shape:
                 raise ContractError("geometry_support_mismatch")
         self._seen: set[str] = set()
-        self._value = np.zeros(self.equation.shape)
+        self._value = self.arithmetic.zeros(self.equation.shape)
 
     def add(self, term: Contribution) -> None:
         if not term.id or term.id in self._seen:
@@ -400,7 +460,8 @@ class TermSink:
             raise ContractError("unknown_support")
         support = self.supports[term.support]
         target = self.supports[self.equation.support]
-        values = frozen_array(term.values)
+        arithmetic = self.arithmetic
+        values = arithmetic.array(term.values)
         if values.shape != support.shape:
             raise ContractError("term_shape_mismatch")
         geometry = self.geometry
@@ -410,7 +471,7 @@ class TermSink:
             if support.id != geometry.cell_support:
                 raise ContractError("geometry_support_mismatch")
             expected = term.unit * geometry.volume_unit
-            contribution = values * geometry.volumes
+            contribution = arithmetic.weighted(values, geometry.volumes)
         elif isinstance(term, FaceFlux):
             if (support.location != "face" or target.location != "cell"
                     or values.shape != geometry.face_measures.shape
@@ -419,10 +480,12 @@ class TermSink:
             if support.id != geometry.face_support or target.id != geometry.cell_support:
                 raise ContractError("geometry_support_mismatch")
             expected = term.unit * geometry.face_unit
-            contribution = np.zeros_like(self._value)
-            weighted = values * geometry.face_measures
-            np.add.at(contribution, geometry.pairs[:, 0], -weighted)
-            np.add.at(contribution, geometry.pairs[:, 1], weighted)
+            contribution = arithmetic.zeros(self.equation.shape)
+            weighted = arithmetic.weighted(values, geometry.face_measures)
+            contribution = arithmetic.scatter_add(
+                contribution, geometry.pairs[:, 0], arithmetic.weighted(weighted, -np.ones(values.shape)),
+            )
+            contribution = arithmetic.scatter_add(contribution, geometry.pairs[:, 1], weighted)
         elif isinstance(term, AlgebraicTerm):
             if support != target or self.equation.role != "constraint":
                 raise ContractError("wrong_algebraic_support")
@@ -433,16 +496,16 @@ class TermSink:
             if support.id != geometry.face_support:
                 raise ContractError("geometry_support_mismatch")
             expected = term.unit * geometry.face_unit
-            contribution = values * geometry.face_measures
+            contribution = arithmetic.weighted(values, geometry.face_measures)
         else:
             raise ContractError("untyped_contribution")
         if expected != self.equation.unit:
             raise ContractError("unit_mismatch")
-        self._value += contribution
+        self._value = arithmetic.add(self._value, contribution)
         self._seen.add(term.id)
 
-    def value(self) -> Vector:
-        return frozen_array(self._value)
+    def value(self) -> Any:
+        return self.arithmetic.freeze(self._value)
 
 
 @dataclass(frozen=True)
@@ -461,7 +524,7 @@ class StorageLaw(Protocol):
 
 
 @dataclass(frozen=True)
-class LinearStorage:
+class LinearStorage(ImmutableArrays):
     matrix: Vector
     coordinate_reference: str = "physical-si-v1"
 
@@ -638,7 +701,7 @@ class TerminalPort:
 
 
 @dataclass(frozen=True)
-class AcceptedStep:
+class AcceptedStep(ImmutableArrays):
     left: Point
     right: Point
     increment: StateIncrement
