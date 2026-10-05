@@ -1231,16 +1231,194 @@ def test_affine_native_pair_evaluates_once(case_id,monkeypatch,request):
         count[0]+=1
         return actual(*args,**kwargs)
     monkeypatch.setattr(m,"evaluate",counted)
+    actual_trial=m.trial;trial_count=[0]
+    def counted_trial(*args,**kwargs):
+        trial_count[0]+=1
+        return actual_trial(*args,**kwargs)
+    monkeypatch.setattr(m,"trial",counted_trial)
     before=time.perf_counter()
     pair=affine_native_sample(m,history,proposal,segments[0],snapshot,m.reference,origin="segment_initial")
     elapsed=time.perf_counter()-before
+    pair_trials=trial_count[0]
     restored=history.restore(history.reference_record,pair[-1]["history"],m.reference)
     log_case(request,{"family":"affine_one_evaluation_pair","case":case_id,"full_evaluation_count":count[0],
                       "one_pair_elapsed_s":elapsed,"sample_bytes":len(json.dumps(pair[-1],separators=(",",":")).encode())+1,
                       "raw_pair_point_identity":pair[0].identity,"native_trajectory":False},
-             {"one_evaluation":count[0]==1,"full_public_history_restores":restored[0].identity==pair[0].identity,
+             {"one_evaluation":count[0]==1,"one_public_trial":pair_trials==1,
+              "full_public_history_restores":restored[0].identity==pair[0].identity,
               "raw_rates_retained":pair[-1]["history"]["raw_solver"] is not None,
               "separate_tangent_origin":pair[-1]["physical_tangent"]["origin"]=="physical_tangent"})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+@pytest.mark.parametrize("family", GATES["points"])
+def test_affine_history_builder_keeps_external_checks(case_id,family,request):
+    from scripts.benchmarks.coupled_device_prototype import AffineDeviceHistory
+    from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+    m=affine_model(case_id);p,u=affine_point(m,family);history=AffineDeviceHistory(m)
+    high=u.copy();low=np.zeros(m.layout.size);index=m.layout.offsets["n_m3"].start
+    high[index]=1.;low[index]=2.**-70
+    primitive=PrimitiveExpansion((high,low,np.zeros(m.layout.size),np.zeros(m.layout.size)))
+    rate=m.S*(.17+np.sin(np.arange(m.layout.size)));adot=np.array([.1,0.])
+    point,increment,record=history.build_sample(primitive,p.time,p.inputs,m.reference,rate,adot)
+    external=history.sample(point,primitive,m.reference,rate,adot)
+    restored=history.restore(history.reference_record,record,m.reference)
+    wrong=u.copy();wrong[0]+=m.S[0]*1e-6
+    with pytest.raises(ContractError,match="history_primitive_point_mismatch"):
+        history.sample(point,wrong,m.reference,rate,adot)
+    with pytest.raises(ContractError,match="history_rate_shape"):
+        history.build_sample(primitive,p.time,p.inputs,m.reference,rate[:-1],adot)
+    with pytest.raises(ContractError,match="raw_solver_values_required"):
+        history.build_sample(primitive,p.time,p.inputs,m.reference,rate,adot,origin="native")
+    log_case(request,{"family":"single_trial_history","case":case_id,"point_family":family,
+                      "point_identity":point.identity,"native_steps":0},
+             {"complete_sample_equal":record==external,"exact_restore":restored[0].identity==point.identity,
+              "low_words_retained":any(any(float.fromhex(v)!=0 for v in word)
+                                        for word in record["cumulative_primitive_words_hex"][1:]),
+              "input_rate_equal":np.array_equal(restored[3],adot)})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_affine_sampling_context_owns_request_and_segments(case_id,monkeypatch,request):
+    from scripts.benchmarks.coupled_device_prototype import AffineSamplingContext,AffineDeviceHistory,affine_native_sample
+
+    m=affine_model(case_id);proposal,_=affine_pilot_request(case_id)
+    supplied=json.loads(json.dumps(proposal));context=AffineSamplingContext(m,supplied)
+    before=context.request_copy();expected=digest(before)
+    supplied["controls"]["atol"][0]*=2
+    supplied["segments"][0]["voltage"][1]=.1
+    copy=context.request_copy();copy["budgets"]["charge_C"]*=100
+    with pytest.raises(TypeError):context.budgets["charge_C"]=1.
+    with pytest.raises(AttributeError):context.request_sha256="changed"
+    with pytest.raises(AttributeError):context.segments[0].end=1.
+    external=replace(context.segments[0],voltage=list(context.segments[0].voltage))
+    assert context.segment_digest(m,external)==context.segment_sha256[0]
+    external.voltage[1]=.1
+    with pytest.raises(ContractError,match="native_history_segment_binding"):
+        context.segment_digest(m,external)
+    foreign=type(m)(m.definition,8)
+    with pytest.raises(ContractError,match="foreign_or_stale_sampling_context"):
+        context.segment_digest(foreign,context.segments[0])
+    history=AffineDeviceHistory(m)
+    snapshot={"time":0.,"z":np.array(proposal["z0"]),"zdot":np.array(proposal["zdot0"]),
+              "success":True,"status":0,"message":"synthetic, no native solver"}
+    ordinary=affine_native_sample(m,history,before,context.segments[0],snapshot,m.reference,origin="segment_initial")
+    owned=affine_native_sample(m,history,context,context.segments[0],snapshot,m.reference,origin="segment_initial")
+    with pytest.raises(ContractError,match="foreign_device_history"):
+        affine_native_sample(m,AffineDeviceHistory(foreign),context,context.segments[0],
+                             snapshot,m.reference,origin="segment_initial")
+    monkeypatch.setattr(m,"source_identity","changed")
+    with pytest.raises(ContractError,match="foreign_or_stale_sampling_context"):
+        context.segment_digest(m,context.segments[0])
+    log_case(request,{"family":"owned_sampling_context","case":case_id,"native_steps":0},
+             {"snapshot_unchanged":context.request_copy()==before,"hash_exact":context.request_sha256==expected,
+              "complete_records_equal":ordinary[-1]==owned[-1]})
+
+
+def test_ida_statistics_keep_raw_time_generation_and_method_fields(request):
+    from scripts.benchmarks.coupled_device_prototype import ida_statistics_snapshot
+
+    raw={"num_steps":0,"residual_evals":0,"linear_setups":0,"error_test_fails":0,
+         "nonlinear_iters":0,"nonlinear_conv_fails":0,"jacobian_evals":0,
+         "last_order":0,"current_order":4,"initial_step":.1,"last_step":0.,
+         "current_step":.2,"current_time":2.,"current_cj":17.,
+         "nonlin_conv_coef_requested":.01,"coefficient_getter_available":False}
+    solver=SimpleNamespace(statistics=lambda:raw)
+    before=ida_statistics_snapshot(solver,"segment",2,"initialization_return",2.,2.)
+    raw.update(num_steps=1,residual_evals=3,linear_setups=1,nonlinear_iters=3,jacobian_evals=1,
+               last_order=1,current_order=2,current_step=.02,current_time=2.01,current_cj=100.)
+    after=ida_statistics_snapshot(solver,"segment",2,"interpolant_probe",2.005,2.005,before=before)
+    with pytest.raises(ContractError,match="native_statistics_generation_mismatch"):
+        ida_statistics_snapshot(solver,"segment",3,"before_onestep",3.,before=before)
+    raw["num_steps"]=0
+    with pytest.raises(ContractError,match="native_statistics_counter_regressed"):
+        ida_statistics_snapshot(solver,"segment",2,"after_onestep",3.,before=after)
+    with pytest.raises(ContractError,match="public_native_statistics_unavailable"):
+        ida_statistics_snapshot(SimpleNamespace(),"segment",1,"initialization_return",0.)
+    log_case(request,{"family":"native_statistics_provenance","before":before,"after":after,"native_calls":0},
+             {"zero_step_invalid_method":not before["method_state_valid"],
+              "retained_raw_sentinel_or_previous_fields":before["raw_statistics"]["current_cj"]==17.,
+              "accepted_step_method_valid":after["method_state_valid"],
+              "current_and_last_distinct":after["raw_statistics"]["current_order"]==2 and after["raw_statistics"]["last_order"]==1,
+              "internal_and_returned_time_distinct":after["internal_time_hex"]!=after["returned_time_hex"],
+              "counter_delta_exact":after["work_since_before"]["nonlinear_iters"]==3,
+              "raw_getter_copy_owned":after["raw_statistics"]["num_steps"]==1})
+
+
+def test_affine_saved_sampling_matches_complete_original_records(monkeypatch,request):
+    """Compare both sampling algorithms on one explicitly bound model/source.
+
+    Archived raw inputs select states; the comparison does not reassign the
+    original history's source identity or claim a new native trajectory.
+    """
+    from hashlib import sha256
+    from scripts.benchmarks.coupled_device_prototype import (
+        AffineCoupledSlab,AffineDeviceHistory,AffineSamplingContext,affine_native_sample,
+    )
+
+    bundle=json.loads(Path(os.environ["AFFINE_SAMPLE_REGRESSION"]).read_text())
+    for entry in bundle["files"].values():
+        assert sha256(Path(entry["path"]).read_bytes()).hexdigest()==entry["sha256"]
+    proposal=json.loads(Path(bundle["files"]["request"]["path"]).read_text())
+    original_path=Path(bundle["files"]["baseline_kernel"]["path"])
+    spec=importlib.util.spec_from_file_location("_accepted_affine_sampling_original",original_path)
+    original=importlib.util.module_from_spec(spec);sys.modules[spec.name]=original;spec.loader.exec_module(original)
+    m=AffineCoupledSlab(SlabDefinition.from_plan(Path(bundle["files"]["plan"]["path"]),
+                                                Path(bundle["model_input_root"]),bundle["case_id"]),8)
+    assert digest(m.numeric_packet())==digest(proposal["numeric_packet"])
+    before=time.perf_counter();context=AffineSamplingContext(m,proposal);context_seconds=time.perf_counter()-before
+    history=AffineDeviceHistory(m);original_history=original.AffineDeviceHistory(m)
+    points={bundle["reference_point_identity"]:m.reference}
+    for item in bundle["native_chain"]:
+        h=item["history"];previous=points[h["predecessor_identity"]]
+        z=np.array([float.fromhex(v) for v in h["raw_solver"]["z_hex"]])
+        point,_=m.trial(m.S*z,float.fromhex(h["time_hex"]),
+                        [float.fromhex(v) for v in h["input_hex"]],predecessor=previous)
+        assert point.identity==h["point_identity"]
+        points[point.identity]=point
+    actual_trial=m.trial;trial_count=[0]
+    def counted_trial(*args,**kwargs):
+        trial_count[0]+=1
+        return actual_trial(*args,**kwargs)
+    monkeypatch.setattr(m,"trial",counted_trial)
+    rows=[]
+    for index,item in enumerate(bundle["selected_records"]):
+        h=item["history"];previous=points[h["predecessor_identity"]]
+        segment=next(v for v in context.segments if v.id==item["segment_id"])
+        snapshot={"time":float.fromhex(h["time_hex"]),"success":True,
+                  "z":np.array([float.fromhex(v) for v in h["raw_solver"]["z_hex"]]),
+                  "zdot":np.array([float.fromhex(v) for v in h["raw_solver"]["zdot_hex"]])}
+        measured={}
+        for kind in (("original","owned") if index%2==0 else ("owned","original")):
+            start_count=trial_count[0];start=time.perf_counter()
+            if kind=="original":
+                pair=original.affine_native_sample(m,original_history,proposal,segment,snapshot,previous,origin=h["origin"])
+            else:
+                pair=affine_native_sample(m,history,context,segment,snapshot,previous,origin=h["origin"])
+            measured[kind]=(pair,time.perf_counter()-start,trial_count[0]-start_count)
+        baseline,new=measured["original"][0],measured["owned"][0]
+        assert baseline[-1]==new[-1]
+        assert baseline[0].identity==new[0].identity==h["point_identity"]
+        assert (measured["original"][2],measured["owned"][2])==(2,1)
+        rows.append({"archived_record_sha256":item["record_sha256"],"source_point_identity":h["point_identity"],
+                     "time_hex":h["time_hex"],"origin":h["origin"],"segment_id":item["segment_id"],
+                     "complete_record_sha256":digest(new[-1]),"complete_record_equal":True,
+                     "original_seconds":measured["original"][1],"owned_seconds":measured["owned"][1],
+                     "original_trials":measured["original"][2],"owned_trials":measured["owned"][2]})
+    log_case(request,{"family":"saved_complete_sampling_equivalence","rows":rows,
+                      "context_construction_seconds":context_seconds,"selected_count":len(rows),
+                      "restored_native_event_points":len(bundle["native_chain"]),
+                      "comparison_model_source_identity":m.source_identity,
+                      "archived_model_source_identity":bundle["archived_source_identity"],
+                      "baseline_algorithm_source_sha256":bundle["files"]["baseline_kernel"]["sha256"],
+                      "order_policy":"alternate original/owned first, one call of each per frozen input",
+                      "cost_scope":"complete pair construction; outer stream IO and native solver excluded",
+                      "native_steps":0},
+             {"all_complete_records_equal":all(v["complete_record_equal"] for v in rows),
+              "selected_count_exact":len(rows)==bundle["selected_count"],
+              "one_trial_per_owned_sample":all(v["owned_trials"]==1 for v in rows),
+              "no_native_backend_import":"sksundae" not in sys.modules})
 
 
 def test_affine_saved_failure_weight_contraction(request):

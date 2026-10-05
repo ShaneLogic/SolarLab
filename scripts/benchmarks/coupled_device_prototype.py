@@ -1264,6 +1264,29 @@ class AffineDeviceHistory:
         rebuilt, _ = self.model.trial(primitive, point.time, point.inputs, predecessor=predecessor)
         if rebuilt.identity != point.identity:
             raise ContractError("history_primitive_point_mismatch")
+        return self._sample_record(point, primitive, predecessor, physical_ydot, input_rate,
+                                   origin=origin, event_side=event_side,
+                                   raw_z=raw_z, raw_zdot=raw_zdot)
+
+    def build_sample(self, cumulative_increment, time, inputs, predecessor, physical_ydot,
+                     input_rate, *, origin="algebraic_probe", event_side="continuous",
+                     raw_z=None, raw_zdot=None):
+        """Construct and serialize one public trial without accepting a supplied Point."""
+        from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+        primitive = PrimitiveExpansion.from_value(cumulative_increment)
+        if primitive.shape != (self.model.layout.size,):
+            raise ContractError("history_primitive_shape")
+        point, increment = self.model.trial(primitive, time, inputs, predecessor=predecessor)
+        self.model.validate(point)
+        record = self._sample_record(point, primitive, predecessor, physical_ydot, input_rate,
+                                     origin=origin, event_side=event_side,
+                                     raw_z=raw_z, raw_zdot=raw_zdot)
+        return point, increment, record
+
+    def _sample_record(self, point, primitive, predecessor, physical_ydot, input_rate, *,
+                       origin, event_side, raw_z, raw_zdot):
+        """Serialize only after sample verified, or build_sample constructed, the Point."""
         physical_ydot, input_rate = frozen_array(physical_ydot), frozen_array(input_rate)
         if physical_ydot.shape != point.y.shape or input_rate.shape != (2,):
             raise ContractError("history_rate_shape")
@@ -1961,17 +1984,87 @@ def affine_observation_payload(reading: AffineDeviceObservation) -> dict:
             "tangent_residual_hex": [float(x).hex() for x in reading.tangent_residual]}
 
 
+@dataclass(frozen=True, init=False)
+class AffineSamplingContext:
+    """Own one immutable request snapshot and its exact observation digests.
+
+    Native sampling uses the context-owned frozen segments. External segment
+    objects still take the canonical comparison path, so a mutable caller
+    cannot receive a digest cached for an earlier value.
+    """
+
+    _model: AffineCoupledSlab = field(repr=False)
+    _encoded_request: bytes = field(repr=False)
+    source_identity: str
+    reference_identity: str
+    request_sha256: str
+    controls_sha256: str
+    segments: tuple[ProtocolSegment, ...]
+    segment_sha256: tuple[str, ...]
+    budgets: Mapping
+
+    def __init__(self, model: AffineCoupledSlab, request: Mapping):
+        encoded = json.dumps(dict(request), sort_keys=True, separators=(",", ":"),
+                             allow_nan=False).encode()
+        owned = json.loads(encoded)
+        if owned["case_id"] != model.definition.id:
+            raise ContractError("sampling_context_case_mismatch")
+        segments = tuple(ProtocolSegment(s["id"], s["start"], s["end"],
+                                         tuple(s["voltage"]), tuple(s["photons"]))
+                         for s in owned["segments"])
+        if len({s.id for s in segments}) != len(segments):
+            raise ContractError("sampling_context_duplicate_segment")
+
+        def immutable(value):
+            if isinstance(value, dict):
+                return MappingProxyType({k: immutable(v) for k, v in value.items()})
+            if isinstance(value, list):
+                return tuple(immutable(v) for v in value)
+            return value
+
+        for name, value in {
+            "_model": model, "_encoded_request": encoded,
+            "source_identity": model.source_identity,
+            "reference_identity": model.reference.identity,
+            "request_sha256": sha256(encoded).hexdigest(),
+            "controls_sha256": digest(owned["controls"]),
+            "segments": segments,
+            "segment_sha256": tuple(digest(s) for s in owned["segments"]),
+            "budgets": immutable(owned["budgets"]),
+        }.items():
+            object.__setattr__(self, name, value)
+
+    def request_copy(self) -> dict:
+        """Return an independent copy for a controller's private working data."""
+        return json.loads(self._encoded_request)
+
+    def segment_digest(self, model: AffineCoupledSlab, segment: ProtocolSegment) -> str:
+        if (model is not self._model or model.source_identity != self.source_identity
+                or model.reference.identity != self.reference_identity):
+            raise ContractError("foreign_or_stale_sampling_context")
+        for bound, expected in zip(self.segments, self.segment_sha256):
+            if segment is bound:
+                return expected
+            if segment.id == bound.id:
+                if digest(asdict(segment)) == expected:
+                    return expected
+                break
+        raise ContractError("native_history_segment_binding")
+
+
 def affine_native_sample(model: AffineCoupledSlab, history: AffineDeviceHistory,
-                         request: Mapping, segment: ProtocolSegment, native: Mapping,
+                         request: Mapping | AffineSamplingContext, segment: ProtocolSegment, native: Mapping,
                          predecessor: Point, *, origin: str):
     """Bind a supplied solver snapshot to its protocol and predecessor.
 
     This consumes a snapshot; it neither invokes nor simulates IDA.
     The caller must preserve the returned pair before interpolation.
     """
-    index = next((i for i, s in enumerate(request["segments"]) if s["id"] == segment.id), None)
-    if index is None or digest(request["segments"][index]) != digest(asdict(segment)):
-        raise ContractError("native_history_segment_binding")
+    if history.model is not model:
+        raise ContractError("foreign_device_history")
+    context = request if isinstance(request, AffineSamplingContext) else AffineSamplingContext(model, request)
+    segment_sha256 = context.segment_digest(model, segment)
+    index = next(i for i, s in enumerate(context.segments) if s.id == segment.id)
     t = float(native["time"])
     inputs, input_rate = segment.inputs(t)
     if not native["success"]:
@@ -1990,7 +2083,9 @@ def affine_native_sample(model: AffineCoupledSlab, history: AffineDeviceHistory,
     if z.shape != model.S.shape or zdot.shape != model.S.shape:
         raise ContractError("native_snapshot_shape")
     cumulative, rate = model.S*z, model.S*zdot
-    point, increment = model.trial(cumulative, t, inputs, predecessor=predecessor)
+    point, increment, sample = history.build_sample(
+        cumulative, t, inputs, predecessor, rate, input_rate,
+        origin=origin, event_side=side, raw_z=z, raw_zdot=zdot)
     if origin == "segment_initial" and any(np.any(increment.field(v.id).as_dd() != 0)
                                           for v in model.layout.variables):
         raise ContractError("native_restart_changed_physical_state")
@@ -1998,17 +2093,15 @@ def affine_native_sample(model: AffineCoupledSlab, history: AffineDeviceHistory,
     raw = model.observe(point, rate, input_rate, origin, side, evaluation=evaluation)
     tangent = model.observe(point, model.tangent_rate(point, input_rate, evaluation=evaluation), input_rate,
                             "physical_tangent", side, evaluation=evaluation)
-    sample = history.sample(point, cumulative, predecessor, rate, input_rate, origin=origin,
-                            event_side=side, raw_z=z, raw_zdot=zdot)
     difference = abs(raw.total_inward.as_dd()-tangent.total_inward.as_dd())
-    record = {"kind": "affine_rate_pair", "request_sha256": digest(dict(request)),
-              "segment_id": segment.id, "segment_sha256": digest(asdict(segment)),
-              "controls_sha256": digest(request["controls"]), "history": sample,
+    record = {"kind": "affine_rate_pair", "request_sha256": context.request_sha256,
+              "segment_id": segment.id, "segment_sha256": segment_sha256,
+              "controls_sha256": context.controls_sha256, "history": sample,
               "input_slope_hex": [float(x).hex() for x in input_rate],
               "raw": affine_observation_payload(raw),
               "physical_tangent": affine_observation_payload(tangent),
               "scaling_roundoff": affine_scaling_roundoff(model, z, zdot),
-              "state_checks": affine_state_quality_evidence(model, point, request["budgets"], evaluation=evaluation),
+              "state_checks": affine_state_quality_evidence(model, point, context.budgets, evaluation=evaluation),
               "current_rate_gap_A": float(np.max(difference.hi+difference.lo))}
     record["record_sha256"] = digest(record)
     return point, increment, raw, tangent, record
@@ -2072,6 +2165,49 @@ def affine_charge_accounting(model, delta, integrals, previous_defects,
             "integral_words": [{"high": np.asarray(v.hi).tolist(), "low": np.asarray(v.lo).tolist()} for v in integrals]}
 
 
+_IDA_COUNTER_FIELDS = ("num_steps", "residual_evals", "linear_setups", "error_test_fails",
+                       "nonlinear_iters", "nonlinear_conv_fails", "jacobian_evals")
+
+
+def ida_statistics_snapshot(solver, segment_id: str, generation: int, phase: str,
+                            requested_time: float, returned_time=None, *, before=None) -> dict:
+    """Read public native statistics with explicit time and initialization scope.
+
+    Current method fields can be sentinels or retained values before a first
+    step; they are never filled or relabelled as last-used method fields.
+    Counter differences include rejected work, not an inferred Newton path.
+    """
+    reader = getattr(solver, "statistics", None)
+    if not callable(reader):
+        raise ContractError("public_native_statistics_unavailable")
+    raw = json.loads(json.dumps(reader(), allow_nan=False))
+    if any(type(raw.get(k)) is not int or raw[k] < 0 for k in _IDA_COUNTER_FIELDS):
+        raise ContractError("invalid_native_statistics_counter")
+    if (type(generation) is not int or generation < 1
+            or not math.isfinite(raw["current_time"])):
+        raise ContractError("invalid_native_statistics_context")
+    record = {
+        "kind": "native_statistics", "segment_id": segment_id,
+        "initialization_generation": generation, "phase": phase,
+        "requested_time_hex": float(requested_time).hex(),
+        "returned_time_hex": None if returned_time is None else float(returned_time).hex(),
+        "internal_time_hex": float(raw["current_time"]).hex(),
+        "method_state_valid": raw["num_steps"] > 0,
+        "raw_statistics": raw,
+        "counter_scope": "since this initialization; includes attempted and rejected work",
+        "method_scope": "raw native current/last fields; no inferred iteration branch",
+    }
+    if before is not None:
+        if (before["segment_id"] != segment_id
+                or before["initialization_generation"] != generation):
+            raise ContractError("native_statistics_generation_mismatch")
+        delta = {k: raw[k]-before["raw_statistics"][k] for k in _IDA_COUNTER_FIELDS}
+        if any(v < 0 for v in delta.values()):
+            raise ContractError("native_statistics_counter_regressed")
+        record["work_since_before"] = delta
+    return record
+
+
 def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSegment, ...],
                             request: Mapping, admission: Mapping, emit) -> dict:
     """One admitted full protocol, retaining every raw returned IDA pair.
@@ -2097,6 +2233,11 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
         raise ContractError("affine_native_numeric_packet_changed")
     if any(k in request["controls"] for k in ("constraints_idx", "constraints_type")):
         raise ContractError("absolute_population_constraints_on_remainders")
+    sampling = AffineSamplingContext(model, request)
+    if sampling.request_sha256 != request_id:
+        raise ContractError("affine_native_request_changed_during_snapshot")
+    request = sampling.request_copy()
+    segments = sampling.segments
     from sksundae.ida import IDA
     from scripts.benchmarks.precision_prototype import DD
 
@@ -2142,7 +2283,7 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
     def checked_sample(segment, native, previous, origin):
         nonlocal first_failure
         resource_check()
-        pair = affine_native_sample(model, history, request, segment, native, previous, origin=origin)
+        pair = affine_native_sample(model, history, sampling, segment, native, previous, origin=origin)
         record = pair[-1]
         save(record)
         if not record["state_checks"]["passed"]:
@@ -2186,6 +2327,12 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
                 counts["jacobian"] += 1
                 try:
                     resource_check()
+                    save({"kind": "jacobian_callback_context", "segment_id": segment.id,
+                          "initialization_generation": segment_index+1,
+                          "callback_index": counts["jacobian"], "request_sha256": request_id,
+                          "time_hex": float(t).hex(), "cj_hex": float(cj).hex(),
+                          "z_hex": [float(v).hex() for v in values],
+                          "zdot_hex": [float(v).hex() for v in rates]})
                     matrix = adapter.jacobian(t, values, cj, rates)
                     if (matrix.nnz != model.graph.nnz or not np.array_equal(matrix.indices, model.graph.indices)
                             or not np.array_equal(matrix.indptr, model.graph.indptr)
@@ -2212,6 +2359,8 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
             solver = IDA(residual, jacfn=jacobian, sparsity=sparsity, algebraic_idx=algebraic, **controls)
             initialized = snapshot_solver_result(solver.init_step(segment.start, z, initial_zdot))
             last_attempt = snapshot_receipt("initialization_return", segment, initialized)
+            save(ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                         "initialization_return", segment.start, initialized["time"]))
             if (not initialized["success"] or initialized["time"] != segment.start
                     or not np.array_equal(initialized["z"], z)
                     or not np.array_equal(initialized["zdot"], initial_zdot)):
@@ -2232,7 +2381,22 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
                     raise ContractError("affine_native_step_budget")
                 last_attempt = {"phase": "native_step", "segment_id": segment.id,
                                 "target_time_hex": segment.end.hex(), "previous": last_numerical}
-                native = snapshot_solver_result(solver.step(segment.end, method="onestep", tstop=segment.end))
+                before_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                        "before_onestep", segment.end)
+                save(before_stats)
+                try:
+                    native = snapshot_solver_result(solver.step(segment.end, method="onestep", tstop=segment.end))
+                except BaseException:
+                    try:
+                        save(ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                     "onestep_exception", segment.end, before=before_stats))
+                    except Exception as stats_error:
+                        save({"kind": "native_statistics_unavailable", "segment_id": segment.id,
+                              "initialization_generation": segment_index+1,
+                              "phase": "onestep_exception", "reason": str(stats_error)})
+                    raise
+                save(ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                             "after_onestep", segment.end, native["time"], before=before_stats))
                 last_attempt = snapshot_receipt("native_return", segment, native)
                 if not native["success"]:
                     raise ContractError("affine_native_solver_failure:"+native["message"])
