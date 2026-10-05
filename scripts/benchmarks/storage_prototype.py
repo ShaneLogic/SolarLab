@@ -7,19 +7,103 @@ installed IDA binding.  Independent references and gates belong to the tests.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from hashlib import sha256
 from math import fsum
-from typing import Callable, Protocol
+from types import MappingProxyType
+from typing import Any, Callable, Mapping, Protocol
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 from scripts.benchmarks.contract_prototype import (
     AREA, ONE, PARTICLE, SECOND, VOLUME, BalanceTerms, ContractError,
-    EquationSpec, FaceFlux, FloatArray, Geometry, ImplicitSystem, Layout,
+    EquationSpec, FaceFlux, FieldProjection, FloatArray, Geometry, ImmutableArrays, ImplicitSystem, Layout,
     LinearCoordinates, LinearStorage, Point, StateIncrement, StateView,
     StoragePartials, Support, TermSink, VariableSpec, Vector, frozen_array,
 )
+
+
+@dataclass(frozen=True)
+class _FloatMapAuthority(ImmutableArrays):
+    """Bind the existing small float maps to their canonical finite identities.
+
+    This adapter preserves the existing formulas and binary64 qualification;
+    it does not promote rounded float fields into the DD research lane.
+    """
+
+    mapper: Any
+    layout: Layout
+    values: Mapping[str, FloatArray]
+    y: Vector
+    inputs: Vector
+    time: float
+    identity: str = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "values", MappingProxyType({key: value.immutable_copy()
+                                                           for key, value in self.values.items()}))
+        object.__setattr__(self, "y", frozen_array(self.y))
+        object.__setattr__(self, "inputs", frozen_array(self.inputs))
+        digest = sha256(repr((self.layout.identity, self.mapper.reference, float(self.time))).encode()
+                        + self.y.tobytes() + self.inputs.tobytes())
+        for name in sorted(self.values):
+            digest.update(name.encode() + self.values[name].identity_bytes())
+        object.__setattr__(self, "identity", digest.hexdigest())
+
+    @property
+    def layout_identity(self):
+        return self.layout.identity
+
+    def field(self, name):
+        return _FloatMapArray(self, name)
+
+    def point(self):
+        return Point(self.time, self.y, self.inputs, StateView(self.layout, authority=self), self.mapper.reference)
+
+    def delta_from(self, left):
+        other = left.authority
+        if (not isinstance(other, _FloatMapAuthority) or self.layout_identity != other.layout_identity
+                or self.mapper.reference != other.mapper.reference):
+            raise ContractError("incompatible_state_authority")
+        return self.mapper._increment_fields(other.point(), self.point())
+
+    def project(self, name):
+        return FieldProjection(self.values[name], self.identity, "binary64-storage-map-v1", None)
+
+    def validate_binding(self, time, y, inputs, reference):
+        if (time != self.time or reference != self.mapper.reference or y.shape != self.y.shape
+                or inputs.shape != self.inputs.shape or y.tobytes() != self.y.tobytes()
+                or inputs.tobytes() != self.inputs.tobytes()):
+            raise ContractError("point_authority_binding_mismatch")
+
+    def electrochemical_difference(self, density_id, potential_id, pairs, thermal_voltage, potential_sign):
+        return None
+
+    def validate_transition(self, left, right):
+        return None
+
+
+@dataclass(frozen=True, init=False)
+class _FloatMapArray(FloatArray):
+    authority: _FloatMapAuthority
+    variable: str
+
+    def __init__(self, authority, variable):
+        super().__init__(authority.values[variable].values)
+        object.__setattr__(self, "authority", authority)
+        object.__setattr__(self, "variable", variable)
+
+    def immutable_copy(self):
+        return _FloatMapArray(self.authority, self.variable)
+
+    def identity_bytes(self):
+        return b"binary64-map-field-v1:" + self.authority.identity.encode() + self.variable.encode()
+
+
+def _mapped_point(mapper, layout, fields, y, time, inputs):
+    authority = _FloatMapAuthority(mapper, layout, dict(fields), y, inputs, time)
+    return authority.point()
 
 
 class Coordinates(Protocol):
@@ -153,8 +237,7 @@ class ExponentialStorage:
         if y.shape != (1,) or a.shape != (1,):
             raise ContractError("coordinate_shape_mismatch")
         Q = _positive_exp(fsum((self.by * y[0], self.ba * a[0], self.bt * time)))
-        return Point(time, y, a, StateView(scalar_layout(), [("storage", FloatArray([Q]))]),
-                     self.reference)
+        return _mapped_point(self, scalar_layout(), [("storage", FloatArray([Q]))], y, time, a)
 
     def value(self, point: Point) -> Vector:
         if point.coordinate_reference != self.reference:
@@ -164,11 +247,14 @@ class ExponentialStorage:
     def advance(self, left: Point, dy: ArrayLike, time: float,
                 inputs: ArrayLike = (0.0,)) -> tuple[Point, StateIncrement]:
         right = self.point(left.y + frozen_array(dy), time, inputs)
+        return right, StateIncrement.from_points(left, right)
+
+    def _increment_fields(self, left: Point, right: Point):
         dz = fsum((self.by * (right.y[0] - left.y[0]),
                    self.ba * (right.inputs[0] - left.inputs[0]),
                    self.bt * (right.time - left.time)))
         delta = self.value(left) * np.expm1(dz)
-        return right, StateIncrement(left.identity, right.identity, {"storage": FloatArray(delta)})
+        return {"storage": FloatArray(delta)}
 
     def delta(self, left: Point, right: Point, increment: StateIncrement) -> Vector:
         increment.validate(left, right)
@@ -219,8 +305,8 @@ class CarrierPotentialStorage:
              EquationSpec("constraint", "ic-probe", "scalar", (1,), ONE, role="constraint",
                           derivative_support=("carrier", "potential"))),
         )
-        return Point(time, y, a, StateView(layout, [("carrier", FloatArray([n])),
-                                                   ("potential", FloatArray([y[1]]))]), self.reference)
+        return _mapped_point(self, layout, [("carrier", FloatArray([n])),
+                                            ("potential", FloatArray([y[1]]))], y, time, a)
 
     def value(self, point: Point) -> Vector:
         if point.coordinate_reference != self.reference:
@@ -230,13 +316,15 @@ class CarrierPotentialStorage:
     def advance(self, left: Point, dy: ArrayLike, time: float,
                 inputs: ArrayLike = (0.0,)) -> tuple[Point, StateIncrement]:
         right = self.point(left.y + frozen_array(dy), time, inputs)
+        return right, StateIncrement.from_points(left, right)
+
+    def _increment_fields(self, left: Point, right: Point):
         dz = fsum((*list(right.y - left.y), self.alpha * (right.inputs[0] - left.inputs[0]),
                    self.beta * (right.time - left.time)))
-        inc = StateIncrement(left.identity, right.identity, {
+        return {
             "carrier": FloatArray(self.value(left) * np.expm1(dz)),
             "potential": FloatArray([right.y[1] - left.y[1]]),
-        })
-        return right, inc
+        }
 
     def delta(self, left: Point, right: Point, increment: StateIncrement) -> Vector:
         increment.validate(left, right)
@@ -321,8 +409,7 @@ class SharedCapacityStorage:
             (EquationSpec("balance", "shared-sites", "sites", (len(self.active),),
                           PARTICLE / SECOND, derivative_support=("populations",)),),
         )
-        return Point(time, y, inputs, StateView(layout, [("populations", FloatArray(C * theta))]),
-                     self.reference)
+        return _mapped_point(self, layout, [("populations", FloatArray(C * theta))], y, time, inputs)
 
     def from_occupancies(self, theta: ArrayLike, time: float = 0.0,
                          inputs: ArrayLike = (1.0,)) -> Point:
@@ -352,6 +439,9 @@ class SharedCapacityStorage:
     def advance(self, left: Point, dy: ArrayLike, time: float,
                 inputs: ArrayLike = (1.0,)) -> tuple[Point, StateIncrement]:
         right = self.point(left.y + frozen_array(dy), time, inputs)
+        return right, StateIncrement.from_points(left, right)
+
+    def _increment_fields(self, left: Point, right: Point):
         dq = right.y - left.y
         theta_left, theta_right = self.theta(left), self.theta(right)
         active = np.asarray(self.active)
@@ -365,7 +455,7 @@ class SharedCapacityStorage:
         dC = fsum((right.inputs[0] - left.inputs[0],
                    self.capacity_rate * (right.time - left.time)))
         dQ = self.capacity(left) * dtheta + dC * theta_right
-        return right, StateIncrement(left.identity, right.identity, {"populations": FloatArray(dQ)})
+        return {"populations": FloatArray(dQ)}
 
     def delta(self, left: Point, right: Point, increment: StateIncrement) -> Vector:
         increment.validate(left, right)
