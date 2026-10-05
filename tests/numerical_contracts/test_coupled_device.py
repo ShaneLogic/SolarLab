@@ -1883,3 +1883,309 @@ def test_voltage_lift_full_protocol_wrms_certificate(case_id, request):
     log_case(request, {"family": "voltage_lift_full_range_wrms", "case": case_id,
                        "certificate": proof, "independent_fraction_comparisons": comparisons,
                        "complete_protocol_s": segments[-1].end, "future_controls_are_not_admitted": True}, checks)
+
+
+def lift_controller_fixture(case_id):
+    """Prospective controller inputs; no native request or run admission."""
+    from scripts.benchmarks.coupled_device_prototype import AffineSamplingContext, voltage_lift_wrms_policy
+
+    m, mapping, adapter, z, _ = lift_fixture(case_id)
+    segments = protocol_from_plan(PLAN, case_id)
+    previous_paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(previous_paths[case_id]).read_text())
+    proof = voltage_lift_wrms_policy(mapping, previous["controls"], segments)
+    controls = dict(previous["controls"])
+    controls.update(rtol=proof["rtol"], atol=proof["atol"])
+    declaration = {"case_id": case_id, "segments": [asdict(s) for s in segments],
+                   "controls": controls, "budgets": previous["budgets"],
+                   "voltage_lift_map": mapping.payload(), "weight_certificate": proof,
+                   "test_only": True, "native_execution_authorized": False}
+    return m, mapping, adapter, z, AffineSamplingContext(m, declaration)
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_segment_callback_wiring(case_id, request):
+    """Draft regression: exact binding signature, inputs/rates and CSC order."""
+    from scipy.sparse import csc_matrix
+    from scripts.benchmarks.coupled_device_prototype import (
+        AffineSamplingContext, VoltageLiftSegmentAdapter,
+    )
+
+    m, mapping, adapter, z, context = lift_controller_fixture(case_id)
+    zdot = .17+np.sin(np.arange(m.layout.size))
+    zero_inputs = np.zeros(2)
+    direction = affine_directions(m)[-1][2]/m.S
+    errors = []
+    for segment in context.segments:
+        binding = VoltageLiftSegmentAdapter(adapter, context, segment)
+        time = segment.start+(segment.end-segment.start)/2
+        inputs, input_rate = segment.inputs(time)
+        output = np.empty(m.layout.size)
+        binding.residual(time, z, zdot, output)
+        reference = lift_decimal_reference(mapping, z, zdot, inputs, input_rate, 100)
+        value = compare(output/m.Drow, reference["F"], m.Drow,
+                        GATES["value_scaled_atol"], GATES["value_scaled_rtol"])
+        checks = []
+        for cj in GATES["cj_s_inv"]:
+            slots = np.empty(m.graph.nnz)
+            binding.jacobian(time, z, zdot, output, cj, slots)
+            matrix = csc_matrix((slots, m.graph.indices, m.graph.indptr), shape=m.graph.shape)
+            ref = lift_reference_jvp(mapping, z, zdot, inputs, input_rate,
+                                     direction, cj*direction, zero_inputs, zero_inputs, 100)
+            comparison = compare((matrix @ direction)/m.Drow, ref, m.Drow,
+                                 GATES["jacobian_scaled_atol"], GATES["jacobian_scaled_rtol"])
+            checks.append({"cj": cj, "comparison": comparison})
+        with pytest.raises(ContractError, match="voltage_lift_residual_buffer_shape"):
+            binding.residual(time, z, zdot, np.empty(m.layout.size-1))
+        with pytest.raises(ContractError, match="voltage_lift_jacobian_buffer_shape"):
+            binding.jacobian(time, z, zdot, output, GATES["cj_s_inv"][0], np.empty(m.graph.nnz-1))
+        errors.append({"segment": segment.id, "residual": value, "jacobian": checks,
+                       "input_rates_hex": [float(v).hex() for v in input_rate]})
+    foreign = context.request_copy()
+    foreign["voltage_lift_map"]["reference_inputs_hex"][0] = (1.0).hex()
+    with pytest.raises(ContractError, match="voltage_lift_request_map_mismatch"):
+        VoltageLiftSegmentAdapter(adapter, AffineSamplingContext(m, foreign), context.segments[0])
+    log_case(request, {"family": "voltage_lift_segment_wiring", "case": case_id,
+                       "comparisons": errors, "native_steps": 0,
+                       "full_protocol_definition_s": context.segments[-1].end},
+             {"all_frozen_segments_and_cj": all(row["residual"]["passed"] and all(
+                 item["comparison"]["passed"] for item in row["jacobian"]) for row in errors),
+              "binding_and_buffer_guards": True, "no_native_import": "sksundae" not in sys.modules})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_initial_and_event_rate_encoding(case_id, request):
+    """Draft regression: rate encoding must not re-encode physical states."""
+    from scripts.benchmarks.coupled_device_prototype import (
+        VoltageLiftSegmentAdapter, voltage_lift_initial_input,
+    )
+
+    m, mapping, adapter, z, context = lift_controller_fixture(case_id)
+    records = []
+    for i, segment in enumerate(context.segments):
+        raw = np.zeros(m.layout.size) if i == 0 else z
+        if i == 0:
+            previous = m.reference
+        else:
+            # A supplied synthetic left endpoint, not an integrated state.
+            left_inputs, _ = context.segments[i-1].inputs(segment.start)
+            previous, _ = mapping.trial(raw, segment.start, left_inputs)
+        binding = VoltageLiftSegmentAdapter(adapter, context, segment)
+        point, increment, zdot, record = voltage_lift_initial_input(binding, raw, previous)
+        _, input_rate = segment.inputs(segment.start)
+        desired = m.tangent_rate(point, input_rate)
+        with localcontext() as ctx:
+            ctx.prec = 100
+            expected = [float((dec(value)-sum((dec(mapping.lift[j, k])*dec(input_rate[k])
+                        for k in range(2)), Decimal(0)))/dec(mapping.columns[j]))
+                        for j, value in enumerate(desired)]
+        assert np.array_equal(zdot, expected)
+        assert record["raw_z_hex"] == [float(v).hex() for v in raw]
+        assert record["desired_physical_tangent_hex"] == [float(v).hex() for v in desired]
+        assert all(np.all(increment.field(v.id).high == 0) and np.all(increment.field(v.id).low == 0)
+                   for v in m.layout.variables)
+        assert not record["state_changed"] and not record["native_initialization_performed"]
+        assert not record["consistency_or_physical_acceptance_certified"]
+        mapped = mapping.physical_rate(zdot, input_rate)
+        exact_rate = lift_exact_map(mapping, zdot, input_rate, rate=True)
+        assert lift_primitive_fractions(mapped) == exact_rate
+        assert [Fraction(v) for v in record["mapped_minus_desired_rate_exact"]] == [
+            a-lift_fraction(b) for a, b in zip(exact_rate, desired, strict=True)]
+        if input_rate[0] != 0:
+            assert np.any(zdot[m.layout.offsets["phi_V"]] != (desired/m.S)[m.layout.offsets["phi_V"]])
+        changed = raw.copy()
+        changed[0] += 2.0**-40
+        with pytest.raises(ContractError, match="voltage_lift_restart_changed_physical_state"):
+            voltage_lift_initial_input(binding, changed, previous)
+        records.append(record)
+    log_case(request, {"family": "voltage_lift_initial_event_encoding", "case": case_id,
+                       "synthetic_start_records": records, "native_steps": 0},
+             {"Decimal100_coordinate_encoding": True, "all_initial_and_event_sides": len(records) == 3,
+              "exact_mapped_rate_errors_retained": True, "zero_physical_state_changes": True})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_snapshot_history_wiring(case_id, request):
+    """Draft regression: native-shaped fixtures remain labelled synthetic."""
+    from scripts.benchmarks.coupled_device_prototype import (
+        VoltageLiftHistory, VoltageLiftSegmentAdapter, voltage_lift_native_sample,
+    )
+
+    m, mapping, adapter, z, context = lift_controller_fixture(case_id)
+    segment = context.segments[1]
+    binding = VoltageLiftSegmentAdapter(adapter, context, segment)
+    history = VoltageLiftHistory(mapping)
+    inputs, _ = segment.inputs(segment.start)
+    previous, _ = mapping.trial(z, segment.start, inputs)
+    zdot = .17+np.sin(np.arange(m.layout.size))
+    records = []
+    for origin in ("segment_initial", "native", "interpolant", "stop_output", "endpoint_restore"):
+        when = (segment.start if origin == "segment_initial" else segment.end if
+                origin in {"stop_output", "endpoint_restore"} else segment.start+(segment.end-segment.start)/2)
+        supplied = {"success": True, "status": 1 if origin == "stop_output" else 0,
+                    "message": "synthetic nonnative fixture", "time": when, "z": z, "zdot": zdot}
+        point, increment, raw, tangent, record = voltage_lift_native_sample(
+            binding, history, supplied, previous, origin=origin)
+        rebuilt, delta, rate, input_rate = history.restore(history.reference_record, record["history"], previous)
+        assert rebuilt.identity == point.identity == raw.point.identity == tangent.point.identity
+        assert delta.left_identity == increment.left_identity == previous.identity
+        assert raw.origin == origin and tangent.origin == "physical_tangent"
+        assert record["raw"]["physical_ydot_hex"] == [float(v).hex() for v in rate.high]
+        assert record["history"]["raw_solver_zdot_hex"] == [float(v).hex() for v in zdot]
+        assert np.array_equal(input_rate, segment.inputs(when)[1])
+        assert not np.array_equal(rate.high, m.S*zdot)
+        expected_side = "right" if origin == "segment_initial" else "left" if when == segment.end else "continuous"
+        assert raw.event_side == expected_side == record["history"]["event_side"]
+        assert not record["interval_or_prefix_charge_certified"]
+        assert record["rate_projection"] == record["history"]["physical_rate_projection"]
+        records.append(record)
+    with pytest.raises(ContractError, match="native_snapshot_unsuccessful"):
+        voltage_lift_native_sample(binding, history, dict(supplied, success=False), previous, origin="native")
+    with pytest.raises(ContractError, match="native_history_origin"):
+        voltage_lift_native_sample(binding, history, supplied, previous, origin="physical_tangent")
+    with pytest.raises(ContractError, match="native_history_predecessor_interval"):
+        voltage_lift_native_sample(binding, history, dict(supplied, time=previous.time), previous, origin="native")
+    log_case(request, {"family": "voltage_lift_snapshot_wiring", "case": case_id,
+                       "synthetic_records": records, "native_steps": 0, "new_sparse_corrections": 0},
+             {"reconstructed_all_supplied_origins": len(records) == 5,
+              "mapped_rate_words_and_projection_audit": True,
+              "same_physical_point_for_raw_and_tangent": True,
+              "original_state_and_protocol_retained": True, "no_interval_acceptance_inferred": True})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_charge_integrand_projection(case_id, request):
+    from scripts.benchmarks.coupled_device_prototype import voltage_lift_charge_rate_projection
+
+    m, mapping, adapter, z, context = lift_controller_fixture(case_id)
+    segment = context.segments[1]
+    time = segment.start+(segment.end-segment.start)/2
+    inputs, input_rate = segment.inputs(time)
+    zdot = .17+np.sin(np.arange(m.layout.size))
+    _, _, rate, _, audit = adapter.observe(time, z, zdot, inputs, input_rate)
+    actual = voltage_lift_charge_rate_projection(m, audit)
+    references = []
+    for precision in (80, 100):
+        full = lift_decimal_reference(mapping, z, zdot, inputs, input_rate, precision)
+        projected = decimal_kernel(m, affine_exact_input(m, mapping.physical_primitive(z, inputs)),
+                                   list(map(dec, inputs)), list(map(dec, rate.high)), precision)
+        with localcontext() as ctx:
+            ctx.prec = precision
+            con = [a-b for a, b in zip(projected["Icond"], full["Icond"], strict=True)]
+            metal = [(a-c)-(b-d) for a, c, b, d in zip(projected["Itotal"], projected["Icond"],
+                                                     full["Itotal"], full["Icond"], strict=True)]
+            references.append([sum(con), *metal])
+    # This linear rational contraction should round identically to both
+    # independent Decimal references; a tolerance cannot hide an erased term.
+    assert [float(v) for v in references[0]] == [float(v) for v in references[1]]
+    assert [float(v) for v in actual] == [float(v) for v in references[1]]
+    assert any(v != 0 for v in actual)
+    with pytest.raises(ContractError, match="voltage_lift_projection_shape"):
+        voltage_lift_charge_rate_projection(m, dict(audit, component_error_exact=[]))
+    log_case(request, {"family": "voltage_lift_charge_projection", "case": case_id,
+                       "exact_integrand_errors_A": [str(v) for v in actual],
+                       "independent_Decimal80_100": references, "native_steps": 0},
+             {"three_correct_charge_integrands": True, "no_nonzero_error_erased": True,
+              "body_integrand_is_reservoir_sum": True, "metal_integrand_is_total_minus_conduction": True})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+@pytest.mark.parametrize("boundary", ("interval_total", "prefix_total", "interval_reference_share", "prefix_reference_share"))
+def test_voltage_lift_projection_budget_boundaries(case_id, boundary, request):
+    from scripts.benchmarks.coupled_device_prototype import voltage_lift_charge_accounting
+    from scripts.benchmarks.precision_prototype import DD
+
+    m, _, _, _, context = lift_controller_fixture(case_id)
+    budget = context.budgets["charge_C"]
+    B, R = lift_fraction(budget), lift_fraction(budget/3)
+    quantum = lift_fraction(np.spacing(budget))/4
+    outputs = []
+    for sign in (-1, 0, 1):
+        change = sign*quantum
+        previous_defect = Fraction(0)
+        previous_projection = Fraction(0)
+        if boundary == "interval_total":
+            defect, projection = 3*B/4, B/4+change
+        elif boundary == "prefix_total":
+            defect, previous_defect, projection, previous_projection = B/4, B/2, B/8, B/8+change
+        elif boundary == "interval_reference_share":
+            defect, projection = Fraction(0), R+change
+        else:
+            defect, projection, previous_projection = Fraction(0), R/2, R/2+change
+        high = float(defect)
+        delta = DD(np.full(3, high), np.full(3, float(defect-lift_fraction(high))))
+        estimates = [DD(np.zeros(3)) for _ in range(3)]
+        projection_sums = [tuple([projection]*3) for _ in range(3)]
+        old_p = np.full(3, float(previous_projection))
+        assert lift_fraction(old_p[0]) == previous_projection
+        result = voltage_lift_charge_accounting(
+            m, delta, estimates, projection_sums,
+            np.full(3, float(previous_defect)), np.zeros(3), old_p, budget)
+        expected = sign <= 0
+        assert result["checks"][boundary] is expected
+        assert result["passed"] is expected
+        target = B if "total" in boundary else R
+        field = {"interval_total": "exact_interval_total_C", "prefix_total": "exact_prefix_total_C",
+                 "interval_reference_share": "exact_combined_reference_interval_C",
+                 "prefix_reference_share": "exact_combined_reference_prefix_C"}[boundary]
+        assert all(Fraction(v) == target+change for v in result[field])
+        assert not result["physical_allocations_changed"]
+        assert not result["projection_integral_continuum_certified"]
+        outputs.append({"boundary_sign": sign, "result": result})
+    with pytest.raises(ContractError, match="invalid_voltage_lift_projection_integral"):
+        voltage_lift_charge_accounting(m, DD(np.zeros(3)), estimates,
+                                       [tuple([-B]*3)]*3, np.zeros(3), np.zeros(3), np.zeros(3), budget)
+    log_case(request, {"family": "voltage_lift_projection_budget", "case": case_id,
+                       "boundary": boundary, "quarter_ULP_exact": str(quantum), "outputs": outputs,
+                       "native_steps": 0},
+             {"exact_below_equal_above_decisions": True, "original_allocation_preserved": True,
+              "nonnegative_prefix_debit": True, "no_projection_reference_certification_inferred": True})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_complete_native_request(case_id, request):
+    from copy import deepcopy
+    from scripts.benchmarks.coupled_device_prototype import (
+        prepare_voltage_lift_native_request, validate_voltage_lift_native_request,
+        run_voltage_lift_native_pilot,
+    )
+
+    m, mapping, _, _, context = lift_controller_fixture(case_id)
+    paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(paths[case_id]).read_text())
+    proposal = prepare_voltage_lift_native_request(mapping, context.segments, previous)
+    validate_voltage_lift_native_request(mapping, context.segments, proposal)
+    assert proposal["segments"] == previous["segments"]
+    assert proposal["budgets"] == previous["budgets"]
+    assert proposal["observation_times"] == previous["observation_times"]
+    assert proposal["quadrature"] == previous["quadrature"]
+    assert proposal["previous_controls"] == previous["controls"]
+    assert all(proposal["mandatory"].get(k) == v for k, v in previous["mandatory"].items())
+    assert np.all(np.asarray(proposal["z0"]) == 0)
+    assert not proposal["initial_preparation"]["native_initialization_performed"]
+    assert proposal["preparation_context_sha256"] == proposal["initial_preparation"]["request_sha256"]
+    assert proposal["preparation_context_sha256"] != digest(proposal)
+    changed = deepcopy(proposal)
+    changed["controls"]["rtol"] *= 2
+    with pytest.raises(ContractError, match="voltage_lift_native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    changed = deepcopy(proposal)
+    changed["budgets"]["charge_C"] *= 2
+    with pytest.raises(ContractError, match="voltage_lift_native_gates_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    with pytest.raises(ContractError, match="voltage_lift_native_pilot_not_admitted"):
+        run_voltage_lift_native_pilot(mapping, context.segments, proposal, {}, lambda _: pytest.fail("unadmitted output"))
+    if folder := os.environ.get("VOLTAGE_LIFT_REQUEST_DIR"):
+        path = Path(folder)/(case_id+".json")
+        with path.open("x") as f:
+            json.dump(proposal, f, indent=2, allow_nan=False)
+            f.write("\n")
+    log_case(request, {"family": "voltage_lift_complete_request", "case": case_id,
+                       "request_sha256": digest(proposal), "map_identity": mapping.identity,
+                       "complete_protocol_s": context.segments[-1].end,
+                       "observation_counts": {k: len(v) for k, v in proposal["observation_times"].items()},
+                       "controls": proposal["controls"], "budgets": proposal["budgets"],
+                       "initial_preparation": proposal["initial_preparation"],
+                       "native_steps": 0, "native_controller_executed": False},
+             {"full_original_protocol_and_points": True, "all_physical_gates_unchanged": True,
+              "explicit_preparation_identity": True, "native_admission_guard_precedes_import": "sksundae" not in sys.modules})

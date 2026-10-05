@@ -2868,3 +2868,691 @@ def voltage_lift_wrms_policy(mapping: AffineVoltageMap, previous_controls: Mappi
             "scope": "all real physical remainders and stated protocol inputs; local error-denominator comparison only",
             "state_and_rate_projection_errors_separate": True,
             "native_admission": False, "global_accuracy_or_conservation_certified": False}
+
+
+@dataclass(frozen=True)
+class VoltageLiftSegmentAdapter:
+    """Unexecuted controller draft: bind public callbacks to one segment.
+
+    The caller owns resource checks and retention of the first callback
+    failure. These callbacks do not start IDA, grant admission, or recover
+    invalid states. The archived40/42 tests cover the underlying algebra;
+    this new wiring needs its own frozen tests before native use.
+    """
+
+    adapter: VoltageLiftAdapter
+    context: AffineSamplingContext
+    segment: ProtocolSegment
+    segment_sha256: str = field(init=False)
+    source_identity: str = field(init=False)
+
+    def __post_init__(self):
+        if not isinstance(self.adapter, VoltageLiftAdapter):
+            raise ContractError("voltage_lift_public_adapter_required")
+        mapping = self.adapter.mapping
+        segment_digest = self.context.segment_digest(mapping.model, self.segment)
+        declared_map = self.context.request_copy().get("voltage_lift_map")
+        if not isinstance(declared_map, dict) or digest(declared_map) != mapping.identity:
+            raise ContractError("voltage_lift_request_map_mismatch")
+        # Use the context-owned tuple inputs even when the caller supplied an
+        # equal segment with mutable nested lists.
+        owned = next(s for s in self.context.segments if s.id == self.segment.id)
+        object.__setattr__(self, "segment", owned)
+        object.__setattr__(self, "segment_sha256", segment_digest)
+        object.__setattr__(self, "source_identity", digest({
+            "adapter": self.adapter.source_identity,
+            "request": self.context.request_sha256, "segment": segment_digest,
+        }))
+
+    def residual(self, time, z, zdot, output):
+        mapping = self.adapter.mapping
+        self.context.segment_digest(mapping.model, self.segment)
+        if not isinstance(output, np.ndarray) or output.shape != mapping.columns.shape:
+            raise ContractError("voltage_lift_residual_buffer_shape")
+        inputs, input_rate = self.segment.inputs(time)
+        output[:] = self.adapter.residual(time, z, zdot, inputs, input_rate)
+
+    def jacobian(self, time, z, zdot, residual_value, cj, output):
+        """Actual binding signature; fill the declared sparse CSC slots."""
+        mapping = self.adapter.mapping
+        self.context.segment_digest(mapping.model, self.segment)
+        graph = mapping.model.graph
+        if not isinstance(output, np.ndarray) or output.shape != (graph.nnz,):
+            raise ContractError("voltage_lift_jacobian_buffer_shape")
+        inputs, input_rate = self.segment.inputs(time)
+        matrix = self.adapter.jacobian(time, z, zdot, inputs, input_rate, cj)
+        if (matrix.shape != graph.shape or matrix.nnz != graph.nnz
+                or not np.array_equal(matrix.indices, graph.indices)
+                or not np.array_equal(matrix.indptr, graph.indptr)):
+            raise ContractError("voltage_lift_csc_slot_mismatch")
+        output[:] = matrix.data
+
+
+def voltage_lift_initial_input(binding: VoltageLiftSegmentAdapter, z, predecessor: Point):
+    """Prepare a rate at an unchanged segment-start state, without IDA.
+
+    The desired physical tangent is distinct from the finite encoded rate.
+    Encode (desired-L*adot)/S once, retain the exact rounding errors, and
+    expose both residuals. No consistency or physical acceptance is inferred
+    from constructing this input. The physical state is never re-encoded.
+    """
+    mapping, segment = binding.adapter.mapping, binding.segment
+    model = mapping.model
+    binding.context.segment_digest(model, segment)
+    if predecessor.time != segment.start:
+        raise ContractError("voltage_lift_initial_predecessor_time")
+    z = frozen_array(z)
+    inputs, input_rate = segment.inputs(segment.start)
+    point, increment = mapping.trial(z, segment.start, inputs, predecessor=predecessor)
+    model.validate(point)
+    if any(np.any(increment.field(v.id).high) or np.any(increment.field(v.id).low)
+           for v in model.layout.variables):
+        raise ContractError("voltage_lift_restart_changed_physical_state")
+    evaluation = model.observation_evaluation(point)
+    desired = model.tangent_rate(point, input_rate, evaluation=evaluation)
+    f = lambda v: Fraction.from_float(float(v))
+    exact_coordinates = [
+        (f(value)-sum((f(mapping.lift[i, j])*f(input_rate[j])
+                       for j in range(input_rate.size)), Fraction(0)))/f(mapping.columns[i])
+        for i, value in enumerate(desired)
+    ]
+    zdot = frozen_array([float(v) for v in exact_coordinates])
+    mapped_rate = mapping.physical_rate(zdot, input_rate)
+    represented = [sum((f(word[i]) for word in mapped_rate.words), Fraction(0))
+                   for i in range(model.layout.size)]
+    residual_words = lambda rate: {
+        "high_hex": [float(v).hex() for v in rate.high],
+        "low_hex": [float(v).hex() for v in rate.low],
+    }
+    problem = binding.adapter.problem
+    record = {
+        "schema": "solarlab.voltage-lift-initial-input.v1",
+        "source_identity": binding.source_identity,
+        "request_sha256": binding.context.request_sha256,
+        "map_identity": mapping.identity, "segment_id": segment.id,
+        "segment_sha256": binding.segment_sha256,
+        "time_hex": float(segment.start).hex(),
+        "point_identity": point.identity, "predecessor_identity": predecessor.identity,
+        "raw_z_hex": [float(v).hex() for v in z],
+        "raw_zdot_hex": [float(v).hex() for v in zdot],
+        "inputs_hex": [float(v).hex() for v in inputs],
+        "input_rates_hex": [float(v).hex() for v in input_rate],
+        "desired_physical_tangent_hex": [float(v).hex() for v in desired],
+        "ideal_coordinate_rate_exact": [str(v) for v in exact_coordinates],
+        "coordinate_encoding_error_exact": [str(f(v)-q) for v, q in zip(zdot, exact_coordinates, strict=True)],
+        "mapped_physical_rate_words_hex": [[float(v).hex() for v in word] for word in mapped_rate.words],
+        "mapped_minus_desired_rate_exact": [str(v-f(w)) for v, w in zip(represented, desired, strict=True)],
+        "projected_minus_desired_rate_exact": [str(f(v)-f(w)) for v, w in zip(mapped_rate.high, desired, strict=True)],
+        "rate_projection": voltage_lift_rate_projection(model, mapped_rate),
+        "desired_tangent_residual_SI": residual_words(problem.residual(point, desired, input_rate)),
+        "represented_rate_residual_SI": residual_words(problem.residual(point, mapped_rate.high, input_rate)),
+        "state_changed": False, "rate_source": "named physical tangent at unchanged state",
+        "native_initialization_performed": False, "native_steps": 0,
+        "consistency_or_physical_acceptance_certified": False,
+    }
+    record["record_sha256"] = digest(record)
+    return point, increment, zdot, record
+
+
+def voltage_lift_native_sample(binding: VoltageLiftSegmentAdapter, history: VoltageLiftHistory,
+                               native: Mapping, predecessor: Point, *, origin: str):
+    """Draft sampling hook for a supplied snapshot; it never advances time.
+
+    All mapped rate words and the explicitly projected physical rate survive
+    in history. The physical tangent is evaluated at the identical Point.
+    This hook does not integrate projection errors or accept an interval.
+    """
+    mapping, context, segment = binding.adapter.mapping, binding.context, binding.segment
+    model = mapping.model
+    if history.mapping is not mapping:
+        raise ContractError("foreign_voltage_lift_history")
+    segment_digest = context.segment_digest(model, segment)
+    index = next(i for i, s in enumerate(context.segments) if s.id == segment.id)
+    t = float(native["time"])
+    inputs, input_rate = segment.inputs(t)
+    if not native["success"]:
+        raise ContractError("native_snapshot_unsuccessful")
+    if origin == "segment_initial":
+        if t != segment.start or predecessor.time != t:
+            raise ContractError("native_segment_initial_time")
+        side = "continuous" if index == 0 else "right"
+    elif origin in {"native", "stop_output", "endpoint_restore", "interpolant"}:
+        if not segment.start <= predecessor.time < t <= segment.end:
+            raise ContractError("native_history_predecessor_interval")
+        side = "left" if t == segment.end else "continuous"
+    else:
+        raise ContractError("native_history_origin")
+    z, zdot = frozen_array(native["z"]), frozen_array(native["zdot"])
+    point, increment, rate, sample = history.build_sample(
+        z, t, inputs, predecessor, zdot, input_rate, origin=origin, event_side=side)
+    if origin == "segment_initial" and any(
+            np.any(increment.field(v.id).high) or np.any(increment.field(v.id).low)
+            for v in model.layout.variables):
+        raise ContractError("voltage_lift_restart_changed_physical_state")
+    evaluation = model.observation_evaluation(point)
+    raw = model.observe(point, rate.high, input_rate, origin, side, evaluation=evaluation)
+    tangent = model.observe(point, model.tangent_rate(point, input_rate, evaluation=evaluation),
+                            input_rate, "physical_tangent", side, evaluation=evaluation)
+    difference = abs(raw.total_inward.as_dd()-tangent.total_inward.as_dd())
+    record = {
+        "kind": "voltage_lift_rate_pair", "request_sha256": context.request_sha256,
+        "map_identity": mapping.identity,
+        "segment_id": segment.id, "segment_sha256": segment_digest,
+        "controls_sha256": context.controls_sha256, "history": sample,
+        "snapshot_status": native["status"], "snapshot_message": native["message"],
+        "input_slope_hex": [float(v).hex() for v in input_rate],
+        "raw": affine_observation_payload(raw),
+        "physical_tangent": affine_observation_payload(tangent),
+        "state_checks": affine_state_quality_evidence(model, point, context.budgets, evaluation=evaluation),
+        "current_rate_gap_A": float(np.max(difference.hi+difference.lo)),
+        "rate_projection": sample["physical_rate_projection"],
+        "interval_or_prefix_charge_certified": False,
+        "supplied_snapshot_only": True,
+    }
+    record["record_sha256"] = digest(record)
+    return point, increment, raw, tangent, record
+
+def voltage_lift_charge_rate_projection(model: AffineCoupledSlab, audit: Mapping):
+    """Exact projected-minus-mapped errors in the three charge integrands.
+
+    Body charge uses the sum of reservoir conduction currents. Metal charge
+    uses total-minus-conduction on each side; it must not use total current
+    or the whole-body storage-rate error as a substitute.
+    """
+    errors = [Fraction(v) for v in audit["component_error_exact"]]
+    total = [Fraction(v) for v in audit["total_current_error_exact_A"]]
+    if len(errors) != model.layout.size or len(total) != 2:
+        raise ContractError("voltage_lift_projection_shape")
+    n, p = (errors[model.layout.offsets[name]] for name in ("n_m3", "p_m3"))
+    q = Fraction.from_float(float(Q))
+    conduction = [q*Fraction.from_float(float(model.geometry.volumes[i]))*(p[i]-n[i])
+                  for i in (0, model.count-1)]
+    return (sum(conduction, Fraction(0)), total[0]-conduction[0], total[1]-conduction[1])
+
+
+def voltage_lift_charge_accounting(model, delta, integrals, projection_integrals,
+                                   previous_defects, previous_uncertainties,
+                                   previous_projection, budget):
+    """Include explicit projection estimates within the original allocations.
+
+    The projection inputs are exact rational Gauss sums of absolute signed
+    rate errors. E32+abs(E32-E16) is an estimate, just as the original16/32
+    current discrepancy is an estimate; neither is a continuum certificate.
+    No signed cancellation can consume less of the unchanged charge budget.
+    """
+    base = affine_charge_accounting(model, delta, integrals, previous_defects,
+                                    previous_uncertainties, budget)
+    size = len(base["exact_interval_total_C"])
+    prior = frozen_array(previous_projection)
+    if (prior.shape != (size,) or np.any(prior < 0) or len(projection_integrals) != 3
+            or any(len(row) != size for row in projection_integrals)
+            or any(not isinstance(v, Fraction) or v < 0 for row in projection_integrals for v in row)):
+        raise ContractError("invalid_voltage_lift_projection_integral")
+    f = lambda v: Fraction.from_float(float(v))
+    projection = [b+abs(b-a) for a, b in zip(projection_integrals[1], projection_integrals[2], strict=True)]
+    cumulative = [f(a)+b for a, b in zip(prior, projection, strict=True)]
+    interval = [Fraction(a)+b for a, b in zip(base["exact_interval_total_C"], projection, strict=True)]
+    prefix = [Fraction(a)+b for a, b in zip(base["exact_prefix_total_C"], cumulative, strict=True)]
+    reference_interval = [f(a)+b for a, b in zip(base["quadrature_uncertainty_estimate_C"], projection, strict=True)]
+    reference_prefix = [f(a)+b for a, b in zip(base["cumulative_quadrature_uncertainty_estimate_C"], cumulative, strict=True)]
+    bound, reference_bound = f(budget), f(budget/3)
+    original = dict(base["checks"])
+    checks = {
+        "interval_total": all(v <= bound for v in interval),
+        "prefix_total": all(v <= bound for v in prefix),
+        "interval_reference_share": all(v <= reference_bound for v in reference_interval),
+        "prefix_reference_share": all(v <= reference_bound for v in reference_prefix),
+        "original_projected_rate_checks": all(original.values()),
+    }
+    upper = lambda values: [_fraction_float_bound(v, upper=True) for v in values]
+    base.update(
+        original_projected_rate_checks=original,
+        projection_absolute_gauss_sums_exact_C=[[str(v) for v in row] for row in projection_integrals],
+        rate_projection_estimate_C=upper(projection),
+        cumulative_rate_projection_estimate_C=upper(cumulative),
+        interval_total_bound_C=upper(interval), prefix_total_bound_C=upper(prefix),
+        exact_interval_total_C=[str(v) for v in interval], exact_prefix_total_C=[str(v) for v in prefix],
+        exact_combined_reference_interval_C=[str(v) for v in reference_interval],
+        exact_combined_reference_prefix_C=[str(v) for v in reference_prefix],
+        projection_estimate="E32+abs(E32-E16), E is positive-weight quadrature of absolute exact per-sample projection errors",
+        projection_integral_continuum_certified=False,
+        physical_allocations_changed=False, checks=checks, passed=all(checks.values()),
+    )
+    return base
+
+
+def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
+                                        segments: tuple[ProtocolSegment, ...],
+                                        previous_request: Mapping) -> dict:
+    """Prepare the full original protocol; this does not authorize execution."""
+    model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
+    if (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3
+            or old["schema"] != "solarlab.affine-native-request.v1"
+            or old["case_id"] != model.definition.id
+            or digest(old["segments"]) != digest([asdict(s) for s in segments])):
+        raise ContractError("voltage_lift_original_case_or_protocol_changed")
+    packet = model.numeric_packet()
+    for key, value in asdict(model.definition).items():
+        if key != "source_path" and old["numeric_packet"]["definition"][key] != value:
+            raise ContractError("voltage_lift_material_or_initial_data_changed:"+key)
+    for key in ("x_m", "cell_edges_m", "volumes_m3", "face_areas_m2", "column_scaling", "row_scaling"):
+        if old["numeric_packet"][key] != packet[key]:
+            raise ContractError("voltage_lift_geometry_or_scaling_changed:"+key)
+    if any(k in old["controls"] for k in ("constraints_idx", "constraints_type")):
+        raise ContractError("absolute_population_constraints_on_voltage_departures")
+    proof = voltage_lift_wrms_policy(mapping, old["controls"], segments)
+    controls = dict(old["controls"])
+    controls.update(rtol=proof["rtol"], atol=proof["atol"])
+    request = {
+        "schema": "solarlab.voltage-lift-native-request.v1", "case_id": model.definition.id,
+        "prior_request_sha256": digest(old), "numeric_packet": packet,
+        "voltage_lift_map": mapping.payload(), "map_identity": mapping.identity,
+        "segments": old["segments"], "controls": controls,
+        "previous_controls": old["controls"], "weight_certificate": proof,
+        "budgets": dict(old["budgets"]), "original_budgets": dict(old["budgets"]),
+        "observation_times": old["observation_times"], "quadrature": old["quadrature"],
+        "mandatory": dict(old["mandatory"], mapped_rate_projection_budget=True),
+        "observation_policy": old["observation_policy"],
+        "quadrature_uncertainty_scope": old["quadrature_uncertainty_scope"],
+        "projection_policy": {
+            "rates": "all four direct-map words retained; public residual/observer consume the explicitly named first-word projection",
+            "point_current": "absolute raw/tangent difference plus absolute exact projected-minus-mapped total-current error <= original current_A/3",
+            "charge_integrands": ["sum(reservoir_conduction)", "left(total-conduction)", "right(total-conduction)"],
+            "interval": "positive8/16/32 Gauss sums E of absolute exact sample errors; E32+abs(E32-E16) added to original total and B/3 reference allocation",
+            "prefix": "sum of nonnegative interval projection estimates, carried with outward-safe rounding; no signed cancellation",
+            "continuum_certificate": False,
+        },
+        "physical_domain_policy": old["physical_domain_policy"],
+        "history_policy": "one original physical reference/map; preserve all native/interpolant/stop/restore and event-side raw coordinates, full physical rate words, projected rate and named same-state tangent; no history recentering",
+        "uncertified_by_first_pilot": old["uncertified_by_first_pilot"]+[
+            "continuous-interval projection error bound beyond the explicitly sampled quadrature estimate"],
+        "native_admission": False,
+    }
+    # This preparation context deliberately precedes the final request. Its
+    # digest remains labelled as such; no self-referential hash is invented.
+    context = AffineSamplingContext(model, request)
+    binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), context, context.segments[0])
+    z0 = np.zeros(model.layout.size)
+    initial, _, zdot0, initial_record = voltage_lift_initial_input(binding, z0, model.reference)
+    request.update(z0=z0.tolist(), zdot0=zdot0.tolist(), actual_initial_identity=initial.identity,
+                   initial_preparation=initial_record, preparation_context_sha256=context.request_sha256)
+    return request
+
+
+def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, request: Mapping):
+    """Fail closed on request/physical/allocation changes before importing IDA."""
+    model = mapping.model
+    if (request.get("schema") != "solarlab.voltage-lift-native-request.v1"
+            or request.get("case_id") != model.definition.id
+            or request.get("map_identity") != mapping.identity
+            or digest(request.get("voltage_lift_map")) != mapping.identity
+            or digest(model.numeric_packet()) != digest(request["numeric_packet"])
+            or digest([asdict(s) for s in segments]) != digest(request["segments"])):
+        raise ContractError("voltage_lift_native_request_binding")
+    if model.intervals != 8 or model.layout.size > 45 or len(segments) != 3:
+        raise ContractError("voltage_lift_native_scope")
+    proof = voltage_lift_wrms_policy(mapping, request["previous_controls"], tuple(segments))
+    controls = dict(request["previous_controls"], rtol=proof["rtol"], atol=proof["atol"])
+    if (digest(proof) != digest(request["weight_certificate"])
+            or digest(controls) != digest(request["controls"])
+            or controls.get("calc_initcond") is not None
+            or controls.get("linsolver") != "sparse"
+            or any(k in controls for k in ("constraints_idx", "constraints_type"))):
+        raise ContractError("voltage_lift_native_controls_changed")
+    if (digest(request["budgets"]) != digest(request["original_budgets"])
+            or not all(request["mandatory"].values())
+            or not request["mandatory"].get("mapped_rate_projection_budget")):
+        raise ContractError("voltage_lift_native_gates_changed")
+    if (segments[0].start != 0 or any(a.end != b.start or a.voltage[1] != b.voltage[0]
+                                    or a.photons[1] != b.photons[0]
+                                    for a, b in zip(segments[:-1], segments[1:], strict=True))):
+        raise ContractError("voltage_lift_native_protocol_discontinuity")
+    for segment in segments:
+        times = frozen_array(request["observation_times"][segment.id])
+        if (times.ndim != 1 or times.size < 2 or times[0] != segment.start or times[-1] != segment.end
+                or np.any(np.diff(times) <= 0)):
+            raise ContractError("voltage_lift_native_observation_times")
+    for order in (8, 16, 32):
+        table = request["quadrature"][str(order)]
+        nodes, weights = frozen_array(table["nodes"]), frozen_array(table["weights"])
+        if (nodes.shape != (order,) or weights.shape != (order,) or np.any(np.abs(nodes) >= 1)
+                or np.any(weights <= 0) or np.any(np.diff(nodes) <= 0)):
+            raise ContractError("voltage_lift_native_quadrature")
+
+
+def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[ProtocolSegment, ...],
+                                  request: Mapping, admission: Mapping, emit) -> dict:
+    """One separately admitted full protocol with unchanged physical gates.
+
+    This controller retains actual IDA outputs before any interpolation and
+    preserves both event sides. It never clips a state, replaces native rates
+    with tangents, or retries a failed trajectory. Its charge reference terms
+    remain explicit quadrature estimates, not continuum error certificates.
+    """
+    model = mapping.model
+    request_id = digest(dict(request))
+    if (admission.get("request_sha256") != request_id
+            or admission.get("map_identity") != mapping.identity
+            or admission.get("voltage_lift_native_authorized") is not True
+            or not str(admission.get("coordinator_message", "")).startswith("msg_")):
+        raise ContractError("voltage_lift_native_pilot_not_admitted")
+    validate_voltage_lift_native_request(mapping, segments, request)
+    bindings = admission.get("source_sha256", {})
+    if str(Path(__file__).resolve()) not in bindings:
+        raise ContractError("voltage_lift_native_executing_kernel_not_bound")
+    for path, expected in bindings.items():
+        if sha256(Path(path).read_bytes()).hexdigest() != expected:
+            raise ContractError("voltage_lift_native_source_changed")
+    cancellation = Path(admission["cancel_path"]) if admission.get("cancel_path") else None
+    if cancellation is not None and cancellation.exists():
+        raise ContractError("voltage_lift_cancelled_before_native_import")
+    sampling = AffineSamplingContext(model, request)
+    if sampling.request_sha256 != request_id:
+        raise ContractError("voltage_lift_request_changed_during_snapshot")
+    request, segments = sampling.request_copy(), sampling.segments
+    from sksundae.ida import IDA
+    from scripts.benchmarks.precision_prototype import DD
+
+    started = time.perf_counter()
+    budgets, controls = request["budgets"], request["controls"]
+    counts = {"residual": 0, "jacobian": 0, "native_steps": 0, "onestep_returns": 0,
+              "normal_queries": 0, "initializations": 0, "history_bytes": 0}
+    cumulative = {key: np.zeros(3) for key in ("raw", "physical_tangent")}
+    cumulative_u = {key: np.zeros(3) for key in cumulative}
+    cumulative_projection = np.zeros(3)
+    first_failure = last_attempt = last_numerical = last_accepted = None
+    history = VoltageLiftHistory(mapping)
+    z, predecessor = frozen_array(request["z0"]), model.reference
+    rows, columns = model.graph.edges().T
+    sparsity = csc_matrix((np.ones(len(rows)), (rows, columns)), shape=model.graph.shape)
+    differential = np.unique(model.mass.tocoo().col)
+    algebraic = np.setdiff1d(np.arange(model.layout.size), differential).tolist()
+
+    def save(record):
+        size = len(json.dumps(record, separators=(",", ":"), allow_nan=False).encode())+1
+        if counts["history_bytes"]+size > budgets["total_output_bytes"]-1048576:
+            raise ContractError("voltage_lift_history_budget")
+        emit(record)
+        counts["history_bytes"] += size
+
+    def resource_check():
+        if cancellation is not None and cancellation.exists():
+            raise ContractError("voltage_lift_cancelled")
+        if time.perf_counter()-started > budgets["wall_s"]:
+            raise ContractError("voltage_lift_wall_budget")
+        if counts["residual"] > budgets["residual_calls"]:
+            raise ContractError("voltage_lift_residual_budget")
+        if counts["native_steps"] > budgets["native_steps"]:
+            raise ContractError("voltage_lift_step_budget")
+        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss > budgets["rss_bytes"]:
+            raise ContractError("voltage_lift_rss_budget")
+
+    def snapshot_receipt(phase, segment, native):
+        return {"phase": phase, "segment_id": segment.id, "time_hex": float(native["time"]).hex(),
+                "success": native["success"], "status": native["status"], "message": native["message"],
+                "z_hex": [float(v).hex() for v in native["z"]],
+                "zdot_hex": [float(v).hex() for v in native["zdot"]]}
+
+    def checked_sample(binding, native, previous, origin):
+        nonlocal first_failure
+        resource_check()
+        pair = voltage_lift_native_sample(binding, history, native, previous, origin=origin)
+        record = dict(pair[-1])
+        raw, tangent = pair[2:4]
+        gap = abs(raw.total_inward.as_dd()-tangent.total_inward.as_dd())
+        exact = [Fraction.from_float(float(h))+Fraction.from_float(float(l))+abs(Fraction(e))
+                 for h, l, e in zip(gap.hi, gap.lo,
+                                   record["rate_projection"]["total_current_error_exact_A"], strict=True)]
+        limit = Fraction.from_float(float(budgets["current_A"]/3))
+        record["current_with_projection"] = {
+            "exact_bounds_A": [str(v) for v in exact], "original_allocation_A": budgets["current_A"]/3,
+            "passed": all(v <= limit for v in exact),
+            "scope": "triangle bound for direct mapped-rate versus same-state named tangent; constituent arithmetic limits separate",
+        }
+        record.pop("record_sha256")
+        record["record_sha256"] = digest(record)
+        pair = (*pair[:-1], record)
+        save(record)
+        if not record["state_checks"]["passed"]:
+            first_failure = first_failure or {"phase": "physical_state_quality", "record": record}
+            raise ContractError("voltage_lift_native_or_interpolant_state_quality")
+        if not record["current_with_projection"]["passed"]:
+            first_failure = first_failure or {"phase": "raw_tangent_current_with_projection", "record": record}
+            raise ContractError("voltage_lift_raw_tangent_current_budget")
+        return pair
+
+    def pointer(pair):
+        return {"record_sha256": pair[-1]["record_sha256"], "point_identity": pair[0].identity,
+                "time_s": pair[0].time, "origin": pair[2].origin, "segment_id": pair[-1]["segment_id"]}
+
+    try:
+        save({"kind": "voltage_lift_reference", "request_sha256": request_id,
+              "reference_digest": history.reference_digest, "reference": history.reference_record})
+        for segment_index, segment in enumerate(segments):
+            binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), sampling, segment)
+
+            def residual(t, values, rates, output):
+                nonlocal first_failure
+                counts["residual"] += 1
+                try:
+                    resource_check()
+                    binding.residual(t, values, rates, output)
+                except BaseException as error:
+                    if first_failure is None:
+                        first_failure = {"phase": "residual", "segment_id": segment.id,
+                                         "time_hex": float(t).hex(), "reason": str(error),
+                                         "z_hex": [float(v).hex() for v in values],
+                                         "zdot_hex": [float(v).hex() for v in rates]}
+                        save({"kind": "first_callback_failure", "failure": first_failure})
+                    raise
+
+            def jacobian(t, values, rates, residual_value, cj, output):
+                nonlocal first_failure
+                counts["jacobian"] += 1
+                try:
+                    resource_check()
+                    save({"kind": "jacobian_callback_context", "segment_id": segment.id,
+                          "initialization_generation": segment_index+1, "map_identity": mapping.identity,
+                          "callback_index": counts["jacobian"], "request_sha256": request_id,
+                          "time_hex": float(t).hex(), "cj_hex": float(cj).hex(),
+                          "z_hex": [float(v).hex() for v in values],
+                          "zdot_hex": [float(v).hex() for v in rates]})
+                    binding.jacobian(t, values, rates, residual_value, cj, output)
+                except BaseException as error:
+                    if first_failure is None:
+                        first_failure = {"phase": "jacobian", "segment_id": segment.id,
+                                         "time_hex": float(t).hex(), "cj_hex": float(cj).hex(),
+                                         "reason": str(error), "z_hex": [float(v).hex() for v in values],
+                                         "zdot_hex": [float(v).hex() for v in rates]}
+                        save({"kind": "first_callback_failure", "failure": first_failure})
+                    raise
+
+            _, _, initial_zdot, initial_proof = voltage_lift_initial_input(binding, z, predecessor)
+            if segment_index == 0:
+                # Preparation and runtime have different context hashes. All
+                # source physical data and supplied rate words must agree.
+                for key in ("point_identity", "raw_z_hex", "raw_zdot_hex", "inputs_hex", "input_rates_hex",
+                            "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
+                            "desired_tangent_residual_SI", "represented_rate_residual_SI"):
+                    if initial_proof[key] != request["initial_preparation"][key]:
+                        raise ContractError("voltage_lift_initial_input_changed:"+key)
+                if not np.array_equal(initial_zdot, request["zdot0"]):
+                    raise ContractError("voltage_lift_frozen_initial_rate_changed")
+            last_attempt = {"phase": "segment_initialization", "segment_id": segment.id,
+                            "time_hex": float(segment.start).hex(), "proof": initial_proof}
+            save({"kind": "voltage_lift_initialization_input", **last_attempt})
+            resource_check()
+            solver = IDA(residual, jacfn=jacobian, sparsity=sparsity, algebraic_idx=algebraic, **controls)
+            counts["initializations"] += 1
+            initialized = snapshot_solver_result(solver.init_step(segment.start, z, initial_zdot))
+            last_attempt = snapshot_receipt("initialization_return", segment, initialized)
+            save(ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                         "initialization_return", segment.start, initialized["time"]))
+            if (not initialized["success"] or initialized["time"] != segment.start
+                    or not np.array_equal(initialized["z"], z)
+                    or not np.array_equal(initialized["zdot"], initial_zdot)):
+                raise ContractError("voltage_lift_initialization_changed_state_or_failed")
+            left_pair = checked_sample(binding, initialized, predecessor, "segment_initial")
+            left, last_numerical = left_pair[0], pointer(left_pair)
+            if last_accepted is None:
+                last_accepted = last_numerical
+            sample_times = np.asarray(request["observation_times"][segment.id])
+            cursor = 0
+            while cursor < len(sample_times) and sample_times[cursor] == segment.start:
+                save({"kind": "requested_sample", **last_numerical})
+                cursor += 1
+            while left.time < segment.end:
+                resource_check()
+                if counts["native_steps"] >= budgets["native_steps"]:
+                    raise ContractError("voltage_lift_step_budget")
+                last_attempt = {"phase": "native_step", "segment_id": segment.id,
+                                "target_time_hex": float(segment.end).hex(), "previous": last_numerical}
+                before_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                        "before_onestep", segment.end)
+                save(before_stats)
+                try:
+                    native = snapshot_solver_result(solver.step(segment.end, method="onestep", tstop=segment.end))
+                except BaseException:
+                    try:
+                        failed_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                               "onestep_exception", segment.end, before=before_stats)
+                        counts["native_steps"] += failed_stats["work_since_before"]["num_steps"]
+                        save(failed_stats)
+                    except Exception as stats_error:
+                        save({"kind": "native_statistics_unavailable", "segment_id": segment.id,
+                              "phase": "onestep_exception", "reason": str(stats_error)})
+                    raise
+                after_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                       "after_onestep", segment.end, native["time"], before=before_stats)
+                save(after_stats)
+                counts["native_steps"] += after_stats["work_since_before"]["num_steps"]
+                counts["onestep_returns"] += 1
+                last_attempt = snapshot_receipt("native_return", segment, native)
+                if not native["success"]:
+                    raise ContractError("voltage_lift_solver_failure:"+native["message"])
+                t = native["time"]
+                if not left.time < t <= segment.end:
+                    raise ContractError("voltage_lift_interval_not_monotone")
+                origin = "stop_output" if native["status"] == 1 else "native"
+                right_pair = checked_sample(binding, native, left, origin)
+                right, last_numerical = right_pair[0], pointer(right_pair)
+                cache = {left.time: left_pair, t: right_pair}
+                active = True
+
+                def read_normal(when, phase):
+                    nonlocal last_attempt
+                    resource_check()
+                    before = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                      "before_"+phase, when)
+                    save(before)
+                    last_attempt = {"phase": phase, "segment_id": segment.id,
+                                    "requested_time_hex": float(when).hex(), "previous": last_numerical}
+                    counts["normal_queries"] += 1
+                    try:
+                        normal = snapshot_solver_result(solver.step(when, method="normal", tstop=segment.end))
+                    except BaseException:
+                        failed = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                          phase+"_exception", when, before=before)
+                        counts["native_steps"] += failed["work_since_before"]["num_steps"]
+                        save(failed)
+                        raise
+                    after = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                     phase+"_return", when, normal["time"], before=before)
+                    counts["native_steps"] += after["work_since_before"]["num_steps"]
+                    save(after)
+                    last_attempt = snapshot_receipt(phase+"_return", segment, normal)
+                    if (after["work_since_before"]["num_steps"] != 0
+                            or after["internal_time_hex"] != before["internal_time_hex"]):
+                        save({"kind": "unexpected_native_work_during_output", "snapshot": last_attempt})
+                        raise ContractError("voltage_lift_output_query_advanced_native_history")
+                    return normal
+
+                def query(when):
+                    nonlocal last_attempt
+                    if not active or not left.time <= when <= t:
+                        raise ContractError("expired_or_foreign_voltage_lift_interval")
+                    if when in cache:
+                        return cache[when]
+                    normal = read_normal(when, "interpolant")
+                    if not normal["success"] or normal["time"] != when:
+                        raise ContractError("voltage_lift_dense_query_failed")
+                    pair = checked_sample(binding, normal, left, "interpolant")
+                    cache[when] = pair
+                    return pair
+
+                try:
+                    integrals = {key: [] for key in cumulative}
+                    projection_integrals = []
+                    for order in (8, 16, 32):
+                        table, h = request["quadrature"][str(order)], t-left.time
+                        totals = {key: DD(np.zeros(3)) for key in cumulative}
+                        projection_sum = [Fraction(0)]*3
+                        for node, weight in zip(table["nodes"], table["weights"], strict=True):
+                            pair = query(left.time+h*(float(node)+1)/2)
+                            for key, reading in zip(cumulative, pair[2:4], strict=True):
+                                current = model.arithmetic.concatenate((
+                                    reading.conduction_inward.as_dd().sum().reshape(1),
+                                    reading.total_inward.as_dd()-reading.conduction_inward.as_dd()))
+                                totals[key] += DD(h)*(float(weight)/2)*current
+                            error = voltage_lift_charge_rate_projection(model, pair[-1]["rate_projection"])
+                            weight_q = Fraction.from_float(h)*Fraction.from_float(float(weight)/2)
+                            projection_sum = [a+abs(weight_q*b) for a, b in zip(projection_sum, error, strict=True)]
+                        for key in cumulative:
+                            integrals[key].append(totals[key])
+                        projection_integrals.append(tuple(projection_sum))
+                    changes = model.finite_physical_changes(left, right, right_pair[1])
+                    delta = model.arithmetic.concatenate((changes["body_charge_C"].as_dd().reshape(1),
+                                                           changes["metal_charge_C"].as_dd()))
+                    evidence = {
+                        "raw": voltage_lift_charge_accounting(model, delta, integrals["raw"], projection_integrals,
+                                                               cumulative["raw"], cumulative_u["raw"], cumulative_projection,
+                                                               budgets["charge_C"]),
+                        "physical_tangent": affine_charge_accounting(model, delta, integrals["physical_tangent"],
+                                                                      cumulative["physical_tangent"], cumulative_u["physical_tangent"],
+                                                                      budgets["charge_C"]),
+                    }
+                    for key in cumulative:
+                        cumulative[key] = np.asarray(evidence[key]["cumulative_absolute_defect_C"])
+                        cumulative_u[key] = np.asarray(evidence[key]["cumulative_quadrature_uncertainty_estimate_C"])
+                    cumulative_projection = np.asarray(evidence["raw"]["cumulative_rate_projection_estimate_C"])
+                    while cursor < len(sample_times) and sample_times[cursor] <= t:
+                        save({"kind": "requested_sample", **pointer(query(float(sample_times[cursor])))})
+                        cursor += 1
+                    restored = read_normal(t, "endpoint_restore")
+                    if not restored["success"] or restored["time"] != t:
+                        raise ContractError("voltage_lift_endpoint_restore_failed")
+                    restored_pair = checked_sample(binding, restored, left, "endpoint_restore")
+                    interval = {"kind": "voltage_lift_interval_charge", "segment_id": segment.id,
+                                "left": pointer(left_pair), "right": pointer(right_pair),
+                                "endpoint_restore": pointer(restored_pair), "ledgers": evidence,
+                                "endpoint_snapshot_equal": bool(np.array_equal(restored["z"], native["z"])),
+                                "endpoint_rates_equal": bool(np.array_equal(restored["zdot"], native["zdot"])),
+                                "states_projected": False, "reference_estimates_are_continuum_certificates": False}
+                    save(interval)
+                    if not all(v["passed"] for v in evidence.values()):
+                        first_failure = first_failure or interval
+                        raise ContractError("voltage_lift_interval_or_prefix_charge_budget")
+                    last_accepted = last_numerical
+                finally:
+                    active = False
+                z = native["z"].copy()
+                left_pair, left = right_pair, right
+            if cursor != len(sample_times):
+                raise ContractError("voltage_lift_missing_frozen_observation")
+            predecessor = left
+        result = {"status": "completed_bounded_voltage_lift_native_pilot", "complete_protocol": True}
+    except BaseException as error:
+        result = {"status": "failed_bounded_voltage_lift_native_pilot", "complete_protocol": False,
+                  "reason": str(error), "exception": type(error).__name__, "traceback": traceback.format_exc(),
+                  "first_failure": first_failure or last_attempt}
+    result.update(
+        request_sha256=request_id, map_identity=mapping.identity, counts=counts,
+        elapsed_s=time.perf_counter()-started, last_numerical=last_numerical,
+        last_physically_accepted=last_accepted, last_attempt=last_attempt,
+        cumulative_absolute_charge_defects_C={k: v.tolist() for k, v in cumulative.items()},
+        cumulative_quadrature_uncertainty_estimates_C={k: v.tolist() for k, v in cumulative_u.items()},
+        cumulative_raw_rate_projection_estimates_C=cumulative_projection.tolist(),
+        cumulative_scope="includes any fully evaluated first failed interval; raw projection stays a separate nonnegative debit",
+        scientific_or_G2_qualification=False, projection_integral_continuum_certified=False,
+    )
+    return result
