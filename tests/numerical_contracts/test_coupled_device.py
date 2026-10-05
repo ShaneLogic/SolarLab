@@ -1463,3 +1463,423 @@ def test_affine_saved_failure_weight_contraction(request):
               "positive_scalar_and_vector_weights":new_r>0 and min(new_a)>0,
               "original_physical_and_observation_gates_unchanged":proposal["budgets"]==base["budgets"],
               "no_new_native_import":"sksundae" not in sys.modules})
+
+
+def lift_fraction(value):
+    return Fraction.from_float(float(value))
+
+
+def lift_primitive_fractions(value):
+    return [sum((lift_fraction(word[i]) for word in value.words), Fraction(0))
+            for i in range(value.shape[0])]
+
+
+def lift_exact_map(mapping, raw, inputs, *, rate=False):
+    result = []
+    for i in range(mapping.model.layout.size):
+        value = lift_fraction(mapping.columns[i])*lift_fraction(raw[i])
+        for j in range(2):
+            a = lift_fraction(inputs[j])-(Fraction(0) if rate else lift_fraction(mapping.reference_inputs[j]))
+            value += lift_fraction(mapping.lift[i, j])*a
+        result.append(value)
+    return result
+
+
+def lift_encode_target(mapping, physical, inputs, *, rate=False):
+    """Independent test-only lossy encoding; never rewrite a native record."""
+    result = []
+    for i, value in enumerate(physical):
+        lift = sum((lift_fraction(mapping.lift[i, j])*(lift_fraction(inputs[j])
+                    -(Fraction(0) if rate else lift_fraction(mapping.reference_inputs[j])))
+                    for j in range(2)), Fraction(0))
+        result.append(float((value-lift)/lift_fraction(mapping.columns[i])))
+    return np.asarray(result)
+
+
+def lift_fixture(case_id, family="perturbed", area=1.0):
+    from scripts.benchmarks.coupled_device_prototype import AffineVoltageMap, VoltageLiftAdapter
+
+    m = affine_model(case_id, area)
+    p, physical = affine_point(m, family)
+    mapping = AffineVoltageMap(m)
+    raw = lift_encode_target(mapping, [lift_fraction(v) for v in physical], p.inputs)
+    return m, mapping, VoltageLiftAdapter(mapping), raw, p.inputs
+
+
+def lift_decimal_reference(mapping, z, zdot, inputs, input_rate, precision=80):
+    """Direct physical reference from the mathematical external map."""
+    with localcontext() as ctx:
+        ctx.prec = precision
+        cv = lambda x: x if isinstance(x, Decimal) else dec(x)
+        m = mapping.model
+        physical, rate = [], []
+        roots = [v for variable in m.layout.variables for v in word_decimals(m.field(m.reference, variable.id))]
+        for i in range(m.layout.size):
+            physical.append(roots[i]+dec(mapping.columns[i])*cv(z[i])+sum(
+                (dec(mapping.lift[i, j])*(cv(inputs[j])-dec(mapping.reference_inputs[j])) for j in range(2)), Decimal(0)))
+            rate.append(dec(mapping.columns[i])*cv(zdot[i])+sum(
+                (dec(mapping.lift[i, j])*cv(input_rate[j]) for j in range(2)), Decimal(0)))
+        return decimal_kernel(m, physical, list(map(cv, inputs)), rate, precision)
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_public_words_and_weak_changes(case_id, request):
+    m, mapping, adapter, z, inputs = lift_fixture(case_id)
+    expected_lift = np.zeros((m.layout.size, 2))
+    expected_lift[m.layout.offsets["phi_V"], 0] = -m.x/m.definition.length
+    primitive = mapping.physical_primitive(z, inputs)
+    point, _ = mapping.trial(z, .01, inputs)
+    checks = {"declared_geometry_lift": np.array_equal(mapping.lift, expected_lift),
+              "all_physical_input_words_exact": lift_primitive_fractions(primitive) == lift_exact_map(mapping, z, inputs),
+              "Point_y_stays_physical": np.array_equal(point.y, primitive.high),
+              "Point_y_is_not_raw_z": not np.array_equal(point.y, z),
+              "mass_lift_is_exact_zero": np.all(m.mass @ mapping.lift == 0),
+              "original_reference_retained": mapping.reference_identity == m.reference.identity}
+    weak = []
+    zero = np.zeros(m.layout.size)
+    base, _ = mapping.trial(zero, .01, inputs)
+    for sign in (-1, 0, 1):
+        raw = zero.copy()
+        raw[m.layout.offsets["phi_V"]] = sign*2.0**-80
+        right, increment = mapping.trial(raw, .02, inputs, predecessor=base)
+        change = increment.field("phi_V")
+        expected = [lift_fraction(mapping.columns[i])*lift_fraction(raw[i])
+                    for i in range(m.layout.offsets["phi_V"].start, m.layout.offsets["phi_V"].stop)]
+        values = word_decimals(change)
+        checks[f"weak_sign_{sign}"] = all((v > 0 if sign > 0 else v < 0 if sign < 0 else v == 0) for v in values)
+        with localcontext() as ctx:
+            ctx.prec = 100
+            errors = [abs(v-Decimal(q.numerator)/Decimal(q.denominator)) for v, q in zip(values, expected)]
+        weak.append({"sign": sign, "physical_changes": values, "independent_errors": errors,
+                     "point_identity": right.identity})
+    with pytest.raises(ContractError, match="voltage_lift_coordinate_shape"):
+        mapping.physical_primitive(z[:-1], inputs)
+    with pytest.raises(ValueError):
+        mapping.lift[0, 0] = 1
+    with pytest.raises(ContractError, match="voltage_lift_tangent_requires_named_evaluation"):
+        adapter.observe(.01, z, np.zeros(m.layout.size), inputs, np.zeros(2), origin="physical_tangent")
+    log_case(request, {"family": "voltage_lift_exact_words", "case": case_id,
+                       "map": mapping.payload(), "weak_changes": weak, "native_steps": 0}, checks)
+
+
+@pytest.mark.parametrize("case_id", CASES)
+@pytest.mark.parametrize("area", GATES["areas_m2"])
+def test_voltage_lift_physical_rate_ports_and_inventory(case_id, area, request):
+    m, mapping, adapter, z, inputs = lift_fixture(case_id, area=area)
+    zdot = .17+np.sin(np.arange(m.layout.size))
+    adot = np.array([.1, .3*m.definition.photon_reference])
+    point, _, rate, observed, audit = adapter.observe(.01, z, zdot, inputs, adot)
+    expected = lift_exact_map(mapping, zdot, adot, rate=True)
+    reference = lift_decimal_reference(mapping, z, zdot, inputs, adot, 100)
+    # The physical observer consumes the declared final projection. Its
+    # difference from the direct-map reference is separately reconstructed.
+    projected_reference = decimal_kernel(m, affine_exact_input(m, mapping.physical_primitive(z, inputs)),
+                                         list(map(dec, inputs)), list(map(dec, rate.high)), 100)
+    comparisons = {key: compare_words(value, projected_reference[key], 1,
+                                      GATES["value_scaled_atol"], GATES["value_scaled_rtol"])
+                   for key, value in (("Icond", observed.conduction_inward),
+                                      ("Itotal", observed.total_inward),
+                                      ("Qbody", observed.body_charge), ("Qmetal", observed.metal_charge))}
+    with localcontext() as ctx:
+        ctx.prec = 100
+        port_errors = [projected_reference["Itotal"][i]-reference["Itotal"][i]
+                       -Decimal(Fraction(v).numerator)/Decimal(Fraction(v).denominator)
+                       for i, v in enumerate(audit["total_current_error_exact_A"])]
+    left, _ = mapping.trial(z, 0, np.zeros(2))
+    right, increment = mapping.trial(z, .01, inputs, predecessor=left)
+    delta = adapter.finite_storage_increment(left, right, increment)
+    checks = {"all_rate_words_exact": lift_primitive_fractions(rate) == expected,
+              "observer_uses_explicit_projection": np.array_equal(observed.derivative, rate.high),
+              "independent_ports": all(v["passed"] for v in comparisons.values()),
+              "projection_error_independently_reconstructed": max(map(abs, port_errors)) <= dec(GATES["value_scaled_atol"]),
+              "voltage_change_does_not_change_inventory": all(v == 0 for v in word_decimals(delta)),
+              "physical_increment_contains_input_lift": any(v != 0 for v in word_decimals(increment.field("phi_V"))),
+              "unchanged_sparse_structure": adapter.linearize(.01, z, zdot, inputs, adot).structure.identity == m.public_problem().structure.identity,
+              "no_native_import": "sksundae" not in sys.modules}
+    log_case(request, {"family": "voltage_lift_rates_ports", "case": case_id, "area_m2": area,
+                       "rate_projection": audit, "independent_projection_errors_A": port_errors,
+                       "comparisons": comparisons, "inventory_delta": word_decimals(delta)}, checks)
+
+
+def lift_reference_jvp(mapping, z, zdot, inputs, adot, dz, dzdot, da, dadot, precision):
+    with localcontext() as ctx:
+        ctx.prec = precision
+        h = Decimal("1e-22")
+        results = []
+        for sign in (-1, 1):
+            values = [[dec(v)+sign*h*dec(d) for v, d in zip(base, direction)]
+                      for base, direction in ((z, dz), (zdot, dzdot), (inputs, da), (adot, dadot))]
+            results.append(lift_decimal_reference(mapping, *values, precision)["F"])
+        return [(b-a)/(2*h) for a, b in zip(*results)]
+
+
+@pytest.mark.parametrize("case_id", CASES)
+@pytest.mark.parametrize("family", GATES["points"])
+def test_voltage_lift_full_chain_and_fd_ladder(case_id, family, request):
+    m, mapping, adapter, z, inputs = lift_fixture(case_id, family)
+    zdot = .17+np.sin(np.arange(m.layout.size))
+    adot = np.array([.1, .3*m.definition.photon_reference])
+    linearization = adapter.linearize(.01, z, zdot, inputs, adot)
+    zero, za = np.zeros(m.layout.size), np.zeros(2)
+    records = []
+    for name, sign, physical in affine_directions(m):
+        direction = physical/m.S
+        for cj in GATES["cj_s_inv"]:
+            reference = lift_reference_jvp(mapping, z, zdot, inputs, adot, direction, cj*direction, za, za, 80)
+            reference100 = lift_reference_jvp(mapping, z, zdot, inputs, adot, direction, cj*direction, za, za, 100)
+            matrix = linearization.ida_matrix(cj)
+            actual = matrix @ direction
+            # Reference is physical; the solver derivative is row-scaled.
+            check = compare(actual/m.Drow, reference, m.Drow,
+                            GATES["jacobian_scaled_atol"], GATES["jacobian_scaled_rtol"])
+            uncertainty = compare(np.zeros(m.layout.size), [a-b for a, b in zip(reference, reference100)],
+                                  m.Drow, GATES["jacobian_scaled_atol"]*GATES["reference_fraction_of_gate"], 0)
+            ladder = []
+            for epsilon in GATES["fd_epsilon_ladder"]:
+                plus = adapter.residual(.01, z+epsilon*direction, zdot+epsilon*cj*direction, inputs, adot)
+                minus = adapter.residual(.01, z-epsilon*direction, zdot-epsilon*cj*direction, inputs, adot)
+                finite = (plus-minus)/(2*epsilon)
+                ladder.append(float(np.max(np.abs(finite-actual))/max(np.max(np.abs(actual)), 1e-30)))
+            hits = np.asarray(ladder) <= GATES["fd_plateau_relative_limit"]
+            width = GATES["fd_required_adjacent_points"]
+            plateau = any(np.all(hits[i:i+width]) for i in range(len(hits)-width+1))
+            records.append({"direction": name, "sign": sign, "cj": cj, "comparison": check,
+                            "reference_uncertainty": uncertainty, "fd_errors": ladder,
+                            "fd_plateau": plateau, "declared_nnz": matrix.nnz})
+    input_records = []
+    for j, scale in enumerate((m.definition.vt, max(m.definition.photon_reference, 2e16))):
+        da = np.zeros(2); da[j] = scale
+        for kind in ("input", "input_rate"):
+            aa, ar = (da, za) if kind == "input" else (za, da)
+            reference = lift_reference_jvp(mapping, z, zdot, inputs, adot, zero, zero, aa, ar, 100)
+            actual = (linearization.inputs if kind == "input" else linearization.input_rate) @ da
+            check = compare(actual/m.Drow, reference, m.Drow,
+                            GATES["jacobian_scaled_atol"], GATES["jacobian_scaled_rtol"])
+            input_records.append({"kind": kind, "input": j, "comparison": check})
+    checks = {"all_signed_block_coupled_jacobians": all(x["comparison"]["passed"] for x in records),
+              "reference_precision_share": all(x["reference_uncertainty"]["passed"] for x in records),
+              "all_fd_plateaus": all(x["fd_plateau"] for x in records),
+              "full_input_and_input_rate_chain": all(x["comparison"]["passed"] for x in input_records),
+              "all_declared_sparse_slots": all(x["declared_nnz"] == m.graph.nnz for x in records),
+              "explicit_time_partial_zero": np.all(linearization.time == 0),
+              "fixed_inputs_time_invariance": np.array_equal(adapter.residual(.01, z, zdot, inputs, adot),
+                                                              adapter.residual(.02, z, zdot, inputs, adot))}
+    log_case(request, {"family": "voltage_lift_complete_chain", "case": case_id, "point": family,
+                       "epsilon_ladder": GATES["fd_epsilon_ladder"], "directions": records,
+                       "input_partials": input_records, "source_identity": adapter.source_identity}, checks)
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_history_reconstructs_physical_words(case_id, request):
+    from copy import deepcopy
+    from scripts.benchmarks.coupled_device_prototype import VoltageLiftHistory
+
+    m, mapping, adapter, z, inputs = lift_fixture(case_id)
+    history = VoltageLiftHistory(mapping)
+    segments = protocol_from_plan(PLAN, case_id)
+    previous, restored_previous = m.reference, m.reference
+    records, ids = [], []
+    for segment in segments:
+        a, adot = segment.inputs(segment.end)
+        point, increment, rate, record = history.build_sample(
+            z, segment.end, a, previous, np.zeros(m.layout.size), adot,
+            origin="algebraic_probe", event_side="left")
+        decoded, dincrement, drate, da = history.restore(history.reference_record, record, restored_previous)
+        assert decoded.identity == point.identity
+        assert lift_primitive_fractions(drate) == lift_primitive_fractions(rate)
+        assert np.array_equal(da, adot)
+        assert all(word_decimals(increment.field(v.id)) == word_decimals(dincrement.field(v.id))
+                   for v in m.layout.variables)
+        records.append(record); ids.append(point.identity)
+        previous, restored_previous = point, decoded
+    original = records[0]
+    damaged = deepcopy(original)
+    supported_index = next(i for i, value in enumerate(original["raw_solver_z_hex"])
+                           if float.fromhex(value) != 0)
+    damaged["raw_solver_z_hex"][supported_index] = float(np.nextafter(
+        float.fromhex(damaged["raw_solver_z_hex"][supported_index]), np.inf)).hex()
+    with pytest.raises(ContractError, match="voltage_lift_history_word_mismatch"):
+        history.restore(history.reference_record, damaged, m.reference)
+    unsupported = deepcopy(original)
+    zero_index = next(i for i, value in enumerate(original["raw_solver_z_hex"])
+                      if float.fromhex(value) == 0)
+    unsupported["raw_solver_z_hex"][zero_index] = float(np.nextafter(0.0, np.inf)).hex()
+    with pytest.raises(ArithmeticError, match="below the supported precision range"):
+        history.restore(history.reference_record, unsupported, m.reference)
+    damaged = deepcopy(original)
+    damaged["physical_rate_words_hex"][1][0] = (2.0**-80).hex()
+    with pytest.raises(ContractError, match="voltage_lift_history_word_mismatch"):
+        history.restore(history.reference_record, damaged, m.reference)
+    with pytest.raises(ContractError, match="voltage_lift_history_binding_mismatch"):
+        history.restore(history.reference_record, original, previous)
+    log_case(request, {"family": "voltage_lift_history", "case": case_id,
+                       "synthetic_protocol_boundary_ids": ids, "complete_protocol_definition_s": segments[-1].end,
+                       "native_steps": 0, "sample_bytes": [len(json.dumps(x).encode()) for x in records]},
+             {"all_sources_words_and_predecessors_reconstructed": True,
+              "all_coordinate_and_physical_rates_present": all("raw_solver_zdot_hex" in x and "physical_rate_words_hex" in x for x in records),
+              "no_hidden_legacy_coordinate_assertion": all(x["raw_coordinate_frame"] == "scaled-voltage-departure-v1" for x in records),
+              "one_original_reference": all(not x["reference_embedded"] for x in records)})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_port_input_derivatives(case_id, request):
+    m, mapping, adapter, z, inputs = lift_fixture(case_id)
+    zdot = .17+np.sin(np.arange(m.layout.size))
+    adot = np.array([.1, .3*m.definition.photon_reference])
+    partials = adapter.port_partials(.01, z, zdot, inputs, adot)
+    records = []
+    for column, magnitude in enumerate((m.definition.vt, max(m.definition.photon_reference, 2e16))):
+        direction = np.zeros(2); direction[column] = magnitude
+        for kind in ("inputs", "input_rates"):
+            with localcontext() as ctx:
+                ctx.prec = 100
+                h = Decimal("1e-22")
+                refs = []
+                for sign in (-1, 1):
+                    a = [dec(x)+sign*h*dec(v) if kind == "inputs" else dec(x)
+                         for x, v in zip(inputs, direction)]
+                    ar = [dec(x)+sign*h*dec(v) if kind == "input_rates" else dec(x)
+                          for x, v in zip(adot, direction)]
+                    refs.append(lift_decimal_reference(mapping, z, zdot, a, ar, 100))
+                ref = {key: [(b-a)/(2*h) for a, b in zip(refs[0][key], refs[1][key])]
+                       for key in ("Qmetal", "Icond", "Itotal", "Qbody")}
+            actual = {"Icond": partials["conduction_"+kind] @ direction,
+                      "Itotal": partials["current_"+kind] @ direction,
+                      "Qmetal": partials["charge_inputs"] @ direction if kind == "inputs" else np.zeros(2),
+                      "Qbody": np.atleast_1d(partials["body_inputs"] @ direction) if kind == "inputs" else np.zeros(1)}
+            comparisons = {key: compare(value, ref[key], 1, GATES["jacobian_scaled_atol"], GATES["jacobian_scaled_rtol"])
+                           for key, value in actual.items()}
+            records.append({"input": column, "kind": kind, "comparisons": comparisons})
+    log_case(request, {"family": "voltage_lift_port_derivatives", "case": case_id,
+                       "input_partial_checks": records},
+             {"all_direct_and_lift_port_derivatives": all(v["passed"] for row in records for v in row["comparisons"].values()),
+              "no_native_import": "sksundae" not in sys.modules})
+
+
+def test_voltage_lift_native37_saved_rounding_control(request):
+    """Re-encode immutable saved inputs; this is not a native history replay."""
+    from scripts.benchmarks.coupled_device_prototype import AffineCoupledSlab, AffineVoltageMap, VoltageLiftAdapter
+
+    saved_path = Path(os.environ["LIFT_SAVED_CONTROL"])
+    original_path = Path(os.environ["LIFT_NATIVE_REQUEST"])
+    history_path = Path(os.environ["LIFT_NATIVE_HISTORY"])
+    saved, native = json.loads(saved_path.read_text()), json.loads(original_path.read_text())
+    # Use the original numerical definition, including its original source
+    # path. The newly imported computational source keeps its own identity.
+    m = AffineCoupledSlab(SlabDefinition(**native["numeric_packet"]["definition"]), 8)
+    mapping, records = AffineVoltageMap(m), []
+    adapter = VoltageLiftAdapter(mapping)
+    selected_ids = {x["native_record"] for x in saved["selected"]}
+    native_records = {}
+    for line in history_path.open():
+        record = json.loads(line)
+        if record.get("record_sha256") in selected_ids:
+            native_records[record["record_sha256"]] = record
+    assert set(native_records) == selected_ids
+    duration = float(native["segments"][-1]["end"])-float(native["segments"][0]["start"])
+    point_budget = native["budgets"]["charge_C"]/(3*duration)
+    loss_records = []
+    all_checks = {"no_original_native_steps": True, "new_source_identity_explicit": True}
+    for item in saved["selected"]:
+        original = native_records[item["native_record"]]
+        h = original["history"]
+        inputs = np.array([float.fromhex(x) for x in h["input_hex"]])
+        adot = np.array([float.fromhex(x) for x in h["input_rate_hex"]])
+        base_u = [sum((lift_fraction(float.fromhex(word[i])) for word in h["cumulative_primitive_words_hex"]), Fraction(0))
+                  for i in range(m.layout.size)]
+        base_rate = [lift_fraction(float.fromhex(x)) for x in h["physical_ydot_hex"]]
+        after_u = [a+Fraction(b) for a, b in zip(base_u, item["ideal_physical_delta_exact"])]
+        after_rate = [a+Fraction(b) for a, b in zip(base_rate, item["ideal_rate_delta_exact"])]
+        points = []
+        for label, target_u, target_rate in (("saved_before", base_u, base_rate),
+                                              ("ideal_single_correction", after_u, after_rate)):
+            z = lift_encode_target(mapping, target_u, inputs)
+            zdot = lift_encode_target(mapping, target_rate, adot, rate=True)
+            point, _, rate, observed, projection = adapter.observe(item["time"], z, zdot, inputs, adot)
+            points.append(point)
+            primitive = mapping.physical_primitive(z, inputs)
+            encoded_u = lift_primitive_fractions(primitive)
+            encoded_rate = lift_primitive_fractions(rate)
+            with localcontext() as ctx:
+                ctx.prec = 100
+                convert = lambda q: Decimal(q.numerator)/Decimal(q.denominator)
+                roots = [v for spec in m.layout.variables for v in word_decimals(m.field(m.reference, spec.id))]
+                target_x = [a+convert(b) for a, b in zip(roots, target_u)]
+                reference = decimal_kernel(m, target_x, list(map(dec, inputs)), list(map(convert, target_rate)), 100)
+                current_errors = [value-ref for value, ref in zip(word_decimals(observed.total_inward), reference["Itotal"])]
+                conduction_error = sum(word_decimals(observed.conduction_inward))-sum(reference["Icond"])
+                projected = m.public_problem().residual(point, rate.high, adot)
+                qsum = Decimal(0)
+                for equation, variable, _ in m.rate_fields:
+                    sl = m.graph.row_offsets[equation]
+                    qsum += dec(Q)*(-1 if variable in {"n_m3", "f"} else 1)*sum(word_decimals(projected)[sl])
+                expected_q = Decimal(0)
+                for equation, variable, _ in m.rate_fields:
+                    sl = m.graph.row_offsets[equation]
+                    expected_q += dec(Q)*(-1 if variable in {"n_m3", "f"} else 1)*sum(reference["F"][sl])
+                residual_error = qsum-expected_q
+            errors = [abs(float(conduction_error)), *(abs(float(v)) for v in current_errors), abs(float(residual_error))]
+            all_checks[f"pointwise_rounding_{item['time']}_{label}"] = max(errors) <= point_budget
+            records.append({"native_record": item["native_record"], "label": label,
+                            "time_s": item["time"], "new_point_identity": point.identity,
+                            "map_identity": mapping.identity, "raw_z_hex": [float(v).hex() for v in z],
+                            "state_encoding_error_exact": [str(a-b) for a, b in zip(encoded_u, target_u)],
+                            "rate_encoding_error_exact": [str(a-b) for a, b in zip(encoded_rate, target_rate)],
+                            "conduction_sum_error_A": str(conduction_error),
+                            "total_current_errors_A": [str(v) for v in current_errors],
+                            "physical_charge_residual_A": str(qsum), "target_charge_residual_A": str(expected_q),
+                            "charge_residual_error_A": str(residual_error),
+                            "pointwise_budget_A": point_budget, "rate_projection": projection,
+                            "old_history_replaced": False})
+        old_z = np.array([float.fromhex(v) for v in h["raw_solver"]["z_hex"]])
+        dz = np.array([float.fromhex(v) for v in item["proposed_dz_hex"]])
+        lost = (dz != 0) & (old_z+dz == old_z)
+        sl = m.layout.offsets["phi_V"]
+        change = points[1].state.field("phi_V").difference(points[0].state.field("phi_V"))
+        values = word_decimals(change)
+        recovered = [values[i] != 0 and (values[i] > 0) == (dz[sl][i] > 0)
+                     for i in range(m.count) if lost[sl][i]]
+        all_checks[f"lost_potential_updates_retained_{item['time']}"] = bool(recovered) and all(recovered)
+        loss_records.append({"time_s": item["time"], "original_lost_indices": np.flatnonzero(lost[sl]).tolist(),
+                             "mapped_physical_changes": values, "all_recovered": all(recovered)})
+    log_case(request, {"family": "voltage_lift_saved37_control", "source_case": m.definition.id,
+                       "source_identity": m.source_identity, "pointwise_budget_A": point_budget,
+                       "budget_scope": "Bcharge/(3*T) saved-point diagnostic only; no extra native allocation",
+                       "saved_targets": records, "lost_update_checks": loss_records,
+                       "native_steps": 0, "new_sparse_corrections": 0, "full_protocol_completed": False}, all_checks)
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_voltage_lift_full_protocol_wrms_certificate(case_id, request):
+    from scripts.benchmarks.coupled_device_prototype import voltage_lift_wrms_policy
+
+    m, mapping, _, _, _ = lift_fixture(case_id)
+    previous_paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(previous_paths[case_id]).read_text())
+    assert np.array_equal(previous["numeric_packet"]["column_scaling"], m.S)
+    segments = protocol_from_plan(PLAN, case_id)
+    proof = voltage_lift_wrms_policy(mapping, previous["controls"], segments)
+    r, old_r = lift_fraction(proof["rtol"]), lift_fraction(previous["controls"]["rtol"])
+    checks = {"all_analytic_triangle_margins": all(all(row["checks"].values()) for row in proof["components"]),
+              "all_complete_protocol_segments": len(proof["full_protocol_input_bounds"]) == len(segments),
+              "no_native_award": not proof["native_admission"] and not proof["global_accuracy_or_conservation_certified"]}
+    comparisons = 0
+    for component in proof["components"]:
+        i = component["index"]
+        a, old_a = Fraction(component["new_physical_atol_exact"]), Fraction(component["old_physical_atol_exact"])
+        for record in proof["full_protocol_input_bounds"]:
+            for first in record["input_bounds"][0]:
+                for second in record["input_bounds"][1]:
+                    offset = sum((lift_fraction(mapping.lift[i, j])*(lift_fraction(v)-lift_fraction(mapping.reference_inputs[j]))
+                                  for j, v in enumerate((first, second))), Fraction(0))
+                    assert abs(offset) <= Fraction(component["offset_upper_exact"])
+                    # Explicitly include cancellation, negative coordinates,
+                    # zero and large values; the analytic margin proves the
+                    # full range rather than just these witnesses.
+                    for y in (Fraction(0), offset, -offset, old_a/old_r, -old_a/old_r,
+                              10**12*old_a/old_r, -10**12*old_a/old_r):
+                        assert a+r*abs(y-offset) <= old_a+old_r*abs(y)
+                        comparisons += 1
+    log_case(request, {"family": "voltage_lift_full_range_wrms", "case": case_id,
+                       "certificate": proof, "independent_fraction_comparisons": comparisons,
+                       "complete_protocol_s": segments[-1].end, "future_controls_are_not_admitted": True}, checks)

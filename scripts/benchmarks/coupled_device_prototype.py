@@ -2492,3 +2492,379 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
                   scientific_or_G2_qualification=False)
     # The runner writes this tail separately even after the streaming cap.
     return result
+
+
+@dataclass(frozen=True)
+class AffineVoltageMap(ImmutableArrays):
+    """External voltage departures mapped into unchanged physical Points.
+
+    ``z`` is a solver coordinate. Point.y is the physical SI remainder
+    ``S*z + L*(a-a_ref)`` and is never relabeled as z. The public primitive
+    addition retains every input word within its declared four-word capacity.
+    """
+
+    model: AffineCoupledSlab = field(repr=False, compare=False)
+    columns: np.ndarray = field(init=False, repr=False)
+    rows: np.ndarray = field(init=False, repr=False)
+    lift: np.ndarray = field(init=False, repr=False)
+    reference_inputs: np.ndarray = field(init=False, repr=False)
+    model_identity: str = field(init=False)
+    reference_identity: str = field(init=False)
+    identity: str = field(init=False)
+
+    def __post_init__(self):
+        from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+        if not isinstance(self.model, AffineCoupledSlab):
+            raise ContractError("voltage_lift_requires_physical_affine_model")
+        if not callable(getattr(PrimitiveExpansion, "add", None)):
+            raise ContractError("public_primitive_add_unavailable")
+        m = self.model
+        if m.reference.inputs.shape != (2,):
+            raise ContractError("voltage_lift_input_shape")
+        lift = np.zeros((m.layout.size, 2))
+        # These binary64 coefficients define the map. We do not assume that
+        # their discrete Poisson action is exactly zero on the physical mesh.
+        lift[m.layout.offsets["phi_V"], 0] = -m.x/m.definition.length
+        for name, value in (("columns", m.S), ("rows", m.Drow),
+                            ("lift", lift), ("reference_inputs", m.reference.inputs)):
+            object.__setattr__(self, name, frozen_array(value))
+        object.__setattr__(self, "model_identity", m.source_identity)
+        object.__setattr__(self, "reference_identity", m.reference.identity)
+        object.__setattr__(self, "identity", digest(self.payload()))
+
+    def payload(self):
+        return {
+            "schema": "solarlab.affine-voltage-map.v1",
+            "physical_model": self.model_identity,
+            "physical_reference": self.reference_identity,
+            "layout": self.model.layout.identity,
+            "columns_hex": [float(v).hex() for v in self.columns],
+            "rows_hex": [float(v).hex() for v in self.rows],
+            "lift_hex": [[float(v).hex() for v in row] for row in self.lift],
+            "reference_inputs_hex": [float(v).hex() for v in self.reference_inputs],
+            "raw_coordinate_meaning": "scaled voltage departures; other fields are scaled physical remainders",
+            "physical_coordinate_meaning": "Point.y is the first word of S*z+L*(a-a_ref)",
+        }
+
+    def _check(self):
+        m = self.model
+        if (m.source_identity != self.model_identity
+                or m.reference.identity != self.reference_identity
+                or not np.array_equal(m.S, self.columns)
+                or not np.array_equal(m.Drow, self.rows)):
+            raise ContractError("voltage_lift_source_changed")
+
+    def _compose(self, raw, inputs, *, subtract_reference):
+        from scripts.benchmarks.precision_prototype import DD, DoubleArray, PrimitiveExpansion
+
+        self._check()
+        raw, inputs = frozen_array(raw), frozen_array(inputs)
+        if raw.shape != self.columns.shape or inputs.shape != self.reference_inputs.shape:
+            raise ContractError("voltage_lift_coordinate_shape")
+        result = PrimitiveExpansion.from_value(DoubleArray.from_dd(DD(self.columns)*DD(raw)))
+        for j in range(inputs.size):
+            if not np.any(self.lift[:, j]):
+                continue
+            result = result.add(DoubleArray.from_dd(DD(self.lift[:, j])*DD(inputs[j])))
+            if subtract_reference:
+                result = result.add(DoubleArray.from_dd(-DD(self.lift[:, j])*DD(self.reference_inputs[j])))
+        return result
+
+    def physical_primitive(self, z, inputs):
+        return self._compose(z, inputs, subtract_reference=True)
+
+    def physical_rate(self, zdot, input_rate):
+        return self._compose(zdot, input_rate, subtract_reference=False)
+
+    def trial(self, z, time, inputs, *, predecessor=None):
+        primitive = self.physical_primitive(z, inputs)
+        return self.model.trial(primitive, time, inputs, predecessor=predecessor)
+
+
+def voltage_lift_rate_projection(model: AffineCoupledSlab, primitive) -> dict:
+    """Exact finite arithmetic audit of the explicitly declared rate projection.
+
+    At a fixed physical state the rate contribution to these ports is linear.
+    This gives its actual signed error; it is not a trajectory error estimate.
+    """
+    from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+    if not isinstance(primitive, PrimitiveExpansion) or primitive.shape != (model.layout.size,):
+        raise ContractError("voltage_lift_rate_shape")
+    f = lambda v: Fraction.from_float(float(v))
+    exact = [sum((f(word[i]) for word in primitive.words), Fraction(0))
+             for i in range(model.layout.size)]
+    error = [f(v)-source for v, source in zip(primitive.high, exact, strict=True)]
+    fields = {v.id: error[model.layout.offsets[v.id]] for v in model.layout.variables}
+    m, N = model.definition, model.count
+    q, nt, eps, area = map(f, (Q, m.trap_density, m.epsilon, m.area))
+    volumes = list(map(f, model.geometry.volumes))
+    n, p, phi = (fields[name] for name in ("n_m3", "p_m3", "phi_V"))
+    c, trap = ((fields["c_m3"], fields["f"]) if m.dynamic
+               else ([Fraction(0)]*N, [Fraction(0)]*N))
+    rho = [q*(p[i]-n[i]+c[i]-nt*trap[i]) for i in range(N)]
+    ddot = [-eps*(phi[j+1]-phi[j])/f(model.dx[j]) for j in range(N-1)]
+    conduction = [q*volumes[i]*(p[i]-n[i]) for i in (0, N-1)]
+    total = [conduction[0]+area*ddot[0]-volumes[0]*rho[0],
+             conduction[1]-area*ddot[-1]-volumes[-1]*rho[-1]]
+    body = sum((v*r for v, r in zip(volumes, rho, strict=True)), Fraction(0))
+    return {
+        "projection": "first word of the normalized four-word physical rate",
+        "projected_rate_hex": [float(v).hex() for v in primitive.high],
+        "component_error_exact": [str(v) for v in error],
+        "conduction_error_A": [float(v) for v in conduction],
+        "total_current_error_A": [float(v) for v in total],
+        "total_current_error_exact_A": [str(v) for v in total],
+        "body_charge_rate_error_A": float(body),
+        "body_charge_rate_error_exact_A": str(body),
+        "scope": "rate projection at unchanged physical state; no state or integral certificate",
+    }
+
+
+@dataclass(frozen=True)
+class VoltageLiftAdapter:
+    """Public physical kernel plus an explicit external affine input map.
+
+    All arguments are independent for partial derivatives. A future native
+    controller must supply protocol inputs/rates and separately obtain run
+    admission; this object neither imports nor starts a native integrator.
+    """
+
+    mapping: AffineVoltageMap
+    problem: object = field(init=False, repr=False)
+    source_identity: str = field(init=False)
+
+    def __post_init__(self):
+        if not isinstance(self.mapping, AffineVoltageMap):
+            raise ContractError("voltage_lift_map_required")
+        self.mapping._check()
+        object.__setattr__(self, "problem", self.mapping.model.public_problem())
+        object.__setattr__(self, "source_identity", digest({
+            "map": self.mapping.identity, "partial_frame": "raw-z,raw-zdot,inputs,input-rates,time-v1"}))
+
+    def _point_rate(self, time, z, zdot, inputs, input_rate, predecessor=None):
+        point, increment = self.mapping.trial(z, time, inputs, predecessor=predecessor)
+        physical_rate = self.mapping.physical_rate(zdot, input_rate)
+        # The common physical problem accepts binary64 rates. This final
+        # projection is explicit; history and observations also retain all
+        # push-forward words and an independent finite-rate error audit.
+        return point, increment, physical_rate
+
+    def residual(self, time, z, zdot, inputs, input_rate):
+        point, _, rate = self._point_rate(time, z, zdot, inputs, input_rate)
+        value = self.problem.residual(point, rate.high, frozen_array(input_rate))
+        return self.mapping.rows*self.mapping.model.project_output(value)
+
+    def linearize(self, time, z, zdot, inputs, input_rate):
+        from scripts.benchmarks.contract_prototype import SparseLinearization
+
+        point, _, rate = self._point_rate(time, z, zdot, inputs, input_rate)
+        physical = self.problem.linearize(point, rate.high, frozen_array(input_rate))
+        mapping, structure = self.mapping, physical.structure
+
+        def scale(matrix):
+            columns = np.repeat(np.arange(matrix.shape[1]), np.diff(matrix.indptr))
+            return structure.filled(matrix.data*mapping.rows[matrix.indices]*mapping.columns[columns])
+
+        # Fy already includes the physical storage-rate contraction. Because
+        # the external map is affine, there are no missing map Hessian terms.
+        inputs_part = physical.inputs+physical.y @ mapping.lift
+        rates_part = physical.input_rate+physical.ydot @ mapping.lift
+        return SparseLinearization(
+            scale(physical.y), scale(physical.ydot),
+            mapping.rows[:, None]*inputs_part, mapping.rows[:, None]*rates_part,
+            mapping.rows*physical.time, structure, self.source_identity)
+
+    def jacobian(self, time, z, zdot, inputs, input_rate, cj):
+        return self.linearize(time, z, zdot, inputs, input_rate).ida_matrix(cj)
+
+    def finite_storage_increment(self, left, right, increment):
+        return self.problem.storage.delta(left, right, increment)
+
+    def observe(self, time, z, zdot, inputs, input_rate, *,
+                predecessor=None, origin="algebraic_probe", side="continuous"):
+        if origin == "physical_tangent":
+            raise ContractError("voltage_lift_tangent_requires_named_evaluation")
+        point, increment, rate = self._point_rate(time, z, zdot, inputs, input_rate, predecessor)
+        observed = self.mapping.model.observe(point, rate.high, input_rate, origin, side)
+        return point, increment, rate, observed, voltage_lift_rate_projection(self.mapping.model, rate)
+
+    def physical_tangent_observation(self, time, z, inputs, input_rate, *, side="continuous"):
+        point, _ = self.mapping.trial(z, time, inputs)
+        rate = self.mapping.model.tangent_rate(point, input_rate)
+        observed = self.mapping.model.observe(point, rate, input_rate, "physical_tangent", side)
+        return point, rate, observed
+
+    def port_partials(self, time, z, zdot, inputs, input_rate):
+        point, _, _ = self._point_rate(time, z, zdot, inputs, input_rate)
+        p = self.mapping.model.port_partials(point)
+        columns, lift = diags(self.mapping.columns), self.mapping.lift
+        return {
+            "charge_z": p["charge_y"] @ columns,
+            "charge_inputs": frozen_array(p["charge_y"] @ lift),
+            "conduction_z": p["conduction_y"] @ columns,
+            "conduction_zdot": p["conduction_ydot"] @ columns,
+            "conduction_inputs": frozen_array(p["conduction_y"] @ lift),
+            "conduction_input_rates": frozen_array(p["conduction_ydot"] @ lift),
+            "current_z": p["current_y"] @ columns,
+            "current_zdot": p["current_ydot"] @ columns,
+            "current_inputs": frozen_array(p["current_inputs"]+p["current_y"] @ lift),
+            "current_input_rates": frozen_array(p["current_input_rates"]+p["current_ydot"] @ lift),
+            "body_z": frozen_array(p["body_y"]*self.mapping.columns),
+            "body_inputs": frozen_array(p["body_y"] @ lift),
+        }
+
+
+class VoltageLiftHistory:
+    """Replay the new raw coordinate map without converting old histories."""
+
+    def __init__(self, mapping: AffineVoltageMap):
+        from scripts.benchmarks.precision_prototype import encode_point
+
+        if not isinstance(mapping, AffineVoltageMap):
+            raise ContractError("voltage_lift_map_required")
+        mapping._check()
+        self.mapping = mapping
+        self.reference_record = {
+            "schema": "solarlab.voltage-lift-reference.v1",
+            "map": mapping.payload(), "map_identity": mapping.identity,
+            "physical_reference": encode_point(mapping.model.reference),
+            "physical_reference_identity": mapping.reference_identity,
+        }
+        self.reference_digest = digest(self.reference_record)
+
+    def build_sample(self, z, time, inputs, predecessor, zdot, input_rate, *,
+                     origin="algebraic_probe", event_side="continuous"):
+        if origin not in {"algebraic_probe", "native", "interpolant", "stop_output",
+                           "endpoint_restore", "segment_initial"}:
+            raise ContractError("unknown_derivative_origin")
+        if event_side not in {"continuous", "left", "right"}:
+            raise ContractError("unknown_event_side")
+        z, zdot = frozen_array(z), frozen_array(zdot)
+        inputs, input_rate = frozen_array(inputs), frozen_array(input_rate)
+        physical = self.mapping.physical_primitive(z, inputs)
+        rate = self.mapping.physical_rate(zdot, input_rate)
+        point, increment = self.mapping.model.trial(physical, time, inputs, predecessor=predecessor)
+        self.mapping.model.validate(point)
+        words = lambda value: [[float(x).hex() for x in word] for word in value.words]
+        record = {
+            "schema": "solarlab.voltage-lift-sample.v1",
+            "map_identity": self.mapping.identity,
+            "physical_model_identity": self.mapping.model_identity,
+            "reference_digest": self.reference_digest,
+            "point_identity": point.identity, "predecessor_identity": predecessor.identity,
+            "time_hex": float(time).hex(),
+            "inputs_hex": [float(v).hex() for v in inputs],
+            "input_rates_hex": [float(v).hex() for v in input_rate],
+            "raw_solver_z_hex": [float(v).hex() for v in z],
+            "raw_solver_zdot_hex": [float(v).hex() for v in zdot],
+            "physical_cumulative_words_hex": words(physical),
+            "physical_rate_words_hex": words(rate),
+            "physical_rate_projection": voltage_lift_rate_projection(self.mapping.model, rate),
+            "origin": origin, "event_side": event_side,
+            "raw_coordinate_frame": "scaled-voltage-departure-v1",
+            "physical_rate_frame": "direct-map-push-forward-v1",
+            "reference_embedded": False,
+        }
+        return point, increment, rate, record
+
+    def restore(self, reference_record, record, predecessor):
+        from scripts.benchmarks.precision_prototype import decode_point
+
+        if (digest(reference_record) != self.reference_digest
+                or record.get("schema") != "solarlab.voltage-lift-sample.v1"
+                or record.get("map_identity") != self.mapping.identity
+                or record.get("reference_digest") != self.reference_digest
+                or record.get("predecessor_identity") != predecessor.identity):
+            raise ContractError("voltage_lift_history_binding_mismatch")
+        reference = decode_point(reference_record["physical_reference"], self.mapping.model.layout)
+        if reference.identity != self.mapping.reference_identity:
+            raise ContractError("voltage_lift_reference_decode_mismatch")
+        point, increment, rate, rebuilt = self.build_sample(
+            [float.fromhex(v) for v in record["raw_solver_z_hex"]], float.fromhex(record["time_hex"]),
+            [float.fromhex(v) for v in record["inputs_hex"]], predecessor,
+            [float.fromhex(v) for v in record["raw_solver_zdot_hex"]],
+            [float.fromhex(v) for v in record["input_rates_hex"]],
+            origin=record["origin"], event_side=record["event_side"])
+        if digest(rebuilt) != digest(record):
+            raise ContractError("voltage_lift_history_word_mismatch")
+        return point, increment, rate, frozen_array([float.fromhex(v) for v in record["input_rates_hex"]])
+
+
+def voltage_lift_wrms_policy(mapping: AffineVoltageMap, previous_controls: Mapping,
+                            segments: tuple[ProtocolSegment, ...]) -> dict:
+    """Conservative denominators over every input in the full finite protocol.
+
+    Previous controls refer to scaled physical remainders, not absolute
+    populations. Triangle inequalities cover all real remainders; sampled
+    states are not used to choose the bounds. This proves a local norm
+    comparison only, not global state accuracy or physical conservation.
+    """
+    mapping._check()
+    if not segments:
+        raise ContractError("voltage_lift_protocol_required")
+    f = lambda v: Fraction.from_float(float(v))
+    old_r = f(previous_controls["rtol"])
+    old_atol = frozen_array(previous_controls["atol"])
+    if old_atol.shape != mapping.columns.shape or old_r <= 0 or np.any(old_atol <= 0):
+        raise ContractError("invalid_original_error_weights")
+    ranges = []
+    for segment in segments:
+        if segment.end <= segment.start:
+            raise ContractError("invalid_frozen_protocol")
+        bounds = []
+        for endpoints in (segment.voltage, segment.photons):
+            start, end = map(float, endpoints)
+            duration = float(segment.end-segment.start)
+            rate = float((end-start)/duration)
+            # The ordinary interpolation path is a monotone composition of
+            # rounded subtraction, constant multiplication and addition.
+            # Include its endpoint limit as well as the explicit overrides.
+            ordinary_end = float(start+float(rate*duration))
+            if not all(math.isfinite(v) for v in (start, end, rate, ordinary_end)):
+                raise ContractError("voltage_lift_protocol_range")
+            bounds.append((min(start, end, ordinary_end), max(start, end, ordinary_end)))
+        ranges.append({"segment": asdict(segment), "input_bounds": bounds})
+    offsets = []
+    for row in mapping.lift:
+        largest = Fraction(0)
+        for record in ranges:
+            lower, upper = Fraction(0), Fraction(0)
+            for j, (a, b) in enumerate(record["input_bounds"]):
+                endpoints = [f(row[j])*(f(v)-f(mapping.reference_inputs[j])) for v in (a, b)]
+                lower += min(endpoints); upper += max(endpoints)
+            largest = max(largest, abs(lower), abs(upper))
+        offsets.append(largest)
+    scales = list(map(f, mapping.columns))
+    physical_atol = [s*f(a) for s, a in zip(scales, old_atol, strict=True)]
+    r_bound = min([old_r]+[a/(2*u) for a, u in zip(physical_atol, offsets) if u])
+    rnew = _fraction_float_bound(r_bound, upper=False)
+    if rnew <= 0:
+        raise ContractError("no_positive_representable_conservative_rtol")
+    r = f(rnew)
+    atol, rows = [], []
+    for i, (s, a, u) in enumerate(zip(scales, physical_atol, offsets, strict=True)):
+        new_bound = a-r*u
+        encoded = _fraction_float_bound(new_bound/s, upper=False)
+        actual = s*f(encoded)
+        checks = {"positive_atol": encoded > 0, "rtol_not_larger": r <= old_r,
+                  "half_absolute_budget": r*u <= a/2,
+                  "encoded_atol_not_larger": actual <= new_bound,
+                  "triangle_margin": actual+r*u <= a}
+        if not all(checks.values()):
+            raise ContractError("voltage_lift_wrms_certificate_failed")
+        atol.append(encoded)
+        rows.append({"index": i, "scale_exact": str(s), "offset_upper_exact": str(u),
+                     "old_physical_atol_exact": str(a), "new_physical_atol_exact": str(actual),
+                     "atol_z_hex": encoded.hex(), "checks": checks})
+    return {"schema": "solarlab.voltage-lift-wrms-proof.v1", "map_identity": mapping.identity,
+            "rtol": rnew, "atol": atol, "rtol_hex": rnew.hex(),
+            "old_controls_sha256": digest(dict(previous_controls)),
+            "old_coordinate_frame": "scaled original physical remainders",
+            "full_protocol_input_bounds": ranges, "components": rows,
+            "bound": "S*atol_z+rnew*abs(y-L*(a-a_ref))<=S*old_atol_z+rold*abs(y)",
+            "proof": "abs(y-b)<=abs(y)+U; rnew<=rold; Anew+rnew*U<=Aold; directed-down binary64 encoding",
+            "scope": "all real physical remainders and stated protocol inputs; local error-denominator comparison only",
+            "state_and_rate_projection_errors_separate": True,
+            "native_admission": False, "global_accuracy_or_conservation_certified": False}
