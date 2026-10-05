@@ -27,7 +27,9 @@ def test_transition_lock_preserves_every_existing_dependency_record():
     old_metadata = tomllib.loads((ROOT / "perovskite-sim/pyproject.toml").read_text())
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert metadata["project"]["requires-python"] == ">=3.11"
-    assert metadata["project"]["dependencies"] == old_metadata["project"]["dependencies"]
+    assert metadata["project"]["dependencies"] == [
+        *old_metadata["project"]["dependencies"], "pydantic==2.13.5",
+    ]
     assert metadata["project"]["optional-dependencies"] == old_metadata["project"]["optional-dependencies"]
     assert "scripts" not in metadata["project"]
 
@@ -92,6 +94,9 @@ def test_import_linter_accepts_actual_package_sources(tmp_path):
         ("solarlab", "perovskite_sim", True),
         ("solarlab_research", "solarlab_server", False),
         ("solarlab_server", "solarlab_research", False),
+        ("solarlab.materials", "solarlab.config", False),
+        ("solarlab.materials", "solarlab.device", False),
+        ("solarlab.units", "solarlab.materials", False),
     ],
 )
 def test_import_linter_rejects_actual_direct_and_indirect_violations(
@@ -99,8 +104,10 @@ def test_import_linter_rejects_actual_direct_and_indirect_violations(
 ):
     for name in PACKAGES:
         shutil.copytree(ROOT / "src" / name, tmp_path / name)
-    target = tmp_path / source
-    if indirect:
+    target = tmp_path.joinpath(*source.split("."))
+    if target.with_suffix(".py").is_file():
+        target.with_suffix(".py").write_text(f"import {forbidden}\n")
+    elif indirect:
         (target / "boundary_probe.py").write_text(f"import {forbidden}\n")
         (target / "__init__.py").write_text(f"from {source} import boundary_probe\n")
     else:

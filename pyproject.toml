@@ -17,6 +17,8 @@ dependencies = [
     "pyyaml==6.0.3",
     "matplotlib==3.11.2",
     "threadpoolctl==3.6.0",
+    # Strict editable configuration DTOs are part of the new core package.
+    "pydantic==2.13.5",
 ]
 
 [project.optional-dependencies]
@@ -122,6 +124,7 @@ only-include = [
     "perovskite-sim/pyproject.toml",
     "perovskite-sim/uv.lock",
     "tests/refactor/test_package_preparation.py",
+    "tests/refactor/test_configuration_preparation.py",
 ]
 
 [tool.importlinter]
@@ -140,3 +143,15 @@ forbidden_modules = [
 name = "Companion packages are independent"
 type = "independence"
 modules = ["solarlab_research", "solarlab_server"]
+
+[[tool.importlinter.contracts]]
+name = "Material data does not import higher configuration or device layers"
+type = "forbidden"
+source_modules = ["solarlab.materials"]
+forbidden_modules = ["solarlab.config", "solarlab.device"]
+
+[[tool.importlinter.contracts]]
+name = "Units do not depend on model or input data"
+type = "forbidden"
+source_modules = ["solarlab.units"]
+forbidden_modules = ["solarlab.materials", "solarlab.config", "solarlab.device"]
