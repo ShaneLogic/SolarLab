@@ -58,6 +58,10 @@ class Boundary(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, Boundary())
 sys.path.insert(0, sys.argv[1])
 import solarlab
+import solarlab.physics.registry
+import solarlab.physics.selection
+import solarlab.physics.presets
+import solarlab.experiments.registry
 assert solarlab.__all__ == ()
 assert not any(name.startswith(('perovskite_sim', 'backend', 'solarlab_server', 'solarlab_research')) for name in sys.modules)
 """
@@ -97,6 +101,10 @@ def test_import_linter_accepts_actual_package_sources(tmp_path):
         ("solarlab.materials", "solarlab.config", False),
         ("solarlab.materials", "solarlab.device", False),
         ("solarlab.units", "solarlab.materials", False),
+        ("solarlab.materials", "solarlab.physics", False),
+        ("solarlab.physics", "solarlab.config", False),
+        ("solarlab.physics", "solarlab.device", False),
+        ("solarlab.physics", "solarlab.experiments", True),
     ],
 )
 def test_import_linter_rejects_actual_direct_and_indirect_violations(

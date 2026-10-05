@@ -125,6 +125,7 @@ only-include = [
     "perovskite-sim/uv.lock",
     "tests/refactor/test_package_preparation.py",
     "tests/refactor/test_configuration_preparation.py",
+    "tests/refactor/test_registry_preparation.py",
 ]
 
 [tool.importlinter]
@@ -148,10 +149,16 @@ modules = ["solarlab_research", "solarlab_server"]
 name = "Material data does not import higher configuration or device layers"
 type = "forbidden"
 source_modules = ["solarlab.materials"]
-forbidden_modules = ["solarlab.config", "solarlab.device"]
+forbidden_modules = ["solarlab.config", "solarlab.device", "solarlab.physics", "solarlab.experiments"]
 
 [[tool.importlinter.contracts]]
 name = "Units do not depend on model or input data"
 type = "forbidden"
 source_modules = ["solarlab.units"]
-forbidden_modules = ["solarlab.materials", "solarlab.config", "solarlab.device"]
+forbidden_modules = ["solarlab.materials", "solarlab.config", "solarlab.device", "solarlab.physics", "solarlab.experiments"]
+
+[[tool.importlinter.contracts]]
+name = "Physics declarations do not import device assembly or experiments"
+type = "forbidden"
+source_modules = ["solarlab.physics"]
+forbidden_modules = ["solarlab.config", "solarlab.device", "solarlab.experiments"]
