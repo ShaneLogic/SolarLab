@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from fractions import Fraction
 from pathlib import Path
@@ -364,6 +365,92 @@ class TestThinBridgeAndAnalyticCurrent(FrozenFixture):
         np.testing.assert_allclose(phi, x*(1-x), atol=1e-13, rtol=1e-12)
         np.testing.assert_allclose(Ddot, x[1:]+x[:-1]-1, atol=1e-13, rtol=1e-12)
         np.testing.assert_allclose(residual, 0., atol=1e-13, rtol=0.)
+
+
+class TestPrebiasFirstStepPolicy(FrozenFixture):
+    """Constructor/bridge mocks only; no Radau step or device solve is run."""
+
+    def test_default_plan_omits_policy_and_request_stays_exact(self):
+        with patch.object(hr, "source_binding", return_value={}), patch.object(hr, "environment_binding", return_value={}):
+            default = hr.build_plan(REPO, ARCHIVE, "hi_diffusivity_00", 60, 2, 2)
+            explicit_none = hr.build_plan(REPO, ARCHIVE, "hi_diffusivity_00", 60, 2, 2,
+                                          prebias_first_step_s=None)
+            changed = hr.build_plan(REPO, ARCHIVE, "hi_diffusivity_00", 60, 2, 2,
+                                    prebias_first_step_s=4e-14)
+        self.assertEqual(default, explicit_none)
+        self.assertNotIn("prebias_first_step_s", default["numerics"])
+        self.assertEqual(changed["numerics"]["prebias_first_step_s"], 4e-14)
+        self.assertEqual(default["request"], changed["request"])
+        self.assertEqual(default["controls"], changed["controls"])
+        self.assertEqual(default["control_sha256"], changed["control_sha256"])
+        self.assertNotEqual(default["identity_sha256"], changed["identity_sha256"])
+        del changed["numerics"]["prebias_first_step_s"]
+        for plan in (default, changed):
+            del plan["identity_sha256"]
+        self.assertEqual(default, changed)
+
+    def test_invalid_requested_policy_rejected_before_execution(self):
+        control = self.timeline(level=2)[1].controls[0]
+        for value in (True, "4e-14", 0., -1., float("inf"), float("nan"), .376):
+            with self.subTest(value=value), self.assertRaises(hr.ReferenceError):
+                hr.prebias_first_step(value, control)
+
+    def test_recorder_constructor_preserves_default_and_forwards_only_requested_step(self):
+        calls = []
+        class ConstructorOnly:
+            def __init__(self, *args, **kwargs):
+                calls.append((args, kwargs))
+        with patch("scipy.integrate.Radau", ConstructorOnly):
+            method, times, states = hr.radau_history([3.])
+            method("fun", 0., [3.], 1., rtol=1e-6)
+            self.assertEqual(calls[-1][1], {"rtol": 1e-6})
+            method, times, states = hr.radau_history([3.], first_step=4e-14)
+            method("fun", 0., [3.], 1., rtol=1e-6)
+            self.assertEqual(calls[-1][1], {"rtol": 1e-6, "first_step": 4e-14})
+            self.assertEqual((times, states), ([0.], [(3.,)]))
+            with self.assertRaisesRegex(hr.ReferenceError, "conflicting"):
+                method("fun", 0., [3.], 1., first_step=1e-10)
+
+    def test_real_installed_method_class_accepts_first_step(self):
+        import inspect
+        from scipy.integrate import Radau
+        self.assertIn("first_step", inspect.signature(Radau).parameters)
+
+    def test_only_dark_prebias_bridge_receives_requested_step(self):
+        import numpy as np
+        state = (1., 2., 3., 4., 0., 0.)
+        for phase in self.timeline(level=2):
+            control = phase.controls[0]
+            bridge = hr.ProductionBridge.__new__(hr.ProductionBridge)
+            bridge.np, bridge.x, bridge.stack = np, np.array([0., 1.]), object()
+            bridge.mat = SimpleNamespace(P_ion0=np.zeros(2))
+            bridge.widths, bridge.initial_inventory = np.array([.5, .5]), 0.
+            bridge.numerics = {"rtol": 1e-6, "atol_m3": .01, "prebias_first_step_s": 4e-14}
+            bridge.jacobian = object()
+            solver = Mock(return_value=SimpleNamespace(success=True, t=np.array([0., control.duration]),
+                y=np.array([state, state]).T, message="mock", numerical_diagnostics=None))
+            bridge.jv = SimpleNamespace(run_transient=solver)
+            with patch.object(hr, "radau_history", return_value=(object, [0., control.duration], [state, state])) as recorder:
+                segment = bridge.advance(state, control)
+            self.assertTrue(segment.success)
+            requested = phase.id == "dark_prebias"
+            self.assertEqual(recorder.call_args.kwargs, {"first_step": 4e-14} if requested else {})
+            self.assertEqual("requested_first_step_s" in segment.diagnostics, requested)
+            self.assertEqual(solver.call_args.kwargs["max_step"], control.max_step_s)
+            self.assertEqual(solver.call_args.kwargs["jacobian"], bridge.jacobian)
+            self.assertIsNone(solver.call_args.kwargs["t_eval"])
+
+    def test_supervisor_preserves_requested_policy_in_child_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args = SimpleNamespace(output=Path(temporary)/"run", repo=REPO, archive=ARCHIVE,
+                case="hi_diffusivity_00", grid=60, step_level=2, solver_level=2,
+                admission=Path(temporary)/"Admission.json", prebias_first_step_s=4e-14)
+            child = Mock(returncode=0)
+            child.poll.return_value = 0
+            with patch.object(hr.subprocess, "Popen", return_value=child) as launch:
+                self.assertEqual(hr.supervise(args, {"mock": True}), 0)
+            argv = launch.call_args.args[0]
+            self.assertEqual(argv[argv.index("--prebias-first-step-s")+1], repr(4e-14))
 
 
 class TestAdmission(unittest.TestCase):

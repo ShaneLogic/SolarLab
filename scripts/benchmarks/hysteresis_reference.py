@@ -241,8 +241,18 @@ def source_binding(repo: Path) -> dict:
             "files_sha256": digest(pins), "scope": "actual tracked Python production/backend tree plus this isolated harness;no Git mutation"}
 
 
+def prebias_first_step(value, control: Control) -> float | None:
+    """Validate the optional startup step without changing any physical control."""
+    if value is None:
+        return None
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or not 0 < value <= min(control.duration, control.max_step_s)):
+        raise ReferenceError("prebias first_step must be finite, positive and within the control cap")
+    return float(value)
+
+
 def build_plan(repo: Path, archive: Path, case_id: str, grid: int, step_level: int,
-               solver_level: int) -> dict:
+               solver_level: int, *, prebias_first_step_s=None) -> dict:
     bundle = load_inputs(repo, archive, case_id)
     c = bundle["contract"]
     if type(grid) is not int or grid not in c["refinement_plan"]["phase1_spatial"]["requested_N"]:
@@ -273,6 +283,9 @@ def build_plan(repo: Path, archive: Path, case_id: str, grid: int, step_level: i
             "observation_capability": "exact control endpoints only;no dense output",
             "current_qualification": "pending_NC06_and_independent_device_derivative_and_refinement_errors",
             "execution_authorized": False}
+    first_step = prebias_first_step(prebias_first_step_s, phases[1].controls[0])
+    if first_step is not None:
+        plan["numerics"]["prebias_first_step_s"] = first_step
     plan["identity_sha256"] = digest(plan)
     return plan
 
@@ -406,7 +419,7 @@ def differentiated_poisson(factor, rho_dot, right_voltage_rate: float):
     return phi_dot, Ddot, residual
 
 
-def radau_history(initial_state, observer=None):
+def radau_history(initial_state, observer=None, *, first_step=None):
     """Observe public successful steps without changing the Radau algorithm.
 
     The first record is the input initial state. Later records come only from
@@ -419,6 +432,13 @@ def radau_history(initial_state, observer=None):
     states = [tuple(map(float, initial_state))]
 
     class ObservedRadau(Radau):
+        def __init__(self, *args, **kwargs):
+            if first_step is not None:
+                if kwargs.get("first_step") not in (None, first_step):
+                    raise ReferenceError("conflicting requested Radau first_step")
+                kwargs["first_step"] = first_step
+            super().__init__(*args, **kwargs)
+
         def step(self):
             previous = self.t
             message = super().step()
@@ -479,7 +499,10 @@ class ProductionBridge:
         self.active_control = control
         sink = getattr(self, "accepted_observer", None)
         observer = None if sink is None else lambda time_value, values: sink(control, time_value, values)
-        method, accepted_times, accepted_states = radau_history(state, observer)
+        requested_first_step = (prebias_first_step(self.numerics.get("prebias_first_step_s"), control)
+                                if control.phase_id == "dark_prebias" else None)
+        startup = {} if requested_first_step is None else {"first_step": requested_first_step}
+        method, accepted_times, accepted_states = radau_history(state, observer, **startup)
         try:
             result = self.jv.run_transient(
                 x=self.x, y0=self.np.asarray(state, dtype=float), stack=self.stack,
@@ -497,6 +520,8 @@ class ProductionBridge:
                     "accepted_steps": len(accepted_times)-1,
                     "last_accepted_local_time_s": accepted_times[-1] if len(accepted_times) > 1 else None,
                     "solver_method": "Radau with observational step subclass"}
+            if requested_first_step is not None:
+                diag["requested_first_step_s"] = requested_first_step
             values = self.np.asarray(result.y)
             success = bool(result.success)
             returned_times = self.np.asarray(result.t)
@@ -676,6 +701,8 @@ def supervise(args, plan: dict) -> int:
             "--case", args.case, "--grid", str(args.grid), "--step-level", str(args.step_level),
             "--solver-level", str(args.solver_level), "--admission", str(args.admission.resolve()),
             "--output", str(output)]
+    if args.prebias_first_step_s is not None:
+        argv.extend(("--prebias-first-step-s", repr(args.prebias_first_step_s)))
     started = time.monotonic()
     stop_reason = None
     with (output/"Stdout.txt").open("x") as stdout, (output/"Stderr.txt").open("x") as stderr:
@@ -722,10 +749,13 @@ def main(argv=None) -> int:
     parser.add_argument("--grid", type=int, default=60)
     parser.add_argument("--step-level", type=int, default=0)
     parser.add_argument("--solver-level", type=int, default=0)
+    parser.add_argument("--prebias-first-step-s", type=float,
+                        help="optional first Radau step for dark_prebias only; original default unchanged")
     parser.add_argument("--admission", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    plan = build_plan(args.repo, args.archive, args.case, args.grid, args.step_level, args.solver_level)
+    plan = build_plan(args.repo, args.archive, args.case, args.grid, args.step_level, args.solver_level,
+                      prebias_first_step_s=args.prebias_first_step_s)
     if args.operation == "plan":
         if args.output.exists():
             raise ReferenceError("preserve existing plan;choose a new evidence attempt path")
