@@ -1,0 +1,1036 @@
+{
+  "schema": "solarlab.hysteresis_reference_contract.v1",
+  "version": 1,
+  "status": "frozen_standard_reference_qualification_pending",
+  "created_at": "2026-10-05T09:04:55.273556+00:00",
+  "frozen_at": "2026-10-05T09:51:28.332696+00:00",
+  "independent_review": {
+    "status": "approved",
+    "reviewer_session": "01a10b6e-1a04-79f3-8852-5d182fe6be54",
+    "reviewed_sha256": "ee35db8311a423afd10c5dca72d5f7985deb97b1848118732ac1eceec8c926fe",
+    "review_receipt": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/HIIndependentReviewV1.json",
+      "sha256": "548fe81a5ebea29c518a21df2dfb08aa7365030853d501f4882159c0deeb40a0"
+    },
+    "scope": "Corrected independent-control/observation reference plan and executable stricter power predicate, with unchanged numeric targets; reference/source/env qualifications and candidate execution remain separate",
+    "root_authorization_message": "msg_663fe18bb6d3",
+    "approved_sections_sha256": "4e6a1c6adf465ed7ccb310cb4d0a7b7789259b846da4e8b2e2888a84f478ac13",
+    "prior_numeric_review": {
+      "reviewer_session": "01a10b53-17dc-7bf2-a3e0-f3902e5b5d96",
+      "reviewed_sha256": "a544abcb27bb0e46e63da87d9e2d688c01db06af19146be02ab500a10ef6bd97"
+    }
+  },
+  "candidate_results_consulted": false,
+  "source_capture_head": "0acc9d6cb7bd2e5c69cb3299a88522623c22bb37",
+  "governance": "Local proposal only; all global gate and acceptance activity is recorded solely in ExecutionStateV1.json",
+  "scope": "Reproduce all 21+21+3 original internal finite-time records and establish a separate prospective numerical/new-algorithm qualification; not Calado-paper fitting",
+  "source_bindings": [
+    {
+      "root": "archive",
+      "path": "results/CaladoRepro/DenseIonMatrixV1/Matrix.json",
+      "sha256": "63942ee5fc3e89eb6403a01d10bff5dbb2b096e4de3f3cab201f3808369f127a",
+      "role": "42_curve_pairs"
+    },
+    {
+      "root": "archive",
+      "path": "results/CaladoRepro/UiProtocol/RateMatrixV1/Matrix.json",
+      "sha256": "f9dd7757622d95a9d4b91b2b93911d1fc365c65895ef7e65b962748350d126cd",
+      "role": "three_scan_rates"
+    },
+    {
+      "root": "archive",
+      "path": "results/CaladoRepro/UiProtocol/WaveformNominalSpatialFrontend.json",
+      "sha256": "dc3fb2c7bf2de13baf809f29663fe9e362adbd9cd066fc3891d8e1c82d6a51b4",
+      "role": "captured_original_request"
+    },
+    {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/PeakProvenanceV1.json",
+      "sha256": "5b075ce4b069cf7533d533337deef3bbecf3350840ae0bdb0cd3e7c87355e83b",
+      "role": "checked_peak_numeric_payload_lineage"
+    },
+    {
+      "root": "repository",
+      "path": "perovskite-sim/docs/IonSweepFigureReference.md",
+      "sha256": "a068a50962ed14a6863496c54e98bf4cdfaddcc623f74063ede9c7b20cc7f3ef",
+      "role": "four_case_same_grid_contract"
+    },
+    {
+      "root": "repository",
+      "path": "perovskite-sim/perovskite_sim/experiments/waveform_jv.py",
+      "sha256": "cac7648c136190db6bca65697cdb3200ab7b57e81787736a67d706cda333d1e7",
+      "role": "actual_old_control_and_sampling_semantics"
+    },
+    {
+      "root": "repository",
+      "path": "perovskite-sim/perovskite_sim/experiments/jv_sweep.py",
+      "sha256": "428fbe1c421192e2495ac94fa171df42f2be94dca7733b7a5ab2e07a9628ef96",
+      "role": "actual_hold_caps_fallbacks_and_interval_current_definition"
+    },
+    {
+      "root": "repository",
+      "path": "perovskite-sim/perovskite_sim/solver/mol.py",
+      "sha256": "1c02ff41356cfaf75245e3e9e3a0101064d43a766e9e416053ea1e75ef54b61a",
+      "role": "actual_dense_output_and_rhs_budget_semantics"
+    },
+    {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/HIPowerPreconditionV1.py",
+      "sha256": "90c7ed2722448874968361f1fd07fe1dfb5bb81b5e8ff582dc74483891bda6ff",
+      "role": "required_executable_HI_reference_power_predicate"
+    }
+  ],
+  "reference_set": {
+    "manifest_path": "reproducibility/RefactorReferenceManifestV1.json",
+    "cases_pointer": "/hi/cases",
+    "required_case_ids": [
+      "hi_diffusivity_00",
+      "hi_diffusivity_01",
+      "hi_diffusivity_02",
+      "hi_diffusivity_03",
+      "hi_diffusivity_04",
+      "hi_diffusivity_05",
+      "hi_diffusivity_06",
+      "hi_diffusivity_07",
+      "hi_diffusivity_08",
+      "hi_diffusivity_09",
+      "hi_diffusivity_10",
+      "hi_diffusivity_11",
+      "hi_diffusivity_12",
+      "hi_diffusivity_13",
+      "hi_diffusivity_14",
+      "hi_diffusivity_15",
+      "hi_diffusivity_16",
+      "hi_diffusivity_17",
+      "hi_diffusivity_18",
+      "hi_diffusivity_19",
+      "hi_diffusivity_20",
+      "hi_density_00",
+      "hi_density_01",
+      "hi_density_02",
+      "hi_density_03",
+      "hi_density_04",
+      "hi_density_05",
+      "hi_density_06",
+      "hi_density_07",
+      "hi_density_08",
+      "hi_density_09",
+      "hi_density_10",
+      "hi_density_11",
+      "hi_density_12",
+      "hi_density_13",
+      "hi_density_14",
+      "hi_density_15",
+      "hi_density_16",
+      "hi_density_17",
+      "hi_density_18",
+      "hi_density_19",
+      "hi_density_20",
+      "hi_rate_20",
+      "hi_rate_40",
+      "hi_rate_80"
+    ],
+    "cases_payload_sha256": "646d85ce8f72ee23fb289e0ba604b30136f8f86d595bb0bd5d6e8e43c3c43300",
+    "payload_hash_rule": "SHA-256 of UTF-8 json.dumps(value, sort_keys=True, separators=(comma, colon), ensure_ascii=True, allow_nan=False); parsed integer/float values retained; not an RFC 8785 claim",
+    "record_count": 45,
+    "distinct_request_count": 43,
+    "removed_records": 0,
+    "dedup_rule": "Only identical full effective source/input/protocol/initial/model/numerics/environment identity may share an execution; preserve every coverage relation"
+  },
+  "identity": {
+    "Dref_m2_s": 2.585e-18,
+    "cref_m3": 1e+25,
+    "temperature_K": 300,
+    "nominal_request_sha256": "f85b35f9926a85b31bb8c865c91d1ab093abdca5dbcf06a906b940aa0ee13d6d",
+    "protocol": {
+      "dark_seed": {
+        "voltage_V": 0,
+        "duration_s": 120
+      },
+      "dark_preparation": {
+        "voltage_V": -1,
+        "duration_s": 30
+      },
+      "forward_light_dwell_s": 0.5,
+      "forward": [
+        -1,
+        1.2
+      ],
+      "dark_turnaround_s": 3,
+      "reverse_light_dwell_s": 0.5,
+      "reverse": [
+        1.2,
+        -1
+      ],
+      "rates_V_s": [
+        0.02,
+        0.04,
+        0.08
+      ],
+      "branch_durations_s": [
+        110,
+        55,
+        27.5
+      ],
+      "uniform_generation_m3_s": 2.5e+27,
+      "driver": "continuous waveform, finite-time Radau; no substitution of a steady solve",
+      "all_four_contact_S": null,
+      "contact_semantics": "Original all-carrier Dirichlet; not paper mixed-minority contacts",
+      "effective_material_input": "Exact nominal_request.device retained; alter only the selected absorber field",
+      "numerics": {
+        "requested_N_grid": 60,
+        "actual_nodes": 61,
+        "samples_per_branch": 111,
+        "rtol": 0.0001,
+        "atol_m3": 1
+      }
+    },
+    "controls": {
+      "diffusivity": {
+        "ratios": [
+          0.0,
+          0.1,
+          0.2,
+          0.3,
+          0.4,
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9,
+          1.0,
+          1.1,
+          1.2,
+          1.3,
+          1.4,
+          1.5,
+          1.6,
+          1.7,
+          1.8,
+          1.9,
+          2.0
+        ],
+        "varied_field": "absorber.D_ion",
+        "fixed_c0_m3": 1e+25,
+        "zero_meaning": "D=0 keeps the uniform mobile-ion population and equal negative background"
+      },
+      "density": {
+        "ratios": [
+          0.0,
+          0.1,
+          0.2,
+          0.3,
+          0.4,
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9,
+          1.0,
+          1.1,
+          1.2,
+          1.3,
+          1.4,
+          1.5,
+          1.6,
+          1.7,
+          1.8,
+          1.9,
+          2.0
+        ],
+        "varied_field": "absorber.P0",
+        "fixed_D_m2_s": 2.585e-18,
+        "zero_meaning": "c0=0 removes initial mobile inventory and fixed countercharge",
+        "coupling": "Every c0 change updates both fixed negative background and initial mobile population"
+      }
+    },
+    "current_effective_source_gap": "Two of six old code pins match current files; resolve each changed file and full historical environment before treating an old artifact as exact algorithm replay"
+  },
+  "evidence_channels": {
+    "historical_four_same_grid": {
+      "scope": "D ratios 0, 0.2, 1, 2 only; original 61 nodes and 110 archived current samples per branch",
+      "existing_limits": {
+        "source_id": "hi_existing_test",
+        "fixture_source_id": "hi_fixture",
+        "ratios": [
+          0,
+          0.2,
+          1,
+          2
+        ],
+        "J": {
+          "unit": "A/m^2",
+          "atol": 0.001,
+          "rtol": 1e-05,
+          "rule": "sum"
+        },
+        "HI_P": {
+          "unit": "1",
+          "atol": 1e-05,
+          "rtol": 0.0002,
+          "rule": "max_existing_pytest_approx"
+        },
+        "voltage": {
+          "unit": "V",
+          "atol": 1e-12,
+          "rtol": 0
+        },
+        "mask": "Only the inherited [1:] stored-current scope on both branches; original omission remains visible",
+        "qualification": "historical four-case same-grid regression only; no full scan or new solver certification"
+      },
+      "grants_full_matrix_or_new_solver": false
+    },
+    "full_record_reproduction": {
+      "scope": "All 45 records, full native branches and current/metric/status fields under original input/history; old stored comparisons apply at their 110 available coordinates",
+      "status": "requires_complete_source_and_new_prospective_budgets",
+      "coarse_reference_policy": "If original finite-grid values fail reference-error requirements, keep them as historical anchors and explicitly rebaseline numerical evidence; do not force agreement by loosening gates"
+    },
+    "numerical_and_new_algorithm": {
+      "scope": "Comparison against independently qualified numerical references, preserving physical preparation and observations; adaptive internal steps need not match",
+      "proposed_gates": {
+        "J_A_m2": {
+          "atol": 0.001,
+          "rtol": 0.0001,
+          "unit": "A/m^2",
+          "rule": "sum"
+        },
+        "Pmax_W_m2": {
+          "atol": 0.0005,
+          "rtol": 0.0001,
+          "unit": "W/m^2",
+          "rule": "sum",
+          "additional_limit": "Must also meet the tighter per-case HI uncertainty allocation"
+        },
+        "Voc_V": {
+          "atol": 0.0001,
+          "rtol": 0.0,
+          "unit": "V",
+          "requires": "bracket and current-to-voltage slope/error propagation"
+        },
+        "Jsc_A_m2": {
+          "atol": 0.001,
+          "rtol": 0.0001,
+          "unit": "A/m^2",
+          "rule": "sum"
+        },
+        "FF_fraction": {
+          "atol": 0.0001,
+          "rtol": 0.0001,
+          "unit": "1",
+          "rule": "sum",
+          "requires": "resolved Voc/Jsc denominator"
+        },
+        "PCE_percent": {
+          "atol": 0.001,
+          "rtol": 0.0001,
+          "unit": "percentage_point",
+          "rule": "sum",
+          "requires": "fixed declared incident power or mark undefined"
+        },
+        "HI_P": {
+          "atol": 0.001,
+          "rtol": 0.0,
+          "unit": "1",
+          "requires": "resolved supplied power uncertainties and same definition"
+        },
+        "HI_normalized": {
+          "atol": 0.001,
+          "rtol": 0.0,
+          "unit": "1",
+          "requires": "resolved reverse-power uncertainty"
+        },
+        "ion_inventory_relative_drift": {
+          "limit": 1e-08,
+          "scale": "independently integrated initial physical inventory"
+        },
+        "zero_inventory_absolute_m_minus2": {
+          "limit": 100000000.0,
+          "scale": "fixed cref*400nm = 4e18 m^-2; no division by zero"
+        }
+      },
+      "design_basis": "Retain section 14 Voc 1e-4 V, relative Jsc/FF/PCE 1e-4 and HI absolute 1e-3 targets. The J absolute floor is 6.24e-6 of the fixed q*G*400nm=160.2176634 A/m2 generation scale; Pmax floor is J floor times fixed 0.5 V; FF floor is 0.01 percentage point; PCE floor is 0.01 W/m2 at declared 1000 W/m2 Pin. These are explicit prospective engineering floors, not inferred continuum errors.",
+      "old_gate_precedence": "Exact historical four-case same-grid replay must still satisfy its own stricter J relative and HI gates; the new numerical channel cannot waive an existing gate",
+      "not_ready_for_execution": "The reviewed thresholds and corrected reference plan may freeze before physical refinement runs. Actual source/environment/control support and independent per-case reference errors are mandatory before qualified-reference use and candidate acceptance; no execution is authorized here."
+    }
+  },
+  "error_budget": {
+    "reference_error_fraction_max": 0.3333333333333333,
+    "combination": "Conservative sum of independently bounded spatial, temporal, solver and observable-extraction errors; no cancellation credit",
+    "axis_initial_allocation": "Four independently assessed contributions (space, integration/time, solver accuracy, observable extraction) each start with at most 1/12 of the migration allowance; legacy coupled changes receive no separate per-axis credit",
+    "HI_resolution": "Require forward/reverse Pmax error intervals excluding zero; propagate interval corners and require propagated HI error <= one third of 1e-3 for the reference",
+    "weak_peak_example": {
+      "case_id": "hi_diffusivity_02",
+      "historical_Pf_W_m2": 0.8051574747501198,
+      "historical_Pr_W_m2": 78.26439288754077,
+      "reference_HI_error_allocation": 0.0003333333333333333,
+      "first_order_common_power_error_ceiling_W_m2": 2.7329465269315636e-06,
+      "exact_symmetric_interval_common_power_ceiling_W_m2": 2.7329372505209222e-06,
+      "use": "Planning estimate only; actual acceptance uses nonlinear interval propagation; do not lower a floor to make the denominator resolved",
+      "exact_common_power_formula": "e=B*f^2/(f+r+B*f), B=0.001/3; unequal uncertainties use exact interval corners",
+      "generic_full_Pmax_limits_permit_HI_error": 0.08048303454445498,
+      "generic_one_third_Pmax_limits_permit_HI_error": 0.026814779972999796
+    },
+    "rounding": "Captured binary JSON values are historical stored outputs, not a numerical-error certificate",
+    "required_power_precondition": {
+      "executable_source": {
+        "root": "archive",
+        "path": "test/ArchitectureRefactor/Stage00/HIPowerPreconditionV1.py",
+        "sha256": "90c7ed2722448874968361f1fd07fe1dfb5bb81b5e8ff582dc74483891bda6ff"
+      },
+      "callable": "qualify_reference_power",
+      "required_for": "Every record and every qualified numerical reference before comparison eligibility; generic Pmax checks are necessary but insufficient",
+      "arguments": {
+        "pmax_atol": 0.0005,
+        "pmax_rtol": 0.0001,
+        "hi_p_atol": 0.001,
+        "hi_normalized_atol": 0.001
+      },
+      "reference_allocation": {
+        "numerator": 1,
+        "denominator": 3
+      },
+      "input": "Actual forward/reverse powers and independently justified absolute power uncertainties, all W/m2; absent uncertainties remain unknown",
+      "all_required": [
+        "Each power uncertainty <= (0.0005 + 0.0001*abs(P))/3",
+        "Forward and reverse denominator intervals both exclude zero",
+        "Exact interval-corner HI_P error <= 0.001/3",
+        "Exact interval-corner HI_normalized error <= 0.001/3",
+        "Source, environment and uncertainty-evidence qualification independently verified"
+      ],
+      "failure": "Any false/unknown predicate blocks reference use and candidate acceptance; no scalar HI match substitutes"
+    },
+    "legacy_joint_evidence": "The old sample-count ladder changes restart placement, internal step caps and interval displacement extraction together; it is one joint diagnostic and never three independent bounds",
+    "freeze_vs_qualification": "Freeze numeric thresholds and this reviewed reference plan before generating candidate outputs. Actual reference error/source/environment evidence is then required before qualified-reference use and candidate acceptance; this task authorizes no simulation."
+  },
+  "refinement_plan": {
+    "status": "corrected_prospective_plan_driver_not_implemented_no_runs_authorized",
+    "source_audit": {
+      "waveform_file": "perovskite-sim/perovskite_sim/experiments/waveform_jv.py",
+      "restarts": "sweep() calls advance() for every requested voltage point; each nonzero segment starts a new solve",
+      "ramp_cap": "duration/20 per adjacent requested-sample interval; max_nfev=100000 per solve",
+      "hold_cap": "_integrate_step uses the hold/subdivision duration/20, max_nfev=100000, max_bisect=10, with recorded numerical/radiative/BDF fallbacks; a smaller cap alone is not a branch certificate",
+      "current": "At a point, conduction is evaluated at the endpoint, displacement uses epsilon*(E_end-E_prev)/duration with the prior point/dwell state; it is not automatically an instantaneous ramp current",
+      "dense_output": "run_transient passes dense_output=False; no decoupled dense-output reference driver exists"
+    },
+    "legacy_joint_refinement": {
+      "classification": "JOINT restart/sampling/internal-step-cap/observable-extraction diagnostic",
+      "existing_numeric_payloads_reused": true,
+      "per_axis_error_credit": false,
+      "divisor80_warning": "80 was a prospective unsupported setting; current code hardcodes 20. Even at fixed 80, changing 111/221/441 points changes interval seconds and restart/current definitions together.",
+      "cap_table": [
+        {
+          "rate_V_s": 0.02,
+          "samples_per_branch": 111,
+          "ramp_restarts_per_branch": 110,
+          "interval_s": 1.0,
+          "actual_hardcoded_max_step_s": 0.05,
+          "hypothetical_divisor80_max_step_s": 0.0125
+        },
+        {
+          "rate_V_s": 0.02,
+          "samples_per_branch": 221,
+          "ramp_restarts_per_branch": 220,
+          "interval_s": 0.5,
+          "actual_hardcoded_max_step_s": 0.025,
+          "hypothetical_divisor80_max_step_s": 0.00625
+        },
+        {
+          "rate_V_s": 0.02,
+          "samples_per_branch": 441,
+          "ramp_restarts_per_branch": 440,
+          "interval_s": 0.25,
+          "actual_hardcoded_max_step_s": 0.0125,
+          "hypothetical_divisor80_max_step_s": 0.003125
+        },
+        {
+          "rate_V_s": 0.04,
+          "samples_per_branch": 111,
+          "ramp_restarts_per_branch": 110,
+          "interval_s": 0.5,
+          "actual_hardcoded_max_step_s": 0.025,
+          "hypothetical_divisor80_max_step_s": 0.00625
+        },
+        {
+          "rate_V_s": 0.04,
+          "samples_per_branch": 221,
+          "ramp_restarts_per_branch": 220,
+          "interval_s": 0.25,
+          "actual_hardcoded_max_step_s": 0.0125,
+          "hypothetical_divisor80_max_step_s": 0.003125
+        },
+        {
+          "rate_V_s": 0.04,
+          "samples_per_branch": 441,
+          "ramp_restarts_per_branch": 440,
+          "interval_s": 0.125,
+          "actual_hardcoded_max_step_s": 0.00625,
+          "hypothetical_divisor80_max_step_s": 0.0015625
+        },
+        {
+          "rate_V_s": 0.08,
+          "samples_per_branch": 111,
+          "ramp_restarts_per_branch": 110,
+          "interval_s": 0.25,
+          "actual_hardcoded_max_step_s": 0.0125,
+          "hypothetical_divisor80_max_step_s": 0.003125
+        },
+        {
+          "rate_V_s": 0.08,
+          "samples_per_branch": 221,
+          "ramp_restarts_per_branch": 220,
+          "interval_s": 0.125,
+          "actual_hardcoded_max_step_s": 0.00625,
+          "hypothetical_divisor80_max_step_s": 0.0015625
+        },
+        {
+          "rate_V_s": 0.08,
+          "samples_per_branch": 441,
+          "ramp_restarts_per_branch": 440,
+          "interval_s": 0.0625,
+          "actual_hardcoded_max_step_s": 0.003125,
+          "hypothetical_divisor80_max_step_s": 0.00078125
+        }
+      ],
+      "new_simulations_authorized": false
+    },
+    "phase0": {
+      "new_solves": 0,
+      "actions": [
+        "Verify pinned inputs/curves and exact physical history",
+        "Apply the per-record executable power-error predicate; missing evidence stays unknown",
+        "Implement and independently check decoupled controls, interpolation/derivatives and event-side current under a separate authorized task before reference generation"
+      ]
+    },
+    "future_decoupled_reference_driver": {
+      "implementation_status": "not_implemented",
+      "source_path": null,
+      "control_restart_grid": {
+        "status": "exact_proposed_grid_to_freeze",
+        "physical_phase_boundaries": "The seven phase starts/ends listed in phase_profiles",
+        "ramp_control_intervals_per_branch": 440,
+        "ramp_restart_formula": "phase_start + j*phase_duration/440 for integer j=0..440, with the same grid for every observation request and every max-step/solver refinement level",
+        "hold_restart_rule": "One fixed control interval per hold phase, ending at its physical event boundary",
+        "local_time_origin": "0 at each fixed control interval; physical time=interval_start+local_time; carry the final physical state without an output-driven reset or new initialization",
+        "observation_independence": "111/221/441 or additional qualified observation points never alter this control grid",
+        "basis": "Fix the existing 441-point peak-reference control cadence once; do not reinterpret a changing n_points value as independent temporal refinement"
+      },
+      "phase_profiles": [
+        {
+          "rate_V_s": 0.02,
+          "phases": [
+            {
+              "id": "dark_seed",
+              "start_s": 0.0,
+              "end_s": 120.0,
+              "duration_s": 120.0,
+              "max_step_s_levels": [
+                6.0,
+                3.0,
+                1.5
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "dark_prebias",
+              "start_s": 120.0,
+              "end_s": 150.0,
+              "duration_s": 30.0,
+              "max_step_s_levels": [
+                1.5,
+                0.75,
+                0.375
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "forward_light_dwell",
+              "start_s": 150.0,
+              "end_s": 150.5,
+              "duration_s": 0.5,
+              "max_step_s_levels": [
+                0.025,
+                0.0125,
+                0.00625
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "forward_ramp",
+              "start_s": 150.5,
+              "end_s": 260.5,
+              "duration_s": 110.0,
+              "max_step_s_levels": [
+                0.0125,
+                0.00625,
+                0.003125
+              ],
+              "proposed_max_rhs_evaluations": 44000000,
+              "control_intervals": 440,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "dark_turnaround",
+              "start_s": 260.5,
+              "end_s": 263.5,
+              "duration_s": 3.0,
+              "max_step_s_levels": [
+                0.15,
+                0.075,
+                0.0375
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "reverse_light_dwell",
+              "start_s": 263.5,
+              "end_s": 264.0,
+              "duration_s": 0.5,
+              "max_step_s_levels": [
+                0.025,
+                0.0125,
+                0.00625
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "reverse_ramp",
+              "start_s": 264.0,
+              "end_s": 374.0,
+              "duration_s": 110.0,
+              "max_step_s_levels": [
+                0.0125,
+                0.00625,
+                0.003125
+              ],
+              "proposed_max_rhs_evaluations": 44000000,
+              "control_intervals": 440,
+              "max_rhs_evaluations_per_control_interval": 100000
+            }
+          ],
+          "physical_phase_boundaries_s": [
+            0.0,
+            120.0,
+            150.0,
+            150.5,
+            260.5,
+            263.5,
+            264.0,
+            374.0
+          ]
+        },
+        {
+          "rate_V_s": 0.04,
+          "phases": [
+            {
+              "id": "dark_seed",
+              "start_s": 0.0,
+              "end_s": 120.0,
+              "duration_s": 120.0,
+              "max_step_s_levels": [
+                6.0,
+                3.0,
+                1.5
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "dark_prebias",
+              "start_s": 120.0,
+              "end_s": 150.0,
+              "duration_s": 30.0,
+              "max_step_s_levels": [
+                1.5,
+                0.75,
+                0.375
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "forward_light_dwell",
+              "start_s": 150.0,
+              "end_s": 150.5,
+              "duration_s": 0.5,
+              "max_step_s_levels": [
+                0.025,
+                0.0125,
+                0.00625
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "forward_ramp",
+              "start_s": 150.5,
+              "end_s": 205.5,
+              "duration_s": 55.0,
+              "max_step_s_levels": [
+                0.00625,
+                0.003125,
+                0.0015625
+              ],
+              "proposed_max_rhs_evaluations": 44000000,
+              "control_intervals": 440,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "dark_turnaround",
+              "start_s": 205.5,
+              "end_s": 208.5,
+              "duration_s": 3.0,
+              "max_step_s_levels": [
+                0.15,
+                0.075,
+                0.0375
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "reverse_light_dwell",
+              "start_s": 208.5,
+              "end_s": 209.0,
+              "duration_s": 0.5,
+              "max_step_s_levels": [
+                0.025,
+                0.0125,
+                0.00625
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "reverse_ramp",
+              "start_s": 209.0,
+              "end_s": 264.0,
+              "duration_s": 55.0,
+              "max_step_s_levels": [
+                0.00625,
+                0.003125,
+                0.0015625
+              ],
+              "proposed_max_rhs_evaluations": 44000000,
+              "control_intervals": 440,
+              "max_rhs_evaluations_per_control_interval": 100000
+            }
+          ],
+          "physical_phase_boundaries_s": [
+            0.0,
+            120.0,
+            150.0,
+            150.5,
+            205.5,
+            208.5,
+            209.0,
+            264.0
+          ]
+        },
+        {
+          "rate_V_s": 0.08,
+          "phases": [
+            {
+              "id": "dark_seed",
+              "start_s": 0.0,
+              "end_s": 120.0,
+              "duration_s": 120.0,
+              "max_step_s_levels": [
+                6.0,
+                3.0,
+                1.5
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "dark_prebias",
+              "start_s": 120.0,
+              "end_s": 150.0,
+              "duration_s": 30.0,
+              "max_step_s_levels": [
+                1.5,
+                0.75,
+                0.375
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "forward_light_dwell",
+              "start_s": 150.0,
+              "end_s": 150.5,
+              "duration_s": 0.5,
+              "max_step_s_levels": [
+                0.025,
+                0.0125,
+                0.00625
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "forward_ramp",
+              "start_s": 150.5,
+              "end_s": 178.0,
+              "duration_s": 27.5,
+              "max_step_s_levels": [
+                0.003125,
+                0.0015625,
+                0.00078125
+              ],
+              "proposed_max_rhs_evaluations": 44000000,
+              "control_intervals": 440,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "dark_turnaround",
+              "start_s": 178.0,
+              "end_s": 181.0,
+              "duration_s": 3.0,
+              "max_step_s_levels": [
+                0.15,
+                0.075,
+                0.0375
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "reverse_light_dwell",
+              "start_s": 181.0,
+              "end_s": 181.5,
+              "duration_s": 0.5,
+              "max_step_s_levels": [
+                0.025,
+                0.0125,
+                0.00625
+              ],
+              "proposed_max_rhs_evaluations": 100000,
+              "control_intervals": 1,
+              "max_rhs_evaluations_per_control_interval": 100000
+            },
+            {
+              "id": "reverse_ramp",
+              "start_s": 181.5,
+              "end_s": 209.0,
+              "duration_s": 27.5,
+              "max_step_s_levels": [
+                0.003125,
+                0.0015625,
+                0.00078125
+              ],
+              "proposed_max_rhs_evaluations": 44000000,
+              "control_intervals": 440,
+              "max_rhs_evaluations_per_control_interval": 100000
+            }
+          ],
+          "physical_phase_boundaries_s": [
+            0.0,
+            120.0,
+            150.0,
+            150.5,
+            178.0,
+            181.0,
+            181.5,
+            209.0
+          ]
+        }
+      ],
+      "max_step_rule": "Use the literal seconds in the selected common refinement level for every integration. These fixed numbers were chosen once from the source hold caps and legacy 441-point ramp intervals; they are independent of the requested observation count.",
+      "work_cap_rationale": "100000 is the existing per-attempt RHS cap. Apply that fixed cap to each declared control interval; 44000000 is only the aggregate branch ceiling over the 440 frozen intervals. The 600 s wall and RSS caps still stop first. Old automatic bisection/radiative/BDF fallback is not silently inherited; any fallback must be explicitly recorded and qualified.",
+      "observation_grids": {
+        "samples_per_branch": [
+          111,
+          221,
+          441
+        ],
+        "voltage_axis": "Uniform -1..1.2 V forward and reverse, with exact phase time map",
+        "independence": "All grids query the same accepted trajectory at fixed control/restart/max-step settings; requesting more observations must not change accepted steps or the physical history",
+        "output_kind": "native endpoint or independently qualified solver dense output, with interpolation/state/derivative error evidence; display PCHIP is never counted as a new observation or accepted step"
+      },
+      "storage": "Retain control event-side states, all accepted-step times and error evidence, required native branch outputs and dense-output coefficients or an equivalent replayable representation; no omission of difficult intervals"
+    },
+    "sentinel_case_ids": [
+      "hi_diffusivity_00",
+      "hi_density_00",
+      "hi_diffusivity_01",
+      "hi_diffusivity_02",
+      "hi_diffusivity_03",
+      "hi_density_01",
+      "hi_density_02",
+      "hi_density_03",
+      "hi_diffusivity_10",
+      "hi_diffusivity_20",
+      "hi_density_20",
+      "hi_rate_20",
+      "hi_rate_80"
+    ],
+    "sentinel_conditions": 13,
+    "phase1_spatial": {
+      "requested_N": [
+        60,
+        120,
+        240
+      ],
+      "expected_actual_nodes": [
+        61,
+        121,
+        241
+      ],
+      "fixed_output_samples_per_branch": 441,
+      "fixed_max_step_level": 2,
+      "fixed_solver_rtol": 1e-06,
+      "fixed_density_atol_m3": 0.01,
+      "maximum_new_solves": 39,
+      "rule": "Compare conserved/weighted fields with separate interface traces; preserve the exact phase restart grid and current observable"
+    },
+    "phase1_temporal": {
+      "fixed_actual_nodes": 121,
+      "fixed_output_samples_per_branch": 441,
+      "max_step_levels": [
+        0,
+        1,
+        2
+      ],
+      "fixed_solver_rtol": 1e-06,
+      "fixed_density_atol_m3": 0.01,
+      "maximum_additional_solves": 26,
+      "rule": "Only literal seconds caps change; the fixed 440-interval ramp control grid, hold boundaries and observation grid stay fixed; level 2 overlaps spatial runs"
+    },
+    "phase1_solver": {
+      "fixed_actual_nodes": 121,
+      "fixed_output_samples_per_branch": 441,
+      "fixed_max_step_level": 2,
+      "rtol_values": [
+        0.0001,
+        1e-05,
+        1e-06
+      ],
+      "density_atol_m3_values": [
+        1,
+        0.1,
+        0.01
+      ],
+      "maximum_additional_solves": 26,
+      "rule": "This is a joint local-error tolerance ladder. An independent nonlinear/residual or alternative-algorithm accuracy check remains necessary; do not count rtol and atol as separate axes."
+    },
+    "phase1_observable_extraction": {
+      "samples_per_branch": [
+        111,
+        221,
+        441
+      ],
+      "maximum_additional_integrations": 0,
+      "rule": "Query the same qualified finest trajectory and explicit current definitions at the three observation grids; bracket true Pmax/Voc and bound interpolation/derivative errors. Dense interpolation without an independent bound earns no precision credit."
+    },
+    "phase1_solver_independence_gap": "The present waveform path exposes no independently user-controlled nonlinear residual gate and no qualified dense-output derivative. These must be supplied and checked by an authorized future driver; current plan arithmetic does not certify them.",
+    "phase1_admission": "Require independently justified conservative bounds for all four contributions and the stricter per-case power predicate; contraction or repeatability alone is not a certificate",
+    "phase2_full_matrix": {
+      "records": 45,
+      "maximum_distinct_conditions_if_complete_identity_deduplicates": 43,
+      "one_axis_maximum_integrations_per_condition": 4,
+      "maximum_initial_solves_without_deduplication": 180,
+      "observation_re_evaluation_integrations": 0,
+      "settings": "Qualified common base plus adjacent space/time/solver checks for each otherwise untested case; observation grids reuse a qualified trajectory",
+      "reuse": "Only exact full identity intersections; retain all 45 coverage relations",
+      "rule": "Sentinels do not certify other coordinates; insufficient error bounds or coupled axes remain unresolved within the initial cap, with further work requiring a separately reviewed bounded plan"
+    },
+    "bounded_failure": "Preserve first failure, unstarted work and unsupported controls; no automatic larger budgets or relaxed numeric limits"
+  },
+  "resource_proposal": {
+    "maximum_phase1_new_solves": 91,
+    "maximum_phase2_solves_before_reuse": 180,
+    "wall_limit_per_case_s": 600,
+    "phase1_wall_budget_s": 21600,
+    "phase2_wall_budget_s": 43200,
+    "active_scientific_workers": 1,
+    "BLAS_threads": 1,
+    "maximum_RSS_GiB": 8,
+    "maximum_stage_artifacts_GiB": 4,
+    "derivation": "The corrected decoupled plan has 39 spatial plus 26 time-cap plus 26 solver integrations; observation refinements reuse accepted trajectories. Current legacy sampling is joint and earns no independent credit. Existing historical costs remain context only; all caps are stop rules, not predictions or execution authorization.",
+    "scheduling": "Correctness phase is not a performance claim. No three-repeat performance requirement added to expensive science runs."
+  },
+  "first_point_contract": {
+    "historical": "All archived stored-current curves omit first sample; 90 branch-start currents have no historical array reference",
+    "new_output": "Retain end-dwell and event-side states, input derivatives, and explicit instantaneous ramp-side current; also retain separately labeled legacy interval endpoint current if comparing historical arrays",
+    "do_not_substitute": "A finite difference across the light switch or the full dwell is not the ramp-start instantaneous displacement current",
+    "verification": "Check current components, boundary orientation and Maxwell balance; compare later common samples without hiding the first point and certify starts against an independent derivative/residual reference"
+  },
+  "conservation_proposal": {
+    "interval_and_total": "Apply the inventory thresholds to every accepted interval and the sum of absolute interval balance defects over each physical phase and whole history; terminal drift alone cannot hide cancellation",
+    "current_balance_A_m2": {
+      "atol": 0.001,
+      "rtol": 0.0001,
+      "fixed_scale_A_m2": 160.2176634,
+      "rule": "sum"
+    },
+    "current_balance_definition": "Maximum spread of properly oriented total (conduction plus displacement) current, with the same physical terminal definition; no claim from conduction-current constancy alone",
+    "controls_gap": "Bind actual accepted-step data and a validated residual/current reconstruction before these checks can be executed"
+  },
+  "metric_contract": {
+    "HI_P": "Pmax_reverse/Pmax_forward - 1",
+    "HI_normalized": "(Pmax_reverse-Pmax_forward)/Pmax_reverse",
+    "zero_denominator": "unknown with null value and reason; never filled with zero",
+    "weak_forward_power": "Propagate independent Pmax uncertainty before accepting a large HI; do not enlarge floors from candidate results",
+    "required_acceptance_outputs": [
+      "both full native J-V branches including negative bias and injection",
+      "Pmax on each branch",
+      "Jsc on each branch",
+      "Voc and bracket/slope on each branch",
+      "FF and PCE when defined",
+      "both explicitly named HI definitions",
+      "inventory/current components and first-point status"
+    ],
+    "first_point": "Original stored-state current reconstruction omitted index 0 on each branch because its predecessor was not exported; this omission is tagged and does not authorize new solvers to discard first points",
+    "PCHIP": "401-point display guides are not new simulations, observations, or accepted sample counts"
+  },
+  "external_data_needs": "No new author Calado data needed for original internal-matrix reproduction. Exact historical source/environment or explicit current-source rebaseline is needed; original Calado paper quantitative match remains outside this task.",
+  "execution_authorized": false,
+  "scientific_qualification_granted": false,
+  "review_working_head": "9224f652aa2527db9139579f25033d93aafc77f4",
+  "freeze_scope": {
+    "threshold_and_reference_plan_freeze": "Requires independent approval of this corrected plan and the already approved numeric limits; does not require already completed physical refinement runs",
+    "qualified_reference_use": "Requires actual immutable source/input/environment/initial-state bindings and independently established per-case reference errors, including the executable power predicate",
+    "candidate_acceptance": "Requires the frozen contract, qualified reference, eligible candidate identity and all physical/numerical checks; no missing uncertainty may be zero-filled",
+    "candidate_execution_authorized": false
+  },
+  "observable_definitions": {
+    "historical_interval_current": {
+      "definition": "J_cond(t_j) plus signed [D(t_j)-D(t_(j-1))]/(t_j-t_(j-1)); use original 111-point branch intervals for old stored-current comparisons",
+      "scope": "110 archived current values/branch; the original driver first value was a dwell-interval current, and the archived reconstruction omitted it",
+      "identity": "Explicitly label legacy_interval_endpoint; never compare it silently with instantaneous current"
+    },
+    "instantaneous_ramp_current": {
+      "definition": "J_cond(t)+signed dD/dt on the requested ramp event side; for this fixed-epsilon HI model, Ddot=epsilon0*epsilon_face*Edot, with Edot from differentiated Poisson using the full charge derivative and the actual boundary voltage derivative",
+      "event_rule": "Save end-dwell prestate and evaluate the ramp-side derivative at t=0+; a voltage/light discontinuity has event-side and integrated-charge accounting, not a fabricated finite instantaneous impulse value",
+      "identity": "instantaneous_ramp_side_v1; future qualified driver only"
+    },
+    "independent_error_estimate": {
+      "legacy_to_instantaneous": "On a smooth single physical phase, interval quotient bias is bounded by (Delta_t/2)*sup|D_second_time_derivative| plus endpoint/interpolation/Poisson errors; do not apply this across events",
+      "instantaneous": "Bound differentiated-Poisson residual and RHS/state/dense-derivative errors, crosscheck against a separately refined temporal solution or independent derivative calculation; an ODE state tolerance alone does not bound Ddot",
+      "metric_propagation": "Propagate qualified current/dense-output errors to bracketed Pmax/Voc and then apply the executable per-case HI power predicate",
+      "status": "independent bounds not yet available"
+    },
+    "history_comparison": "Compute both labeled observables from the same qualified future trajectory if needed; historical agreement does not certify instantaneous currents and no observable definition changes inside a comparison"
+  }
+}
