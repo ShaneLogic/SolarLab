@@ -325,9 +325,21 @@ def _linear_map_sum(terms: tuple[tuple[float, DD | PrimitiveExpansion], ...]) ->
     for coefficient, value in terms:
         if not np.isfinite(coefficient) or value.shape != shape:
             raise ContractError("linear_map_shape_or_coefficient")
+        if coefficient == 0.0:
+            continue
+        multiplier = None if coefficient in (-1.0, 1.0) else DD(coefficient)
         for word in value.words if isinstance(value, PrimitiveExpansion) else (value.hi, value.lo):
-            product = DD(coefficient)*DD(word)
-            components.extend((product.hi.ravel(), product.lo.ravel()))
+            if not np.any(word):
+                continue
+            # Multiplication by +/-1 is exact for every finite source word.
+            # Retain the words themselves until the same fsum contraction.
+            if coefficient == 1.0:
+                components.append(word.ravel())
+            elif coefficient == -1.0:
+                components.append((-word).ravel())
+            else:
+                product = multiplier*DD(word)
+                components.extend((product.hi.ravel(), product.lo.ravel()))
     high, low = np.zeros(int(np.prod(shape))), np.zeros(int(np.prod(shape)))
     for index in range(len(high)):
         words = [float(component[index]) for component in components]
@@ -371,6 +383,7 @@ class MappedAuthority:
     identity: str = field(init=False)
     root_identity: str = field(init=False)
     map_identity: str = field(init=False)
+    _projection_cache: Mapping[str, DD] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         names = {spec.id for spec in self.layout.variables}
@@ -472,11 +485,16 @@ class MappedAuthority:
             if self.local_primitives is not None and self.reference != prefix + self.previous_point_identity:
                 raise ContractError("authority_predecessor_reference_mismatch")
         object.__setattr__(self, "identity", _digest(self.payload()))
+        projections = {}
         for spec in self.layout.variables:
             value = self._project(spec.id)
             if (spec.lower is not None and np.any(value < spec.lower)
                     or spec.upper is not None and np.any(value > spec.upper)):
                 raise ContractError("physical_state_outside_domain")
+            projections[spec.id] = value
+        # The full source, map and arrays have already been made immutable.
+        # Reuse this validated projection without changing its word values.
+        object.__setattr__(self, "_projection_cache", MappingProxyType(projections))
 
     def __getattribute__(self, name):
         value = object.__getattribute__(self, name)
@@ -545,6 +563,9 @@ class MappedAuthority:
         return _linear_map_sum(terms) if terms else DD(np.zeros(right_selection.shape))
 
     def _project(self, name: str) -> DD:
+        cached = getattr(self, "_projection_cache", None)
+        if cached is not None:
+            return cached[name]
         base = self.anchor[name].as_dd()
         if self.coordinate_kind == "fixed-reference":
             selection = np.arange(int(np.prod(base.shape)), dtype=np.intp).reshape(base.shape)
@@ -836,18 +857,20 @@ class MappedArray(DoubleArray):
         return (b"authority-field-v1:" + self.authority.identity.encode() + self.variable.encode()
                 + repr(self.shape).encode() + self._selection.tobytes())
 
-    def _pair(self, other: PhysicalArray):
+    def _pair(self, other: PhysicalArray, *, need_change: bool = True):
         if not isinstance(other, MappedArray) or self.variable != other.variable or self.shape != other.shape:
             raise ContractError("authority_field_mismatch")
         self.authority._compatible(other.authority)
         base = self.authority.anchor[self.variable].as_dd().ravel()
         left, right = base[other._selection], base[self._selection]
-        change = self.authority._drive_difference(other.authority, self.variable, self._selection, other._selection)
+        change = (self.authority._drive_difference(other.authority, self.variable,
+                                                  self._selection, other._selection)
+                  if need_change else None)
         return left, right, change
 
     def log_ratio(self, other: PhysicalArray) -> DoubleArray:
-        left, right, change = self._pair(other)
         mode = self.authority.modes[self.variable]
+        left, right, change = self._pair(other, need_change=mode in {"log", "log_zero"})
         if mode in {"log", "log_zero"}:
             return DoubleArray.from_dd(_log_ratio(right, left)+change)
         difference = self.difference(other).as_dd()
@@ -865,7 +888,7 @@ class MappedArray(DoubleArray):
         return DoubleArray(high, low)
 
     def difference(self, other: PhysicalArray) -> DoubleArray:
-        left, right, change = self._pair(other)
+        left, right, _ = self._pair(other, need_change=False)
         mode = self.authority.modes[self.variable]
         if mode in {"linear", "inactive", "fixed"}:
             if "fixed-reference" in (self.authority.coordinate_kind, other.authority.coordinate_kind):
@@ -877,6 +900,9 @@ class MappedArray(DoubleArray):
                     (-coefficient, value) for coefficient, value in other.authority._drive_terms(
                         self.variable, other._selection))
                 return DoubleArray.from_dd(_linear_map_sum(terms))
+        change = self.authority._drive_difference(other.authority, self.variable,
+                                                  self._selection, other._selection)
+        if mode in {"linear", "inactive", "fixed"}:
             return DoubleArray.from_dd((right-left)+change)
         actual_left, actual_right = other.as_dd(), self.as_dd()
         if mode in {"log", "log_zero"}:
