@@ -284,6 +284,10 @@ class PrimitiveExpansion:
     def immutable_copy(self) -> PrimitiveExpansion:
         return self
 
+    def add(self, other: PrimitiveExpansion | DoubleArray | ArrayLike) -> PrimitiveExpansion:
+        """Exactly add input primitives within the fixed four-word capacity."""
+        return _exact_primitive_sum(self, other)
+
     def take_flat(self, indices: ArrayLike) -> PrimitiveExpansion:
         indices = integer_indices(indices)
         if np.any(indices < 0) or np.any(indices >= self._words[0].size):

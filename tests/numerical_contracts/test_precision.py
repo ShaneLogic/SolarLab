@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, localcontext
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -17,7 +18,7 @@ from scripts.benchmarks.contract_prototype import (
     Point, StateView, Support, TermSink, Unit, VariableSpec,
 )
 from scripts.benchmarks.precision_prototype import (
-    DD, DoubleArithmetic, DoubleArray, RelativeCoordinates,
+    DD, DoubleArithmetic, DoubleArray, PrimitiveExpansion, RelativeCoordinates,
     bernoulli, decode_point, encode_point,
 )
 
@@ -35,6 +36,57 @@ def decimal_words(value: DoubleArray, index=0):
 
 def expm1_series(value):
     return sum(value ** k / Decimal(math.factorial(k)) for k in range(1, 6))
+
+
+def test_primitive_add_preserves_exact_voltage_product_and_remainder():
+    theta = [0.00855663413738028, 0.8191527652292634]
+    voltage = 0.010463084503981271
+    products = [Fraction.from_float(x) * Fraction.from_float(voltage) for x in theta]
+    high = np.array([float(value) for value in products])
+    low = np.array([float(value - Fraction.from_float(float(word)))
+                    for value, word in zip(products, high)])
+    lift = PrimitiveExpansion.from_value(DoubleArray(high, low))
+    departure = PrimitiveExpansion.from_value([-high[0], 2.0**-120])
+    before = (lift.identity_bytes(), departure.identity_bytes())
+    result = departure.add(lift)
+    for index, product in enumerate(products):
+        exact = sum((Fraction.from_float(float(word[index])) for word in result.words), Fraction())
+        expected = product + Fraction.from_float(float(departure.high[index]))
+        assert exact == expected
+    assert result.words[0][0] != 0
+    assert (lift.identity_bytes(), departure.identity_bytes()) == before
+    assert all(not word.flags.writeable for word in result.words)
+
+
+def test_primitive_add_cancellation_retains_three_authoritative_words():
+    terms = (1.0, 2.0**-54, 2.0**-108, 2.0**-162)
+    left = PrimitiveExpansion(tuple(np.array([value]) for value in terms))
+    result = left.add([-1.0])
+    exact = sum((Fraction.from_float(float(word[0])) for word in result.words), Fraction())
+    assert exact == sum((Fraction.from_float(value) for value in terms[1:]), Fraction())
+    assert result.words[2][0] != 0
+    with pytest.raises(ContractError, match="primitive_projection_would_discard_remainder"):
+        result.as_dd()
+
+
+def test_primitive_add_capacity_and_shape_fail_without_mutation():
+    left = PrimitiveExpansion(tuple(np.array([value]) for value in
+                                    (1.0, 2.0**-54, 2.0**-108, 2.0**-162)))
+    identity = left.identity_bytes()
+    with pytest.raises(ContractError, match="primitive_expansion_capacity_exceeded"):
+        left.add([2.0**-216])
+    with pytest.raises(ContractError, match="primitive_shape_mismatch"):
+        left.add([1.0, 2.0])
+    assert left.identity_bytes() == identity
+
+
+def test_primitive_add_rejects_finite_input_sum_overflow():
+    largest = np.finfo(np.float64).max
+    value = PrimitiveExpansion((np.array([largest]), np.zeros(1), np.zeros(1), np.zeros(1)))
+    identity = value.identity_bytes()
+    with pytest.raises(ContractError, match="primitive_expansion_sum_range"):
+        value.add(value)
+    assert value.identity_bytes() == identity
 
 
 def assert_decimal_close(candidate, reference, atol, rtol):
