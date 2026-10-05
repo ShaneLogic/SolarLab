@@ -79,7 +79,33 @@ The one input file code still reads, `ScapsParams.xlsx`, stays at
 
 ## Git
 
-`origin`: `github.com/ShaneLogic/SolarLab.git`, default branch `main`. Commits land directly on `main` in this project (no PR workflow enforced locally). Use `git push origin main` after committing.
+`origin`: `github.com/ShaneLogic/SolarLab.git`, default branch `main`.
+
+The user authorized the full refactor on 2026-10-05. All refactor development,
+staging, commits and pushes belong on **`devel`**. Do not modify, commit to, or
+push `main`. A single coordinator-designated integrator owns branch changes,
+staging, commits and synchronization in the shared checkout. Other workers must
+verify the repository path, actual branch and HEAD before editing their assigned
+files; they must not switch branches or commit concurrently. Preserve existing
+changes and unrelated untracked files; never reset or stash them to start work.
+
+The automatic delivery endpoint is a fully validated, reproducible release and
+a review-ready **`devel` → `main` PR**. Only the user may merge it. Agents must
+not merge, enable auto-merge, bypass branch protection, or claim `main` has been
+refactored before the human merge. Resolve safe integration conflicts and rerun
+affected checks on `devel` before requesting that final review. Any per-task
+branch advice in older plans is superseded for this shared refactor run.
+
+Follow archive `plans/Impl/ArchitectureRefactorExecutionV1.md`, including its
+startup supplement, and keep the sole active task ledger at archive
+`test/ArchitectureRefactor/ExecutionStateV1.json`. Worker reports are evidence,
+not additional activity ledgers. Repository-required guidance stays in Git;
+design plans, startup evidence and scientific run artifacts stay in the archive.
+Use the supported Orca task/message/lifecycle workflow for dispatched work and
+respect each Dispatch's file ownership. Every participating agent must have
+actual runtime `gpt-6-astra`, reasoning `max`, Full Access and network enabled
+verified; a requested setting or UI label alone is insufficient. The 24-hour
+target does not lower scientific, numerical, performance or release gates.
 
 ## Common Commands
 
