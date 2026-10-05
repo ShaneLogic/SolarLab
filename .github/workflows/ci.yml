@@ -125,10 +125,11 @@ jobs:
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
           tests/refactor/test_package_preparation.py
           tests/refactor/test_configuration_preparation.py
-      - name: Check typed configuration and material preparation
+          tests/refactor/test_registry_preparation.py
+      - name: Check typed configuration, material and registry preparation
         run: |
-          uv run --frozen --no-sync ruff check src tests/refactor/test_configuration_preparation.py
-          uv run --frozen --no-sync mypy src/solarlab/units.py src/solarlab/materials src/solarlab/device src/solarlab/config
+          uv run --frozen --no-sync ruff check src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py
+          uv run --frozen --no-sync mypy src/solarlab
       - name: Installed package imports and resources outside the checkout
         working-directory: ${{ runner.temp }}
         run: |
