@@ -248,9 +248,10 @@ def test_empty_fixed_reference_keeps_original_v4_bytes(policy):
     root = coordinates.initial(StateView(layout, ()), inputs=[2.])
     kwargs = {} if policy is None else {"transition_representation": policy}
     point, increment = coordinates.trial(root, [], 1., [3.], **kwargs)
-    golden_path = os.environ.get("EMPTY_LEGACY_CODEC")
-    if golden_path is None:
-        pytest.skip("original-source empty-layout codec receipt not supplied")
+    golden_path = os.environ.get(
+        "EMPTY_LEGACY_CODEC",
+        Path(__file__).resolve().parents[1] / "fixtures/refactor/EmptyStateV4.json",
+    )
     golden = json.loads(Path(golden_path).read_text())
     assert encode_point(root) == golden["reference"]
     assert encode_point(point) == golden["point"]

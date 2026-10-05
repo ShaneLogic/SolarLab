@@ -1,0 +1,135 @@
+{
+  "schema": "solarlab.original-empty-fixed-reference-codec.v1",
+  "original_record_sha256": "961ede602e94ad812187e7b4035199c7e01721af28856a9c24fac2229d610901",
+  "original_sources": {
+    "scripts.benchmarks.contract_prototype": {
+      "sha256": "6d1a29717a74d0d242caf3b8bfaa3a557e18ebaa71c8983a85b88fb79f1c87d6"
+    },
+    "perovskite_sim": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "perovskite_sim.physics": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "perovskite_sim.physics.compensated": {
+      "sha256": "48235c68776a31db04191347b506222c07f1837960fe0658da4e1c65f25a3204"
+    },
+    "scripts.benchmarks.precision_prototype": {
+      "sha256": "6889d666c0a8fe2c1653b9b7e51e8a21ccf06492fc14af35ff2c0829b42c84c2"
+    }
+  },
+  "reference": {
+    "payload": {
+      "schema": "solarlab.precision-point.v2",
+      "layout": "b8e3ecee405b4b61bee01fd988125f77f9498e764b26253fafd352a25acee168",
+      "coordinate_reference": "relative:f10dc28b172e484a79a587d35af48c60ec2f2b0ff148cf85d37045bfa334172d:initial",
+      "identity": "49492a358408bdd81a9a6af0ab1033782403a5c295dbf3267b14b7b4e32dbb38",
+      "time": "0x0.0p+0",
+      "y": [],
+      "inputs": [
+        "0x1.0000000000000p+1"
+      ],
+      "fields": {},
+      "authority_identity": "a9e1e4f2d76aaaa051f6cdbce5695f9a858311b5fb3ff91ce8649f0d1bf9604b",
+      "authority": {
+        "schema": "solarlab.state-authority.v3",
+        "layout": "b8e3ecee405b4b61bee01fd988125f77f9498e764b26253fafd352a25acee168",
+        "map": "relative-fields",
+        "version": 1,
+        "modes": {},
+        "parameters": {},
+        "anchor": {},
+        "primitives": {},
+        "time": "0x0.0p+0",
+        "inputs": [
+          "0x1.0000000000000p+1"
+        ],
+        "coordinates": [],
+        "reference": "relative:f10dc28b172e484a79a587d35af48c60ec2f2b0ff148cf85d37045bfa334172d:initial",
+        "composition_policy": "exact-four-word-primitives-v1",
+        "transition": null
+      },
+      "field_role": "projection"
+    },
+    "sha256": "99c49a8cd91f5205336a750eae507664e75debf2f0ed767f54fae3a8289739fd"
+  },
+  "point": {
+    "payload": {
+      "schema": "solarlab.precision-point.v2",
+      "layout": "b8e3ecee405b4b61bee01fd988125f77f9498e764b26253fafd352a25acee168",
+      "coordinate_reference": "affine-trial:f10dc28b172e484a79a587d35af48c60ec2f2b0ff148cf85d37045bfa334172d:49492a358408bdd81a9a6af0ab1033782403a5c295dbf3267b14b7b4e32dbb38",
+      "identity": "2be58f6ba47099012b23717e032fc20df020343a792481b9bbf5aba0fa52dfd6",
+      "time": "0x1.0000000000000p+0",
+      "y": [],
+      "inputs": [
+        "0x1.8000000000000p+1"
+      ],
+      "fields": {},
+      "authority_identity": "c30de4a2e9713486302f2412c7efdda1d683120f339bfdccb42f4948e69ebae9",
+      "authority": {
+        "schema": "solarlab.state-authority.v4",
+        "layout": "b8e3ecee405b4b61bee01fd988125f77f9498e764b26253fafd352a25acee168",
+        "map": "relative-fields",
+        "version": 1,
+        "modes": {},
+        "parameters": {},
+        "anchor": {},
+        "primitives": {},
+        "time": "0x1.0000000000000p+0",
+        "inputs": [
+          "0x1.8000000000000p+1"
+        ],
+        "coordinates": [],
+        "reference": "affine-trial:f10dc28b172e484a79a587d35af48c60ec2f2b0ff148cf85d37045bfa334172d:49492a358408bdd81a9a6af0ab1033782403a5c295dbf3267b14b7b4e32dbb38",
+        "composition_policy": "exact-four-word-primitives-v1",
+        "coordinate_contract": {
+          "kind": "fixed-reference-affine-v1",
+          "solver_projection": "first-word",
+          "reference": {
+            "payload": {
+              "schema": "solarlab.precision-point.v2",
+              "layout": "b8e3ecee405b4b61bee01fd988125f77f9498e764b26253fafd352a25acee168",
+              "coordinate_reference": "relative:f10dc28b172e484a79a587d35af48c60ec2f2b0ff148cf85d37045bfa334172d:initial",
+              "identity": "49492a358408bdd81a9a6af0ab1033782403a5c295dbf3267b14b7b4e32dbb38",
+              "time": "0x0.0p+0",
+              "y": [],
+              "inputs": [
+                "0x1.0000000000000p+1"
+              ],
+              "fields": {},
+              "authority_identity": "a9e1e4f2d76aaaa051f6cdbce5695f9a858311b5fb3ff91ce8649f0d1bf9604b",
+              "authority": {
+                "schema": "solarlab.state-authority.v3",
+                "layout": "b8e3ecee405b4b61bee01fd988125f77f9498e764b26253fafd352a25acee168",
+                "map": "relative-fields",
+                "version": 1,
+                "modes": {},
+                "parameters": {},
+                "anchor": {},
+                "primitives": {},
+                "time": "0x0.0p+0",
+                "inputs": [
+                  "0x1.0000000000000p+1"
+                ],
+                "coordinates": [],
+                "reference": "relative:f10dc28b172e484a79a587d35af48c60ec2f2b0ff148cf85d37045bfa334172d:initial",
+                "composition_policy": "exact-four-word-primitives-v1",
+                "transition": null
+              },
+              "field_role": "projection"
+            },
+            "sha256": "99c49a8cd91f5205336a750eae507664e75debf2f0ed767f54fae3a8289739fd"
+          }
+        },
+        "transition": {
+          "previous_authority": "a9e1e4f2d76aaaa051f6cdbce5695f9a858311b5fb3ff91ce8649f0d1bf9604b",
+          "previous_point": "49492a358408bdd81a9a6af0ab1033782403a5c295dbf3267b14b7b4e32dbb38",
+          "previous_primitives": {},
+          "local_primitives": {}
+        }
+      },
+      "field_role": "projection"
+    },
+    "sha256": "1c8900cce160ab6bd758813afd19b7f51f2c9ddeeb3e7cba32697a2cf5f0ea81"
+  }
+}
