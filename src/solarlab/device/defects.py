@@ -69,7 +69,7 @@ class LegacyBulkTrapInput(StructuredInput):
 
 class MultivalentEnergyInput(StructuredInput):
     first_transition_eV_above_vb: QuantityInput = q("eV", required=True)
-    correlation_energies_eV: tuple[QuantityInput, ...]
+    correlation_energies_eV: tuple[QuantityInput, ...] = Field(json_schema_extra={"item_unit": "eV"})
     energy_reference: Literal["above_valence_band"]
 
     @field_validator("correlation_energies_eV")
@@ -99,7 +99,7 @@ class MultivalentConfigurationInput(StructuredInput):
     family: Literal["single_donor", "single_acceptor", "double_donor", "double_acceptor", "amphoteric", "custom_multilevel"]
     charge_states_e: tuple[int, ...]
     degeneracy_convention: Literal["scaps_binomial", "unity", "explicit"]
-    state_degeneracies: tuple[QuantityInput, ...]
+    state_degeneracies: tuple[QuantityInput, ...] = Field(json_schema_extra={"item_unit": "1", "item_positive": True})
     energy_levels: MultivalentEnergyInput
     transition_kinetics: tuple[KineticsInput, ...]
 

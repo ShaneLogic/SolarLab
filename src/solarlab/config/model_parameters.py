@@ -5,8 +5,13 @@ from __future__ import annotations
 from solarlab.device.resolved import PreparedLayer
 from solarlab.physics.registry import EvidenceRef, metadata_digest
 from solarlab.physics.selection import ParameterSource
+from solarlab.config.structured_parameters import (
+    device_topology, resolve_structured_edit, structured_parameter_source, structured_parameter_sources,
+    update_structured_source,
+)
 
-__all__ = ["layer_parameter_source"]
+__all__ = ["layer_parameter_source", "device_topology", "structured_parameter_source",
+           "structured_parameter_sources", "update_structured_source", "resolve_structured_edit"]
 
 
 def layer_parameter_source(layer: PreparedLayer) -> ParameterSource:

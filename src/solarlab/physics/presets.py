@@ -107,10 +107,12 @@ def select_preset(
     preset: NamedPreset, registry: ModelRegistry, topology: Topology,
     context: CapabilityContext, parameter_sources: Mapping[Scope, ParameterSource],
     overrides: Mapping[Scope, Mapping[str, Sequence[ModelChoice]]] | None = None,
+    *, instance_parameter_sources: Mapping[str, ParameterSource] | None = None,
 ) -> PresetSelection:
     """Explicit overrides may depart from history; that departure is retained."""
     if not isinstance(preset, NamedPreset):
         raise ValueError("a named preset is required")
     return PresetSelection(preset, select_models(
         registry, topology, context, dict(preset.defaults), parameter_sources, overrides,
+        instance_parameter_sources=instance_parameter_sources,
     ))

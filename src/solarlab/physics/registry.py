@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 import hashlib
 import json
 import re
-from typing import Any
+from typing import Any, Protocol
 
 from solarlab.materials.parameter_schema import parameter_names, parameter_schema
 from solarlab.units import normalize_quantity, supported_units
@@ -20,6 +20,7 @@ from solarlab.units import normalize_quantity, supported_units
 __all__ = [
     "CapabilityContext", "CapabilityRule", "EvidenceRef", "ModelDefinition",
     "ModelRef", "ModelRegistry", "OwnedVariable", "Requirement", "Scope",
+    "StructuredSchema", "StructuredData", "StructuredParameters", "StructuredAuthority",
     "metadata_digest", "metadata_value",
 ]
 
@@ -47,9 +48,13 @@ def _strings(values: Iterable[str], label: str) -> tuple[str, ...]:
 
 def metadata_value(value: Any) -> Any:
     """Detached JSON data for these immutable declarations, in canonical order."""
+    if isinstance(value, (StructuredSchema, StructuredParameters)):
+        return value.export()
     if is_dataclass(value) and not isinstance(value, type):
         return {item.name: metadata_value(getattr(value, item.name))
-                for item in fields(value) if not item.name.startswith("_")}
+                for item in fields(value) if not item.name.startswith("_")
+                and not (item.metadata.get("omit_none") and getattr(value, item.name) is None)
+                and not (item.metadata.get("omit_empty") and getattr(value, item.name) == ())}
     if isinstance(value, tuple):
         return [metadata_value(item) for item in value]
     if value is None or type(value) in {str, int, float, bool}:
@@ -109,6 +114,163 @@ class Scope:
     @property
     def key(self) -> str:
         return "/".join((self.kind, *self.ids))
+
+
+def _json_document(value: str) -> str:
+    """Freeze bounded JSON, rejecting duplicate keys and nonfinite values."""
+    if type(value) is not str or not value or len(value) > 2**23:
+        raise ValueError("structured metadata requires bounded JSON text")
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        if len({key for key, _ in items}) != len(items):
+            raise ValueError("duplicate structured metadata key")
+        return dict(items)
+    return json.dumps(json.loads(value, object_pairs_hook=pairs), sort_keys=True,
+                      separators=(",", ":"), allow_nan=False)
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredSchema:
+    """A closed DTO's schemas, supplied across the configuration boundary.
+
+    These schemas describe editable and normalized parameters, not the derived
+    physical output of a resolver or numerical eligibility.
+    """
+
+    id: str
+    version: int
+    family: str
+    scope_kind: str
+    document_version: str
+    input_json: str
+    normalized_json: str
+    source: EvidenceRef
+
+    def __post_init__(self) -> None:
+        ModelRef(self.id, self.version)
+        _token(self.family, "structured family")
+        if self.scope_kind not in _KINDS or not isinstance(self.document_version, str) or not self.document_version:
+            raise ValueError("structured schema requires a scope and document version")
+        for name in ("input_json", "normalized_json"):
+            object.__setattr__(self, name, _json_document(getattr(self, name)))
+            schema = json.loads(getattr(self, name))
+            if not isinstance(schema, dict) or schema.get("type") != "object" or schema.get("additionalProperties") is not False:
+                raise ValueError("structured schema must be a closed object DTO")
+        if self.parameter_names != tuple(sorted(json.loads(self.normalized_json).get("properties", {}))):
+            raise ValueError("input and normalized parameter names differ")
+        if not isinstance(self.source, EvidenceRef) or self.source.sha256 != metadata_digest(json.loads(self.input_json)):
+            raise ValueError("structured schema source must bind the actual DTO input schema")
+
+    @property
+    def parameter_names(self) -> tuple[str, ...]:
+        return tuple(sorted(json.loads(self.input_json).get("properties", {})))
+
+    def export(self) -> dict[str, Any]:
+        return {"id": self.id, "version": self.version, "family": self.family,
+                "scope_kind": self.scope_kind, "document_version": self.document_version,
+                "source": metadata_value(self.source),
+                "input_schema": json.loads(self.input_json),
+                "normalized_parameter_schema": json.loads(self.normalized_json)}
+
+    @property
+    def content_sha256(self) -> str:
+        return metadata_digest(self.export())
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredData:
+    """Immutable snapshot returned by the explicitly injected DTO authority."""
+
+    schema: StructuredSchema
+    scope: Scope
+    device_id: str
+    owner_id: str
+    local_id: str
+    orientation: tuple[str, ...]
+    presence: str
+    input_json: str
+    normalized_json: str
+    resolved_reference_json: str
+    source: EvidenceRef
+    capability_gaps: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.schema, StructuredSchema) or not isinstance(self.scope, Scope) or self.scope.kind != self.schema.scope_kind:
+            raise ValueError("structured data/schema scope mismatch")
+        for name in ("device_id", "owner_id", "local_id"):
+            _token(getattr(self, name), name)
+        orientation = tuple(self.orientation)
+        if isinstance(self.orientation, (str, bytes)):
+            raise ValueError("orientation requires named endpoints")
+        for item in orientation:
+            _token(item, "orientation")
+        object.__setattr__(self, "orientation", orientation)
+        if self.presence not in {"absent", "null", "value"} or not isinstance(self.source, EvidenceRef):
+            raise ValueError("structured parameters require explicit presence/source")
+        for name in ("input_json", "normalized_json", "resolved_reference_json"):
+            object.__setattr__(self, name, _json_document(getattr(self, name)))
+        raw, normalized = json.loads(self.input_json), json.loads(self.normalized_json)
+        if (self.presence == "value") != isinstance(raw, dict) or (self.presence != "value" and raw is not None):
+            raise ValueError("input presence and document disagree")
+        for value in (raw, normalized):
+            if value is not None and (not isinstance(value, dict) or set(value) - set(self.schema.parameter_names)):
+                raise ValueError("structured data has unknown top-level fields")
+        object.__setattr__(self, "capability_gaps", _strings(self.capability_gaps, "capability gap"))
+
+    @property
+    def instance_id(self) -> str:
+        return self.scope.key + "/" + self.local_id
+
+
+class StructuredAuthority(Protocol):
+    """Explicit data-validation injection; no discovery or physics callbacks."""
+
+    def snapshot(self) -> StructuredData: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredParameters:
+    """Resolved data cannot be supplied to or replaced on this wrapper.
+
+    The configuration-owned authority validates the complete DTO/device and
+    supplies the snapshot. Physics depends only on this low-level protocol.
+    """
+
+    _authority: StructuredAuthority = field(repr=False, compare=False)
+    data: StructuredData = field(init=False)
+
+    def __post_init__(self) -> None:
+        data = self._authority.snapshot()
+        if not isinstance(data, StructuredData):
+            raise ValueError("structured authority must return a validated immutable snapshot")
+        object.__setattr__(self, "data", data)
+
+    @property
+    def input_sha256(self) -> str:
+        return metadata_digest({"schema": self.data.schema.source.sha256,
+                                "presence": self.data.presence, "input": json.loads(self.data.input_json)})
+
+    @property
+    def normalized_sha256(self) -> str:
+        return metadata_digest({"schema": metadata_digest(json.loads(self.data.schema.normalized_json)),
+                                "parameters": json.loads(self.data.normalized_json)})
+
+    def export(self) -> dict[str, Any]:
+        data = self.data
+        return {"schema": {"id": data.schema.id, "version": data.schema.version,
+                            "sha256": data.schema.content_sha256},
+                "scope": metadata_value(data.scope), "device_id": data.device_id,
+                "owner_id": data.owner_id, "local_id": data.local_id,
+                "orientation": list(data.orientation), "presence": data.presence,
+                "input": json.loads(data.input_json), "input_sha256": self.input_sha256,
+                "normalized_parameters": json.loads(data.normalized_json),
+                "normalized_sha256": self.normalized_sha256,
+                "resolved_reference": json.loads(data.resolved_reference_json),
+                "source": metadata_value(data.source), "capability_gaps": list(data.capability_gaps),
+                "can_execute": False}
+
+    @property
+    def content_sha256(self) -> str:
+        return metadata_digest(self.export())
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +411,7 @@ class ModelDefinition:
     conflicts: tuple[ModelRef, ...] = ()
     derivative_support: str = "not_registered"
     parameter_schema: str = "scalar_layer"
+    structured_schema: StructuredSchema | None = field(default=None, metadata={"omit_none": True})
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, ModelRef) or not isinstance(self.capability, CapabilityRule):
@@ -260,8 +423,15 @@ class ModelDefinition:
             object.__setattr__(self, name, _strings(getattr(self, name), name))
         if not self.scopes or set(self.scopes) - _KINDS or self.support not in _SUPPORTS:
             raise ValueError("invalid model scope/support declaration")
-        if set(self.parameters) - parameter_names(self.parameter_schema):
-            raise ValueError("parameter schema is not available in this scalar preparation slice")
+        if self.structured_schema is None:
+            if set(self.parameters) - parameter_names(self.parameter_schema):
+                raise ValueError("parameter schema is not available in this scalar preparation slice")
+        else:
+            schema = self.structured_schema
+            if not isinstance(schema, StructuredSchema) or self.parameter_schema != schema.id or self.family != schema.family or self.scopes != (schema.scope_kind,):
+                raise ValueError("structured model schema/family/scope mismatch")
+            if self.parameters != schema.parameter_names:
+                raise ValueError("a structured model must consume its complete closed DTO")
         if self.composition not in {"exclusive", "additive"}:
             raise ValueError("composition must be exclusive or additive")
         if self.derivative_support not in {"not_registered", "declared_analytic", "declared_directional"}:
@@ -301,7 +471,14 @@ class ModelRegistry:
         object.__setattr__(self, "_parameter_schema", json.dumps(self._schemas(), sort_keys=True, allow_nan=False))
 
     def _schemas(self) -> dict[str, Any]:
-        return {name: parameter_schema(name) for name in sorted({"scalar_layer", *(item.parameter_schema for item in self.definitions)})}
+        result = {"scalar_layer": parameter_schema("scalar_layer")}
+        for item in self.definitions:
+            schema = (parameter_schema(item.parameter_schema) if item.structured_schema is None
+                      else item.structured_schema.export())
+            if item.parameter_schema in result and result[item.parameter_schema] != schema:
+                raise ValueError("conflicting definitions of one parameter schema")
+            result[item.parameter_schema] = schema
+        return {name: result[name] for name in sorted(result)}
 
     def get(self, ref: ModelRef) -> ModelDefinition:
         for item in self.definitions:

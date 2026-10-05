@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
+from typing import Any
 
 from solarlab.materials.parameter_schema import parameter_values
 from solarlab.materials.parameters import Scalar
 from solarlab.physics.registry import (
     CapabilityContext, EvidenceRef, ModelRef, ModelRegistry, OwnedVariable,
-    Scope, _strings, _token, metadata_digest, metadata_value,
+    Scope, StructuredParameters, _strings, _token, metadata_digest, metadata_value,
 )
 
 __all__ = [
@@ -25,6 +26,9 @@ class Topology:
 
     electrical_layer_ids: tuple[str, ...]
     contacts: tuple[tuple[str, str], ...] = ()
+    interface_ids: tuple[tuple[str, str, str], ...] = field(default=(), metadata={"omit_empty": True})
+    contact_sides: tuple[tuple[str, str], ...] = field(default=(), metadata={"omit_empty": True})
+    device_id: str | None = field(default=None, metadata={"omit_none": True})
 
     def __post_init__(self) -> None:
         ids = tuple(self.electrical_layer_ids)
@@ -47,6 +51,31 @@ class Topology:
                 raise ValueError("contact must bind an outer electrical layer")
         object.__setattr__(self, "electrical_layer_ids", ids)
         object.__setattr__(self, "contacts", tuple(sorted(contacts)))
+        if self.device_id is not None:
+            _token(self.device_id, "device ID")
+        if isinstance(self.interface_ids, (str, bytes)) or isinstance(self.contact_sides, (str, bytes)):
+            raise ValueError("topology IDs require explicit tuples")
+        if any(isinstance(item, (str, bytes)) for item in (*self.interface_ids, *self.contact_sides)):
+            raise ValueError("topology bindings require explicit endpoint tuples")
+        interfaces = tuple(tuple(item) for item in self.interface_ids)
+        if any(len(item) != 3 for item in interfaces) or len({item[0] for item in interfaces}) != len(interfaces):
+            raise ValueError("interfaces require unique (ID, left, right) triples")
+        pairs = set(zip(ids, ids[1:]))
+        if len({item[1:] for item in interfaces}) != len(interfaces) or any(item[1:] not in pairs for item in interfaces):
+            raise ValueError("interface IDs must bind directed adjacent electrical layers")
+        for identifier, _, _ in interfaces:
+            _token(identifier, "interface ID")
+        sides = tuple(tuple(item) for item in self.contact_sides)
+        if any(len(item) != 2 for item in sides) or len({item[0] for item in sides}) != len(sides):
+            raise ValueError("contact sides require unique (ID, side) pairs")
+        if len({item[1] for item in sides}) != len(sides):
+            raise ValueError("only one contact may bind each side")
+        contact_layers = {pair[0]: pair[1] for pair in contacts}
+        for identifier, side in sides:
+            if side not in {"left", "right"} or contact_layers.get(identifier) != ids[0 if side == "left" else -1]:
+                raise ValueError("contact side and endpoint disagree")
+        object.__setattr__(self, "interface_ids", tuple(sorted(interfaces)))
+        object.__setattr__(self, "contact_sides", tuple(sorted(sides)))
 
     def scopes(self) -> tuple[Scope, ...]:
         return (Scope("device"), *(Scope("layer", (value,)) for value in self.electrical_layer_ids),
@@ -57,6 +86,24 @@ class Topology:
         if not isinstance(scope, Scope) or scope not in self.scopes():
             raise ValueError(f"scope is not in the directed electrical topology: {scope!r}")
 
+    def validate_parameters(self, parameters: StructuredParameters) -> None:
+        data = parameters.data
+        self.validate(data.scope)
+        if self.device_id != data.device_id:
+            raise ValueError("structured parameters require their explicit device identity")
+        if data.scope.kind == "layer":
+            valid = data.scope.ids == (data.owner_id,) and data.orientation == data.scope.ids
+        elif data.scope.kind == "interface":
+            valid = (data.owner_id, *data.scope.ids) in self.interface_ids and data.orientation == data.scope.ids
+        elif data.scope.kind == "contact":
+            valid = (data.scope.ids == (data.owner_id,) and data.owner_id in dict(self.contacts)
+                     and data.owner_id in dict(self.contact_sides)
+                     and data.orientation == (dict(self.contact_sides)[data.owner_id], dict(self.contacts)[data.owner_id]))
+        else:
+            valid = data.owner_id == self.device_id and data.orientation == ()
+        if not valid:
+            raise ValueError("structured owner ID or orientation disagrees with topology")
+
 
 @dataclass(frozen=True, slots=True)
 class ParameterSource:
@@ -64,12 +111,19 @@ class ParameterSource:
     values: tuple[tuple[str, Scalar], ...]
     evidence: EvidenceRef
     parameter_schema: str = "scalar_layer"
+    structured: StructuredParameters | None = field(default=None, metadata={"omit_none": True})
 
     def __post_init__(self) -> None:
         _token(self.id, "parameter source")
         if not isinstance(self.evidence, EvidenceRef):
             raise ValueError("parameter source needs evidence")
-        object.__setattr__(self, "values", parameter_values(self.values, self.parameter_schema))
+        if self.structured is None:
+            object.__setattr__(self, "values", parameter_values(self.values, self.parameter_schema))
+        else:
+            _structured_binding(self.structured, self.parameter_schema, self.values)
+            if self.evidence != self.structured.data.source:
+                raise ValueError("structured parameter source evidence mismatch")
+            object.__setattr__(self, "values", ())
 
     @property
     def content_sha256(self) -> str:
@@ -83,12 +137,23 @@ class ModelChoice:
     parameters: tuple[tuple[str, Scalar], ...] = ()
     field_bindings: tuple[tuple[str, str], ...] = ()
     parameter_schema: str = "scalar_layer"
+    structured: StructuredParameters | None = field(default=None, metadata={"omit_none": True})
 
     def __post_init__(self) -> None:
         _token(self.id, "local model instance ID")
         if not isinstance(self.model, ModelRef):
             raise ValueError("model choice requires an explicit ID/version")
-        object.__setattr__(self, "parameters", parameter_values(self.parameters, self.parameter_schema))
+        if self.parameter_schema in {"scalar_layer", "full_layer"}:
+            if self.structured is not None:
+                raise ValueError("scalar choices cannot carry a structured document")
+            object.__setattr__(self, "parameters", parameter_values(self.parameters, self.parameter_schema))
+        else:
+            _token(self.parameter_schema, "structured parameter schema")
+            if tuple(self.parameters):
+                raise ValueError("structured choices cannot also contain scalar overrides")
+            if self.structured is not None:
+                _structured_binding(self.structured, self.parameter_schema, ())
+            object.__setattr__(self, "parameters", ())
         if isinstance(self.field_bindings, (str, bytes)):
             raise ValueError("field bindings require explicit pairs")
         entries = tuple(self.field_bindings)
@@ -115,17 +180,30 @@ class SelectedModel:
     owned_variables: tuple[tuple[str, OwnedVariable], ...]
     read_variables: tuple[str, ...]
     parameter_schema: str = "scalar_layer"
+    structured: StructuredParameters | None = field(default=None, metadata={"omit_none": True})
 
     def __post_init__(self) -> None:
         _token(self.local_id, "selected model instance")
         if not isinstance(self.model, ModelRef) or not isinstance(self.scope, Scope):
             raise ValueError("selected model requires explicit ref and scope")
-        object.__setattr__(self, "parameters", parameter_values(self.parameters, self.parameter_schema))
+        if self.structured is None:
+            object.__setattr__(self, "parameters", parameter_values(self.parameters, self.parameter_schema))
+            parameter_names = {name for name, _ in self.parameters}
+        else:
+            _structured_binding(self.structured, self.parameter_schema, self.parameters)
+            if self.structured.data.scope != self.scope or self.structured.data.local_id != self.local_id:
+                raise ValueError("structured instance identity does not match selection")
+            if self.parameter_source_sha256 != self.structured.content_sha256:
+                raise ValueError("structured selected source identity is stale")
+            object.__setattr__(self, "parameters", ())
+            parameter_names = set(self.structured.data.schema.parameter_names)
         if self.parameter_source_sha256 is not None and re.fullmatch(r"[0-9a-f]{64}", self.parameter_source_sha256) is None:
             raise ValueError("invalid parameter source identity")
         overridden = _strings(self.overridden_parameters, "overridden parameter")
-        if set(overridden) - {name for name, _ in self.parameters}:
+        if set(overridden) - parameter_names:
             raise ValueError("override origin names an absent parameter")
+        if self.structured is not None and set(overridden) not in (set(), parameter_names):
+            raise ValueError("structured overrides replace one complete validated document")
         object.__setattr__(self, "overridden_parameters", overridden)
         owned = tuple(self.owned_variables)
         if any(not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], str)
@@ -165,6 +243,8 @@ class Selection:
             raise ValueError("selection order must cover every unique model instance")
         for item in instances:
             self.topology.validate(item.scope)
+            if item.structured is not None:
+                self.topology.validate_parameters(item.structured)
         problems = tuple(self.declared_problems)
         if any(not isinstance(item, str) or not item for item in problems):
             raise ValueError("invalid declared compatibility problem")
@@ -178,9 +258,24 @@ class Selection:
         # caches when D=0, thickness or another physical input changes.
         return metadata_digest(metadata_value(self))
 
+    def export(self) -> dict[str, Any]:
+        """Ordered metadata for future input/UI consumers; never run permission."""
+        schemas = {item.structured.data.schema.id: item.structured.data.schema.export()
+                   for item in self.instances if item.structured is not None}
+        return {"schema": "solarlab.model-selection.v1", **metadata_value(self),
+                "parameter_schemas": {name: schemas[name] for name in sorted(schemas)},
+                "status": "prepared_pending_G2", "can_execute": False}
+
+
+def _structured_binding(parameters: StructuredParameters, schema: str, scalars: object) -> None:
+    if not isinstance(parameters, StructuredParameters) or parameters.data.schema.id != schema:
+        raise ValueError("structured parameter schema binding mismatch")
+    if scalars != ():
+        raise ValueError("structured parameters cannot be mixed with scalar parameters")
+
 
 def _choices(values: Sequence[ModelChoice]) -> tuple[ModelChoice, ...]:
-    if isinstance(values, (str, bytes)):
+    if values is None or isinstance(values, (str, bytes)):
         raise ValueError("model choices require a sequence")
     result = tuple(values)
     if any(not isinstance(value, ModelChoice) for value in result):
@@ -199,16 +294,27 @@ def _bind(
         raise ValueError(f"{choice.id}: parameter schema binding mismatch")
     if scope.kind not in definition.scopes:
         raise ValueError(f"{scope.key}/{choice.id}: model does not support this scope")
-    explicit = dict(choice.parameters)
-    if set(explicit) - set(definition.parameters):
-        raise ValueError(f"{choice.id}: unconsumed model parameters")
-    inherited = dict(source.values) if source is not None else {}
-    values = {name: explicit[name] if name in explicit else inherited.get(name)
-              for name in definition.parameters}
-    missing = [name for name in definition.parameters if name not in explicit and name not in inherited]
-    if missing:
-        raise ValueError(f"{choice.id}: missing consumed parameters {missing}")
-    parameters = parameter_values(tuple(values.items()), definition.parameter_schema)
+    structured = None
+    source_sha = source.content_sha256 if source is not None else None
+    if definition.structured_schema is not None:
+        structured = choice.structured if choice.structured is not None else (source.structured if source is not None else None)
+        if structured is None or structured.data.schema != definition.structured_schema:
+            raise ValueError(f"{choice.id}: missing or mismatched closed structured parameters")
+        parameters = ()
+        explicit_names = definition.parameters if choice.structured is not None else ()
+        source_sha = structured.content_sha256
+    else:
+        explicit = dict(choice.parameters)
+        if set(explicit) - set(definition.parameters):
+            raise ValueError(f"{choice.id}: unconsumed model parameters")
+        inherited = dict(source.values) if source is not None else {}
+        values = {name: explicit[name] if name in explicit else inherited.get(name)
+                  for name in definition.parameters}
+        missing = [name for name in definition.parameters if name not in explicit and name not in inherited]
+        if missing:
+            raise ValueError(f"{choice.id}: missing consumed parameters {missing}")
+        parameters = parameter_values(tuple(values.items()), definition.parameter_schema)
+        explicit_names = tuple(sorted(explicit))
     bindings = dict(choice.field_bindings)
     names = {item.name for item in definition.owns} | set(definition.reads)
     if set(bindings) - names:
@@ -218,8 +324,7 @@ def _bind(
     local_owned = {item.name: target for target, item in owned}
     reads = tuple(bindings.get(name, local_owned.get(name, name)) for name in definition.reads)
     return SelectedModel(choice.id, choice.model, scope, parameters,
-                         source.content_sha256 if source is not None else None,
-                         tuple(sorted(explicit)), owned, reads, definition.parameter_schema)
+                         source_sha, explicit_names, owned, reads, definition.parameter_schema, structured)
 
 
 def _dependency_scope(scope: Scope, relation: str) -> Scope:
@@ -289,6 +394,7 @@ def validate_selection(selection: Selection, registry: ModelRegistry) -> tuple[s
         raise ValueError("selection/model registry identity mismatch")
     owners = {name: "external" for name in selection.context.available_variables}
     families: dict[tuple[Scope, str], list[SelectedModel]] = {}
+    structured_sources: set[str] = set()
     for instance in selection.instances:
         selection.topology.validate(instance.scope)
         definition = registry.get(instance.model)
@@ -296,11 +402,20 @@ def validate_selection(selection: Selection, registry: ModelRegistry) -> tuple[s
             raise ValueError(f"{instance.id}: model does not support this scope")
         if instance.parameter_schema != definition.parameter_schema:
             raise ValueError(f"{instance.id}: parameter schema binding mismatch")
-        parameters = parameter_values(instance.parameters, definition.parameter_schema)
-        if tuple(name for name, _ in parameters) != definition.parameters:
-            raise ValueError(f"{instance.id}: consumed parameter names do not match declaration")
-        if instance.parameter_source_sha256 is None and set(definition.parameters) != set(instance.overridden_parameters):
-            raise ValueError(f"{instance.id}: inherited parameters require a source identity")
+        if definition.structured_schema is None:
+            parameters = parameter_values(instance.parameters, definition.parameter_schema)
+            if instance.structured is not None or tuple(name for name, _ in parameters) != definition.parameters:
+                raise ValueError(f"{instance.id}: consumed parameter names do not match declaration")
+            if instance.parameter_source_sha256 is None and set(definition.parameters) != set(instance.overridden_parameters):
+                raise ValueError(f"{instance.id}: inherited parameters require a source identity")
+        else:
+            structured = instance.structured
+            if structured is None or structured.data.schema != definition.structured_schema:
+                raise ValueError(f"{instance.id}: structured schema identity mismatch")
+            selection.topology.validate_parameters(structured)
+            if structured.data.instance_id != instance.id or instance.parameter_source_sha256 != structured.content_sha256:
+                raise ValueError(f"{instance.id}: structured parameter instance/source identity mismatch")
+            structured_sources.add(structured.data.source.sha256)
         declared_owns = tuple(variable for _, variable in instance.owned_variables)
         if declared_owns != definition.owns:
             raise ValueError(f"{instance.id}: owned variable specs do not match declaration")
@@ -315,6 +430,8 @@ def validate_selection(selection: Selection, registry: ModelRegistry) -> tuple[s
                 raise ValueError(f"duplicate ownership of physical variable {target}")
             owners[target] = instance.id
         families.setdefault((instance.scope, definition.family), []).append(instance)
+    if len(structured_sources) > 1:
+        raise ValueError("structured selections cannot mix distinct prepared-device snapshots; rebind all instances")
     for group in families.values():
         if len(group) > 1 and any(registry.get(item.model).composition == "exclusive" for item in group):
             raise ValueError(f"{group[0].scope.key}: exclusive model family has multiple instances")
@@ -337,6 +454,7 @@ def select_models(
     defaults: Mapping[str, Sequence[ModelChoice]],
     parameter_sources: Mapping[Scope, ParameterSource],
     overrides: Mapping[Scope, Mapping[str, Sequence[ModelChoice]]] | None = None,
+    *, instance_parameter_sources: Mapping[str, ParameterSource] | None = None,
 ) -> Selection:
     """Inherit kind defaults, then replace explicitly overridden families.
 
@@ -358,6 +476,13 @@ def select_models(
     for source in parameter_sources.values():
         if not isinstance(source, ParameterSource):
             raise ValueError("parameter sources must be immutable validated records")
+    per_instance = {} if instance_parameter_sources is None else instance_parameter_sources
+    if not isinstance(per_instance, Mapping):
+        raise ValueError("instance parameter sources must be a mapping")
+    for identifier, source in per_instance.items():
+        if not isinstance(source, ParameterSource) or source.structured is None or identifier != source.structured.data.instance_id:
+            raise ValueError("structured sources must be keyed by their canonical instance IDs")
+        topology.validate_parameters(source.structured)
     selected: list[SelectedModel] = []
     for scope in topology.scopes():
         families: dict[str, tuple[ModelChoice, ...]] = {}
@@ -373,7 +498,9 @@ def select_models(
                 raise ValueError("model choice does not belong to the overridden family")
             families[family] = choices
         choices = _choices(tuple(choice for family in sorted(families) for choice in families[family]))
-        selected.extend(_bind(choice, scope, registry, parameter_sources.get(scope)) for choice in choices)
+        selected.extend(_bind(choice, scope, registry,
+                              per_instance.get(scope.key + "/" + choice.id) if registry.get(choice.model).structured_schema is not None
+                              else parameter_sources.get(scope)) for choice in choices)
     instances = tuple(sorted(selected, key=lambda item: item.id))
     selection = Selection(registry.content_sha256, topology, context, instances,
                           _order(instances, registry), _declared_problems(instances, registry, context))

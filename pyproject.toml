@@ -128,6 +128,7 @@ only-include = [
     "tests/refactor/test_registry_preparation.py",
     "tests/refactor/test_device_configuration_preparation.py",
     "tests/refactor/test_complex_configuration_preparation.py",
+    "tests/refactor/test_structured_registry_preparation.py",
 ]
 
 [tool.importlinter]
