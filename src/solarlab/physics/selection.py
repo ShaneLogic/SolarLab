@@ -300,7 +300,7 @@ def _bind(
         structured = choice.structured if choice.structured is not None else (source.structured if source is not None else None)
         if structured is None or structured.data.schema != definition.structured_schema:
             raise ValueError(f"{choice.id}: missing or mismatched closed structured parameters")
-        parameters = ()
+        parameters: tuple[tuple[str, Scalar], ...] = ()
         explicit_names = definition.parameters if choice.structured is not None else ()
         source_sha = structured.content_sha256
     else:

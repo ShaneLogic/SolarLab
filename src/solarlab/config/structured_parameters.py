@@ -117,10 +117,10 @@ class _DeviceParameterAuthority:
         model, resolved = self.prepared.to_input(), self.prepared.to_mapping()
         dto: type[StructuredInput]
         if self.family == "bulk_defect" or self.family in _LAYER_DTOS:
-            matches = [(raw, layer) for raw, layer in zip(model.layers, self.prepared.layers) if raw.id == self.owner_id]
-            if len(matches) != 1:
+            layer_matches = [(raw, layer) for raw, layer in zip(model.layers, self.prepared.layers) if raw.id == self.owner_id]
+            if len(layer_matches) != 1:
                 raise ValueError("structured parameters name an unknown layer ID")
-            raw_layer, layer = matches[0]
+            raw_layer, layer = layer_matches[0]
             scope = Scope("layer", (layer.id,))
             context = {"band_gap_eV": dict(layer.parameters)["Eg"],
                        "material_id": layer.material.id, "material_sha256": layer.material.content_sha256,
@@ -164,19 +164,19 @@ class _DeviceParameterAuthority:
             if not interface.electrical:
                 raise ValueError("optical-only interfaces do not belong to electrical model selection")
             effective = InterfaceInput.model_validate_json(interface.input_json)
-            matches = [item for item in model.interfaces if item.id == self.owner_id]
+            interface_inputs = [item for item in model.interfaces if item.id == self.owner_id]
             scope = Scope("interface", (effective.left, effective.right))
-            return _Location(InterfaceInput, model.schema_version + "#interface", scope, scope.ids, bool(matches),
-                             matches[0] if matches else None, effective.normalized_data(), interface.to_mapping(),
+            return _Location(InterfaceInput, model.schema_version + "#interface", scope, scope.ids, bool(interface_inputs),
+                             interface_inputs[0] if interface_inputs else None, effective.normalized_data(), interface.to_mapping(),
                              ("interfaces", self.owner_id), {"adjacent_gaps_eV": list(interface.adjacent_gaps_eV)})
         if self.family == "contact":
             contacts = [item for item in resolved["contacts"] if item["id"] == self.owner_id]
             if len(contacts) != 1:
                 raise ValueError("unknown contact ID")
             contact = contacts[0]
-            matches = [item for item in model.contacts if item.id == self.owner_id]
+            contact_inputs = [item for item in model.contacts if item.id == self.owner_id]
             return _Location(ContactInput, model.schema_version + "#contact", Scope("contact", (self.owner_id,)),
-                             (contact["side"], contact["layer"]), bool(matches), matches[0] if matches else None,
+                             (contact["side"], contact["layer"]), bool(contact_inputs), contact_inputs[0] if contact_inputs else None,
                              ContactInput.model_validate(contact).normalized_data(), contact,
                              ("contacts", self.owner_id), {})
         raise ValueError(f"unavailable structured parameter family: {self.family!r}")
