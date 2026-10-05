@@ -1,0 +1,184 @@
+name: Refactor checks
+
+on:
+  push:
+    branches: [devel]
+  pull_request:
+    branches: [main, devel]
+  workflow_dispatch:
+    inputs:
+      run_coverage:
+        description: Run coverage on the bounded core smoke selection
+        type: boolean
+        default: false
+      run_slow:
+        description: Run the existing dark p-n junction regression only
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refactor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: perovskite-sim
+
+env:
+  UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-refactor
+  PYTHONDONTWRITEBYTECODE: "1"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  VECLIB_MAXIMUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv lock --check
+      - run: uv sync --frozen --extra dev
+      # Scope grows with the refactor. Do not reformat the legacy numerical tree.
+      - name: Lint new files and the touched shared fixture
+        run: >-
+          uv run --frozen --no-sync ruff check --config pyproject.toml
+          tests/conftest.py tests/unit/test_pytest_isolation.py
+          tests/unit/backend/conftest.py tests/integration/backend/conftest.py
+          ../scripts/benchmarks/probe_ida_binding.py
+      - name: Format check for new files
+        run: >-
+          uv run --frozen --no-sync ruff format --check --config pyproject.toml
+          tests/unit/test_pytest_isolation.py tests/unit/backend/conftest.py
+          tests/integration/backend/conftest.py ../scripts/benchmarks/probe_ida_binding.py
+      - name: Type check new files
+        run: >-
+          uv run --frozen --no-sync mypy
+          tests/unit/test_pytest_isolation.py tests/unit/backend/conftest.py
+          tests/integration/backend/conftest.py ../scripts/benchmarks/probe_ida_binding.py
+
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen --extra dev
+      - name: Core imports, negative inputs and independent arithmetic oracles
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          tests/unit/test_pytest_isolation.py::test_core_pytest_does_not_import_backend
+          tests/unit/test_blas_marker_selection.py
+          tests/unit/physics/test_dynamic_storage.py
+          tests/unit/discretization/test_fe_operators.py
+
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen --extra dev --extra server
+      - name: Job cleanup, mocked dispatch and API rejection paths
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          tests/unit/test_pytest_isolation.py::test_backend_cleanup_precedes_monkeypatch_undo
+          tests/unit/backend/test_jobs.py tests/unit/backend/test_progress.py
+          tests/unit/backend/test_twod_microstructure_preflight.py
+          tests/unit/backend/test_experiment_protocol_api.py
+          tests/integration/backend/test_twod_configs_api.py
+
+  binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --all-extras
+      - name: Optional research, notebook and legacy queue imports
+        run: >-
+          uv run --frozen --no-sync python -c
+          "import openpyxl, fitz, jupyterlab, backend.celery_app"
+      - name: Tiny analytic IDA binding probes
+        run: >-
+          uv run --frozen --no-sync python ../scripts/benchmarks/probe_ida_binding.py
+          --output "$RUNNER_TEMP/BindingCapabilitiesV1.json"
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: perovskite-sim/frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: perovskite-sim/frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run test:run
+      - run: npm run build
+
+  coverage:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --extra dev
+      # Coverage stays outside the default pytest addopts and numerical lanes.
+      - run: >-
+          uv run --frozen --no-sync python -m pytest -q
+          --cov=perovskite_sim.physics.dynamic_storage
+          --cov=perovskite_sim.discretization.fe_operators --cov-report=term-missing
+          tests/unit/physics/test_dynamic_storage.py
+          tests/unit/discretization/test_fe_operators.py
+
+  slow:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_slow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --extra dev
+      # One bounded existing regression. Full slow suites and qualified
+      # SCAPS/HI/R1 long-window campaigns require separately scheduled runs.
+      - run: >-
+          uv run --frozen --no-sync python -m pytest -q -m slow
+          tests/regression/test_pn_junction_analytic.py
