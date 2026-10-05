@@ -527,6 +527,18 @@ and reproduction commands live under
 the full interpretation is in the
 2026-08-11 manual (distributed separately).
 
+### Historical R1 failure evidence
+
+The V53 baseline at source `12869a4f90d6d08af2d24af902838d8a4d5c00c4`
+saved 309 of the 3727 required rows, including the initial state. Its next
+finite step, 309, failed the original nonlinear residual gate; the saved
+prefix does not qualify the full 100 s window or admit the compensated run.
+Step 183's earlier successful correction remains a separate regression.
+The [bound 183/309 witness](tests/fixtures/refactor/R1FailureWitnessV1.json)
+preserves both inputs and their original preparation/source identities.
+The [saved-state diagnostic](scripts/benchmarks/diagnose_r1_saved_failure.py)
+supports bounded reconstruction without restarting the trajectory.
+
 <p align="center">
   <img src="docs/figures/CsiQfConvergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
 </p>
