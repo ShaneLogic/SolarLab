@@ -1,0 +1,935 @@
+{
+  "schema": "solarlab.analytic-reference-gates.v1",
+  "status": "frozen",
+  "version": 1,
+  "scope": "P00-03 analytic references for P02-02 through P02-08; no device or external qualification",
+  "change_class": "N",
+  "plan_tasks": [
+    "P00-03",
+    "P02-02",
+    "P02-03",
+    "P02-04",
+    "P02-05",
+    "P02-06",
+    "P02-07",
+    "P02-08"
+  ],
+  "independent_review": {
+    "status": "approved_with_conditions_applied",
+    "reviewer_session": "01a10b2f-45dd-7021-818a-3feec5cd361c",
+    "model": "gpt-6-astra",
+    "effort": "max",
+    "reviewed_sha256": "98a9ce6fc248852e4ba85a4ac4dcb7d1a0e6360de78fb342390840539fbe8c0d",
+    "scope": "small analytic reference gates only",
+    "conditions_applied": [
+      "NC06 analytic and quadrature errors separately recorded",
+      "NC06 IDA observation times separated from native BE grid maxima"
+    ],
+    "frozen_at": "2026-10-05T08:32:55.457547+00:00"
+  },
+  "frozen_at": "2026-10-05T08:32:55.457547+00:00",
+  "source_identity_policy": "Bind this file digest, implementation digest, inputs, environment and run start before candidate execution. Any gate change requires new independent review and a new affected attempt.",
+  "common_rules": {
+    "comparison": "abs(candidate-reference) <= atol + rtol*abs(reference)",
+    "relative_scale": "reference only",
+    "reference_error_fraction_maximum": 0.3333333333333333,
+    "zero_inventory": "absolute defect on the declared fixed scale; never divide by zero",
+    "geometry": "Explicit control volumes and face measures, applied exactly once by assembly",
+    "source_reference": "Closed-form analytic values or independent 80-digit Decimal evaluation; no production solver as oracle",
+    "all_steps": "Check every published accepted interval and cumulative absolute inventory defect",
+    "missing_evidence": "not_passed",
+    "forbidden_repairs": [
+      "accepted-state clipping",
+      "post-step normalization",
+      "erasing low words",
+      "omitting failing samples"
+    ]
+  },
+  "gates": [
+    {
+      "id": "NC01",
+      "quantity": "physical inventory and two-cell backward Euler state",
+      "unit": "dimensionless scaled particle inventory",
+      "cases": [
+        "equal volumes [1,1], n0=[1,2], conductance=1, h=0.5",
+        "unequal volumes [1,2] with the same oriented face flux",
+        "disconnected blocking domains",
+        "zero species inventory"
+      ],
+      "reference": "n1=(M-hL)^-1 M n0; equal-volume n1=[1.25,1.75]; each connected-domain inventory is invariant",
+      "state_atol": 1e-12,
+      "state_rtol": 1e-11,
+      "inventory_relative_limit": 1e-10,
+      "zero_inventory_absolute_limit": 1e-13,
+      "cumulative_absolute_inventory_relative_limit": 1e-10,
+      "reference_error_bound": 1e-14,
+      "counterexample": "Ordinary coordinate BDF on n=exp(q) at h=0.5 must be identified as nonconservative; no requirement to accept that route",
+      "norm": "max over every state component; inventory separately per declared domain",
+      "mask": "all cells, faces, domains and accepted intervals",
+      "inventory_scale": "sum(V_i*n_i_initial) within each connected domain; zero domains use fixed inventory scale 1",
+      "interval_defect": "abs(sum_domain(delta_Q) - integral_of_declared_boundary_flux_and_sources); cumulative is sum of these absolute defects",
+      "fixed_inputs": [
+        {
+          "id": "equal_be",
+          "volumes": [
+            1,
+            1
+          ],
+          "initial": [
+            1,
+            2
+          ],
+          "faces": [
+            [
+              0,
+              1
+            ]
+          ],
+          "conductance": [
+            1
+          ],
+          "step_sizes": [
+            0.5
+          ],
+          "domains": [
+            [
+              0,
+              1
+            ]
+          ],
+          "expected_final": [
+            "1.25",
+            "1.75"
+          ]
+        },
+        {
+          "id": "unequal_be",
+          "volumes": [
+            1,
+            2
+          ],
+          "initial": [
+            1,
+            2
+          ],
+          "faces": [
+            [
+              0,
+              1
+            ]
+          ],
+          "conductance": [
+            1
+          ],
+          "step_sizes": [
+            0.5
+          ],
+          "domains": [
+            [
+              0,
+              1
+            ]
+          ],
+          "expected_final": [
+            "9/7",
+            "13/7"
+          ]
+        },
+        {
+          "id": "disconnected_be",
+          "volumes": [
+            1,
+            2,
+            1,
+            3
+          ],
+          "initial": [
+            1,
+            2,
+            4,
+            1
+          ],
+          "faces": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "conductance": [
+            1,
+            0.2
+          ],
+          "step_sizes": [
+            0.25,
+            0.5,
+            0.25
+          ],
+          "domains": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "expected_inventory": [
+            5,
+            7
+          ]
+        },
+        {
+          "id": "zero_be",
+          "volumes": [
+            1,
+            2
+          ],
+          "initial": [
+            0,
+            0
+          ],
+          "faces": [
+            [
+              0,
+              1
+            ]
+          ],
+          "conductance": [
+            1
+          ],
+          "step_sizes": [
+            0.5
+          ],
+          "domains": [
+            [
+              0,
+              1
+            ]
+          ],
+          "expected_final": [
+            0,
+            0
+          ]
+        },
+        {
+          "id": "equal_ida",
+          "volumes": [
+            1,
+            1
+          ],
+          "initial": [
+            1,
+            2
+          ],
+          "faces": [
+            [
+              0,
+              1
+            ]
+          ],
+          "conductance": [
+            1
+          ],
+          "end_time": 1,
+          "max_steps": [
+            0.1,
+            0.02
+          ],
+          "max_orders": [
+            1,
+            2,
+            5
+          ],
+          "solver_atol": 1e-12,
+          "solver_rtols": [
+            1e-06,
+            1e-09
+          ],
+          "expected": "n(t)=[1.5-0.5*exp(-2t),1.5+0.5*exp(-2t)]",
+          "trajectory_gates": [
+            {
+              "solver_rtol": 1e-06,
+              "atol": 3e-06,
+              "rtol": 5e-05
+            },
+            {
+              "solver_rtol": 1e-09,
+              "atol": 1e-08,
+              "rtol": 1e-07
+            }
+          ]
+        }
+      ],
+      "reference_evaluation": "Independent exact rational 2-cell formulas and Decimal80 matrix elimination for BE; Decimal80 exponential for IDA. No production solver is an oracle.",
+      "budget_basis": "Linear conservation is a discrete identity; 1e-10 retains plan inventory requirement. State budgets are toy arithmetic or independently declared time-accuracy budgets, not IDA solver settings."
+    },
+    {
+      "id": "NC02",
+      "quantity": "carrier-trap exchange inventory",
+      "unit": "dimensionless scaled particle inventory",
+      "reference": "r=k*n*(1-f)-e*Nt*f; ndot=-r, Nt*fdot=r. Invariant S=n+Nt*f. BE root f1-f0-h/Nt*r(S-Nt*f1,f1)=0 is unique in the feasible interval.",
+      "cases": [
+        "capture",
+        "reverse emission",
+        "zero reaction",
+        "near-empty and near-full occupancy"
+      ],
+      "inventory_relative_limit": 1e-10,
+      "cumulative_absolute_inventory_relative_limit": 1e-10,
+      "reference_error_bound": 1e-14,
+      "feasibility": "0 <= f <= 1 and n >= 0, without post-acceptance repair",
+      "norm": "max absolute/relative component error plus inventory defects for each independently closed case",
+      "mask": "all species including carrier and occupied traps; all accepted intervals",
+      "inventory_scale": "S_initial=n_initial+Nt*f_initial for each case; zero case fixed scale 1",
+      "zero_inventory_absolute_limit": 1e-13,
+      "state_atol": 1e-12,
+      "state_rtol": 1e-11,
+      "interval_defect": "abs(delta_n+Nt*delta_f), accumulated as sum of absolute interval defects",
+      "fixed_inputs": [
+        {
+          "id": "capture",
+          "n": 3,
+          "f": 0.25,
+          "Nt": 2,
+          "k": 0.5,
+          "e": 0,
+          "h": 0.1,
+          "required_direction": "f increases and n decreases"
+        },
+        {
+          "id": "emission",
+          "n": 0.1,
+          "f": 0.75,
+          "Nt": 2,
+          "k": 0,
+          "e": 0.4,
+          "h": 0.1,
+          "expected_f": "0.75/1.04",
+          "required_direction": "f decreases and n increases"
+        },
+        {
+          "id": "mixed",
+          "n": 1.1,
+          "f": 0.6,
+          "Nt": 2,
+          "k": 0.4,
+          "e": 0.3,
+          "h": 0.1,
+          "required_direction": "f decreases and n increases"
+        },
+        {
+          "id": "disabled",
+          "n": 2,
+          "f": 0.25,
+          "Nt": 2,
+          "k": 0,
+          "e": 0,
+          "h": 0.1,
+          "required_direction": "exactly unchanged"
+        },
+        {
+          "id": "near_empty",
+          "n": 2,
+          "f": 1e-12,
+          "Nt": 2,
+          "k": 0.5,
+          "e": 0,
+          "h": 0.1,
+          "required_direction": "capture"
+        },
+        {
+          "id": "near_full",
+          "n": 0.5,
+          "f": 0.999999999999,
+          "Nt": 2,
+          "k": 0,
+          "e": 0.4,
+          "h": 0.1,
+          "required_direction": "emission"
+        },
+        {
+          "id": "zero",
+          "n": 0,
+          "f": 0,
+          "Nt": 2,
+          "k": 0.5,
+          "e": 0.4,
+          "h": 0.1,
+          "required_direction": "strict zero inventory"
+        }
+      ],
+      "reference_evaluation": "Decimal80 bisection of the scalar BE equation for 300 iterations on f in [0,min(1,S/Nt)], or exact emission formula. Check state and nonzero rate, not conservation alone.",
+      "budget_basis": "Invariant is exact by reaction stoichiometry. State/rate references exclude a constant-state implementation."
+    },
+    {
+      "id": "NC03",
+      "quantity": "consistent physical initial state and tangent",
+      "unit": "dimensionless density and potential",
+      "reference": "n=exp(q+phi), phi+n=V. Initial n=2,V=0,phi=-2,q=log(2)+2. For V=0.1 preserve n=2, set phi=-1.9,q=log(2)+1.9. For Vdot=s preserve ndot=0, phidot=s,qdot=-s.",
+      "physical_state_atol": 1e-13,
+      "physical_state_rtol": 1e-13,
+      "residual_absolute_limit": 1e-12,
+      "tangent_absolute_limit": 1e-12,
+      "reference_error_bound": 1e-15,
+      "negative_cases": [
+        "holding q fixed changes physical n",
+        "dependent constraints",
+        "missing gauge",
+        "incompatible fixed electrode charge and imposed voltage jump"
+      ],
+      "norm": "maximum component error, residual infinity norm and tangent infinity norm",
+      "mask": "all physical state components, algebraic constraints and tangent rows",
+      "fixed_scale": 1,
+      "fixed_inputs": {
+        "n0": 2,
+        "V0": 0,
+        "V1": 0.1,
+        "slopes": [
+          0,
+          0.2,
+          -0.3
+        ],
+        "columns": [
+          "q",
+          "phi"
+        ],
+        "Qy_initial": [
+          [
+            2,
+            2
+          ]
+        ],
+        "gy_initial": [
+          [
+            2,
+            3
+          ]
+        ],
+        "expected_combined_determinant": 2,
+        "dependent_constraint_matrix": [
+          [
+            1,
+            0
+          ],
+          [
+            2,
+            0
+          ]
+        ],
+        "floating_poisson_matrix": [
+          [
+            1,
+            -1
+          ],
+          [
+            -1,
+            1
+          ]
+        ],
+        "incompatible_capacitor": {
+          "C": 2,
+          "imposed_voltage": 1,
+          "fixed_charge": 0
+        }
+      },
+      "rank_rule": "rank counts singular values > 64*float64_eps*max(matrix.shape)*sigma_max; compare to declared independent row and variable counts",
+      "negative_case_results": {
+        "dependent_constraint_matrix": "dependent_constraints",
+        "floating_poisson_matrix": "missing_gauge",
+        "incompatible_capacitor": "incompatible_fixed_physical_quantities"
+      },
+      "reference_evaluation": "Exact n and linear potential/tangent; Decimal80 log(2) for q.",
+      "budget_basis": "Small analytic equations with unit scale; tolerances exceed binary64 evaluation error without permitting physical population change."
+    },
+    {
+      "id": "NC04",
+      "quantity": "full nonlinear storage and input Jacobian",
+      "unit": "dimensionless scaled residual",
+      "reference": "Q=exp(2*y+3*a+5*t), R=0, F=Q*(2*ydot+3*adot+5). Fy=2*F, Fa=3*F, Ft=5*F, Fydot=2*Q, Fadot=3*Q. IDA J=Fy+cj*Fydot.",
+      "analytic_atol": 1e-12,
+      "analytic_rtol": 1e-12,
+      "joint_direction_steps": [
+        0.0001,
+        1e-05,
+        1e-06,
+        1e-07
+      ],
+      "finite_difference_relative_limit": 5e-07,
+      "finite_difference_fixed_scale": 1.0,
+      "required_adjacent_step_passes": 2,
+      "reference_error_bound": 1e-14,
+      "cases": [
+        "nonzero ydot and adot",
+        "several cj values including zero",
+        "separate input and explicit-time changes",
+        "mixed state/input/time direction",
+        "right-end BE Qy-hRy with fixed left state"
+      ],
+      "storage_delta_rule": "Use finite Q(right)-Q(left) via stable analytic increments, including input/time changes; never replace by Qy*delta_y",
+      "norm": "abs(FD-analytic)/max(1,abs(analytic)) for scalar JVP; infinity norm for assembled vectors",
+      "mask": "every declared derivative, point, cj and direction",
+      "fixed_scale": 1,
+      "fixed_inputs": {
+        "points": [
+          {
+            "y": 0.1,
+            "a": -0.2,
+            "t": 0.03
+          },
+          {
+            "y": -0.3,
+            "a": 0.1,
+            "t": 0.02
+          }
+        ],
+        "rates": [
+          {
+            "ydot": 0.4,
+            "adot": -0.7
+          },
+          {
+            "ydot": 0,
+            "adot": 0
+          },
+          {
+            "ydot": -0.2,
+            "adot": 0.1
+          }
+        ],
+        "cj": [
+          0,
+          0.1,
+          4,
+          100
+        ],
+        "directions": [
+          [
+            1,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ],
+          [
+            1,
+            2,
+            -1,
+            0.5
+          ]
+        ],
+        "direction_order": [
+          "dy",
+          "da",
+          "dt",
+          "d_adot"
+        ],
+        "storage_delta": {
+          "left": {
+            "y": 0.1,
+            "a": -0.2,
+            "t": 0.03
+          },
+          "increment": {
+            "dy": 0.02,
+            "da": 0.01,
+            "dt": 0.005
+          }
+        }
+      },
+      "direction_normalization": "Divide each four-component direction by its Euclidean norm; d_ydot=cj*dy",
+      "stencil": "Central difference [F(t+eps*dt,y+eps*dy,ydot+eps*cj*dy,a+eps*da,adot+eps*d_adot)-F(t-eps*dt,y-eps*dy,ydot-eps*cj*dy,a-eps*da,adot-eps*d_adot)]/(2*eps)",
+      "analytic_jvp": "Fy*dy+Fa*da+Ft*dt+Fydot*cj*dy+Fadot*d_adot",
+      "adjacent_rule": "At least two adjacent eps entries must pass for every point/rate/cj/direction. Report all errors; no cherry-picking directions.",
+      "reference_evaluation": "Decimal80 exponential and analytic derivatives; account for float conversion separately at comparison boundary.",
+      "budget_basis": "Central-difference truncation plus roundoff should exhibit a plateau; analytic matrix tolerance is independently stricter. Numeric acceptance never replaces exact support coverage."
+    },
+    {
+      "id": "NC05",
+      "quantity": "shared-capacity mass matrix and feasibility",
+      "unit": "dimensionless occupancy",
+      "reference": "theta_i=exp(q_i)/(1+sum(exp(q))); theta=[0.2,0.3], vacancy=0.5 gives Qy/C=[[0.16,-0.06],[-0.06,0.21]]",
+      "atol": 1e-13,
+      "rtol": 1e-12,
+      "reference_error_bound": 1e-15,
+      "cases": [
+        "cross derivatives",
+        "near saturation",
+        "zero inventory identity",
+        "capacity changes carried in Qa or Qt once"
+      ],
+      "feasibility": "theta_i >= 0 and sum(theta_i) <= 1; independent sign constraints alone do not certify this",
+      "rank_policy": "Record rank loss/conditioning at capacity boundaries; reject an unsupported singular initialization",
+      "norm": "matrix infinity norm for derivatives; component maximum for storage/delta",
+      "mask": "all species, cross terms and explicit inactive zero species",
+      "fixed_scale": 1,
+      "fixed_inputs": {
+        "capacity": 1,
+        "occupancies": [
+          [
+            0.2,
+            0.3
+          ],
+          [
+            0.499999,
+            0.499999
+          ],
+          [
+            1e-12,
+            2e-12
+          ]
+        ],
+        "zero_case": {
+          "occupancies": [
+            0,
+            0
+          ],
+          "representation": "explicit inactive species; no finite log/softmax coordinate"
+        },
+        "invalid_occupancy": [
+          0.6,
+          0.5
+        ],
+        "capacity_change": {
+          "left": 1,
+          "right": 2,
+          "theta": [
+            0.2,
+            0.3
+          ],
+          "fixed_coordinate_delta_Q": [
+            0.2,
+            0.3
+          ],
+          "fixed_population_new_theta": [
+            0.1,
+            0.15
+          ]
+        }
+      },
+      "rank_rule": "Use the NC03 relative SVD criterion on the active subspace; explicit zero species are excluded only with zero physical inventory identity",
+      "reference_evaluation": "Exact C*(diag(theta)-outer(theta,theta)); independent differentiation of that expression for Hessian contractions.",
+      "budget_basis": "Cross derivatives and storage are analytic local quantities; capacity feasibility is an exact domain check."
+    },
+    {
+      "id": "NC06",
+      "quantity": "electrode current, charge and RC response",
+      "unit": "A, C, V, s and S under explicit port area",
+      "reference": "Pure capacitor Qleft=C*V, Qright=-C*V, Ileft=C*Vdot, Iright=-C*Vdot. RC internal parallel discharge obeys V=V0*exp(-t/(R*C)), I_external=0, Ic=V/R and dQleft/dt=-V/R.",
+      "cases": [
+        "positive and negative ramp",
+        "two opposite port orientations",
+        "pure algebraic capacitor with no internal storage state",
+        "open-circuit constraint",
+        "voltage event impulse",
+        "immutable accepted-step history"
+      ],
+      "algebraic_atol": 1e-13,
+      "algebraic_rtol": 1e-12,
+      "trajectory_atol": 1e-10,
+      "trajectory_rtol": 1e-08,
+      "integrated_charge_atol": 1e-11,
+      "integrated_charge_rtol": 1e-08,
+      "reference_error_bound": 1e-14,
+      "history_rule": "IDA derivative is not a one-interval finite difference; use qualified dense output plus independent interval integration",
+      "norm": "component maximum for state/port/charge, absolute complex error for admittance, interval and cumulative charge separately",
+      "mask": "both ports, all observation times, every accepted interval and both event limits",
+      "fixed_scale": 1,
+      "port_convention": {
+        "current": "positive into the device",
+        "voltage": "Vleft-Vright",
+        "electrode_charge": "Qe=-area*outward_normal.dot(D)",
+        "total_current": "I=-area*outward_normal.dot(Jc)+dQe/dt",
+        "conduction_current": "Ic=-area*outward_normal.dot(Jc)",
+        "charge_balance": "delta_Qe=integral(I-Ic)dt",
+        "left_outward_normal": -1,
+        "right_outward_normal": 1
+      },
+      "fixed_inputs": {
+        "capacitor": {
+          "epsilon": 4,
+          "area": 3,
+          "length": 6,
+          "C": 2,
+          "V0": 0.2,
+          "slopes": [
+            0.3,
+            -0.3
+          ],
+          "times": [
+            0,
+            0.25,
+            0.5,
+            1
+          ],
+          "frequencies_Hz": [
+            0.1,
+            1,
+            10
+          ]
+        },
+        "rc": {
+          "C": 2,
+          "R": 3,
+          "V0": 1,
+          "observation_times": [
+            0,
+            0.03,
+            0.3,
+            1,
+            3,
+            6
+          ],
+          "end_time": 6,
+          "ida": {
+            "rtol": 1e-10,
+            "atol": 1e-12,
+            "max_step": 0.1,
+            "max_order": 5
+          },
+          "be_step_sizes": [
+            0.2,
+            0.1,
+            0.05
+          ],
+          "be_expected": "V_n=V0/(1+h/(R*C))^n",
+          "be_discrete_state_atol": 1e-12,
+          "be_discrete_state_rtol": 1e-11,
+          "be_continuous_finest_error_limit": 0.002,
+          "be_adjacent_error_ratio": [
+            1.7,
+            2.2
+          ],
+          "total_external_current": 0,
+          "conduction_current": "V/R at left; -V/R at right",
+          "observation_times_scope": "continuous IDA only",
+          "be_comparison_times": "Every point of each own fixed BE grid from0 to6; no interpolation to the IDA observation_times",
+          "be_continuous_error_norm": "Maximum absolute error over every point of each own BE grid on [0,6]; compute adjacent ratios from those maxima"
+        },
+        "event": {
+          "time": 0.5,
+          "C": 2,
+          "V_before": 0,
+          "V_after": 0.1,
+          "expected_left_impulse_charge": 0.2,
+          "expected_right_impulse_charge": -0.2
+        }
+      },
+      "reference_evaluation": "Decimal80 exponential for continuous RC; exact rational BE recurrence; adaptive independent interval quadrature with absolute target1e-12 and relative target1e-12 on qualified local interpolation.",
+      "budget_basis": "Continuous IDA trajectory gate and exact discrete BE gate are separate. BE time refinement has independently fixed steps/domain/error; capacitor algebraic/feedthrough gate uses exact identities.",
+      "reference_error_scope": "reference_error_bound=1e-14 covers analytic evaluation only; independent quadrature error is separately bounded and included in the one-third reference-error budget",
+      "quadrature_error_policy": "Record the actual quadrature error estimate and an independent tighter-rule/refinement discrepancy. Their conservative combined bound plus analytic error must be <= allowed charge error/3; requested quadrature tolerance is not an accuracy certificate."
+    },
+    {
+      "id": "NC07",
+      "quantity": "nonlocal sparse support and dense equivalence",
+      "unit": "dimensionless scaled residual",
+      "reference": "R=u*(v^T*y) has Jacobian u*v^T including remote support; a global auxiliary variable gives the same operator after elimination",
+      "atol": 1e-12,
+      "rtol": 1e-11,
+      "reference_error_bound": 1e-14,
+      "cases": [
+        "structural nonzeros with zero current coefficients",
+        "global inventory border",
+        "D=0 splits ion domains",
+        "moving support forces structural recompile",
+        "sparse versus dense solve on small systems"
+      ],
+      "large_scale_qualification": "Separate bounded P02-07 runs must measure 1e4-1e5 unknowns; small equivalence does not certify scale",
+      "norm": "maximum component residual/state error and full structural edge equality",
+      "mask": "all rows/columns including global borders and remote derivatives",
+      "fixed_scale": 1,
+      "fixed_inputs": {
+        "alpha": 2,
+        "u": [
+          1,
+          0,
+          2,
+          -1
+        ],
+        "v": [
+          0.1,
+          0.2,
+          0.05,
+          0.3
+        ],
+        "b": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "operator": "A=alpha*I-u*v^T",
+        "reference_inverse": "x=b/alpha+u*(v^T*b)/(alpha*(alpha-v^T*u))",
+        "auxiliary": "alpha*x-u*z=b; z-v^T*x=0",
+        "declared_u_support": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "declared_v_support": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "domain_cases": [
+          {
+            "D_faces": [
+              1,
+              1,
+              1
+            ],
+            "domains": [
+              [
+                0,
+                1,
+                2,
+                3
+              ]
+            ]
+          },
+          {
+            "D_faces": [
+              1,
+              0,
+              1
+            ],
+            "domains": [
+              [
+                0,
+                1
+              ],
+              [
+                2,
+                3
+              ]
+            ]
+          },
+          {
+            "D_faces": [
+              1,
+              1e-30,
+              1
+            ],
+            "domains": [
+              [
+                0,
+                1,
+                2,
+                3
+              ]
+            ]
+          }
+        ],
+        "moving_support": [
+          [
+            [
+              0,
+              2
+            ]
+          ],
+          [
+            [
+              0,
+              3
+            ]
+          ]
+        ]
+      },
+      "invertibility": "alpha!=0 and alpha!=dot(v,u); check before solve",
+      "reference_evaluation": "Independent Decimal80 Sherman-Morrison formula and explicit small dense assembly.",
+      "budget_basis": "Algebraic equivalence and structural support only; large device/2D scale remains a separate gate."
+    },
+    {
+      "id": "NC08",
+      "quantity": "sub-ULP physical increment and stable driving force",
+      "unit": "m^-3 for density increment; declared units for other fields",
+      "reference": "Decimal precision80 independent oracle for n0*expm1(delta_log_n), n0=1e22 and delta_log_n in [0,+1e-17,-1e-17,+1e-16,-1e-16]",
+      "density_increment_atol": 1e-07,
+      "density_increment_rtol": 1e-12,
+      "reference_error_bound": 1e-60,
+      "zero_rule": "strict zero stays zero; weak nonzero remains distinguishable even when rounded absolute state is unchanged",
+      "cases": [
+        "high/low word roundtrip",
+        "stable face affinity",
+        "weak capture",
+        "displacement increment",
+        "saved183/309 coordinate roundtrip"
+      ],
+      "native_r1_qualification": "Original source-bound R1 thresholds, ports and low-word identities remain separate and unchanged",
+      "norm": "Decimal comparison of every increment component and correct strict-zero/nonzero classification",
+      "mask": "all signs and zero; high and low words; both serialization and restored evaluation",
+      "fixed_scale": "absolute/relative density increment as declared, not absolute density",
+      "decimal_inputs": {
+        "n0": "1e22",
+        "delta_log_n": [
+          "0",
+          "1e-17",
+          "-1e-17",
+          "1e-16",
+          "-1e-16"
+        ]
+      },
+      "reference_evaluation": "Construct inputs from exact decimal strings. Decimal80 evaluates n0*sum(x^k/k!,k=1..5); no exp(x)-1 subtraction. Keep the reference decimal until comparing Decimal.from_float(candidate) or both exact binary words.",
+      "decimal_truncation_error_bound": 1.4e-77,
+      "decimal_arithmetic_error_bound": 1e-70,
+      "float_reference_conversion": "If a reference is rounded to float64, add 0.5ULP of that reference and the exact decimal-to-binary input quantization contribution; never claim the float reference has error1e-60.",
+      "weak_flux": {
+        "D_m2_s": 0.0001,
+        "dx_m": 1e-08,
+        "q_C": "1.602176634e-19",
+        "reference": "q*D/dx*delta_n",
+        "atol_A_m2": 1e-24,
+        "rtol": 1e-12
+      },
+      "displacement": {
+        "D0_C_m2": "1e-2",
+        "increment_C_m2": "1e-22",
+        "dt_s": "1e-3",
+        "expected_current_A_m2": "1e-19",
+        "atol_A_m2": 1e-31,
+        "rtol": 1e-12
+      },
+      "capture": {
+        "capture_coefficient": 1e-16,
+        "trap_density": 10000000000000000,
+        "occupancy": 0.5,
+        "reference": "capture_coefficient*trap_density*(1-occupancy)*delta_n",
+        "atol": 1e-07,
+        "rtol": 1e-12
+      },
+      "budget_basis": "Stable five-term series has a bounded next term for |x|<=1e-16; tolerances resolve the weak increment and cannot be rescaled by1e22 absolute population."
+    }
+  ],
+  "review_history": [
+    {
+      "reviewer_session": "01a10b25-6919-7092-bfe7-886f40aa9f46",
+      "verdict": "revise_before_freeze",
+      "reviewed_sha256": "15f7d024415336c6160226bf4b86147ee050bb4f6bfd9a849731ef56dda969c5",
+      "changes": "explicit inputs/norms/masks, stable Decimal series, port signs and conduction charge balance, BE versus IDA RC gates, nonzero trap kinetics, rank witnesses and invertible nonlocal operator"
+    }
+  ]
+}
