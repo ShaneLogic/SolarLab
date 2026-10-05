@@ -83,6 +83,26 @@ class _FloatMapAuthority(ImmutableArrays):
     def validate_transition(self, left, right):
         return None
 
+    def temporal_log_ratio(self, left, variable_id, indices):
+        before, after = left.field(variable_id), self.field(variable_id)
+        change = self.delta_from(left)[variable_id]
+        if indices is not None:
+            before, after, change = before.take(indices), after.take(indices), change.take(indices)
+        old, new = before.values, after.values
+        if np.any(old <= 0) or np.any(new <= 0):
+            raise ContractError("log_ratio_requires_positive_fields")
+        relative = change.values/old
+        close = np.abs(relative) < 0.5
+        value = np.log(new)-np.log(old)
+        value[close] = np.log1p(relative[close])
+        return FloatArray(value)
+
+    def face_delta(self, left, variable_id, pairs):
+        return None
+
+    def electrochemical_delta(self, left, density_id, potential_id, pairs, thermal_voltage, potential_sign):
+        return None
+
 
 @dataclass(frozen=True, init=False)
 class _FloatMapArray(FloatArray):

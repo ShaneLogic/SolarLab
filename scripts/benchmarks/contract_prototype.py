@@ -275,6 +275,12 @@ class StateAuthority(Protocol):
     def validate_transition(self, left: Point, right: Point) -> None: ...
     def electrochemical_difference(self, density_id: str, potential_id: str, pairs: ArrayLike,
                                    thermal_voltage: float, potential_sign: int) -> PhysicalArray | None: ...
+    def temporal_log_ratio(self, left: StateView, variable_id: str,
+                           indices: ArrayLike | None) -> PhysicalArray | None: ...
+    def face_delta(self, left: StateView, variable_id: str, pairs: ArrayLike) -> PhysicalArray | None: ...
+    def electrochemical_delta(self, left: StateView, density_id: str, potential_id: str,
+                              pairs: ArrayLike, thermal_voltage: float,
+                              potential_sign: int) -> PhysicalArray | None: ...
 
 
 @dataclass(frozen=True)
@@ -318,6 +324,15 @@ class ResolvedAuthority:
         return None
 
     def validate_transition(self, left: Point, right: Point) -> None:
+        return None
+
+    def temporal_log_ratio(self, left, variable_id, indices):
+        return None
+
+    def face_delta(self, left, variable_id, pairs):
+        return None
+
+    def electrochemical_delta(self, left, density_id, potential_id, pairs, thermal_voltage, potential_sign):
         return None
 
 
@@ -464,6 +479,98 @@ class StateIncrement:
             raise ContractError("invalid_canonical_increment")
         if any(self.fields[key].identity_bytes() != canonical[key].identity_bytes() for key in self.fields):
             raise ContractError("increment_authority_mismatch")
+
+    def _log_ratio(self, left: Point, right: Point, variable_id: str,
+                   indices: ArrayLike | None) -> PhysicalArray:
+        if variable_id not in self.fields:
+            raise ContractError("unknown_variable")
+        before, after = left.state.field(variable_id), right.state.field(variable_id)
+        if indices is not None:
+            indices = integer_indices(indices)
+            if not before.shape:
+                raise ContractError("index_outside_support")
+            before, after = before.take(indices), after.take(indices)
+        value = right.state.authority.temporal_log_ratio(left.state, variable_id, indices)
+        if value is None:
+            value = after.log_ratio(before)
+        if value.shape != after.shape or not value.is_finite():
+            raise ContractError("invalid_temporal_log_ratio")
+        return value.immutable_copy()
+
+    def log_ratio(self, left: Point, right: Point, variable_id: str, *,
+                  indices: ArrayLike | None = None) -> PhysicalArray:
+        """Finite temporal log(n_right/n_left) on selected positive populations.
+
+        Selection follows PhysicalArray.take and occurs before logarithms, so
+        inactive zero populations outside the selection need not be evaluated.
+        Mapped authorities retain their generating primitives through this step.
+        """
+        self.validate(left, right)
+        return self._log_ratio(left, right, variable_id, indices)
+
+    def _pairs(self, variable_id: str, pairs: ArrayLike) -> NDArray[np.intp]:
+        if variable_id not in self.fields:
+            raise ContractError("unknown_variable")
+        pairs = integer_indices(pairs)
+        shape = self.fields[variable_id].shape
+        if (len(shape) != 1 or pairs.ndim != 2 or pairs.shape[1] != 2
+                or np.any(pairs < 0) or np.any(pairs >= shape[0])):
+            raise ContractError("face_outside_support")
+        return pairs
+
+    def _face_delta(self, left: Point, right: Point, variable_id: str,
+                    pairs: NDArray[np.intp]) -> PhysicalArray:
+        value = right.state.authority.face_delta(left.state, variable_id, pairs)
+        if value is None:
+            change = self.field(variable_id)
+            value = change.take(pairs[:, 1]).difference(change.take(pairs[:, 0]))
+        if value.shape != (len(pairs),) or not value.is_finite():
+            raise ContractError("invalid_temporal_face_delta")
+        return value
+
+    def face_delta(self, left: Point, right: Point, variable_id: str, pairs: ArrayLike, *,
+                   arithmetic: AssemblyArithmetic | None = None) -> Any:
+        """Finite change of a spatial difference for an affine mapped field.
+
+        A mapped provider combines temporal and spatial primitive terms before
+        projection. Explicitly resolved fields use their declared physical words.
+        """
+        self.validate(left, right)
+        pairs = self._pairs(variable_id, pairs)
+        a = arithmetic if arithmetic is not None else FloatArithmetic()
+        return a.freeze(a.array(self._face_delta(left, right, variable_id, pairs)))
+
+    def electrochemical_delta(self, left: Point, right: Point, density_id: str,
+                              potential_id: str, pairs: ArrayLike, thermal_voltage: float, *,
+                              potential_sign: int, arithmetic: AssemblyArithmetic | None = None) -> Any:
+        """Change of log(n_j/n_i)+s*(phi_j-phi_i)/VT across these endpoints.
+
+        Shared named primitives cancel before projection; subtracting two
+        separately projected spatial affinities is not the mapped definition.
+        """
+        self.validate(left, right)
+        if not np.isfinite(thermal_voltage) or thermal_voltage <= 0 or potential_sign not in {-1, 1}:
+            raise ContractError("invalid_activity_parameters")
+        pairs = self._pairs(density_id, pairs)
+        self._pairs(potential_id, pairs)
+        specs = {spec.id: spec for spec in right.state.layout.variables}
+        if specs[potential_id].unit != VOLT:
+            raise ContractError("activity_potential_unit_mismatch")
+        if self.field(density_id).shape != self.field(potential_id).shape:
+            raise ContractError("activity_support_shape_mismatch")
+        a = arithmetic if arithmetic is not None else FloatArithmetic()
+        value = right.state.authority.electrochemical_delta(
+            left.state, density_id, potential_id, pairs, thermal_voltage, potential_sign)
+        if value is not None:
+            if value.shape != (len(pairs),) or not value.is_finite():
+                raise ContractError("invalid_temporal_electrochemical_delta")
+            return a.freeze(a.array(value))
+        temporal = self._log_ratio(left, right, density_id, pairs.ravel())
+        even, odd = np.arange(0, 2*len(pairs), 2), np.arange(1, 2*len(pairs), 2)
+        density = a.array(temporal.take(odd).difference(temporal.take(even)))
+        potential = a.array(self._face_delta(left, right, potential_id, pairs))
+        drop = a.divide(potential, a.array(np.full(potential.shape, thermal_voltage)))
+        return a.freeze(a.add(density, a.weighted(drop, np.full(drop.shape, potential_sign))))
 
 
 @dataclass(frozen=True)

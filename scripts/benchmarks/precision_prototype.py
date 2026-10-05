@@ -305,6 +305,11 @@ def _exact_primitive_sum(left, right) -> PrimitiveExpansion:
     return PrimitiveExpansion._owned(_primitive_words((*left.words, *right.words)))
 
 
+def _exact_primitive_difference(left, right) -> PrimitiveExpansion:
+    right = PrimitiveExpansion.from_value(right)
+    return _exact_primitive_sum(left, PrimitiveExpansion._owned(tuple(-word for word in right.words)))
+
+
 def _linear_map_sum(terms: tuple[tuple[float, DD | PrimitiveExpansion], ...]) -> DD:
     """One bounded map contraction, with DD products preserved before summing.
 
@@ -361,6 +366,8 @@ class MappedAuthority:
     local_primitives: Mapping[str, PrimitiveExpansion] | None = None
     previous_authority_identity: str | None = None
     previous_point_identity: str | None = None
+    coordinate_kind: str = "local"
+    fixed_reference: Point | None = None
     identity: str = field(init=False)
     root_identity: str = field(init=False)
     map_identity: str = field(init=False)
@@ -420,6 +427,14 @@ class MappedAuthority:
             raise ContractError("invalid_authority_binding")
         object.__setattr__(self, "root_identity", ResolvedAuthority(self.layout.identity, self.anchor).identity)
         object.__setattr__(self, "map_identity", _map_identity(self.layout, self.map_name, modes, parameters))
+        if self.coordinate_kind not in {"local", "fixed-reference"}:
+            raise ContractError("unknown_coordinate_meaning")
+        if self.coordinate_kind == "local" and self.fixed_reference is not None:
+            raise ContractError("unexpected_fixed_reference")
+        if self.coordinate_kind == "fixed-reference" and (
+                self.map_name != "relative-fields" or any(mode != "linear" for mode in modes.values())
+                or not isinstance(self.fixed_reference, Point)):
+            raise ContractError("affine_trial_requires_linear_reference")
         if (self.previous_primitives is None) != (self.local_primitives is None):
             raise ContractError("incomplete_authority_transition")
         if self.local_primitives is not None:
@@ -436,15 +451,26 @@ class MappedAuthority:
         elif any(not value.is_zero() for value in self.primitives.values()):
             raise ContractError("authority_transition_required")
         order = [spec.id for spec in self.layout.variables] if self.map_name == "relative-fields" else sorted(expected)
-        local_coordinates = (np.concatenate([self.local_primitives[key].high.ravel() for key in order])
-                             if self.local_primitives is not None and order else np.zeros(sum(int(np.prod(expected[key])) for key in order)))
-        if self.coordinates.shape != local_coordinates.shape or self.coordinates.tobytes() != local_coordinates.tobytes():
+        coordinate_primitives = self.local_primitives
+        if self.coordinate_kind == "fixed-reference":
+            if self.local_primitives is None:
+                raise ContractError("fixed_reference_transition_required")
+            base = self._fixed_reference_primitives()
+            coordinate_primitives = {key: _exact_primitive_difference(self.primitives[key], base[key])
+                                     for key in expected}
+        expected_coordinates = (np.concatenate([coordinate_primitives[key].high.ravel() for key in order])
+                                if coordinate_primitives is not None and order else np.zeros(sum(int(np.prod(expected[key])) for key in order)))
+        if self.coordinates.shape != expected_coordinates.shape or self.coordinates.tobytes() != expected_coordinates.tobytes():
             raise ContractError("authority_coordinate_projection_mismatch")
-        prefix = f"relative:{self.map_identity}:" if self.map_name == "relative-fields" else "physical-input-lift:"
-        if not self.reference.startswith(prefix):
-            raise ContractError("authority_reference_mismatch")
-        if self.local_primitives is not None and self.reference != prefix + self.previous_point_identity:
-            raise ContractError("authority_predecessor_reference_mismatch")
+        if self.coordinate_kind == "fixed-reference":
+            if self.reference != f"affine-trial:{self.map_identity}:{self.fixed_reference.identity}":
+                raise ContractError("authority_fixed_reference_mismatch")
+        else:
+            prefix = f"relative:{self.map_identity}:" if self.map_name == "relative-fields" else "physical-input-lift:"
+            if not self.reference.startswith(prefix):
+                raise ContractError("authority_reference_mismatch")
+            if self.local_primitives is not None and self.reference != prefix + self.previous_point_identity:
+                raise ContractError("authority_predecessor_reference_mismatch")
         object.__setattr__(self, "identity", _digest(self.payload()))
         for spec in self.layout.variables:
             value = self._project(spec.id)
@@ -459,6 +485,20 @@ class MappedAuthority:
     @property
     def layout_identity(self) -> str:
         return self.layout.identity
+
+    def _fixed_reference_primitives(self) -> Mapping[str, PrimitiveExpansion]:
+        reference = self.fixed_reference
+        if not isinstance(reference, Point) or reference.state.layout.identity != self.layout.identity:
+            raise ContractError("affine_trial_reference_layout")
+        authority = reference.state.authority
+        if isinstance(authority, MappedAuthority):
+            if authority.coordinate_kind != "local":
+                raise ContractError("affine_trial_reference_rebase_forbidden")
+            self._compatible(authority)
+            return authority.primitives
+        if not isinstance(authority, ResolvedAuthority) or authority.identity != self.root_identity:
+            raise ContractError("affine_trial_reference_root_mismatch")
+        return {key: PrimitiveExpansion.from_value(np.zeros(value.shape)) for key, value in self.anchor.items()}
 
     def _primitive_shapes(self) -> dict[str, tuple[int, ...]]:
         shapes = {spec.id: spec.shape for spec in self.layout.variables}
@@ -479,22 +519,23 @@ class MappedAuthority:
 
     def _drive_terms(self, name: str, selection: np.ndarray) -> tuple[tuple[float, PrimitiveExpansion], ...]:
         """The same named map as _drive, before reducing its primitive terms."""
-        if self.map_name == "relative-fields":
-            coefficients = ((1.0, name),)
-        else:
-            vt = self.parameters["thermal_voltage_V"]
-            coefficients = {
-                "n_m3": ((1.0, "electron"), (1.0, "potential")),
-                "p_m3": ((1.0, "hole"), (-1.0, "potential")),
-                "phi_V": ((vt, "potential"), (1.0, "voltage_lift")),
-                "dqfn_V": ((vt, "electron"), (-1.0, "voltage_lift")),
-                "dqfp_V": ((vt, "hole"), (1.0, "voltage_lift")),
-                "trace_potential_V": ((vt, "trace_potential"), (1.0, "trace_voltage_lift")),
-                "positive_m3": ((1.0, "positive"),), "occupancy": ((1.0, "occupancy"),),
-                "trace_state_m3": ((1.0, "trace_density"),),
-            }.get(name, ())
         return tuple((coefficient, self.primitives[role].take_flat(selection))
-                     for coefficient, role in coefficients)
+                     for coefficient, role in self._drive_coefficients(name))
+
+    def _drive_coefficients(self, name: str) -> tuple[tuple[float, str], ...]:
+        if self.map_name == "relative-fields":
+            return ((1.0, name),)
+        vt = self.parameters["thermal_voltage_V"]
+        return {
+            "n_m3": ((1.0, "electron"), (1.0, "potential")),
+            "p_m3": ((1.0, "hole"), (-1.0, "potential")),
+            "phi_V": ((vt, "potential"), (1.0, "voltage_lift")),
+            "dqfn_V": ((vt, "electron"), (-1.0, "voltage_lift")),
+            "dqfp_V": ((vt, "hole"), (1.0, "voltage_lift")),
+            "trace_potential_V": ((vt, "trace_potential"), (1.0, "trace_voltage_lift")),
+            "positive_m3": ((1.0, "positive"),), "occupancy": ((1.0, "occupancy"),),
+            "trace_state_m3": ((1.0, "trace_density"),),
+        }.get(name, ())
 
     def _drive_difference(self, other: MappedAuthority, name: str,
                           right_selection: np.ndarray, left_selection: np.ndarray) -> DD:
@@ -504,7 +545,15 @@ class MappedAuthority:
         return _linear_map_sum(terms) if terms else DD(np.zeros(right_selection.shape))
 
     def _project(self, name: str) -> DD:
-        base, drive, mode = self.anchor[name].as_dd(), self._drive(name), self.modes[name]
+        base = self.anchor[name].as_dd()
+        if self.coordinate_kind == "fixed-reference":
+            selection = np.arange(int(np.prod(base.shape)), dtype=np.intp).reshape(base.shape)
+            # V4 affine trials contract the physical anchor and every source
+            # primitive together. Projecting the drive first could erase a
+            # small positive or negative remainder at complete depletion.
+            return _linear_map_sum(((1.0, base),)+self._drive_terms(name, selection))
+        # Preserve the declared projection semantics of historical v3 maps.
+        drive, mode = self._drive(name), self.modes[name]
         if mode in {"log", "log_zero"}:
             return base*drive.exp()
         if mode == "logit":
@@ -538,12 +587,135 @@ class MappedAuthority:
             raise ContractError("incompatible_state_authority")
         if left.identity != right.identity and left.identity != self.previous_point_identity:
             raise ContractError("increment_predecessor_point_mismatch")
+        if self.coordinate_kind == "fixed-reference" and left.identity != self.fixed_reference.identity:
+            authority = left.state.authority
+            if (not isinstance(authority, MappedAuthority) or authority.coordinate_kind != "fixed-reference"
+                    or authority.fixed_reference.identity != self.fixed_reference.identity):
+                raise ContractError("trial_predecessor_reference_mismatch")
+            self._compatible(authority)
+
+    def _temporal_primitives(self, left: StateView) -> Mapping[str, PrimitiveExpansion]:
+        if left.authority.identity == self.identity:
+            return {key: PrimitiveExpansion.from_value(np.zeros(value.shape))
+                    for key, value in self.primitives.items()}
+        if left.authority.identity != self.previous_authority_identity or self.local_primitives is None:
+            raise ContractError("increment_transition_anchor_mismatch")
+        if isinstance(left.authority, MappedAuthority):
+            self._compatible(left.authority)
+            if any(left.authority.primitives[key].identity_bytes()
+                   != self.previous_primitives[key].identity_bytes() for key in self.primitives):
+                raise ContractError("increment_transition_primitive_mismatch")
+        elif (not isinstance(left.authority, ResolvedAuthority)
+              or left.authority.identity != self.root_identity
+              or any(not value.is_zero() for value in self.previous_primitives.values())):
+            raise ContractError("incompatible_state_authority")
+        return self.local_primitives
+
+    def temporal_log_ratio(self, left: StateView, variable_id: str,
+                           indices: ArrayLike | None) -> DoubleArray:
+        changes = self._temporal_primitives(left)
+        before, after = left.field(variable_id), self.field(variable_id)
+        selection = np.arange(int(np.prod(after.shape)), dtype=np.intp).reshape(after.shape)
+        if indices is not None:
+            before, after = before.take(indices), after.take(indices)
+            selection = selection[integer_indices(indices)]
+        old, new = before.as_dd(), after.as_dd()
+        if np.any(old <= 0) or np.any(new <= 0):
+            raise ContractError("log_ratio_requires_positive_fields")
+        if self.modes[variable_id] in {"log", "log_zero"}:
+            terms = tuple((coefficient, changes[role].take_flat(selection))
+                          for coefficient, role in self._drive_coefficients(variable_id))
+            return DoubleArray.from_dd(_linear_map_sum(terms) if terms else DD(np.zeros(after.shape)))
+        change = self.delta_from(left)[variable_id]
+        if indices is not None:
+            change = change.take(indices)
+        relative = change.as_dd()/old
+        close = (relative > -0.5) & (relative < 0.5)
+        high, low = np.zeros(after.shape), np.zeros(after.shape)
+        if np.any(close):
+            value = relative[close].log1p(); high[close], low[close] = value.hi, value.lo
+        if np.any(~close):
+            value = _log_ratio(new[~close], old[~close]); high[~close], low[~close] = value.hi, value.lo
+        return DoubleArray(high, low)
+
+    def _temporal_face_form(self, left: StateView, pairs: ArrayLike,
+                            coefficients: tuple[tuple[float, str], ...]) -> DoubleArray:
+        changes = self._temporal_primitives(left)
+        pairs = integer_indices(pairs)
+        # Only identical named terms with exactly opposite coefficients cancel.
+        # Other coefficients/products remain separate through the DD reduction.
+        remaining: list[tuple[float, str]] = []
+        for coefficient, role in coefficients:
+            for index, (previous, name) in enumerate(remaining):
+                if name == role and previous == -coefficient:
+                    remaining.pop(index)
+                    break
+            else:
+                remaining.append((coefficient, role))
+        terms = tuple(term for coefficient, role in remaining for term in (
+            (coefficient, changes[role].take_flat(pairs[:, 1])),
+            (-coefficient, changes[role].take_flat(pairs[:, 0]))))
+        return DoubleArray.from_dd(_linear_map_sum(terms) if terms else DD(np.zeros(len(pairs))))
+
+    def face_delta(self, left: StateView, variable_id: str, pairs: ArrayLike) -> DoubleArray:
+        if self.modes[variable_id] not in {"linear", "inactive", "fixed"}:
+            raise ContractError("face_delta_requires_affine_map")
+        return self._temporal_face_form(left, pairs, self._drive_coefficients(variable_id))
+
+    def _affine_log_face_delta(self, left: StateView, density_id: str, pairs: np.ndarray) -> DD:
+        before, after = left.field(density_id), self.field(density_id)
+        i, j = pairs[:, 0], pairs[:, 1]
+        n0l, n0r = before.take(i).as_dd(), before.take(j).as_dd()
+        n1l = after.take(i).as_dd()
+        initial_drop = before.take(j).difference(before.take(i)).as_dd()
+        drop_change = self.face_delta(left, density_id, pairs).as_dd()
+        change_left = self.delta_from(left)[density_id].take(i).as_dd()
+        # Change of the spatial density ratio, before taking its logarithm:
+        # (n1R*n0L)/(n1L*n0R)-1 =
+        # [n0L*delta(nR-nL) - (n0R-n0L)*delta(nL)]/(n0R*n1L).
+        # Source-bound spatial differences retain an existing tiny gradient
+        # when both populations receive the same large affine increment.
+        ratio_change = (n0l*drop_change-initial_drop*change_left)/(n0r*n1l)
+        close = (ratio_change > -0.5) & (ratio_change < 0.5)
+        high, low = np.zeros(len(pairs)), np.zeros(len(pairs))
+        if np.any(close):
+            value = ratio_change[close].log1p()
+            high[close], low[close] = value.hi, value.lo
+        if np.any(~close):
+            # A large ratio change has no near-zero temporal face signal;
+            # individual finite logs avoid log1p rounding at depletion.
+            value = (self.temporal_log_ratio(left, density_id, j[~close]).as_dd()
+                     - self.temporal_log_ratio(left, density_id, i[~close]).as_dd())
+            high[~close], low[~close] = value.hi, value.lo
+        return DD(high, low)
+
+    def electrochemical_delta(self, left: StateView, density_id: str, potential_id: str,
+                              pairs: ArrayLike, thermal_voltage: float,
+                              potential_sign: int) -> DoubleArray | None:
+        if self.modes[potential_id] not in {"linear", "inactive", "fixed"}:
+            raise ContractError("temporal_activity_requires_affine_potential")
+        pairs = integer_indices(pairs)
+        for value in (left.field(density_id), self.field(density_id)):
+            if np.any(value.take(pairs.ravel()).as_dd() <= 0):
+                raise ContractError("log_ratio_requires_positive_fields")
+        if self.modes[density_id] in {"linear", "inactive", "fixed"}:
+            density = self._affine_log_face_delta(left, density_id, pairs)
+            potential = self.face_delta(left, potential_id, pairs).as_dd()
+            return DoubleArray.from_dd(density+potential_sign*potential/thermal_voltage)
+        if self.modes[density_id] not in {"log", "log_zero"}:
+            return None
+        coefficients = tuple((thermal_voltage*coefficient, role)
+                             for coefficient, role in self._drive_coefficients(density_id)) + tuple(
+            (potential_sign*coefficient, role) for coefficient, role in self._drive_coefficients(potential_id))
+        return DoubleArray.from_dd(self._temporal_face_form(left, pairs, coefficients).as_dd()/thermal_voltage)
 
     def project(self, name: str) -> FieldProjection:
         value = DoubleArray.from_dd(self._project(name))
         exact_root = all(v.is_zero() for v in self.primitives.values())
         bound = FloatArray(np.zeros(value.shape)) if exact_root else None
-        return FieldProjection(value, self.identity, "stateless-dd-map-v1", bound)
+        evaluator = ("stateless-dd-affine-joint-v1" if self.coordinate_kind == "fixed-reference"
+                     else "stateless-dd-map-v1")
+        return FieldProjection(value, self.identity, evaluator, bound)
 
     def electrochemical_difference(self, density_id: str, potential_id: str, pairs: ArrayLike,
                                    thermal_voltage: float, potential_sign: int) -> DoubleArray | None:
@@ -616,6 +788,11 @@ class MappedAuthority:
                    "time": float(self.time).hex(), "inputs": [float(v).hex() for v in self.inputs],
                    "coordinates": [float(v).hex() for v in self.coordinates], "reference": self.reference,
                    "composition_policy": "exact-four-word-primitives-v1"}
+        if self.coordinate_kind == "fixed-reference":
+            payload["schema"] = "solarlab.state-authority.v4"
+            payload["coordinate_contract"] = {"kind": "fixed-reference-affine-v1",
+                                               "solver_projection": "first-word",
+                                               "reference": encode_point(self.fixed_reference)}
         if include_transition:
             payload["transition"] = None if self.local_primitives is None else {
                 "previous_authority": self.previous_authority_identity,
@@ -691,6 +868,15 @@ class MappedArray(DoubleArray):
         left, right, change = self._pair(other)
         mode = self.authority.modes[self.variable]
         if mode in {"linear", "inactive", "fixed"}:
+            if "fixed-reference" in (self.authority.coordinate_kind, other.authority.coordinate_kind):
+                # V4 paired observables use the same joint affine source as
+                # field projection. Reducing the two drives first can erase
+                # the entire surviving gradient after anchor cancellation.
+                terms = ((1.0, right), (-1.0, left)) + self.authority._drive_terms(
+                    self.variable, self._selection) + tuple(
+                    (-coefficient, value) for coefficient, value in other.authority._drive_terms(
+                        self.variable, other._selection))
+                return DoubleArray.from_dd(_linear_map_sum(terms))
             return DoubleArray.from_dd((right-left)+change)
         actual_left, actual_right = other.as_dd(), self.as_dd()
         if mode in {"log", "log_zero"}:
@@ -784,6 +970,70 @@ class RelativeCoordinates:
                                     previous_point_identity=anchor.identity)
         right = Point(time, y, inputs, StateView(self.layout, authority=authority), reference)
         return right, StateIncrement.from_points(anchor, right)
+
+    def trial(self, reference: Point, cumulative_increment: ArrayLike | DoubleArray | PrimitiveExpansion,
+              time: float, inputs: ArrayLike = (), *, predecessor: Point | None = None
+              ) -> tuple[Point, StateIncrement]:
+        """Affine physical trial at a fixed reference, with an actual predecessor.
+
+        Point.y is the first-word projection of the cumulative SI remainder;
+        complete input words remain authoritative and are serialized. Local
+        predecessor differences are distinct from these fixed coordinates.
+        Existing advance() continues to expose local increments as Point.y.
+        """
+        if any(mode != "linear" for mode in self.modes.values()):
+            raise ContractError("affine_trial_requires_linear_reference")
+        if not isinstance(reference, Point) or reference.state.layout.identity != self.layout.identity:
+            raise ContractError("affine_trial_reference_layout")
+        cumulative = PrimitiveExpansion.from_value(cumulative_increment)
+        if cumulative.shape != (self.layout.size,):
+            raise ContractError("coordinate_layout_mismatch")
+        source = reference.state.authority
+        if isinstance(source, ResolvedAuthority):
+            if any(type(value) is not DoubleArray for value in reference.state.fields.values()):
+                raise ContractError("precision_coordinate_requires_double_words")
+            anchor = reference.state.fields
+            base = {spec.id: PrimitiveExpansion.from_value(np.zeros(spec.shape)) for spec in self.layout.variables}
+        elif isinstance(source, MappedAuthority) and source.map_identity == self.identity:
+            if source.coordinate_kind != "local":
+                raise ContractError("affine_trial_reference_rebase_forbidden")
+            anchor, base = source.anchor, source.primitives
+        else:
+            raise ContractError("coordinate_authority_mismatch")
+        previous = reference if predecessor is None else predecessor
+        if not isinstance(previous, Point) or previous.state.layout.identity != self.layout.identity:
+            raise ContractError("trial_predecessor_reference_mismatch")
+        previous_authority = previous.state.authority
+        if previous.identity == reference.identity:
+            old = base
+        elif (isinstance(previous_authority, MappedAuthority)
+              and previous_authority.coordinate_kind == "fixed-reference"
+              and previous_authority.fixed_reference.identity == reference.identity
+              and previous_authority.map_identity == self.identity):
+            old = previous_authority.primitives
+        else:
+            raise ContractError("trial_predecessor_reference_mismatch")
+        current, local = {}, {}
+        for spec in self.layout.variables:
+            offset = self.layout.offsets[spec.id]
+            value = cumulative.take_flat(np.arange(offset.start, offset.stop, dtype=np.intp)).reshape(spec.shape)
+            current[spec.id] = _exact_primitive_sum(base[spec.id], value)
+            local[spec.id] = _exact_primitive_difference(current[spec.id], old[spec.id])
+        # Use the authority's canonical cumulative words for the solver view.
+        # In particular, a valid input -0 has canonical physical remainder +0;
+        # the exact byte binding below remains strict rather than using allclose.
+        coordinate_words = [_exact_primitive_difference(current[spec.id], base[spec.id])
+                            for spec in self.layout.variables]
+        y = np.concatenate([value.high.ravel() for value in coordinate_words]) if coordinate_words else np.empty(0)
+        inputs = frozen_array(inputs)
+        binding = f"affine-trial:{self.identity}:{reference.identity}"
+        authority = MappedAuthority(self.layout, anchor, self.modes, current, time, inputs, y, binding,
+                                    previous_primitives=old, local_primitives=local,
+                                    previous_authority_identity=previous_authority.identity,
+                                    previous_point_identity=previous.identity,
+                                    coordinate_kind="fixed-reference", fixed_reference=reference)
+        right = Point(time, y, inputs, StateView(self.layout, authority=authority), binding)
+        return right, StateIncrement.from_points(previous, right)
 
     def rebase(self, point: Point, maximum_projection_error: Mapping[str, ArrayLike]) -> Point:
         """Only a certified projection can become an explicitly declared root.
@@ -947,7 +1197,7 @@ def decode_point(record: Mapping[str, Any], layout: Layout) -> Point:
                 raise ContractError("precision_codec_projection_mismatch")
     else:
         if (payload.get("field_role", "resolved-input") != "resolved-input"
-                or payload["coordinate_reference"].startswith(("relative:", "physical-input-lift:"))):
+                or payload["coordinate_reference"].startswith(("relative:", "physical-input-lift:", "affine-trial:"))):
             raise ContractError("precision_codec_unresolved_authority")
         state = StateView(layout, fields)
     if payload.get("schema") == "solarlab.precision-point.v2" and payload.get("authority_identity") != state.authority.identity:
@@ -964,7 +1214,18 @@ def decode_point(record: Mapping[str, Any], layout: Layout) -> Point:
 def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAuthority:
     keys = {"schema", "layout", "map", "version", "modes", "parameters", "anchor", "primitives",
             "time", "inputs", "coordinates", "reference", "composition_policy", "transition"}
-    if (set(payload) != keys or payload["schema"] != "solarlab.state-authority.v3"
+    fixed_reference = None
+    kind = "local"
+    if payload.get("schema") == "solarlab.state-authority.v4":
+        keys.add("coordinate_contract")
+        contract = payload.get("coordinate_contract", {})
+        if (set(contract) != {"kind", "solver_projection", "reference"}
+                or contract["kind"] != "fixed-reference-affine-v1"
+                or contract["solver_projection"] != "first-word"):
+            raise ContractError("precision_codec_coordinate_meaning")
+        fixed_reference = decode_point(contract["reference"], layout)
+        kind = "fixed-reference"
+    if (set(payload) != keys or payload["schema"] not in {"solarlab.state-authority.v3", "solarlab.state-authority.v4"}
             or payload["layout"] != layout.identity or payload["version"] != 1
             or payload["composition_policy"] != "exact-four-word-primitives-v1"):
         raise ContractError("precision_codec_authority_schema")
@@ -999,4 +1260,4 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
                            np.asarray([float.fromhex(x) for x in payload["inputs"]]),
                            np.asarray([float.fromhex(x) for x in payload["coordinates"]]), payload["reference"],
                            payload["map"], {key: float.fromhex(value) for key, value in payload["parameters"].items()},
-                           previous, local, previous_identity, previous_point)
+                           previous, local, previous_identity, previous_point, kind, fixed_reference)
