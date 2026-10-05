@@ -37,6 +37,7 @@ PHASE_IDS = ("dark_seed", "dark_prebias", "forward_light_dwell", "forward_ramp",
 OBSERVATION_COUNTS = (111, 221, 441)
 THREAD_KEYS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS", "BLIS_NUM_THREADS")
+EXACT_DENSE_FACTOR_POLICY = "exact_dense_two_entry_v1"
 
 
 class ReferenceError(ValueError):
@@ -251,8 +252,15 @@ def prebias_first_step(value, control: Control) -> float | None:
     return float(value)
 
 
+def checked_factor_cache_policy(value):
+    if value is not None and (type(value) is not str or value != EXACT_DENSE_FACTOR_POLICY):
+        raise ReferenceError("unsupported factor cache policy")
+    return value
+
+
 def build_plan(repo: Path, archive: Path, case_id: str, grid: int, step_level: int,
-               solver_level: int, *, prebias_first_step_s=None) -> dict:
+               solver_level: int, *, prebias_first_step_s=None, factor_cache_policy=None) -> dict:
+    policy = checked_factor_cache_policy(factor_cache_policy)
     bundle = load_inputs(repo, archive, case_id)
     c = bundle["contract"]
     if type(grid) is not int or grid not in c["refinement_plan"]["phase1_spatial"]["requested_N"]:
@@ -286,6 +294,8 @@ def build_plan(repo: Path, archive: Path, case_id: str, grid: int, step_level: i
     first_step = prebias_first_step(prebias_first_step_s, phases[1].controls[0])
     if first_step is not None:
         plan["numerics"]["prebias_first_step_s"] = first_step
+    if policy is not None:
+        plan["numerics"]["factor_cache_policy"] = policy
     plan["identity_sha256"] = digest(plan)
     return plan
 
@@ -419,7 +429,72 @@ def differentiated_poisson(factor, rho_dot, right_voltage_rate: float):
     return phi_dot, Ddot, residual
 
 
-def radau_history(initial_state, observer=None, *, first_step=None):
+class ExactDenseLUCache:
+    """Two owned factors for one Radau instance's unchanged dense ``lu``.
+
+    Keys are complete dtype/shape/C-order byte strings, captured before the
+    backend may overwrite its argument. One real and one complex entry are
+    retained; no digest or approximate comparison decides a hit. Only ordinary
+    writable, contiguous float64/complex128 square finite arrays are eligible.
+    Everything else reaches the original callable, with its original errors.
+
+    The inspected SciPy dense backend warns on a zero U diagonal. Such results,
+    and nonfinite factors, are never retained. No warning filter/handler is
+    changed. Owned read-only copies also isolate factors from caller aliases;
+    the consumer is the unchanged, separately verified Radau ``solve_lu``.
+    """
+
+    def __init__(self, original_lu):
+        import numpy as np
+        self._np = np
+        self._original_lu = original_lu
+        self._entries = {}
+        self.statistics = {"policy": EXACT_DENSE_FACTOR_POLICY,
+                           "requests": 0, "hits": 0, "misses": 0, "bypasses": 0,
+                           "uncacheable_results": 0, "retained_entries": 0,
+                           "retained_bytes": 0, "peak_retained_bytes": 0}
+
+    def __call__(self, matrix):
+        np, stats = self._np, self.statistics
+        stats["requests"] += 1
+        eligible = (type(matrix) is np.ndarray and matrix.ndim == 2
+                    and matrix.shape[0] == matrix.shape[1] and matrix.size > 0
+                    and matrix.dtype in (np.dtype("float64"), np.dtype("complex128"))
+                    and matrix.dtype.metadata is None and matrix.flags.writeable
+                    and (matrix.flags.c_contiguous or matrix.flags.f_contiguous)
+                    and np.isfinite(matrix).all())
+        if not eligible:
+            stats["misses"] += 1
+            stats["bypasses"] += 1
+            return self._original_lu(matrix)
+        key = (matrix.dtype.str, matrix.shape, matrix.tobytes(order="C"))
+        slot = matrix.dtype.kind
+        entry = self._entries.get(slot)
+        if entry is not None and entry[0] == key:
+            stats["hits"] += 1
+            return entry[1]
+        stats["misses"] += 1  # Only the unchanged callable increments Radau.nlu.
+        factors = self._original_lu(matrix)
+        lu, piv = factors
+        if (lu.dtype != matrix.dtype or lu.shape != key[1]
+                or piv.shape != (key[1][0],) or piv.dtype.kind not in "iu"
+                or not np.isfinite(lu).all() or np.any(lu.diagonal() == 0)):
+            stats["uncacheable_results"] += 1
+            return factors
+        # A Fortran-contiguous caller array can alias the returned LU. Neither
+        # it nor the returned miss factor may alias the retained entry.
+        owned = (lu.copy(order="K"), piv.copy())
+        for array in owned:
+            array.flags.writeable = False
+        self._entries[slot] = (key, owned)
+        stats["retained_entries"] = len(self._entries)
+        stats["retained_bytes"] = sum(len(k[2])+f[0].nbytes+f[1].nbytes
+                                      for k, f in self._entries.values())
+        stats["peak_retained_bytes"] = max(stats["peak_retained_bytes"], stats["retained_bytes"])
+        return factors
+
+
+def radau_history(initial_state, observer=None, *, first_step=None, factor_cache_policy=None):
     """Observe public successful steps without changing the Radau algorithm.
 
     The first record is the input initial state. Later records come only from
@@ -428,16 +503,23 @@ def radau_history(initial_state, observer=None, *, first_step=None):
     """
     from scipy.integrate import Radau
 
+    policy = checked_factor_cache_policy(factor_cache_policy)
     times = [0.]
     states = [tuple(map(float, initial_state))]
+    cache_reports = []  # Counter dictionaries only; never retain solver/factor objects here.
 
     class ObservedRadau(Radau):
+        factor_cache_reports = cache_reports
+
         def __init__(self, *args, **kwargs):
             if first_step is not None:
                 if kwargs.get("first_step") not in (None, first_step):
                     raise ReferenceError("conflicting requested Radau first_step")
                 kwargs["first_step"] = first_step
             super().__init__(*args, **kwargs)
+            if policy is not None:
+                self.lu = ExactDenseLUCache(self.lu)
+                cache_reports.append(self.lu.statistics)
 
         def step(self):
             previous = self.t
@@ -502,7 +584,13 @@ class ProductionBridge:
         requested_first_step = (prebias_first_step(self.numerics.get("prebias_first_step_s"), control)
                                 if control.phase_id == "dark_prebias" else None)
         startup = {} if requested_first_step is None else {"first_step": requested_first_step}
+        policy = checked_factor_cache_policy(self.numerics.get("factor_cache_policy"))
+        if policy is not None:
+            startup["factor_cache_policy"] = policy
         method, accepted_times, accepted_states = radau_history(state, observer, **startup)
+        def cache_diagnostics():
+            return {} if policy is None else {"factor_cache": {
+                "policy": policy, "solvers": [dict(row) for row in method.factor_cache_reports]}}
         try:
             result = self.jv.run_transient(
                 x=self.x, y0=self.np.asarray(state, dtype=float), stack=self.stack,
@@ -520,6 +608,7 @@ class ProductionBridge:
                     "accepted_steps": len(accepted_times)-1,
                     "last_accepted_local_time_s": accepted_times[-1] if len(accepted_times) > 1 else None,
                     "solver_method": "Radau with observational step subclass"}
+            diag.update(cache_diagnostics())
             if requested_first_step is not None:
                 diag["requested_first_step_s"] = requested_first_step
             values = self.np.asarray(result.y)
@@ -556,7 +645,8 @@ class ProductionBridge:
                            {"exception": repr(error), "traceback": traceback.format_exc(),
                             "accepted_steps": len(accepted_times)-1,
                             "last_accepted_local_time_s": accepted_times[-1] if len(accepted_times) > 1 else None,
-                            "within_interval_raw_history": "public Radau.step prefix;first record is input seed"})
+                            "within_interval_raw_history": "public Radau.step prefix;first record is input seed",
+                            **cache_diagnostics()})
 
     def observe(self, state, phase: Phase, physical_time: Fraction, side: str) -> dict:
         from perovskite_sim.constants import Q
@@ -703,6 +793,8 @@ def supervise(args, plan: dict) -> int:
             "--output", str(output)]
     if args.prebias_first_step_s is not None:
         argv.extend(("--prebias-first-step-s", repr(args.prebias_first_step_s)))
+    if getattr(args, "factor_cache_policy", None) is not None:
+        argv.extend(("--factor-cache-policy", args.factor_cache_policy))
     started = time.monotonic()
     stop_reason = None
     with (output/"Stdout.txt").open("x") as stdout, (output/"Stderr.txt").open("x") as stderr:
@@ -751,11 +843,14 @@ def main(argv=None) -> int:
     parser.add_argument("--solver-level", type=int, default=0)
     parser.add_argument("--prebias-first-step-s", type=float,
                         help="optional first Radau step for dark_prebias only; original default unchanged")
+    parser.add_argument("--factor-cache-policy", choices=(EXACT_DENSE_FACTOR_POLICY,),
+                        help="opt-in exact dense factor reuse; absent retains original Radau factor calls")
     parser.add_argument("--admission", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     plan = build_plan(args.repo, args.archive, args.case, args.grid, args.step_level, args.solver_level,
-                      prebias_first_step_s=args.prebias_first_step_s)
+                      prebias_first_step_s=args.prebias_first_step_s,
+                      factor_cache_policy=args.factor_cache_policy)
     if args.operation == "plan":
         if args.output.exists():
             raise ReferenceError("preserve existing plan;choose a new evidence attempt path")
