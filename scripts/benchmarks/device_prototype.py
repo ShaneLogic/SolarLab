@@ -389,12 +389,14 @@ def displacement_current_from_potential(left: Point, right: Point, increment: St
     dt = right.time - left.time
     if dt <= 0:
         raise ContractError("nonpositive_physical_interval")
-    change = increment.field(potential_id)
+    # Contract the full endpoint-bound spatial difference before any node
+    # materialization. Separate DD node increments can erase a weak face term.
+    change = increment.face_delta(left, right, potential_id, geometry.pairs,
+                                  arithmetic=DoubleArithmetic())
     if not isinstance(change, DoubleArray):
         raise ContractError("physical_operator_requires_explicit_precision_provider")
-    dl, dr = geometry.endpoints(change)
     eps = coefficient(epsilon_F_m, len(geometry.spacing_m), positive=True)
-    return DoubleArray.from_dd(-eps * (dr - dl) / DD(geometry.spacing_m) / dt)
+    return DoubleArray.from_dd(-eps * change.as_dd() / DD(geometry.spacing_m) / dt)
 
 
 def lift_physical_inputs(anchor: Point, thermal_voltage_V: float,

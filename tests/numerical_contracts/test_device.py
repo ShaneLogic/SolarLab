@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, localcontext
+from fractions import Fraction
 from hashlib import sha256
 from math import factorial
 from pathlib import Path
@@ -18,7 +19,7 @@ from scripts.benchmarks.contract_prototype import (
     EquationSpec, Geometry, Layout, Point, StateIncrement, StateView, Support, VariableSpec,
 )
 from scripts.benchmarks.precision_prototype import (
-    DD, DoubleArray, RelativeCoordinates, decode_point, encode_point,
+    DD, DoubleArray, PrimitiveExpansion, RelativeCoordinates, decode_point, encode_point,
 )
 from scripts.benchmarks.device_prototype import (
     ElectronTrapCapture, FaceGeometry, _bernoulli_log_change, assemble_charge_rate, displacement_current,
@@ -139,6 +140,44 @@ def advance(coordinates, point, changes, time=1.0):
 
 def restored_increment(left, right):
     return StateIncrement.from_points(left, right)
+
+
+@pytest.mark.parametrize("sign", [-1, 0, 1])
+def test_displacement_helper_contracts_all_temporal_face_words(sign, request):
+    """The actual LD-02 helper must keep a face term hidden below two words."""
+    layout = Layout((Support("nodes", "global", (2,)),),
+                    (VariableSpec("phi_V", "electrostatics", "nodes", (2,), VOLT),), ())
+    coordinates = RelativeCoordinates(layout, {"phi_V": "linear"})
+    root = coordinates.initial(StateView(layout, [("phi_V", DoubleArray([0., 0.]))]))
+    left, _ = coordinates.trial(root, [2.0**-216, 2.0**-216], 1.)
+    primitive = PrimitiveExpansion(tuple(sign*np.array(values) for values in
+        ([1., 1.], [2.0**-54, 2.0**-54], [2.0**-108, 2.0**-108], [2.0**-162, 2.0**-161])))
+    right, increment = coordinates.trial(root, primitive, 2., predecessor=left)
+    geometry = FaceGeometry(np.array([[0, 1]]), np.array([1e-8]))
+    epsilon = EPS_0*12
+    expected = -Fraction.from_float(epsilon)*sign*Fraction.from_float(2.0**-162)/Fraction.from_float(1e-8)
+    actual = displacement_current_from_potential(left, right, increment, geometry, epsilon)
+    with localcontext() as context:
+        context.prec = 100
+        reference = Decimal(expected.numerator)/Decimal(expected.denominator)
+    check = close_record(actual, [reference], 0., 1e-28)
+    # This explicitly retained counterexample is diagnostic only; the helper
+    # above no longer takes this lossy path.
+    projected = increment.field("phi_V").as_dd()
+    premature_face = projected[1]-projected[0]
+    restored_left = decode_point(encode_point(left), layout)
+    restored_right = decode_point(encode_point(right), layout)
+    restored = displacement_current_from_potential(
+        restored_left, restored_right, StateIncrement.from_points(restored_left, restored_right),
+        geometry, epsilon)
+    conclude(request, {"family": "LD02_full_temporal_face", "sign": sign,
+                       "independent_fraction_reference": str(expected), "comparison": check,
+                       "premature_DD_face": [float(premature_face.hi), float(premature_face.lo)],
+                       "native_steps": 0, "current_point": right.identity},
+             {"actual_helper_precision": check["passed"],
+              "sign_and_zero": check["sign_and_exact_zero_match"],
+              "earlier_projection_loses_face": premature_face == 0,
+              "codec_keeps_observable": restored.identity_bytes() == actual.identity_bytes()})
 
 
 def exact_root_fields(point):

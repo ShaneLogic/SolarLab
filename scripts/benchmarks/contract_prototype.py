@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+import math
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
@@ -410,6 +411,10 @@ class StateView:
     def project_field(self, variable_id: str) -> FieldProjection:
         return self.authority.project(variable_id)
 
+    def linear_form(self, form: PhysicalLinearForm, *, arithmetic=None,
+                    point: Point | None = None, sources=()) -> LinearFormResult:
+        return _linear_provider(arithmetic).linear_form(form, self, point=point, sources=sources)
+
 
 @dataclass(frozen=True)
 class Point(ImmutableArrays):
@@ -453,6 +458,11 @@ class StateIncrement:
 
     def field(self, variable_id: str) -> PhysicalArray:
         return self.fields[variable_id]
+
+    def linear_form(self, left: Point, right: Point, form: PhysicalLinearForm, *,
+                    arithmetic=None, sources=()) -> LinearFormResult:
+        return _linear_provider(arithmetic).linear_form(
+            form, self, left=left, right=right, sources=sources)
 
     @classmethod
     def from_points(cls, left: Point, right: Point) -> StateIncrement:
@@ -602,6 +612,587 @@ class LinearCoordinates:
         return right, increment
 
 
+def _linear_scalar(value: Any) -> float:
+    """A coefficient is an exact supplied binary64 value, never an expression."""
+    raw = np.asarray(value)
+    if (raw.shape != () or raw.dtype.kind not in {"i", "u", "f"}
+            or raw.dtype.kind == "f" and raw.dtype.itemsize > 8):
+        raise ContractError("linear_factor_type")
+    result = float(raw)
+    if not math.isfinite(result):
+        raise ContractError("linear_nonfinite_factor")
+    if raw.dtype.kind in {"i", "u"} and int(raw) != int(result):
+        raise ContractError("linear_inexact_integer")
+    return result
+
+
+def _linear_array(value: ArrayLike) -> Vector:
+    raw = np.asarray(value)
+    if raw.dtype.kind not in {"i", "u", "f"} or raw.dtype.kind == "f" and raw.dtype.itemsize > 8:
+        raise ContractError("linear_word_dtype")
+    result = frozen_array(raw)
+    if raw.dtype.kind in {"i", "u"} and any(int(a) != int(b) for a, b in zip(raw.flat, result.flat)):
+        raise ContractError("linear_inexact_integer")
+    return result
+
+
+def _linear_unit(unit: Unit) -> Unit:
+    if not isinstance(unit, Unit):
+        raise ContractError("linear_invalid_unit")
+    return Unit(tuple(unit.powers))
+
+
+@dataclass(frozen=True)
+class LinearFactor:
+    """One source-bound physical coefficient; products stay factored."""
+
+    id: str
+    value: float
+    unit: Unit
+    source_identity: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id or not isinstance(self.source_identity, str) or not self.source_identity:
+            raise ContractError("linear_factor_identity")
+        object.__setattr__(self, "value", _linear_scalar(self.value))
+        object.__setattr__(self, "unit", _linear_unit(self.unit))
+
+    @property
+    def identity(self) -> str:
+        return sha256(repr((self.id, self.value.hex(), self.unit, self.source_identity)).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class LinearSourceSpec:
+    """A resolved source value from one named evaluation, in its actual units."""
+
+    id: str
+    support: str
+    shape: tuple[int, ...]
+    unit: Unit
+    source_identity: str
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.id, str) or not self.id or not isinstance(self.support, str) or not self.support
+                or not isinstance(self.source_identity, str) or not self.source_identity):
+            raise ContractError("linear_source_identity")
+        shape = tuple(self.shape)
+        if not shape or any(type(n) is not int or n < 0 for n in shape):
+            raise ContractError("linear_source_shape")
+        object.__setattr__(self, "shape", shape)
+        object.__setattr__(self, "unit", _linear_unit(self.unit))
+
+
+@dataclass(frozen=True)
+class LinearTerm:
+    """One stored COO contribution, including declared numeric zeros.
+
+    ``field=None`` is exact unity for state-only fixed backgrounds. A divisor
+    requests the separately bounded quotient operation, not a rounded inverse.
+    """
+
+    row: int
+    field: str | None
+    index: int
+    factors: tuple[LinearFactor, ...] = ()
+    sign: int = 1
+    divisor: LinearFactor | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.row, (bool, np.bool_)) or isinstance(self.index, (bool, np.bool_)):
+            raise ContractError("invalid_index")
+        indices = integer_indices([self.row, self.index])
+        if indices.shape != (2,) or np.any(indices < 0):
+            raise ContractError("linear_index_outside_support")
+        if self.field is not None and (not isinstance(self.field, str) or not self.field):
+            raise ContractError("linear_unknown_field")
+        factors = tuple(self.factors)
+        if len(factors) > 4 or not all(isinstance(factor, LinearFactor) for factor in factors):
+            raise ContractError("linear_factor_arity_or_type")
+        if type(self.sign) is not int or self.sign not in {-1, 1}:
+            raise ContractError("linear_invalid_sign")
+        if self.divisor is not None and (not isinstance(self.divisor, LinearFactor) or self.divisor.value == 0):
+            raise ContractError("linear_invalid_divisor")
+        object.__setattr__(self, "row", int(indices[0]))
+        object.__setattr__(self, "index", int(indices[1]))
+        object.__setattr__(self, "factors", factors)
+
+    def _key(self) -> tuple:
+        return (self.row, self.field or "", self.index, self.sign,
+                tuple(factor.identity for factor in self.factors),
+                self.divisor.identity if self.divisor is not None else "")
+
+
+@dataclass(frozen=True)
+class PhysicalLinearForm:
+    """Small sparse physical action; output rows never modify Point layouts.
+
+    ``declared_nnz`` counts stored contributions, including duplicate positions
+    and zeros. Each term has at most four numerator factors and one explicit
+    divisor. Total work is bounded by the actual declaration and its caller's
+    resource budget; this metadata imposes no device/grid-size ceiling.
+    """
+
+    layout: Layout
+    row_ids: tuple[str, ...]
+    row_units: tuple[Unit, ...]
+    terms: tuple[LinearTerm, ...]
+    source_identity: str
+    kind: str
+    declared_nnz: int
+    sources: tuple[LinearSourceSpec, ...] = ()
+    identity: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.layout, Layout) or self.kind not in {"state", "increment", "rate"}
+                or not isinstance(self.source_identity, str) or not self.source_identity):
+            raise ContractError("linear_form_identity_or_kind")
+        rows, units, terms, sources = tuple(self.row_ids), tuple(self.row_units), tuple(self.terms), tuple(self.sources)
+        if (len(rows) != len(units) or len(set(rows)) != len(rows)
+                or any(not isinstance(row, str) or not row for row in rows)):
+            raise ContractError("linear_row_metadata")
+        if (type(self.declared_nnz) is not int or self.declared_nnz != len(terms)
+                or not all(isinstance(term, LinearTerm) for term in terms)):
+            raise ContractError("linear_declared_nnz")
+        units = tuple(_linear_unit(unit) for unit in units)
+        specs = {spec.id: spec for spec in self.layout.variables}
+        supports = {support.id: support for support in self.layout.supports}
+        if (not all(isinstance(source, LinearSourceSpec) for source in sources)
+                or len({source.id for source in sources}) != len(sources)
+                or {source.id for source in sources} & specs.keys()):
+            raise ContractError("linear_source_ownership")
+        for source in sources:
+            if source.support not in supports or source.shape != supports[source.support].shape:
+                raise ContractError("linear_source_support")
+            if source.source_identity != self.source_identity:
+                raise ContractError("linear_source_mismatch")
+        external = {source.id: source for source in sources}
+        for term in terms:
+            if term.row >= len(rows):
+                raise ContractError("linear_row_outside_support")
+            if term.field is None:
+                if self.kind != "state" or term.index != 0:
+                    raise ContractError("linear_constant_requires_state")
+                unit = ONE
+            else:
+                if term.field not in specs and term.field not in external:
+                    raise ContractError("linear_unknown_field")
+                spec = specs[term.field] if term.field in specs else external[term.field]
+                if term.index >= int(np.prod(spec.shape)):
+                    raise ContractError("linear_index_outside_support")
+                unit = spec.unit / SECOND if self.kind == "rate" and term.field in specs else spec.unit
+            for factor in term.factors + ((term.divisor,) if term.divisor is not None else ()):
+                if factor.source_identity != self.source_identity:
+                    raise ContractError("linear_factor_source_mismatch")
+            for factor in term.factors:
+                unit = unit * factor.unit
+            if term.divisor is not None:
+                unit = unit / term.divisor.unit
+            if unit != units[term.row]:
+                raise ContractError("linear_unit_mismatch")
+        terms = tuple(sorted(terms, key=LinearTerm._key))
+        sources = tuple(sorted(sources, key=lambda value: value.id))
+        for name, value in (("row_ids", rows), ("row_units", units), ("terms", terms), ("sources", sources)):
+            object.__setattr__(self, name, value)
+        payload = ("physical-linear-form-v1", self.layout.identity, rows, units,
+                   tuple(term._key() for term in terms), sources, self.source_identity, self.kind, self.declared_nnz)
+        object.__setattr__(self, "identity", sha256(repr(payload).encode()).hexdigest())
+
+
+def _source_evaluation_identity(point_identity: str, entries) -> str:
+    digest = sha256(b"physical-linear-source-evaluation-v1:" + point_identity.encode())
+    for spec, value in sorted(entries, key=lambda item: item[0].id):
+        digest.update(repr(spec).encode() + value.identity_bytes())
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class BoundLinearSource:
+    spec: LinearSourceSpec
+    value: PhysicalArray
+    point_identity: str
+    evaluation_identity: str
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.spec, LinearSourceSpec) or not self.point_identity or not self.evaluation_identity
+                or not callable(getattr(self.value, "is_finite", None))
+                or self.value.shape != self.spec.shape or not self.value.is_finite()
+                or getattr(self.value, "authority", None) is not None):
+            raise ContractError("linear_source_binding")
+        object.__setattr__(self, "value", self.value.immutable_copy())
+
+    @classmethod
+    def bind(cls, point: Point, entries: Iterable[tuple[LinearSourceSpec, PhysicalArray]]) -> tuple[BoundLinearSource, ...]:
+        """Freeze the actual evaluated packet; an arbitrary label is not proof.
+
+        The caller first validates its physical evaluation against ``point``.
+        This factory binds the returned values, not the accuracy of that model.
+        """
+        entries = tuple((spec, value.immutable_copy()) for spec, value in entries)
+        if (not isinstance(point, Point) or not all(isinstance(spec, LinearSourceSpec) for spec, _ in entries)
+                or len({spec.id for spec, _ in entries}) != len(entries)):
+            raise ContractError("linear_source_packet_mismatch")
+        identity = _source_evaluation_identity(point.identity, entries)
+        return tuple(cls(spec, value, point.identity, identity) for spec, value in entries)
+
+    @property
+    def identity(self) -> str:
+        return sha256(repr((self.spec, self.point_identity, self.evaluation_identity)).encode()
+                      + self.value.identity_bytes()).hexdigest()
+
+
+@dataclass(frozen=True, init=False)
+class RateView(ImmutableArrays):
+    """Physical rate words bound to a Point and their declared raw origin.
+
+    ``values`` may be a four-word input primitive; it is never converted to a
+    DoubleArray. The mapping factory owns mapping correctness. This record
+    owns actual mapped/raw bytes and rejects a different Point, input rate or
+    source. Rate fields do not inherit nonnegative state-domain constraints.
+    """
+
+    point: Point
+    values: Any
+    input_rate: Vector
+    source_identity: str
+    mapping_identity: str
+    origin: str
+    raw_coordinates: Vector
+    raw_rate: Vector
+    identity: str
+    _words: tuple[Vector, ...]
+
+    def __init__(self, point: Point, values: Any, input_rate: ArrayLike, *, source_identity: str,
+                 mapping_identity: str, origin: str, raw_coordinates: ArrayLike, raw_rate: ArrayLike):
+        if (not isinstance(point, Point) or not isinstance(source_identity, str) or not source_identity
+                or not isinstance(mapping_identity, str) or not mapping_identity
+                or origin not in {"physical-rate", "mapped-coordinate-rate"}):
+            raise ContractError("linear_rate_identity")
+        if not hasattr(values, "immutable_copy"):
+            values = FloatArray(_linear_array(values))
+        values = values.immutable_copy()
+        words = (values.values,) if type(values) is FloatArray else getattr(values, "words", ())
+        words = tuple(_linear_array(word) for word in words)
+        if (not 1 <= len(words) <= 4 or values.shape != (point.state.layout.size,)
+                or any(word.shape != values.shape for word in words)):
+            raise ContractError("linear_rate_word_shape_or_count")
+        input_rate, raw_coordinates, raw_rate = map(_linear_array, (input_rate, raw_coordinates, raw_rate))
+        if (point.y.shape != values.shape or input_rate.shape != point.inputs.shape
+                or raw_coordinates.shape != point.y.shape or raw_rate.shape != point.y.shape):
+            raise ContractError("rate_shape_mismatch")
+        for name, value in (("point", point), ("values", values), ("input_rate", input_rate),
+                            ("source_identity", source_identity), ("mapping_identity", mapping_identity),
+                            ("origin", origin), ("raw_coordinates", raw_coordinates), ("raw_rate", raw_rate), ("_words", words)):
+            object.__setattr__(self, name, value)
+        digest = sha256(repr(("physical-rate-view-v1", point.identity, point.state.layout.identity,
+                              source_identity, mapping_identity, origin)).encode())
+        digest.update(values.identity_bytes() + b"".join(word.tobytes() for word in words))
+        digest.update(input_rate.tobytes() + raw_coordinates.tobytes() + raw_rate.tobytes())
+        object.__setattr__(self, "identity", digest.hexdigest())
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.values.shape
+
+    @property
+    def words(self) -> tuple[Vector, ...]:
+        return tuple(word.view() for word in self._words)
+
+    def field(self, variable_id: str) -> Any:
+        specs = {spec.id: spec for spec in self.point.state.layout.variables}
+        if variable_id not in specs:
+            raise ContractError("unknown_variable")
+        selection = self.point.state.layout.offsets[variable_id]
+        indices = np.arange(selection.start, selection.stop).reshape(specs[variable_id].shape)
+        take = getattr(self.values, "take_flat", self.values.take if hasattr(self.values, "take") else None)
+        if take is None:
+            raise ContractError("linear_rate_field_capability")
+        return take(indices)
+
+    def validate(self, point: Point, input_rate: ArrayLike, source_identity: str | None = None) -> None:
+        if (point.identity != self.point.identity or point.state.layout.identity != self.point.state.layout.identity
+                or source_identity is not None and source_identity != self.source_identity):
+            raise ContractError("linear_rate_point_or_source_mismatch")
+        input_rate = _linear_array(input_rate)
+        if input_rate.shape != self.input_rate.shape or input_rate.tobytes() != self.input_rate.tobytes():
+            raise ContractError("linear_rate_input_mismatch")
+
+    def linear_form(self, form: PhysicalLinearForm, *, arithmetic=None, point: Point,
+                    sources=()) -> LinearFormResult:
+        return _linear_provider(arithmetic).linear_form(form, self, point=point, sources=sources)
+
+    def __array__(self, dtype=None, copy=None):
+        raise TypeError("implicit full-word rate projection is forbidden")
+
+
+@dataclass(frozen=True)
+class LinearFormResult(ImmutableArrays):
+    value: Any
+    units: tuple[Unit, ...]
+    form_identity: str
+    operand_identity: str
+    source_identities: tuple[str, ...]
+    absolute_error_bound: FloatArray
+    arithmetic_policy: str
+
+    def __post_init__(self) -> None:
+        units = tuple(_linear_unit(unit) for unit in self.units)
+        value = self.value.immutable_copy() if hasattr(self.value, "immutable_copy") else frozen_array(self.value)
+        bound = self.absolute_error_bound.immutable_copy()
+        if (value.shape != (len(units),) or bound.shape != value.shape or np.any(bound.values < 0)
+                or not self.form_identity or not self.operand_identity or not self.arithmetic_policy):
+            raise ContractError("linear_result_metadata")
+        object.__setattr__(self, "value", value)
+        object.__setattr__(self, "units", units)
+        object.__setattr__(self, "source_identities", tuple(self.source_identities))
+        object.__setattr__(self, "absolute_error_bound", bound)
+
+
+def _linear_provider(arithmetic):
+    provider = arithmetic if arithmetic is not None else FloatArithmetic()
+    if not callable(getattr(provider, "linear_form", None)):
+        raise ContractError("physical_linear_action_unavailable")
+    return provider
+
+
+def _word_integer(words) -> int:
+    """Exact bounded dyadic readback in units of the minimum binary64 word.
+
+    Only verifies finite-word transforms and computes their error bounds. It
+    does not replace the floating point physical action with rational physics.
+    A binary64 input needs at most 2098 bits. Summing K submitted finite words
+    adds at most ceil(log2(K)) bits. The four-factor bound gives at most 128
+    product words per contribution (eight input words times sixteen products),
+    and each quotient remainder adds at most eight words. No grid-size limit
+    or unbounded expression/history nesting is used to justify that bound.
+    """
+    total = 0
+    for word in words:
+        numerator, denominator = float(word).as_integer_ratio()
+        total += numerator << (1074 - (denominator.bit_length() - 1))
+    return total
+
+
+def _linear_sum(words) -> float:
+    try:
+        value = math.fsum(words)
+    except (OverflowError, ValueError) as error:
+        raise ContractError("linear_sum_range") from error
+    if not math.isfinite(value):
+        raise ContractError("linear_sum_range")
+    return value
+
+
+def _finite_two_product(a: float, b: float) -> tuple[float, float]:
+    """Scaled Dekker product with an exact range/underflow verification.
+
+    Split normalized mantissas, where every intermediate is normal and finite;
+    rescale the two product words only afterwards. Exact dyadic verification
+    rejects a rescaling that lost a nonzero tail, including gradual underflow.
+    """
+    if not math.isfinite(a) or not math.isfinite(b):
+        raise ContractError("linear_product_nonfinite")
+    if a == 0 or b == 0:
+        return 0.0, 0.0
+    if b in {-1.0, 1.0}:
+        return a * b, 0.0
+    ma, ea = math.frexp(a)
+    mb, eb = math.frexp(b)
+    ca, cb = 134217729.0 * ma, 134217729.0 * mb
+    ah, bh = ca - (ca - ma), cb - (cb - mb)
+    al, bl = ma - ah, mb - bh
+    high = ma * mb
+    low = al * bl - (((high - ah * bh) - al * bh) - ah * bl)
+    try:
+        high, low = math.ldexp(high, ea + eb), math.ldexp(low, ea + eb)
+    except OverflowError as error:
+        raise ContractError("linear_product_overflow") from error
+    if not math.isfinite(high) or not math.isfinite(low):
+        raise ContractError("linear_product_overflow")
+    if _word_integer((a,)) * _word_integer((b,)) != _word_integer((high, low)) << 1074:
+        raise ContractError("linear_product_underflow_or_inexact")
+    return high, low
+
+
+def _upper_ratio(numerator: int, denominator: int) -> float:
+    """Outward binary64 bound, including a nonzero subnormal remainder."""
+    if numerator == 0:
+        return 0.0
+    try:
+        value = numerator / denominator
+    except OverflowError as error:
+        raise ContractError("linear_error_bound_range") from error
+    if not math.isfinite(value):
+        raise ContractError("linear_error_bound_range")
+    a, b = value.as_integer_ratio()
+    if a * denominator < numerator * b:
+        value = math.nextafter(value, math.inf)
+    if not math.isfinite(value):
+        raise ContractError("linear_error_bound_range")
+    return value
+
+
+def _linear_quotient(words: list[float], divisor: float) -> tuple[list[float], float]:
+    """Four quotient words and a bound on the exact unrepresented remainder.
+
+    This operation is explicitly approximate. Each remainder update is exact
+    in finite words, and its residual divided by the original divisor bounds
+    the error before final row rounding. No reciprocal is used as a factor.
+    """
+    if not math.isfinite(divisor) or divisor == 0:
+        raise ContractError("linear_invalid_divisor")
+    remainder, quotient = list(words), []
+    for _ in range(4):
+        lead = _linear_sum(remainder)
+        if lead == 0:
+            if _word_integer(remainder):
+                raise ContractError("linear_quotient_underflow")
+            break
+        word = lead / divisor
+        if not math.isfinite(word):
+            raise ContractError("linear_quotient_overflow")
+        if word == 0:
+            raise ContractError("linear_quotient_underflow")
+        high, low = _finite_two_product(word, divisor)
+        quotient.append(word)
+        remainder.extend((-high, -low))
+    dn, dd = divisor.as_integer_ratio()
+    bound = _upper_ratio(abs(_word_integer(remainder)) * dd, (1 << 1074) * abs(dn))
+    return quotient, bound
+
+
+def _linear_reduce(form: PhysicalLinearForm, components: Mapping[str, tuple[Vector, ...]],
+                   output_words: int) -> tuple[Vector, Vector, Vector]:
+    """The single state/increment/rate reduction, before the requested output."""
+    groups: list[dict[str, tuple[float | None, list[float]]]] = [{} for _ in form.row_ids]
+    for term in form.terms:
+        divisor_key = term.divisor.identity if term.divisor is not None else ""
+        divisor = term.divisor.value if term.divisor is not None else None
+        group = groups[term.row].setdefault(divisor_key, (divisor, []))[1]
+        # A zero coefficient has empty numeric words but remains in the form's
+        # declared structural support, unit validation and source identity.
+        if any(factor.value == 0 for factor in term.factors):
+            continue
+        words = (1.0,) if term.field is None else tuple(float(word.flat[term.index]) for word in components[term.field])
+        for word in words:
+            product = [term.sign * word] if word else []
+            for factor in term.factors:
+                product = [part for value in product for part in _finite_two_product(value, factor.value) if part]
+            group.extend(product)
+    high, low, bounds = (np.zeros(len(form.row_ids)) for _ in range(3))
+    for row, entries in enumerate(groups):
+        words, errors = [], []
+        for divisor, numerator in entries.values():
+            if divisor is None:
+                words.extend(numerator)
+            else:
+                quotient, error = _linear_quotient(numerator, divisor)
+                words.extend(quotient)
+                errors.append(error)
+        high[row] = _linear_sum(words)
+        if output_words == 2:
+            low[row] = _linear_sum([*words, -high[row]])
+            # Normalize the requested two-word result without changing its
+            # represented sum; the final bound uses the normalized pair.
+            h = _linear_sum((high[row], low[row]))
+            l = _linear_sum((high[row], low[row], -h))
+            high[row], low[row] = h, l
+        remainder = abs(_word_integer([*words, -high[row], -low[row]]))
+        errors.append(_upper_ratio(remainder, 1 << 1074))
+        bounds[row] = _upper_ratio(_word_integer(errors), 1 << 1074)
+    return high, low, bounds
+
+
+def _linear_context(form, operand, *, point=None, left=None, right=None, sources=()):
+    if not isinstance(form, PhysicalLinearForm):
+        raise ContractError("physical_linear_form_required")
+    if isinstance(operand, StateView):
+        layout, expected_kind, identity = operand.layout, "state", operand.authority.identity
+        if left is not None or right is not None:
+            raise ContractError("linear_operand_binding")
+        if point is not None and (point.state.authority.identity != operand.authority.identity
+                                  or point.state.layout.identity != layout.identity):
+            raise ContractError("linear_state_point_mismatch")
+    elif isinstance(operand, StateIncrement):
+        if not isinstance(left, Point) or not isinstance(right, Point) or point is not None:
+            raise ContractError("linear_increment_points_required")
+        operand.validate(left, right)
+        layout, expected_kind, point = right.state.layout, "increment", right
+        identity = sha256((left.identity + ":" + right.identity).encode()).hexdigest()
+    elif isinstance(operand, RateView):
+        if not isinstance(point, Point) or left is not None or right is not None:
+            raise ContractError("linear_rate_point_required")
+        operand.validate(point, operand.input_rate, form.source_identity)
+        layout, expected_kind, identity = point.state.layout, "rate", operand.identity
+    else:
+        raise ContractError("unsupported_linear_operand")
+    # Recheck metadata rather than trusting a cached identity on an externally
+    # supplied layout whose nested objects may have been changed by a caller.
+    actual_layout = sha256(repr((layout.supports, layout.variables, layout.equations)).encode()).hexdigest()
+    if form.kind != expected_kind or layout.identity != form.layout.identity or actual_layout != layout.identity:
+        raise ContractError("linear_layout_or_kind_mismatch")
+    sources = tuple(sources)
+    if (not all(isinstance(source, BoundLinearSource) for source in sources)
+            or tuple(sorted((source.spec for source in sources), key=lambda spec: spec.id)) != form.sources):
+        raise ContractError("linear_source_packet_mismatch")
+    if sources:
+        if point is None or any(source.point_identity != point.identity for source in sources):
+            raise ContractError("linear_source_point_mismatch")
+        expected = _source_evaluation_identity(point.identity, ((source.spec, source.value) for source in sources))
+        if any(source.evaluation_identity != expected for source in sources):
+            raise ContractError("linear_source_evaluation_mismatch")
+    identity = sha256(repr((identity, point.identity if point is not None else None)).encode()).hexdigest()
+    return identity, sources
+
+
+def _apply_linear_form(form, operand, *, point=None, left=None, right=None, sources=(),
+                       array_words, state_words, increment_words, output_words, finish):
+    identity, sources = _linear_context(form, operand, point=point, left=left, right=right, sources=sources)
+    external = {source.spec.id: source for source in sources}
+    specs = {spec.id: spec for spec in form.layout.variables}
+    components = {}
+    for name in {term.field for term in form.terms if term.field is not None}:
+        if name in external:
+            parts, shape = array_words(external[name].value), external[name].spec.shape
+        else:
+            shape = specs[name].shape
+            if isinstance(operand, StateView):
+                parts = state_words(operand, name)
+            elif isinstance(operand, StateIncrement):
+                parts = increment_words(left.state, right.state, name)
+            else:
+                selection = form.layout.offsets[name]
+                parts = tuple(word[selection].reshape(shape) for word in operand.words)
+        if (not 1 <= len(parts) <= 8 or any(part.shape != shape or part.dtype != np.dtype(np.float64)
+                                         or not np.isfinite(part).all() for part in parts)):
+            raise ContractError("linear_source_word_shape_or_count")
+        components[name] = parts
+    high, low, bound = _linear_reduce(form, components, output_words)
+    try:
+        value = finish(high, low)
+    except ArithmeticError as error:
+        raise ContractError("linear_output_provider_range") from error
+    return LinearFormResult(value, form.row_units, form.identity, identity,
+                            tuple(source.identity for source in sources), FloatArray(bound),
+                            f"finite-eft-factor4/quotient4/final-word{output_words}-v1")
+
+
+def _float_linear_words(value) -> tuple[Vector, ...]:
+    if type(value) is not FloatArray:
+        raise ContractError("linear_precision_provider_required")
+    return (value.values,)
+
+
+def _resolved_linear_words(state, name) -> tuple[Vector, ...]:
+    if type(state.authority) is not ResolvedAuthority:
+        raise ContractError("linear_authority_provider_required")
+    return _float_linear_words(state.authority.field(name))
+
+
+def _resolved_increment_words(left, right, name) -> tuple[Vector, ...]:
+    return _resolved_linear_words(right, name) + tuple(-word for word in _resolved_linear_words(left, name))
+
+
 @dataclass(frozen=True)
 class Geometry(ImmutableArrays):
     volumes: Vector
@@ -677,6 +1268,9 @@ class AssemblyArithmetic(Protocol):
     def reshape(self, value: Any, shape: tuple[int, ...]) -> Any: ...
     def scatter_add(self, target: Any, indices: NDArray[np.intp], value: Any) -> Any: ...
     def freeze(self, value: Any) -> Any: ...
+    def linear_form(self, form: PhysicalLinearForm, operand: Any, *,
+                    point=None, left=None, right=None, sources=()) -> LinearFormResult: ...
+    def validate_rate(self, value: RateView) -> None: ...
 
 
 class FloatArithmetic:
@@ -727,6 +1321,20 @@ class FloatArithmetic:
 
     def freeze(self, value: Vector) -> Vector:
         return frozen_array(value)
+
+    def validate_rate(self, value: RateView) -> None:
+        if len(value.words) != 1 or type(value.point.state.authority) is not ResolvedAuthority:
+            raise ContractError("linear_precision_provider_required")
+
+    def linear_form(self, form: PhysicalLinearForm, operand: Any, *,
+                    point=None, left=None, right=None, sources=()) -> LinearFormResult:
+        if isinstance(operand, RateView):
+            self.validate_rate(operand)
+        return _apply_linear_form(
+            form, operand, point=point, left=left, right=right, sources=sources,
+            array_words=_float_linear_words, state_words=_resolved_linear_words,
+            increment_words=_resolved_increment_words, output_words=1,
+            finish=lambda high, low: self.freeze(high))
 
 
 class TermSink:
@@ -933,6 +1541,8 @@ class ImplicitSystem:
         return StoragePartials(*converted[:3]), BalanceTerms(rate, algebraic, *converted[3:])
 
     def _check_rates(self, point: Point, ydot: Any, adot: Any) -> None:
+        if isinstance(ydot, RateView):
+            raise ContractError("full_word_rate_requires_explicit_problem_callback")
         if ydot.shape != point.y.shape or adot.shape != point.inputs.shape:
             raise ContractError("rate_shape_mismatch")
         try:
@@ -1179,6 +1789,7 @@ class ValidatedProblem:
     conservative_derivative: Callable[[Point, Point], csc_matrix]
     point_validator: Callable[[Point], None] | None = None
     arithmetic: AssemblyArithmetic | None = None
+    accepted_rate_mapping_identity: str | None = None
 
     def __post_init__(self) -> None:
         if (type(self.input_count) is not int or self.input_count < 0
@@ -1201,6 +1812,9 @@ class ValidatedProblem:
             raise ContractError("problem_source_mismatch")
         if self.storage.arithmetic is not self.arithmetic:
             raise ContractError("problem_arithmetic_mismatch")
+        if self.accepted_rate_mapping_identity is not None and (
+                not isinstance(self.accepted_rate_mapping_identity, str) or not self.accepted_rate_mapping_identity):
+            raise ContractError("problem_rate_mapping_identity")
 
     def _point(self, point: Point) -> None:
         if (point.state.layout.identity != self.layout.identity or point.y.shape != (self.layout.size,)
@@ -1209,8 +1823,18 @@ class ValidatedProblem:
         if self.point_validator is not None:
             self.point_validator(point)
 
-    def _rates(self, point: Point, ydot: Vector, adot: Vector) -> tuple[Vector, Vector]:
+    def _rates(self, point: Point, ydot: Any, adot: Vector) -> tuple[Any, Vector]:
         self._point(point)
+        if isinstance(ydot, RateView):
+            if (self.accepted_rate_mapping_identity is None
+                    or ydot.mapping_identity != self.accepted_rate_mapping_identity):
+                raise ContractError("problem_full_word_rate_not_admitted")
+            ydot.validate(point, adot, self.source_identity)
+            provider = _linear_provider(self.arithmetic)
+            if not callable(getattr(provider, "validate_rate", None)):
+                raise ContractError("problem_full_word_rate_unavailable")
+            provider.validate_rate(ydot)
+            return ydot, frozen_array(adot)
         ydot, adot = frozen_array(ydot), frozen_array(adot)
         if ydot.shape != point.y.shape or adot.shape != point.inputs.shape:
             raise ContractError("rate_shape_mismatch")

@@ -1565,17 +1565,19 @@ def test_voltage_lift_public_words_and_weak_changes(case_id, request):
 @pytest.mark.parametrize("case_id", CASES)
 @pytest.mark.parametrize("area", GATES["areas_m2"])
 def test_voltage_lift_physical_rate_ports_and_inventory(case_id, area, request):
+    from scripts.benchmarks.contract_prototype import RateView
+
     m, mapping, adapter, z, inputs = lift_fixture(case_id, area=area)
     zdot = .17+np.sin(np.arange(m.layout.size))
     adot = np.array([.1, .3*m.definition.photon_reference])
     point, _, rate, observed, audit = adapter.observe(.01, z, zdot, inputs, adot)
     expected = lift_exact_map(mapping, zdot, adot, rate=True)
     reference = lift_decimal_reference(mapping, z, zdot, inputs, adot, 100)
-    # The physical observer consumes the declared final projection. Its
-    # difference from the direct-map reference is separately reconstructed.
+    # The observer now consumes the full map. Preserve the previous lossy
+    # path as an independently reconstructed counterfactual, not its error.
     projected_reference = decimal_kernel(m, affine_exact_input(m, mapping.physical_primitive(z, inputs)),
                                          list(map(dec, inputs)), list(map(dec, rate.high)), 100)
-    comparisons = {key: compare_words(value, projected_reference[key], 1,
+    comparisons = {key: compare_words(value, reference[key], 1,
                                       GATES["value_scaled_atol"], GATES["value_scaled_rtol"])
                    for key, value in (("Icond", observed.conduction_inward),
                                       ("Itotal", observed.total_inward),
@@ -1589,7 +1591,8 @@ def test_voltage_lift_physical_rate_ports_and_inventory(case_id, area, request):
     right, increment = mapping.trial(z, .01, inputs, predecessor=left)
     delta = adapter.finite_storage_increment(left, right, increment)
     checks = {"all_rate_words_exact": lift_primitive_fractions(rate) == expected,
-              "observer_uses_explicit_projection": np.array_equal(observed.derivative, rate.high),
+              "observer_uses_full_rate": isinstance(observed.derivative, RateView)
+                  and observed.derivative.values.identity_bytes() == rate.identity_bytes(),
               "independent_ports": all(v["passed"] for v in comparisons.values()),
               "projection_error_independently_reconstructed": max(map(abs, port_errors)) <= dec(GATES["value_scaled_atol"]),
               "voltage_change_does_not_change_inventory": all(v == 0 for v in word_decimals(delta)),
@@ -2031,6 +2034,10 @@ def test_voltage_lift_snapshot_history_wiring(case_id, request):
         assert delta.left_identity == increment.left_identity == previous.identity
         assert raw.origin == origin and tangent.origin == "physical_tangent"
         assert record["raw"]["physical_ydot_hex"] == [float(v).hex() for v in rate.high]
+        assert record["raw"]["physical_rate"]["values_words_hex"] == [
+            [float(v).hex() for v in word] for word in rate.words]
+        assert record["raw"]["physical_rate"]["observed_origin"] == origin
+        assert record["rate_projection_role"] == "counterfactual_first_word_only"
         assert record["history"]["raw_solver_zdot_hex"] == [float(v).hex() for v in zdot]
         assert np.array_equal(input_rate, segment.inputs(when)[1])
         assert not np.array_equal(rate.high, m.S*zdot)
@@ -2163,6 +2170,7 @@ def test_voltage_lift_complete_native_request(case_id, request):
     assert all(proposal["mandatory"].get(k) == v for k, v in previous["mandatory"].items())
     assert np.all(np.asarray(proposal["z0"]) == 0)
     assert not proposal["initial_preparation"]["native_initialization_performed"]
+    assert not proposal["full_word_consumer_qualification"]["native_policy_admitted"]
     assert proposal["preparation_context_sha256"] == proposal["initial_preparation"]["request_sha256"]
     assert proposal["preparation_context_sha256"] != digest(proposal)
     changed = deepcopy(proposal)
@@ -2172,6 +2180,10 @@ def test_voltage_lift_complete_native_request(case_id, request):
     changed = deepcopy(proposal)
     changed["budgets"]["charge_C"] *= 2
     with pytest.raises(ContractError, match="voltage_lift_native_gates_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    changed = deepcopy(proposal)
+    changed["full_word_consumer_qualification"]["native_policy_admitted"] = True
+    with pytest.raises(ContractError, match="voltage_lift_full_word_qualification_not_reviewed"):
         validate_voltage_lift_native_request(mapping, context.segments, changed)
     with pytest.raises(ContractError, match="voltage_lift_native_pilot_not_admitted"):
         run_voltage_lift_native_pilot(mapping, context.segments, proposal, {}, lambda _: pytest.fail("unadmitted output"))
@@ -2189,3 +2201,213 @@ def test_voltage_lift_complete_native_request(case_id, request):
                        "native_steps": 0, "native_controller_executed": False},
              {"full_original_protocol_and_points": True, "all_physical_gates_unchanged": True,
               "explicit_preparation_identity": True, "native_admission_guard_precedes_import": "sksundae" not in sys.modules})
+
+
+def full_word_fractions(value):
+    """Independent readback for tests; no consumer uses this arithmetic."""
+    return [sum((lift_fraction(word.ravel()[i]) for word in value.words), Fraction())
+            for i in range(value.words[0].size)]
+
+
+def full_word_linear_reference(model, fields, kind, inputs, evaluation=None):
+    """Direct finite-volume identities in exact rational input arithmetic.
+
+    This reader uses physical geometry/material values and no LinearTerm,
+    sparse Jacobian coefficient or candidate reduction implementation.
+    Nonlinear source values are exact *represented* inputs in this arithmetic
+    check; their independent Decimal physics checks remain separate.
+    """
+    m, N = model.definition, model.count
+    q, eps, area, nt, c0 = map(lift_fraction, (Q, m.epsilon, m.area, m.trap_density, m.ion_initial))
+    volume, spacing = list(map(lift_fraction, model.geometry.volumes)), list(map(lift_fraction, model.dx))
+    n, p, phi = (fields[name] for name in ("n_m3", "p_m3", "phi_V"))
+    c, f = (fields["c_m3"], fields["f"]) if m.dynamic else ([Fraction()]*N, [Fraction()]*N)
+    rho = [q*(p[i]-n[i]+(c[i]-nt*f[i]-(c0 if kind == "state" else 0) if m.dynamic else 0))
+           for i in range(N)]
+    displacement = [-eps*(phi[i+1]-phi[i])/spacing[i] for i in range(N-1)]
+    body = sum((v*r for v, r in zip(volume, rho, strict=True)), Fraction())
+    metal = [area*displacement[0]-volume[0]*rho[0], -area*displacement[-1]-volume[-1]*rho[-1]]
+    storage = [volume[i]*(nt if variable == "f" else 1)*fields[variable][i]
+               for _, variable, nodes in model.rate_fields for i in nodes]
+    result = {"storage": storage, "charge_density": rho, "displacement": displacement,
+              "body_charge": [body], "metal_charge": metal, "gauss_defect": [body+sum(metal)]}
+    if m.dynamic:
+        inventory = sum((volume[i]*c[i] for i in range(N)), Fraction())
+        result["ion_inventory"] = [inventory]
+        if kind == "state":
+            result["ion_inventory_change"] = [inventory-c0*sum(volume)]
+    if kind in {"state", "rate"}:
+        result["constraints"] = [area*(displacement[i]-displacement[i-1])-volume[i]*rho[i]
+                                 for i in range(1, N-1)]
+        result["constraints"] += [phi[0], phi[-1]+lift_fraction(inputs[0])]
+        for name, reservoir in (("n_m3", m.n_eq), ("p_m3", m.p_eq)):
+            result["constraints"] += [fields[name][i]-(lift_fraction(reservoir) if kind == "state" else 0)
+                                      for i in (0, N-1)]
+    if kind == "rate":
+        sources = {name: full_word_fractions(value) for name, value in evaluation.nodal_rates.items()}
+        result["balance"] = [a-b for a, b in zip(storage, [sources[name][i]
+            for _, name, nodes in model.rate_fields for i in nodes], strict=True)]
+        icon = [q*(volume[i]*(p[i]-n[i])+sources["n_m3"][i]-sources["p_m3"][i]) for i in (0, N-1)]
+        result.update(conduction=icon, total_current=[a+b for a, b in zip(icon, metal, strict=True)],
+                      charge_integrands=[sum(icon), *metal])
+        jn, jp, fi = (full_word_fractions(getattr(evaluation, key))
+                      for key in ("electron_current", "hole_current", "ion_flux"))
+        result["interior_total_current"] = [a+b+q*c+d for a, b, c, d in zip(jn, jp, fi, displacement, strict=True)]
+    return result
+
+
+@pytest.mark.parametrize("case_id", CASES)
+@pytest.mark.parametrize("area", GATES["areas_m2"])
+@pytest.mark.parametrize("sign", (-1, 0, 1))
+def test_full_word_physical_forms_sign_zero_coefficients(case_id, area, sign, request):
+    from scripts.benchmarks.contract_prototype import RateView
+    from scripts.benchmarks.precision_prototype import PrimitiveExpansion, encode_point
+
+    m = affine_model(case_id, area)
+    root_bytes = encode_point(m.reference)
+    words = [np.zeros(m.layout.size) for _ in range(4)]
+    previous = np.zeros(m.layout.size)
+    for name in ("n_m3", "p_m3", "phi_V"):
+        selection = m.layout.offsets[name]
+        scale = 2.0**-20 if name == "phi_V" else 1.
+        previous[selection] = 2.0**-216
+        for k in range(4):
+            words[k][selection] = sign*scale*2.0**(-54*k)
+    words[3][m.layout.offsets["p_m3"].start+1] *= 2
+    words[3][m.layout.offsets["phi_V"].stop-1] *= 2
+    primitive = PrimitiveExpansion(tuple(words))
+    left, _ = m.trial(previous, 1., (0., 0.))
+    right, increment = m.trial(primitive, 2., (0., 0.), predecessor=left,
+                               transition_representation="paired-endpoints-v1")
+    current = full_word_fractions(primitive)
+    roots = {"n_m3": m.definition.n_eq, "p_m3": m.definition.p_eq, "phi_V": 0.,
+             "c_m3": m.definition.ion_initial, "f": m.definition.f_eq}
+    state_fields, delta_fields = {}, {}
+    for variable in m.layout.variables:
+        sl = m.layout.offsets[variable.id]
+        state_fields[variable.id] = [lift_fraction(roots[variable.id])+v for v in current[sl]]
+        delta_fields[variable.id] = [a-lift_fraction(b) for a, b in zip(current[sl], previous[sl], strict=True)]
+    rate_words = [word.copy() for word in words]
+    if m.definition.dynamic:
+        for k in range(4):
+            rate_words[k][m.layout.offsets["c_m3"]] = sign*2.0**(-54*k)
+            rate_words[k][m.layout.offsets["f"]] = sign*2.0**(-20-54*k)
+    rates = PrimitiveExpansion(tuple(rate_words))
+    raw_rates = rates.high
+    rate = RateView(right, rates, np.zeros(2), source_identity=m.source_identity,
+                    mapping_identity="synthetic-physical-four-word-rate-v1", origin="physical-rate",
+                    raw_coordinates=right.y, raw_rate=raw_rates)
+    rate_values = full_word_fractions(rates)
+    rate_fields = {v.id: rate_values[m.layout.offsets[v.id]] for v in m.layout.variables}
+    evaluation = m.observation_evaluation(right)
+    records, checks = [], {}
+    for kind, fields in (("state", state_fields), ("increment", delta_fields), ("rate", rate_fields)):
+        reference = full_word_linear_reference(m, fields, kind, np.zeros(2), evaluation.values)
+        for name, form in m.linear_forms[kind].items():
+            action = m.linear_action(name, right, **(
+                {"increment": increment, "left": left} if kind == "increment" else
+                {"rate": rate, "evaluation": evaluation} if kind == "rate" else {}))
+            actual = full_word_fractions(action.value)
+            errors = [abs(a-b) for a, b in zip(actual, reference[name], strict=True)]
+            bound = list(map(lift_fraction, action.absolute_error_bound.values))
+            key = kind+"_"+name
+            checks[key] = all(error <= abs(expected)*Fraction("1e-28")
+                              and error <= limit and (a == 0) == (expected == 0)
+                              and (a > 0) == (expected > 0)
+                              for a, expected, error, limit in zip(actual, reference[name], errors, bound, strict=True))
+            checks[key+"_metadata"] = form.declared_nnz == len(form.terms) and action.form_identity == form.identity
+            records.append({"kind": kind, "form": name, "form_identity": form.identity,
+                            "operand_identity": action.operand_identity, "stored_terms": form.declared_nnz,
+                            "actual_exact": list(map(str, actual)), "reference_exact": list(map(str, reference[name])),
+                            "absolute_error_exact": list(map(str, errors)), "arithmetic_bound_exact": list(map(str, bound))})
+    checks.update(original_reference_unchanged=encode_point(m.reference) == root_bytes,
+                  previous_state_not_recentered=increment.left_identity == left.identity,
+                  raw_rate_words_retained=full_word_fractions(rate.values) == rate_values,
+                  original_volume_contains_area=np.array_equal(m.geometry.volumes, area*np.diff(m.edges)))
+    log_case(request, {"family": "full_word_physical_forms", "case": case_id, "area": area, "sign": sign,
+                       "source_identity": m.source_identity, "records": records,
+                       "arithmetic_relative_threshold": "1e-28", "native_steps": 0,
+                       "nonlinear_source_accuracy_certified_here": False}, checks)
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_full_word_public_problem_rate_and_float_paths(case_id, request):
+    from scripts.benchmarks.contract_prototype import FloatArray, RateView
+    from scripts.benchmarks.coupled_device_prototype import affine_observation_payload
+
+    m, mapping, adapter, z, inputs = lift_fixture(case_id)
+    zdot, adot = .17+np.sin(np.arange(m.layout.size)), np.array([.1, .3*m.definition.photon_reference])
+    p, _, primitive, reading, audit = adapter.observe(.01, z, zdot, inputs, adot)
+    rate = reading.derivative
+    assert isinstance(rate, RateView)
+    with pytest.raises(TypeError, match="implicit full-word rate projection"):
+        np.asarray(rate)
+    with pytest.raises(ContractError, match="problem_full_word_rate_not_admitted"):
+        m.public_problem().residual(p, rate, adot)
+    other, _ = mapping.trial(z, .02, inputs)
+    with pytest.raises(ContractError, match="linear_rate_point_or_source_mismatch"):
+        adapter.problem.residual(other, rate, adot)
+    with pytest.raises(ContractError, match="linear_rate_input_mismatch"):
+        adapter.problem.residual(p, rate, adot+np.array([1., 0.]))
+    received = []
+    original = adapter.problem.analytic_linearization
+    def checked_linearization(point, derivative, input_rate):
+        received.append(derivative)
+        return original(point, derivative, input_rate)
+    admitted = replace(adapter.problem, analytic_linearization=checked_linearization)
+    admitted.linearize(p, rate, adot)
+    actual = admitted.residual(p, rate, adot)
+    evaluation = m.observation_evaluation(p)
+    balance = m.linear_action("balance", p, rate=rate, evaluation=evaluation)
+    plain = primitive.high.copy()
+    explicit_plain = RateView(p, FloatArray(plain), adot, source_identity=m.source_identity,
+                              mapping_identity=mapping.identity, origin="physical-rate",
+                              raw_coordinates=p.y, raw_rate=plain)
+    legacy = m.public_problem().residual(p, plain, adot)
+    full_plain = admitted.residual(p, explicit_plain, adot)
+    payload = affine_observation_payload(reading)
+    checks = {"full_rate_reaches_Jacobian_unchanged": len(received) == 1 and received[0] is rate,
+              "residual_joint_mass_source_words": full_word_fractions(actual)[:m.dynamic_count] == full_word_fractions(balance.value),
+              "old_vector_route_keeps_same_physical_arithmetic": legacy.identity_bytes() == full_plain.identity_bytes(),
+              "actual_map_words_retained": full_word_fractions(rate.values) == lift_exact_map(mapping, zdot, adot, rate=True),
+              "full_rate_serialized": payload["physical_rate"]["values_words_hex"] == [[float(v).hex() for v in w] for w in primitive.words],
+              "raw_frame_is_distinct_from_observation_origin": payload["physical_rate"]["frame"] == "mapped-coordinate-rate"
+                    and payload["physical_rate"]["observed_origin"] == "algebraic_probe",
+              "counterfactual_audit_still_retained": audit["projected_rate_hex"] == payload["physical_ydot_hex"],
+              "row_arithmetic_does_not_certify_integration": all("continuous integration errors excluded" in v["error_scope"]
+                   for v in payload["linear_actions"].values())}
+    log_case(request, {"family": "full_word_public_callbacks", "case": case_id, "rate_identity": rate.identity,
+                       "map_identity": mapping.identity, "observation": payload, "native_steps": 0}, checks)
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_full_word_rate_producer_rejects_wrong_raw_point(case_id, request):
+    from scripts.benchmarks.precision_prototype import encode_point
+
+    m, mapping, _, _, _ = lift_fixture(case_id)
+    z, zdot, adot = np.zeros(m.layout.size), np.ones(m.layout.size), np.array([.1, 0.])
+    inputs = np.array([.1, 0.])
+    p, _ = mapping.trial(z, .01, inputs)
+    before = encode_point(p)
+    accepted = mapping.bind_rate(p, z, zdot, adot)
+    wrong = z.copy()
+    wrong[m.layout.offsets["n_m3"].start] = 1.
+    with pytest.raises(ContractError, match="voltage_lift_point_raw_coordinate_mismatch"):
+        mapping.bind_rate(p, wrong, zdot, adot)
+    # Same first Point.y word, different full physical potential. A float-only
+    # relation comparison would admit this false raw-coordinate provenance.
+    weak = z.copy()
+    weak[m.layout.offsets["phi_V"].start+1] = 2.0**-150
+    different, _ = mapping.trial(weak, .01, inputs)
+    assert np.array_equal(different.y, p.y) and different.identity != p.identity
+    with pytest.raises(ContractError, match="voltage_lift_point_raw_coordinate_mismatch"):
+        mapping.bind_rate(p, weak, zdot, adot)
+    actual_weak = mapping.bind_rate(different, weak, zdot, adot)
+    log_case(request, {"family": "full_word_map_relation", "case": case_id,
+                       "relation_form_identity": mapping.relation_form.identity,
+                       "point_identity": p.identity, "weak_point_identity": different.identity,
+                       "rate_identities": [accepted.identity, actual_weak.identity], "native_steps": 0},
+             {"distinct_actual_Point_binding": accepted.point.identity != actual_weak.point.identity,
+              "weak_mismatch_hidden_in_float_projection": np.array_equal(different.y, p.y),
+              "original_state_and_predecessor_unchanged": encode_point(p) == before,
+              "actual_mapped_rate_unchanged": accepted.values.identity_bytes() == actual_weak.values.identity_bytes()})

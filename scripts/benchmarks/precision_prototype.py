@@ -21,7 +21,8 @@ from numpy.typing import ArrayLike
 from perovskite_sim.physics.compensated import DD
 from scripts.benchmarks.contract_prototype import (
     ContractError, FieldProjection, FloatArray, Layout, PhysicalArray, Point,
-    ResolvedAuthority, StateIncrement, StateView, Vector, frozen_array, integer_indices,
+    PhysicalLinearForm, RateView, ResolvedAuthority, StateIncrement, StateView, Vector,
+    _apply_linear_form, frozen_array, integer_indices,
 )
 
 
@@ -54,6 +55,11 @@ class DoubleArray:
     @property
     def low(self) -> Vector:
         return self._low.view()
+
+    @property
+    def words(self) -> tuple[Vector, Vector]:
+        """Public complete words for explicit rate-input binding, without rounding."""
+        return self.high, self.low
 
     @classmethod
     def from_dd(cls, value: DD) -> DoubleArray:
@@ -168,6 +174,64 @@ class DoubleArithmetic:
 
     def freeze(self, value: DD) -> DoubleArray:
         return DoubleArray.from_dd(value)
+
+    def validate_rate(self, value: RateView) -> None:
+        _linear_affine_authority(value.point.state)
+        _double_linear_words(value.values)
+
+    def linear_form(self, form: PhysicalLinearForm, operand: Any, *,
+                    point=None, left=None, right=None, sources=()):
+        if isinstance(operand, RateView):
+            self.validate_rate(operand)
+        return _apply_linear_form(
+            form, operand, point=point, left=left, right=right, sources=sources,
+            array_words=_double_linear_words, state_words=_double_linear_state_words,
+            increment_words=_double_linear_increment_words, output_words=2,
+            finish=DoubleArray)
+
+
+def _double_linear_words(value) -> tuple[Vector, ...]:
+    if type(value) is FloatArray:
+        return (value.values,)
+    if type(value) is DoubleArray:
+        return value.words
+    if type(value) is PrimitiveExpansion:
+        return value.words
+    raise ContractError("linear_unsupported_word_source")
+
+
+def _linear_affine_authority(state):
+    authority = state.authority
+    if type(authority) is ResolvedAuthority:
+        return authority
+    if (type(authority) is not MappedAuthority or authority.map_name != "relative-fields"
+            or any(mode != "linear" for mode in authority.modes.values())):
+        raise ContractError("linear_action_requires_affine_physical_si")
+    return authority
+
+
+def _double_linear_state_words(state, name) -> tuple[Vector, ...]:
+    """The provider owns map interpretation; physical consumers see only actions."""
+    authority = _linear_affine_authority(state)
+    if type(authority) is ResolvedAuthority:
+        return _double_linear_words(authority.field(name))
+    return authority.anchor[name].words + authority.primitives[name].words
+
+
+def _double_linear_increment_words(left, right, name) -> tuple[Vector, ...]:
+    authority = _linear_affine_authority(right)
+    _linear_affine_authority(left)
+    if type(authority) is ResolvedAuthority:
+        return (_double_linear_words(authority.field(name))
+                + tuple(-word for word in _double_linear_words(left.authority.field(name))))
+    # The common wrapper already validated the actual Point predecessor and
+    # canonical increment. This checks map/root/primitive compatibility again
+    # and keeps the bounded original operands; projected delta fields are not
+    # authoritative inputs to a cross-species or spatial contraction.
+    local = authority._temporal_primitives(left)[name]
+    if type(local) is PrimitiveDifference:
+        return local.current.words + tuple(-word for word in local.previous.words)
+    return local.words
 
 
 def _log_ratio(numerator: DD, denominator: DD) -> DD:
@@ -299,6 +363,10 @@ class PrimitiveExpansion:
 
     def is_zero(self) -> bool:
         return all(not np.any(word) for word in self._words)
+
+    def is_finite(self) -> bool:
+        """Public source-value protocol; inspect all words without projection."""
+        return all(bool(np.isfinite(word).all()) for word in self._words)
 
     def as_dd(self) -> DD:
         if any(np.any(word) for word in self._words[2:]):

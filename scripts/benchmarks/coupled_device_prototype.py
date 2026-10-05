@@ -26,9 +26,11 @@ import yaml
 
 from perovskite_sim.constants import EPS_0, K_B, Q
 from scripts.benchmarks.contract_prototype import (
-    COULOMB, ONE, PARTICLE, SECOND, VOLT, VOLUME, BalanceTerms, ContractError,
+    AREA, COULOMB, LENGTH, ONE, PARTICLE, SECOND, VOLT, VOLUME,
+    BalanceTerms, BoundLinearSource, ContractError,
     EquationSpec, FloatArray, Geometry, ImmutableArrays, ImplicitSystem,
-    Layout, LinearCoordinates, LinearStorage, Point, StateIncrement, Support,
+    Layout, LinearCoordinates, LinearFactor, LinearSourceSpec, LinearStorage,
+    LinearTerm, PhysicalLinearForm, Point, RateView, StateIncrement, Support,
     TerminalPort, VariableSpec, frozen_array,
 )
 from scripts.benchmarks.port_prototype import PortSample
@@ -707,6 +709,7 @@ class AffineDeviceEvaluation:
     reference_reaction_p: object
     reaction_change_n: object
     reaction_change_p: object
+    linear_actions: Mapping[str, object]
 
 
 @dataclass(frozen=True)
@@ -714,7 +717,7 @@ class AffineDeviceObservation:
     """Physical rates and port values, before an explicit float output."""
 
     point: Point
-    derivative: np.ndarray
+    derivative: object
     input_rate: np.ndarray
     origin: str
     event_side: str
@@ -726,6 +729,8 @@ class AffineDeviceObservation:
     gauss_defect: object
     tangent_residual: np.ndarray
     interior_total_current: object
+    charge_integrands: object
+    linear_actions: Mapping[str, object]
 
 
 @dataclass(frozen=True)
@@ -781,6 +786,172 @@ class AffineCoupledSlab(CoupledSlab):
             "physical_mass_unchanged": True,
         })
         self.face_pairs = self.geometry.pairs
+        self.linear_forms = MappingProxyType({
+            kind: self._physical_forms(kind) for kind in ("state", "increment", "rate")
+        })
+
+    def _physical_forms(self, kind):
+        """Declare the affine physical coefficients, never read rounded J data.
+
+        These small COO descriptions share the public authority-aware action.
+        Volumes already contain area; only displacement faces receive A.
+        Every quotient keeps its actual dx as a declared divisor.
+        """
+        m, N, source = self.definition, self.count, self.source_identity
+        factor = lambda name, value, unit: LinearFactor(name, float(value), unit, source)
+        q = factor("elementary_charge", Q, COULOMB/PARTICLE)
+        nt = factor("trap_density", m.trap_density, PARTICLE/VOLUME)
+        c0 = factor("fixed_ion_background", m.ion_initial, PARTICLE/VOLUME)
+        eps = factor("permittivity", m.epsilon, COULOMB/VOLT/LENGTH)
+        area = factor("cross_section", m.area, AREA)
+        volumes = tuple(factor(f"volume_{i}", v, VOLUME) for i, v in enumerate(self.geometry.volumes))
+        spacings = tuple(factor(f"spacing_{i}", d, LENGTH) for i, d in enumerate(self.dx))
+        forms = {}
+
+        def form(name, units, terms, sources=()):
+            units, terms = tuple(units), tuple(terms)
+            forms[name] = PhysicalLinearForm(
+                self.layout, tuple(f"{name}_{i}" for i in range(len(units))),
+                units, terms, source, kind, len(terms), tuple(sources))
+
+        def charge(row, node, factors=(), sign=1):
+            terms = [LinearTerm(row, "p_m3", node, (q, *factors), sign),
+                     LinearTerm(row, "n_m3", node, (q, *factors), -sign)]
+            if m.dynamic:
+                terms += [LinearTerm(row, "c_m3", node, (q, *factors), sign),
+                          LinearTerm(row, "f", node, (q, *factors, nt), -sign)]
+                if kind == "state":
+                    terms.append(LinearTerm(row, None, 0, (q, *factors, c0), -sign))
+            return terms
+
+        def displacement(row, face, factors=(), sign=1):
+            return [LinearTerm(row, "phi_V", face, (*factors, eps), sign, spacings[face]),
+                    LinearTerm(row, "phi_V", face+1, (*factors, eps), -sign, spacings[face])]
+
+        def metal(row, side):
+            node, face, sign = (0, 0, 1) if side == 0 else (N-1, N-2, -1)
+            return displacement(row, face, (area,), sign)+charge(row, node, (volumes[node],), -1)
+
+        per_time = SECOND if kind == "rate" else ONE
+        mass = []
+        for equation, variable, nodes in self.rate_fields:
+            for local, node in enumerate(nodes):
+                row = self.graph.row_offsets[equation].start+local
+                mass.append(LinearTerm(row, variable, int(node),
+                                       (volumes[node], nt) if variable == "f" else (volumes[node],)))
+        form("storage", [PARTICLE/per_time]*self.dynamic_count, mass)
+        form("charge_density", [COULOMB/VOLUME/per_time]*N,
+             [term for i in range(N) for term in charge(i, i)])
+        body = [term for i in range(N) for term in charge(0, i, (volumes[i],))]
+        form("body_charge", [COULOMB/per_time], body)
+        form("displacement", [COULOMB/AREA/per_time]*(N-1),
+             [term for i in range(N-1) for term in displacement(i, i)])
+        form("metal_charge", [COULOMB/per_time]*2, metal(0, 0)+metal(1, 1))
+        form("gauss_defect", [COULOMB/per_time], body+metal(0, 0)+metal(0, 1))
+        if m.dynamic:
+            inventory = [LinearTerm(0, "c_m3", i, (volumes[i],)) for i in range(N)]
+            form("ion_inventory", [PARTICLE/per_time], inventory)
+            if kind == "state":
+                form("ion_inventory_change", [PARTICLE], inventory+[
+                    LinearTerm(0, None, 0, (volumes[i], c0), -1) for i in range(N)])
+
+        # The same physical affine constraints apply to states and tangents.
+        # Inputs are actual Point-bound sources, not an inferred Jacobian row.
+        if kind in {"state", "rate"}:
+            contact_source = LinearSourceSpec("applied_contact", "contacts", (2,), VOLT/per_time, source)
+            terms = []
+            for row, i in enumerate(self.interior):
+                terms += displacement(row, int(i), (area,))
+                terms += displacement(row, int(i)-1, (area,), -1)
+                terms += charge(row, int(i), (volumes[i],), -1)
+            offset = N-2
+            for block, variable in enumerate(("phi_V", "n_m3", "p_m3")):
+                for side, node in enumerate((0, N-1)):
+                    row = offset+2*block+side
+                    terms.append(LinearTerm(row, variable, node))
+                    if block == 0:
+                        terms.append(LinearTerm(row, contact_source.id, side))
+                    elif kind == "state":
+                        eq = factor(variable+"_reservoir", m.n_eq if block == 1 else m.p_eq, PARTICLE/VOLUME)
+                        terms.append(LinearTerm(row, None, 0, (eq,), -1))
+            units = [equation.unit/per_time for equation in self.layout.equations
+                     if equation.role == "constraint" for _ in range(int(np.prod(equation.shape)))]
+            form("constraints", units, terms, (contact_source,))
+
+        if kind == "rate":
+            nodal = {variable: LinearSourceSpec("nodal_"+variable, "nodes", (N,), PARTICLE/SECOND, source)
+                     for _, variable, _ in self.rate_fields}
+            balance = list(mass)
+            for equation, variable, nodes in self.rate_fields:
+                balance += [LinearTerm(self.graph.row_offsets[equation].start+j,
+                                       nodal[variable].id, int(node), sign=-1)
+                            for j, node in enumerate(nodes)]
+            form("balance", [PARTICLE/SECOND]*self.dynamic_count, balance, nodal.values())
+
+            def conduction(row, node):
+                return [LinearTerm(row, "p_m3", node, (q, volumes[node])),
+                        LinearTerm(row, "n_m3", node, (q, volumes[node]), -1),
+                        LinearTerm(row, nodal["n_m3"].id, node, (q,)),
+                        LinearTerm(row, nodal["p_m3"].id, node, (q,), -1)]
+
+            carrier_sources = (nodal["n_m3"], nodal["p_m3"])
+            currents = conduction(0, 0)+conduction(1, N-1)
+            form("conduction", [COULOMB/SECOND]*2, currents, carrier_sources)
+            form("total_current", [COULOMB/SECOND]*2,
+                 currents+metal(0, 0)+metal(1, 1), carrier_sources)
+            form("charge_integrands", [COULOMB/SECOND]*3,
+                 conduction(0, 0)+conduction(0, N-1)+metal(1, 0)+metal(2, 1), carrier_sources)
+            face_sources = (
+                LinearSourceSpec("electron_current", "faces", (N-1,), COULOMB/AREA/SECOND, source),
+                LinearSourceSpec("hole_current", "faces", (N-1,), COULOMB/AREA/SECOND, source),
+                LinearSourceSpec("ion_flux", "faces", (N-1,), PARTICLE/AREA/SECOND, source))
+            terms = [term for i in range(N-1) for term in (
+                *displacement(i, i), LinearTerm(i, "electron_current", i),
+                LinearTerm(i, "hole_current", i), LinearTerm(i, "ion_flux", i, (q,)))]
+            form("interior_total_current", [COULOMB/AREA/SECOND]*(N-1), terms, face_sources)
+        return MappingProxyType(forms)
+
+    def physical_rate_view(self, point, derivative, input_rate):
+        """Admit full public rates unchanged; retain the old physical-vector path."""
+        if isinstance(derivative, RateView):
+            derivative.validate(point, input_rate, self.source_identity)
+            return derivative
+        derivative, input_rate = frozen_array(derivative), frozen_array(input_rate)
+        if derivative.shape != point.y.shape or input_rate.shape != (2,):
+            raise ContractError("device_rate_shape")
+        return RateView(point, FloatArray(derivative), input_rate,
+                        source_identity=self.source_identity,
+                        mapping_identity="physical-si-rate-v1:"+self.source_identity,
+                        origin="physical-rate", raw_coordinates=point.y, raw_rate=derivative)
+
+    def linear_action(self, name, point, *, rate=None, increment=None, left=None,
+                      evaluation=None):
+        """Dispatch metadata to the public action; no local word arithmetic."""
+        from scripts.benchmarks.precision_prototype import DoubleArray
+
+        if rate is not None and increment is not None:
+            raise ContractError("ambiguous_physical_linear_operand")
+        kind = "increment" if increment is not None else "rate" if rate is not None else "state"
+        form = self.linear_forms[kind][name]
+        entries = []
+        values = self.evaluated_values(point, evaluation) if any(
+            source.id != "applied_contact" for source in form.sources) else None
+        for spec in form.sources:
+            if spec.id == "applied_contact":
+                voltage = rate.input_rate[0] if kind == "rate" else point.inputs[0]
+                value = DoubleArray([0.0, voltage])
+            elif spec.id.startswith("nodal_"):
+                value = values.nodal_rates[spec.id.removeprefix("nodal_")]
+            else:
+                value = getattr(values, spec.id)
+            entries.append((spec, value))
+        sources = BoundLinearSource.bind(point, entries)
+        if kind == "increment":
+            return increment.linear_form(left, point, form, arithmetic=self.arithmetic, sources=sources)
+        if kind == "rate":
+            rate.validate(point, rate.input_rate, self.source_identity)
+            return rate.linear_form(form, arithmetic=self.arithmetic, point=point, sources=sources)
+        return point.state.linear_form(form, arithmetic=self.arithmetic, point=point, sources=sources)
 
     def initial(self) -> Point:
         return self.reference
@@ -965,62 +1136,32 @@ class AffineCoupledSlab(CoupledSlab):
                   for _, var, nodes in (self.rate_fields if derivatives else ())]
         rate = a.concatenate([rates[var][nodes] for _, var, nodes in self.rate_fields])
         ra = np.vstack([ra_nodal[var][nodes] for _, var, nodes in self.rate_fields])
-        delta = self.remainders(point)
-        reference_n, reference_p = (self.field(self.reference, name).as_dd() for name in ("n_m3", "p_m3"))
-        charge_number0 = reference_p-reference_n
-        charge_change = delta["p_m3"].as_dd()-delta["n_m3"].as_dd()
-        if m.dynamic:
-            charge_number0 = charge_number0+(
-                self.field(self.reference, "c_m3").as_dd()-m.ion_initial)-m.trap_density*self.field(self.reference, "f").as_dd()
-            charge_change = charge_change+delta["c_m3"].as_dd()-m.trap_density*delta["f"].as_dd()
-        charge = Q*(charge_number0+charge_change)
-        displacement = -m.epsilon*dphi/DD(self.dx)
-        poisson = m.area*(displacement[1:]-displacement[:-1])-DD(volume[1:-1])*charge[1:-1]
-        contacts = [
-            self.field(point, "phi_V").as_dd()[[0, N-1]]+DD([0.0, point.inputs[0]]),
-            delta["n_m3"].as_dd()[[0, N-1]],
-            delta["p_m3"].as_dd()[[0, N-1]],
-        ]
-        algebraic = a.concatenate([poisson, *contacts])
+        linear = {name: self.linear_action(name, point)
+                  for name in ("charge_density", "displacement", "constraints")}
         return AffineDeviceEvaluation(
-            pack(rate), pack(algebraic), MappingProxyType({k: pack(v) for k, v in rates.items()}),
+            pack(rate), linear["constraints"].value, MappingProxyType({k: pack(v) for k, v in rates.items()}),
             MappingProxyType(nodal_jac), MappingProxyType({k: frozen_array(v) for k, v in ra_nodal.items()}),
             vstack(blocks, format="csr") if derivatives else None, frozen_array(ra),
-            pack(charge), pack(displacement), pack(jn), pack(jp), pack(fi),
+            linear["charge_density"].value, linear["displacement"].value, pack(jn), pack(jp), pack(fi),
             pack(DD(np.zeros(2))), pack(rn), pack(rp),
-            pack(rn0), pack(rp0), pack(drn), pack(drp),
+            pack(rn0), pack(rp0), pack(drn), pack(drp), MappingProxyType(linear),
         )
-
-    def _mass_action(self, values):
-        from scripts.benchmarks.precision_prototype import DD
-
-        return self.arithmetic.concatenate([
-            DD(self.geometry.volumes[nodes])*(self.definition.trap_density if var == "f" else 1)
-            *values[var][nodes] for _, var, nodes in self.rate_fields
-        ])
 
     def storage_value(self, point):
         self.validate(point)
-        return self.arithmetic.freeze(self._mass_action({
-            v.id: self.field(point, v.id).as_dd() for v in self.layout.variables
-        }))
+        return self.linear_action("storage", point).value
 
     def storage_delta(self, left, right, increment):
         increment.validate(left, right)
         self.validate(left); self.validate(right)
-        return self.arithmetic.freeze(self._mass_action({
-            v.id: increment.field(v.id).as_dd() for v in self.layout.variables
-        }))
+        return self.linear_action("storage", right, increment=increment, left=left).value
 
     def residual(self, point, derivative, input_rate):
-        from scripts.benchmarks.precision_prototype import DD
-
-        derivative, input_rate = frozen_array(derivative), frozen_array(input_rate)
-        if derivative.shape != point.y.shape or input_rate.shape != (2,):
-            raise ContractError("device_rate_shape")
-        e = self.evaluate(point)
-        mass_rate = self._mass_action({v.id: DD(derivative[self.layout.offsets[v.id]]) for v in self.layout.variables})
-        return self.arithmetic.freeze(self.arithmetic.concatenate((mass_rate-e.rate.as_dd(), e.algebraic.as_dd())))
+        rate = self.physical_rate_view(point, derivative, input_rate)
+        evaluation = self.observation_evaluation(point)
+        balance = self.linear_action("balance", point, rate=rate, evaluation=evaluation)
+        return self.arithmetic.freeze(self.arithmetic.concatenate(
+            (balance.value.as_dd(), evaluation.values.algebraic.as_dd())))
 
     def conservative_residual(self, left, right, increment):
         if right.time <= left.time:
@@ -1032,7 +1173,7 @@ class AffineCoupledSlab(CoupledSlab):
     def common_system(self):
         raise ContractError("affine_device_requires_public_sparse_problem")
 
-    def public_problem(self):
+    def public_problem(self, *, accepted_rate_mapping_identity=None):
         from scripts.benchmarks.contract_prototype import PhysicalStorage, SparseLinearization, SparseStructure, ValidatedProblem
 
         structure = SparseStructure.from_graph(self.graph)
@@ -1043,6 +1184,9 @@ class AffineCoupledSlab(CoupledSlab):
 
         def linearize(point, ydot, adot):
             e = self.evaluate(point, derivatives=True)
+            # This physical storage and the external lift are affine. Thus
+            # Qyy*ydot, Qya*adot, Qyt and their input/time counterparts vanish
+            # here only. Nonlinear storage keeps the full public contractions.
             fy = self._assemble_declared(vstack((-e.rate_jacobian, self.G), format="csr"))
             fydot = self._assemble_declared(self.mass.tocsr())
             fa = np.vstack((-e.input_jacobian, self.Ga))
@@ -1052,7 +1196,8 @@ class AffineCoupledSlab(CoupledSlab):
         return ValidatedProblem(self.layout, 2, self.dynamic_count, storage, structure,
                                 self.source_identity, self.residual, linearize,
                                 self.conservative_residual, self.conservative_jacobian,
-                                point_validator=self.validate, arithmetic=self.arithmetic)
+                                point_validator=self.validate, arithmetic=self.arithmetic,
+                                accepted_rate_mapping_identity=accepted_rate_mapping_identity)
 
     def observation_evaluation(self, point):
         """Evaluate/validate once; callers explicitly carry this local value."""
@@ -1081,43 +1226,30 @@ class AffineCoupledSlab(CoupledSlab):
         return frozen_array(result)
 
     def observe(self, point, derivative, input_rate, origin="algebraic_probe", side="continuous", *, evaluation=None):
-        from scripts.benchmarks.precision_prototype import DD, DoubleArray
-
         if origin not in {"native", "interpolant", "physical_tangent", "algebraic_probe",
                            "stop_output", "endpoint_restore", "segment_initial"}:
             raise ContractError("unknown_derivative_origin")
         if side not in {"continuous", "left", "right"}:
             raise ContractError("unknown_event_side")
-        derivative, input_rate = frozen_array(derivative), frozen_array(input_rate)
-        if derivative.shape != point.y.shape or input_rate.shape != (2,):
-            raise ContractError("device_rate_shape")
-        e, m, volume = self.evaluated_values(point, evaluation), self.definition, self.geometry.volumes
-        pack = DoubleArray.from_dd
-        rates = {v.id: DD(derivative[self.layout.offsets[v.id]]) for v in self.layout.variables}
-        rho_dot = Q*(rates["p_m3"]-rates["n_m3"]+(
-            rates["c_m3"]-m.trap_density*rates["f"] if m.dynamic else DD(np.zeros(self.count))))
-        ddot = -m.epsilon*(rates["phi_V"][1:]-rates["phi_V"][:-1])/DD(self.dx)
-        end = np.array([0, self.count-1]); width = DD(volume[end])/m.area
-        displacement, rho = e.displacement.as_dd(), e.charge_density.as_dd()
-        d_outer = self.arithmetic.concatenate((
-            displacement[:1]-rho[:1]*width[:1], displacement[-1:]+rho[-1:]*width[-1:]))
-        dd_outer = self.arithmetic.concatenate((
-            ddot[:1]-rho_dot[:1]*width[:1], ddot[-1:]+rho_dot[-1:]*width[-1:]))
-        icon = Q*(DD(volume[end])*(rates["p_m3"][end]-rates["n_m3"][end])
-                  +e.nodal_rates["n_m3"].as_dd()[end]-e.nodal_rates["p_m3"].as_dd()[end])
-        charges = self.arithmetic.concatenate([
-            self.ports[i].charge(pack(d_outer[i:i+1]), arithmetic=self.arithmetic).as_dd()
-            for i in (0,1)])
-        conventional = icon*DD([1/m.area, -1/m.area])
-        totals = self.arithmetic.concatenate([
-            self.ports[i].current(pack(conventional[i:i+1]), pack(dd_outer[i:i+1]),
-                                  arithmetic=self.arithmetic).as_dd() for i in (0,1)])
-        body, body_rate = (DD(volume)*rho).sum(), (DD(volume)*rho_dot).sum()
+        rate = self.physical_rate_view(point, derivative, input_rate)
+        input_rate = rate.input_rate
+        evaluation = self.observation_evaluation(point) if evaluation is None else evaluation
+        e = self.evaluated_values(point, evaluation)
+        linear = dict(e.linear_actions)
+        linear.update({name: self.linear_action(name, point)
+                       for name in ("metal_charge", "body_charge", "gauss_defect")})
+        linear.update({name+"_rate": self.linear_action(name, point, rate=rate, evaluation=evaluation)
+                       for name in ("body_charge", "metal_charge", "constraints", "conduction",
+                                    "total_current", "charge_integrands", "interior_total_current")})
+        scalar = lambda name: linear[name].value.take(np.asarray(0))
+        kept_derivative = derivative if isinstance(derivative, RateView) else frozen_array(derivative)
         return AffineDeviceObservation(
-            point, derivative, input_rate, origin, side, pack(charges), pack(icon), pack(totals),
-            pack(body), pack(body_rate), pack(body+charges.sum()),
-            frozen_array(self.G @ derivative+self.Ga @ input_rate),
-            pack(e.electron_current.as_dd()+e.hole_current.as_dd()+Q*e.ion_flux.as_dd()+ddot),
+            point, kept_derivative, input_rate, origin, side,
+            linear["metal_charge"].value, linear["conduction_rate"].value,
+            linear["total_current_rate"].value, scalar("body_charge"), scalar("body_charge_rate"),
+            scalar("gauss_defect"), self.project_output(linear["constraints_rate"].value),
+            linear["interior_total_current_rate"].value, linear["charge_integrands_rate"].value,
+            MappingProxyType(linear),
         )
 
     def finite_physical_changes(self, left, right, increment):
@@ -1135,25 +1267,21 @@ class AffineCoupledSlab(CoupledSlab):
             f0, f1 = self.field(left, "f").as_dd(), self.field(right, "f").as_dd()
             drn = m.capture_n*((1-f1)*dn-(n0+m.n1)*df)
             drp = m.capture_p*(f1*dp+(p0+m.p1)*df)
-            drho = Q*(dp-dn+increment.field("c_m3").as_dd()-m.trap_density*df)
         else:
             rn0 = self._capture(left)[0]
             lam1 = m.capture_n*(n1+m.n1)+m.capture_p*(p1+m.p1)
             drn = drp = (m.capture_n*m.capture_p*(n0*dp+p1*dn)
                          -rn0*(m.capture_n*dn+m.capture_p*dp))/lam1
-            drho = Q*(dp-dn)
-        dphi = increment.face_delta(left, right, "phi_V", self.face_pairs, arithmetic=self.arithmetic).as_dd()
-        dD = -m.epsilon*dphi/DD(self.dx)
-        half = DD(self.geometry.volumes[[0,self.count-1]])/m.area
-        douter = self.arithmetic.concatenate((dD[:1]-drho[:1]*half[:1],
-                                               dD[-1:]+drho[-1:]*half[-1:]))
-        dQmetal = m.area*douter*DD([1.0,-1.0])
+        linear = {name: self.linear_action(name, right, increment=increment, left=left)
+                  for name in ("storage", "charge_density", "displacement", "body_charge", "metal_charge")}
         return MappingProxyType({
-            "storage": self.storage_delta(left,right,increment),
+            "storage": linear["storage"].value,
             "capture_n_per_s": pack(drn), "capture_p_per_s": pack(drp),
-            "charge_density_C_m3": pack(drho), "displacement_C_m2": pack(dD),
-            "body_charge_C": pack((DD(self.geometry.volumes)*drho).sum()),
-            "metal_charge_C": pack(dQmetal),
+            "charge_density_C_m3": linear["charge_density"].value,
+            "displacement_C_m2": linear["displacement"].value,
+            "body_charge_C": linear["body_charge"].value.take(np.asarray(0)),
+            "metal_charge_C": linear["metal_charge"].value,
+            "linear_actions": MappingProxyType(linear),
         })
 
     def affine_constraint_error(self, point, *, evaluation=None):
@@ -1960,9 +2088,8 @@ def affine_state_quality_evidence(model: AffineCoupledSlab, point: Point, budget
               and metrics["contact_max_relative"] <= budgets["contact_relative"])
     if m.dynamic:
         c, f = (model.field(point, name).as_dd() for name in ("c_m3", "f"))
-        dc = model.field(point, "c_m3").difference(model.field(model.reference, "c_m3")).as_dd()
-        change = (DD(model.geometry.volumes)*dc).sum()
-        reference = (DD(model.geometry.volumes)*model.field(model.reference, "c_m3").as_dd()).sum()
+        change = model.linear_action("ion_inventory_change", point).value.as_dd()[0]
+        reference = model.linear_action("ion_inventory", model.reference).value.as_dd()[0]
         relative = abs(change/reference)
         ratio = c/m.ion_capacity
         metrics.update(ion_inventory_relative=float(relative.hi+relative.lo),
@@ -1980,13 +2107,38 @@ def affine_observation_payload(reading: AffineDeviceObservation) -> dict:
     def words(value):
         return {"high_hex": [float(x).hex() for x in np.ravel(value.high)],
                 "low_hex": [float(x).hex() for x in np.ravel(value.low)]}
-    return {"point_identity": reading.point.identity, "origin": reading.origin,
+    typed = isinstance(reading.derivative, RateView)
+    displayed = reading.derivative.words[0] if typed else reading.derivative
+    payload = {"point_identity": reading.point.identity, "origin": reading.origin,
             "event_side": reading.event_side,
-            "physical_ydot_hex": [float(x).hex() for x in reading.derivative],
+            "physical_ydot_hex": [float(x).hex() for x in displayed],
             **{name: words(getattr(reading, name)) for name in
                ("metal_charge", "conduction_inward", "total_inward", "body_charge",
                 "body_charge_rate", "gauss_defect", "interior_total_current")},
             "tangent_residual_hex": [float(x).hex() for x in reading.tangent_residual]}
+    if typed:
+        rate = reading.derivative
+        payload.update(
+            physical_ydot_role="first word for display and old field readers; not the physical consumer input",
+            physical_rate={
+                "identity": rate.identity, "point_identity": rate.point.identity,
+                "source_identity": rate.source_identity, "mapping_identity": rate.mapping_identity,
+                "frame": rate.origin, "observed_origin": reading.origin,
+                "values_words_hex": [[float(v).hex() for v in word] for word in rate.words],
+                "raw_coordinates_hex": [float(v).hex() for v in rate.raw_coordinates],
+                "raw_rate_hex": [float(v).hex() for v in rate.raw_rate],
+                "input_rate_hex": [float(v).hex() for v in rate.input_rate],
+            },
+            charge_integrands=words(reading.charge_integrands),
+            linear_actions={name: {
+                "form_identity": action.form_identity, "operand_identity": action.operand_identity,
+                "source_identities": list(action.source_identities),
+                "arithmetic_policy": action.arithmetic_policy,
+                "absolute_error_bound_hex": [float(v).hex() for v in action.absolute_error_bound.values],
+                "error_scope": "represented sources and coefficient arithmetic only; source-model and continuous integration errors excluded",
+            } for name, action in reading.linear_actions.items()},
+        )
+    return payload
 
 
 @dataclass(frozen=True, init=False)
@@ -2516,6 +2668,7 @@ class AffineVoltageMap(ImmutableArrays):
     model_identity: str = field(init=False)
     reference_identity: str = field(init=False)
     identity: str = field(init=False)
+    relation_form: PhysicalLinearForm = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         from scripts.benchmarks.precision_prototype import PrimitiveExpansion
@@ -2537,6 +2690,27 @@ class AffineVoltageMap(ImmutableArrays):
         object.__setattr__(self, "model_identity", m.source_identity)
         object.__setattr__(self, "reference_identity", m.reference.identity)
         object.__setattr__(self, "identity", digest(self.payload()))
+        # Prove the raw-coordinate/Point relation with the same public action.
+        # This does not reconstruct a predecessor or form a second trial.
+        roots = {"n_m3": m.definition.n_eq, "p_m3": m.definition.p_eq, "phi_V": 0.,
+                 "c_m3": m.definition.ion_initial, "f": m.definition.f_eq}
+        sources, terms, units = [], [], []
+        for variable in m.layout.variables:
+            if variable.id not in roots:
+                raise ContractError("voltage_lift_reference_field_unsupported")
+            spec = LinearSourceSpec("map_drive_"+variable.id, variable.support,
+                                    variable.shape, variable.unit, self.model_identity)
+            sources.append(spec)
+            origin = LinearFactor("map_origin_"+variable.id, roots[variable.id],
+                                  variable.unit, self.model_identity)
+            for i in range(int(np.prod(variable.shape))):
+                row = m.layout.offsets[variable.id].start+i
+                terms += [LinearTerm(row, variable.id, i), LinearTerm(row, spec.id, i, sign=-1),
+                          LinearTerm(row, None, 0, (origin,), -1)]
+                units.append(variable.unit)
+        object.__setattr__(self, "relation_form", PhysicalLinearForm(
+            m.layout, tuple(f"raw_point_relation_{i}" for i in range(m.layout.size)),
+            tuple(units), tuple(terms), self.model_identity, "state", len(terms), tuple(sources)))
 
     def payload(self):
         return {
@@ -2582,6 +2756,28 @@ class AffineVoltageMap(ImmutableArrays):
     def physical_rate(self, zdot, input_rate):
         return self._compose(zdot, input_rate, subtract_reference=False)
 
+    def bind_rate(self, point, z, zdot, input_rate):
+        """Bind an actual trial/restored Point and this map's full push-forward.
+
+        Callers retain the actual raw coordinates; no projected density or
+        rate is used to recover a low word or to reconstruct solver history.
+        """
+        self._check()
+        self.model.validate(point)
+        drive = self.physical_primitive(z, point.inputs)
+        sources = []
+        for spec in self.relation_form.sources:
+            selection = self.model.layout.offsets[spec.id.removeprefix("map_drive_")]
+            sources.append((spec, drive.take_flat(np.arange(selection.start, selection.stop))))
+        relation = point.state.linear_form(self.relation_form, arithmetic=self.model.arithmetic,
+                                          point=point, sources=BoundLinearSource.bind(point, sources))
+        if (np.any(relation.value.high != 0) or np.any(relation.value.low != 0)
+                or np.any(relation.absolute_error_bound.values != 0)):
+            raise ContractError("voltage_lift_point_raw_coordinate_mismatch")
+        return RateView(point, self.physical_rate(zdot, input_rate), input_rate,
+                        source_identity=self.model_identity, mapping_identity=self.identity,
+                        origin="mapped-coordinate-rate", raw_coordinates=z, raw_rate=zdot)
+
     def trial(self, z, time, inputs, *, predecessor=None):
         primitive = self.physical_primitive(z, inputs)
         return self.model.trial(primitive, time, inputs, predecessor=predecessor,
@@ -2589,10 +2785,11 @@ class AffineVoltageMap(ImmutableArrays):
 
 
 def voltage_lift_rate_projection(model: AffineCoupledSlab, primitive) -> dict:
-    """Exact finite arithmetic audit of the explicitly declared rate projection.
+    """Exact audit of reducing a mapped rate to its first word.
 
-    At a fixed physical state the rate contribution to these ports is linear.
-    This gives its actual signed error; it is not a trajectory error estimate.
+    Historical consumers used that projection. Full-word consumers retain
+    this audit as a counterfactual only, not their current arithmetic error.
+    Its record shape stays unchanged so old history readers remain usable.
     """
     from scripts.benchmarks.precision_prototype import PrimitiveExpansion
 
@@ -2645,28 +2842,26 @@ class VoltageLiftAdapter:
         if not isinstance(self.mapping, AffineVoltageMap):
             raise ContractError("voltage_lift_map_required")
         self.mapping._check()
-        object.__setattr__(self, "problem", self.mapping.model.public_problem())
+        object.__setattr__(self, "problem", self.mapping.model.public_problem(
+            accepted_rate_mapping_identity=self.mapping.identity))
         object.__setattr__(self, "source_identity", digest({
             "map": self.mapping.identity, "partial_frame": "raw-z,raw-zdot,inputs,input-rates,time-v1"}))
 
     def _point_rate(self, time, z, zdot, inputs, input_rate, predecessor=None):
         point, increment = self.mapping.trial(z, time, inputs, predecessor=predecessor)
-        physical_rate = self.mapping.physical_rate(zdot, input_rate)
-        # The common physical problem accepts binary64 rates. This final
-        # projection is explicit; history and observations also retain all
-        # push-forward words and an independent finite-rate error audit.
+        physical_rate = self.mapping.bind_rate(point, z, zdot, input_rate)
         return point, increment, physical_rate
 
     def residual(self, time, z, zdot, inputs, input_rate):
         point, _, rate = self._point_rate(time, z, zdot, inputs, input_rate)
-        value = self.problem.residual(point, rate.high, frozen_array(input_rate))
+        value = self.problem.residual(point, rate, frozen_array(input_rate))
         return self.mapping.rows*self.mapping.model.project_output(value)
 
     def linearize(self, time, z, zdot, inputs, input_rate):
         from scripts.benchmarks.contract_prototype import SparseLinearization
 
         point, _, rate = self._point_rate(time, z, zdot, inputs, input_rate)
-        physical = self.problem.linearize(point, rate.high, frozen_array(input_rate))
+        physical = self.problem.linearize(point, rate, frozen_array(input_rate))
         mapping, structure = self.mapping, physical.structure
 
         def scale(matrix):
@@ -2693,8 +2888,8 @@ class VoltageLiftAdapter:
         if origin == "physical_tangent":
             raise ContractError("voltage_lift_tangent_requires_named_evaluation")
         point, increment, rate = self._point_rate(time, z, zdot, inputs, input_rate, predecessor)
-        observed = self.mapping.model.observe(point, rate.high, input_rate, origin, side)
-        return point, increment, rate, observed, voltage_lift_rate_projection(self.mapping.model, rate)
+        observed = self.mapping.model.observe(point, rate, input_rate, origin, side)
+        return point, increment, rate.values, observed, voltage_lift_rate_projection(self.mapping.model, rate.values)
 
     def physical_tangent_observation(self, time, z, inputs, input_rate, *, side="continuous"):
         point, _ = self.mapping.trial(z, time, inputs)
@@ -3003,7 +3198,10 @@ def voltage_lift_initial_input(binding: VoltageLiftSegmentAdapter, z, predecesso
         "projected_minus_desired_rate_exact": [str(f(v)-f(w)) for v, w in zip(mapped_rate.high, desired, strict=True)],
         "rate_projection": voltage_lift_rate_projection(model, mapped_rate),
         "desired_tangent_residual_SI": residual_words(problem.residual(point, desired, input_rate)),
-        "represented_rate_residual_SI": residual_words(problem.residual(point, mapped_rate.high, input_rate)),
+        "represented_rate_residual_SI": residual_words(problem.residual(
+            point, mapping.bind_rate(point, z, zdot, input_rate), input_rate)),
+        "physical_rate_consumption": "public RateView full mapped words",
+        "rate_projection_role": "counterfactual_first_word_only",
         "state_changed": False, "rate_source": "named physical tangent at unchanged state",
         "native_initialization_performed": False, "native_steps": 0,
         "consistency_or_physical_acceptance_certified": False,
@@ -3016,9 +3214,9 @@ def voltage_lift_native_sample(binding: VoltageLiftSegmentAdapter, history: Volt
                                native: Mapping, predecessor: Point, *, origin: str):
     """Draft sampling hook for a supplied snapshot; it never advances time.
 
-    All mapped rate words and the explicitly projected physical rate survive
-    in history. The physical tangent is evaluated at the identical Point.
-    This hook does not integrate projection errors or accept an interval.
+    All mapped rate words reach the physical observer and survive in history.
+    The physical tangent is evaluated at the identical Point. The retained
+    first-word audit is counterfactual; no interval acceptance is inferred.
     """
     mapping, context, segment = binding.adapter.mapping, binding.context, binding.segment
     model = mapping.model
@@ -3048,7 +3246,8 @@ def voltage_lift_native_sample(binding: VoltageLiftSegmentAdapter, history: Volt
             for v in model.layout.variables):
         raise ContractError("voltage_lift_restart_changed_physical_state")
     evaluation = model.observation_evaluation(point)
-    raw = model.observe(point, rate.high, input_rate, origin, side, evaluation=evaluation)
+    raw = model.observe(point, mapping.bind_rate(point, z, zdot, input_rate),
+                        input_rate, origin, side, evaluation=evaluation)
     tangent = model.observe(point, model.tangent_rate(point, input_rate, evaluation=evaluation),
                             input_rate, "physical_tangent", side, evaluation=evaluation)
     difference = abs(raw.total_inward.as_dd()-tangent.total_inward.as_dd())
@@ -3064,6 +3263,8 @@ def voltage_lift_native_sample(binding: VoltageLiftSegmentAdapter, history: Volt
         "state_checks": affine_state_quality_evidence(model, point, context.budgets, evaluation=evaluation),
         "current_rate_gap_A": float(np.max(difference.hi+difference.lo)),
         "rate_projection": sample["physical_rate_projection"],
+        "rate_projection_role": "counterfactual_first_word_only",
+        "physical_rate_consumption": "public RateView full mapped words",
         "interval_or_prefix_charge_certified": False,
         "supplied_snapshot_only": True,
     }
@@ -3173,12 +3374,19 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
         "observation_policy": old["observation_policy"],
         "quadrature_uncertainty_scope": old["quadrature_uncertainty_scope"],
         "projection_policy": {
-            "rates": "all four direct-map words retained; public residual/observer consume the explicitly named first-word projection",
-            "point_current": "absolute raw/tangent difference plus absolute exact projected-minus-mapped total-current error <= original current_A/3",
+            "rates": "public RateView carries all direct-map words through residual and observation; first-word audit is counterfactual only",
+            "point_current": "full-word raw/tangent currents and separate public row-arithmetic bounds; complete observation error allocation awaits qualification",
             "charge_integrands": ["sum(reservoir_conduction)", "left(total-conduction)", "right(total-conduction)"],
             "interval": "positive8/16/32 Gauss sums E of absolute exact sample errors; E32+abs(E32-E16) added to original total and B/3 reference allocation",
             "prefix": "sum of nonnegative interval projection estimates, carried with outward-safe rounding; no signed cancellation",
             "continuum_certificate": False,
+        },
+        "full_word_consumer_qualification": {
+            "native_policy_admitted": False,
+            "local_action_scope": "affine contractions of represented state, endpoint increment and rate words with finite physical coefficients",
+            "pending": ["full physical source and row error allocation", "continuous quadrature error certification",
+                        "source-bound native protocol and independent refinements"],
+            "physical_gates_changed": False,
         },
         "physical_domain_policy": old["physical_domain_policy"],
         "history_policy": "one original physical reference/map; preserve all native/interpolant/stop/restore and event-side raw coordinates, full physical rate words, projected rate and named same-state tangent; no history recentering",
@@ -3221,6 +3429,10 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
             or not all(request["mandatory"].values())
             or not request["mandatory"].get("mapped_rate_projection_budget")):
         raise ContractError("voltage_lift_native_gates_changed")
+    qualification = request.get("full_word_consumer_qualification", {})
+    if (qualification.get("native_policy_admitted") is not False
+            or qualification.get("physical_gates_changed") is not False):
+        raise ContractError("voltage_lift_full_word_qualification_not_reviewed")
     if (segments[0].start != 0 or any(a.end != b.start or a.voltage[1] != b.voltage[0]
                                     or a.photons[1] != b.photons[0]
                                     for a, b in zip(segments[:-1], segments[1:], strict=True))):
@@ -3268,6 +3480,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     if sampling.request_sha256 != request_id:
         raise ContractError("voltage_lift_request_changed_during_snapshot")
     request, segments = sampling.request_copy(), sampling.segments
+    # The old native policy charged the first-word rate projection. That is
+    # now a counterfactual; retaining its number cannot qualify a new source.
+    # A future source-bound policy must cover the actual remaining errors.
+    if request.get("full_word_consumer_qualification", {}).get("native_policy_admitted") is not True:
+        raise ContractError("full_word_native_observation_policy_unqualified")
     from sksundae.ida import IDA
     from scripts.benchmarks.precision_prototype import DD
 
