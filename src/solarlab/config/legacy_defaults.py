@@ -11,13 +11,15 @@ from typing import Any
 from solarlab.materials.source import SourceDocument
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.settings import DeviceSettingsInput
+from solarlab.device.tunnelling import CHANNEL_TYPES
 from solarlab.materials.full_parameters import FullParameterInput
 from solarlab.units import normalize_quantity
 
 __all__ = ["read_legacy_default_catalog"]
 
 _SYMBOLS = {"MAXWELL_BOLTZMANN", "FULLY_IONIZED", "BAND_GAP_NARROWING_OFF",
-            "EFFECTIVE_LIFETIME", "MINOURA_2015", "WIDTH_NOT_APPLICABLE", "_DEFECT_FREE_TAU", "Q", "K_B", "T"}
+            "EFFECTIVE_LIFETIME", "MINOURA_2015", "WIDTH_NOT_APPLICABLE", "_DEFECT_FREE_TAU", "Q", "K_B", "T",
+            "BOTH_CARRIERS", "BOTH_SIDES"}
 
 @dataclass(frozen=True, slots=True)
 class _LiteralReader:
@@ -67,7 +69,9 @@ class _LiteralReader:
         return self._literal(ast.Name(id=name))
 
     def fields(self, class_name: str, names: tuple[str, ...]) -> dict[str, Any]:
-        if class_name not in {"MaterialParams", "DeviceStack", "InterfaceDefect", "BulkDefectSpecies", "BulkDefectDistribution", "GrainBoundary", "JunctionLayer"}:
+        if class_name not in {"MaterialParams", "DeviceStack", "InterfaceDefect", "BulkDefectSpecies", "BulkDefectDistribution", "GrainBoundary", "JunctionLayer",
+                              "CIGSGradedOptics", "BandToBandTunnellingChannel", "IntrabandTunnellingChannel",
+                              "InterfaceDefectAssistedTunnellingChannel", "ContactTunnellingChannel"}:
             raise ValueError("class is outside the bounded legacy default adapter")
         matches = [node for tree in self._trees() for node in tree.body
                    if isinstance(node, ast.ClassDef) and node.name == class_name]
@@ -86,7 +90,7 @@ class _LiteralReader:
 
     def mapping_defaults(self, function_name: str, mapping_name: str, names: tuple[str, ...]) -> dict[str, Any]:
         """Read only named mapping.get(key, literal) fallback declarations."""
-        if (function_name, mapping_name) not in {("_layer_from_scaps_row", "row"), ("load_tandem_from_yaml", "tandem")}:
+        if (function_name, mapping_name) not in {("_layer_from_scaps_row", "row"), ("load_tandem_from_yaml", "tandem"), ("cigs_graded_optics_from_mapping", "raw")}:
             raise ValueError("function is outside the bounded SCAPS default adapter")
         functions = [node for tree in self._trees() for node in tree.body
                      if isinstance(node, ast.FunctionDef) and node.name == function_name]
@@ -112,9 +116,9 @@ class _LiteralReader:
         return hashlib.sha256(json.dumps([(item.id, item.sha256) for item in self.sources], separators=(",", ":")).encode()).hexdigest()
 
 
-def read_legacy_default_catalog(sources: tuple[SourceDocument, ...]) -> DefaultCatalog:
+def read_legacy_default_catalog(sources: tuple[SourceDocument, ...], *, model_sources: tuple[SourceDocument, ...] = ()) -> DefaultCatalog:
     """Compile data once; the resulting catalog needs no legacy source files."""
-    reader = _LiteralReader(sources)
+    reader = _LiteralReader((*sources, *model_sources))
     material = reader.fields("MaterialParams", tuple(FullParameterInput.model_fields))
     device = reader.fields("DeviceStack", tuple(DeviceSettingsInput.model_fields))
     interface = reader.fields("InterfaceDefect", ("calibration_factor", "iface_state_calibration_factor"))
@@ -138,8 +142,20 @@ def read_legacy_default_catalog(sources: tuple[SourceDocument, ...]) -> DefaultC
         "tandem_light_direction": reader.mapping_defaults("load_tandem_from_yaml", "tandem", ("light_direction",))["light_direction"],
         "junction_incoherent": reader.fields("JunctionLayer", ("incoherent",))["incoherent"],
     }
+    complex_defaults = {}
+    if model_sources:
+        model_reader = _LiteralReader(model_sources)
+        cigs = model_reader.fields("CIGSGradedOptics", ("model", "slices", "kk_quadrature_order"))
+        if cigs != model_reader.mapping_defaults("cigs_graded_optics_from_mapping", "raw", tuple(cigs)):
+            raise ValueError("CIGS data and loader defaults disagree")
+        complex_defaults["cigs_graded_optics"] = cigs
+        classes = {"band_to_band": "BandToBandTunnellingChannel", "intraband": "IntrabandTunnellingChannel",
+                   "interface_defect_assisted": "InterfaceDefectAssistedTunnellingChannel", "contact": "ContactTunnellingChannel"}
+        for name, model in CHANNEL_TYPES.items():
+            complex_defaults[name] = model_reader.fields(classes[name], tuple(model.model_fields))
     return DefaultCatalog(tuple(material.items()), tuple(device.items()), tuple(scaps.items()), tuple(interface.items()),
                           tuple((name, reader.constant(name)) for name in ("Q", "K_B", "T")),
                           tuple(contacts.items()), tuple(structural.items()),
                           defect["defect_model"], defect["defect_schema_version"], degeneracy, width,
-                          tuple((source.id, source.sha256) for source in sources))
+                          tuple((source.id, source.sha256) for source in (*sources, *model_sources)),
+                          tuple((name, tuple(values.items())) for name, values in complex_defaults.items()))

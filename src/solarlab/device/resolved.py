@@ -17,18 +17,24 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from solarlab.device.defaults import DefaultCatalog
+from solarlab.device.defects import (
+    MULTIVALENT_VERSION, METASTABLE_VERSION, LegacyBulkTrapInput,
+    MetastableDocumentInput, MetastablePreparationInput, MultivalentDefectInput,
+)
 from solarlab.device.inputs import (
     BulkDefectInput, DeviceInput, FullLayerInput, InterfaceInput, SpatialProfileInput,
     TandemInput,
 )
 from solarlab.device.settings import DeviceSettingsInput
+from solarlab.device.tunnelling import CHANNEL_TYPES, validate_resolved_tunnelling
 from solarlab.materials.full_parameters import FullParameterInput, LAYER_OWNED_PARAMETERS, full_parameter_items
+from solarlab.materials.optics import CigsOpticsInput
 from solarlab.materials.parameters import Scalar
 from solarlab.materials.resources import ResourceLibrary, ResourceTable
 from solarlab.materials.source import SourceDocument
 from solarlab.units import UNIT_SCHEMA_VERSION, normalize_quantity
 
-__all__ = ["PreparedMaterial", "PreparedLayer", "PreparedDefect", "PreparedInterface", "PreparedDevice", "PreparedTandem"]
+__all__ = ["PreparedMaterial", "PreparedLayer", "PreparedDefect", "PreparedMultivalentDefect", "PreparedInterface", "PreparedDevice", "PreparedTandem"]
 
 
 def _encode(value: Any) -> bytes:
@@ -124,10 +130,44 @@ class PreparedDefect:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedMultivalentDefect:
+    input_json: bytes
+    band_gap_eV: float
+    _values_json: bytes = field(init=False, repr=False)
+    can_execute: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        model = MultivalentDefectInput.model_validate(_decode(self.input_json))
+        gap = normalize_quantity(self.band_gap_eV, "eV")
+        data = model.resolved_data(gap)
+        object.__setattr__(self, "band_gap_eV", gap)
+        object.__setattr__(self, "input_json", _encode(model.editing_data()))
+        object.__setattr__(self, "_values_json", _encode(data))
+
+    @property
+    def values(self) -> Mapping[str, Any]:
+        return _readonly(_decode(self._values_json))
+
+    def to_mapping(self) -> dict[str, Any]:
+        return _decode(self._values_json)
+
+
+def _cigs_data(document: bytes | None) -> dict[str, Any] | None:
+    if document is None:
+        return None
+    model = CigsOpticsInput.model_validate(_decode(document))
+    if model.model_fields_set != set(CigsOpticsInput.model_fields):
+        raise ValueError("resolved CIGS declaration requires all effective controls")
+    return model.normalized_data()
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedMaterial:
     id: str
     parameters: tuple[tuple[str, Scalar], ...]
     optical: ResourceTable | None
+    cigs_graded_optics_json: bytes | None = None
+    cigs_source_binding: tuple[str, str] | None = None
 
     def __post_init__(self) -> None:
         _identifier(self.id)
@@ -140,6 +180,16 @@ class PreparedMaterial:
                 raise ValueError("unselected optical resource cannot be bound to material")
         elif not isinstance(self.optical, ResourceTable) or self.optical.name != optical_name or self.optical.kind != "nk":
             raise ValueError("material optical name and supplied n-k resource do not match")
+        cigs = _cigs_data(self.cigs_graded_optics_json)
+        if cigs is not None:
+            if optical_name is not None or dict(parameters)["n_optical"] is not None:
+                raise ValueError("cigs_graded_optics conflicts with optical_material or n_optical")
+            binding = self.cigs_source_binding
+            if not isinstance(binding, tuple) or len(binding) != 2 or not isinstance(binding[0], str) or not binding[0] or not isinstance(binding[1], str) or re.fullmatch(r"[0-9a-f]{64}", binding[1]) is None:
+                raise ValueError("CIGS requires a supplied model-source identity")
+            object.__setattr__(self, "cigs_graded_optics_json", _encode(cigs))
+        elif self.cigs_source_binding is not None:
+            raise ValueError("unselected CIGS model cannot retain a source binding")
         object.__setattr__(self, "parameters", parameters)
 
     @property
@@ -148,7 +198,13 @@ class PreparedMaterial:
 
     @property
     def content_sha256(self) -> str:
-        return hashlib.sha256(_encode((self.id, self.parameters, self.optical.content_sha256 if self.optical else None))).hexdigest()
+        base = (self.id, self.parameters, self.optical.content_sha256 if self.optical else None)
+        extra = () if self.cigs_graded_optics_json is None else (_decode(self.cigs_graded_optics_json), self.cigs_source_binding)
+        return hashlib.sha256(_encode((*base, *extra))).hexdigest()
+
+    @property
+    def cigs_graded_optics(self) -> Mapping[str, Any] | None:
+        return _readonly(_cigs_data(self.cigs_graded_optics_json))
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,11 +215,16 @@ class PreparedLayer:
     thickness: float
     parameters: tuple[tuple[str, Scalar], ...]
     field_origins: tuple[tuple[str, str], ...]
-    defects: tuple[PreparedDefect, ...]
+    defects: tuple[PreparedDefect | PreparedMultivalentDefect, ...]
     defect_model: str
     defect_schema_version: str | None
     material_name: str | None
     optical: ResourceTable | None
+    bulk_trap_distribution_json: bytes | None = None
+    cigs_graded_optics_json: bytes | None = None
+    cigs_source_binding: tuple[str, str] | None = None
+    metastable_document_json: bytes | None = None
+    metastable_preparation_json: bytes | None = None
     material: PreparedMaterial = field(init=False)
 
     def __post_init__(self) -> None:
@@ -178,13 +239,31 @@ class PreparedLayer:
         if len(origins) != len(parameters) or {name for name, _ in origins} != {name for name, _ in parameters} or any(not isinstance(origin, str) or not origin for _, origin in origins):
             raise ValueError("every resolved parameter requires an explicit origin")
         defects = tuple(self.defects)
-        if any(not isinstance(defect, PreparedDefect) for defect in defects) or len({defect.values["id"] for defect in defects}) != len(defects):
+        if any(not isinstance(defect, (PreparedDefect, PreparedMultivalentDefect)) for defect in defects) or len({defect.values["id"] for defect in defects}) != len(defects):
             raise ValueError("layer defects require unique validated IDs")
-        if self.defect_model not in {"effective_lifetime", "explicit_quasi_steady"}:
+        if self.defect_model not in {"effective_lifetime", "explicit_quasi_steady", "explicit_metastable_frozen"}:
             raise ValueError("unsupported declared defect model")
-        _validate_defect_version(self.id, self.defect_schema_version, defects, self.defect_model)
         values = dict(parameters)
-        if self.defect_model == "explicit_quasi_steady" and (values["carrier_statistics"] != "maxwell_boltzmann" or values["dopant_ionization_model"] != "fully_ionized" or values["band_gap_narrowing_model"] != "off"):
+        if self.metastable_document_json is not None:
+            if defects or self.bulk_trap_distribution_json is not None or self.defect_schema_version != METASTABLE_VERSION or self.defect_model != "explicit_metastable_frozen":
+                raise ValueError("metastable inventory is exclusive with other defect inventories")
+            document = MetastableDocumentInput.model_validate(_decode(self.metastable_document_json))
+            document.resolved_data(values["Eg"])
+            object.__setattr__(self, "metastable_document_json", _encode(document.editing_data()))
+        else:
+            if self.defect_model == "explicit_metastable_frozen" or self.metastable_preparation_json is not None:
+                raise ValueError("metastable mode/protocol requires a metastable document")
+            _validate_defect_version(self.id, self.defect_schema_version, defects, self.defect_model)
+        if self.metastable_preparation_json is not None:
+            protocol = MetastablePreparationInput.model_validate(_decode(self.metastable_preparation_json))
+            object.__setattr__(self, "metastable_preparation_json", _encode(protocol.editing_data()))
+        if self.bulk_trap_distribution_json is not None:
+            if defects or self.defect_model != "effective_lifetime":
+                raise ValueError("bulk_trap_distribution is exclusive with explicit defect inventories")
+            trap = LegacyBulkTrapInput.model_validate(_decode(self.bulk_trap_distribution_json))
+            trap.resolved_data(values["Eg"])
+            object.__setattr__(self, "bulk_trap_distribution_json", _encode(trap.editing_data()))
+        if (self.defect_model != "effective_lifetime" or self.bulk_trap_distribution_json is not None) and (values["carrier_statistics"] != "maxwell_boltzmann" or values["dopant_ionization_model"] != "fully_ionized" or values["band_gap_narrowing_model"] != "off"):
             raise ValueError("unavailable explicit-defect/statistics/ionization/BGN combination")
         if any(defect.band_gap_eV != dict(parameters)["Eg"] for defect in defects):
             raise ValueError("defect energy binding does not match its layer gap")
@@ -193,7 +272,20 @@ class PreparedLayer:
         object.__setattr__(self, "field_origins", tuple(sorted(origins)))
         object.__setattr__(self, "defects", defects)
         object.__setattr__(self, "material", PreparedMaterial(self.material_name or self.id + ":material",
-                          tuple((name, value) for name, value in parameters if name not in LAYER_OWNED_PARAMETERS), self.optical))
+                          tuple((name, value) for name, value in parameters if name not in LAYER_OWNED_PARAMETERS), self.optical,
+                          self.cigs_graded_optics_json, self.cigs_source_binding))
+
+    @property
+    def bulk_trap_distribution(self) -> Mapping[str, Any] | None:
+        if self.bulk_trap_distribution_json is None:
+            return None
+        return _readonly(LegacyBulkTrapInput.model_validate(_decode(self.bulk_trap_distribution_json)).resolved_data(dict(self.parameters)["Eg"]))
+
+    @property
+    def metastable_document(self) -> Mapping[str, Any] | None:
+        if self.metastable_document_json is None:
+            return None
+        return _readonly(MetastableDocumentInput.model_validate(_decode(self.metastable_document_json)).resolved_data(dict(self.parameters)["Eg"]))
 
     @property
     def local_parameters(self) -> Mapping[str, Scalar]:
@@ -201,12 +293,23 @@ class PreparedLayer:
 
     def to_mapping(self) -> dict[str, Any]:
         values = dict(self.parameters)
-        return {"id": self.id, "name": self.name, "role": self.role, "thickness_m": self.thickness,
+        data = {"id": self.id, "name": self.name, "role": self.role, "thickness_m": self.thickness,
                 "material_id": self.material.id, "material_sha256": self.material.content_sha256,
                 "material_parameters": dict(self.material.parameters), "layer_parameters": dict(self.local_parameters),
                 "defect_model": self.defect_model, "defect_schema_version": self.defect_schema_version,
                 "bulk_defects": [defect.to_mapping() for defect in self.defects],
                 "provenance": [{"parameter": name, "effective_value": values[name], "origin": origin} for name, origin in self.field_origins]}
+        if self.bulk_trap_distribution_json is not None:
+            data["bulk_trap_distribution"] = LegacyBulkTrapInput.model_validate(_decode(self.bulk_trap_distribution_json)).resolved_data(values["Eg"])
+        if self.cigs_graded_optics_json is not None:
+            data["cigs_graded_optics"] = _cigs_data(self.cigs_graded_optics_json)
+            data["cigs_model_source"] = self.cigs_source_binding
+        if self.metastable_document_json is not None:
+            data["metastable_document"] = MetastableDocumentInput.model_validate(_decode(self.metastable_document_json)).resolved_data(values["Eg"])
+            data["metastable_preparation"] = (MetastablePreparationInput.model_validate(_decode(self.metastable_preparation_json)).normalized_data()
+                                               if self.metastable_preparation_json is not None else None)
+            data["metastable_state"] = None
+        return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,11 +396,17 @@ def _scaps_derived(values: dict[str, Any], defects: tuple[PreparedDefect, ...], 
     return result
 
 
-def _validate_defect_version(layer_id: str, version: str | None, defects: tuple[PreparedDefect, ...], mode: str) -> None:
+def _validate_defect_version(layer_id: str, version: str | None, defects: tuple[PreparedDefect | PreparedMultivalentDefect, ...], mode: str) -> None:
     if version is None:
         if mode != "effective_lifetime" or defects:
             raise ValueError(f"layers.{layer_id}: microscopic inventory requires a schema version")
         return
+    if version == MULTIVALENT_VERSION:
+        if mode != "explicit_quasi_steady" or not defects or any(not isinstance(defect, PreparedMultivalentDefect) for defect in defects):
+            raise ValueError(f"layers.{layer_id}: v4 requires a nonempty multivalent explicit inventory")
+        return
+    if any(isinstance(defect, PreparedMultivalentDefect) for defect in defects):
+        raise ValueError(f"layers.{layer_id}: multivalent species require the v4 schema")
     if version not in {"solarlab-explicit-bulk-defects-v1", "solarlab-explicit-bulk-defects-v2", "solarlab-explicit-bulk-defects-v3"}:
         raise ValueError(f"layers.{layer_id}.defect_schema_version: typed preparation is unavailable for this version")
     if mode == "explicit_quasi_steady" and not defects:
@@ -334,7 +443,8 @@ def _validate_defect_version(layer_id: str, version: str | None, defects: tuple[
         raise ValueError(f"layers.{layer_id}: v3 requires at least one normalized spatial profile")
 
 
-def _resolve_layer(layer: FullLayerInput, material: dict[str, Any], defaults: DefaultCatalog, resources: ResourceLibrary) -> PreparedLayer:
+def _resolve_layer(layer: FullLayerInput, material: dict[str, Any], defaults: DefaultCatalog, resources: ResourceLibrary,
+                   material_cigs: CigsOpticsInput | None = None) -> PreparedLayer:
     default_values = dict(defaults.material)
     origins = {name: "catalog:" + defaults.content_sha256 for name in default_values}
     if layer.parameterization == "scaps":
@@ -349,16 +459,19 @@ def _resolve_layer(layer: FullLayerInput, material: dict[str, Any], defaults: De
     origins.update((name, "layer_input:" + layer.id) for name in explicit)
     defect_data = [item.editing_data() for item in layer.bulk_defects]
     for item in defect_data:
-        if item["distribution"]["kind"] == "single_level":
+        if "distribution" in item and item["distribution"]["kind"] == "single_level":
             item["distribution"].setdefault("width_convention", defaults.distribution_width_convention)
-    defects = tuple(PreparedDefect(_encode(item), values.get("Eg", 0)) for item in defect_data)
+    defects = tuple((PreparedMultivalentDefect if isinstance(declared, MultivalentDefectInput) else PreparedDefect)(_encode(item), values.get("Eg", 0))
+                    for declared, item in zip(layer.bulk_defects, defect_data))
     metadata_ids = [item.defect_id for item in layer.scaps_defect_metadata]
     if len(set(metadata_ids)) != len(metadata_ids) or set(metadata_ids) - {item.values["id"] for item in defects}:
         raise ValueError(f"layers.{layer.id}.scaps_defect_metadata: duplicate or unknown defect ID")
     if metadata_ids and layer.parameterization != "scaps":
         raise ValueError(f"layers.{layer.id}.scaps_defect_metadata: requires SCAPS parameterization")
     if layer.parameterization == "scaps":
-        derived = _scaps_derived(values, defects, defaults)
+        if any(isinstance(defect, PreparedMultivalentDefect) for defect in defects) or layer.metastable_document is not None or layer.bulk_trap_distribution is not None:
+            raise ValueError(f"layers.{layer.id}: SCAPS scalar adapter does not define complex-defect lifetime projection")
+        derived = _scaps_derived(values, tuple(defect for defect in defects if isinstance(defect, PreparedDefect)), defaults)
         values.update(derived)
         origins.update((name, "derived:scaps_dos_and_parallel_inventory") for name in derived)
         if values.get("trap_N_t_interface") is not None and values.get("trap_N_t_bulk") is None:
@@ -367,9 +480,27 @@ def _resolve_layer(layer: FullLayerInput, material: dict[str, Any], defaults: De
     mode = layer.defect_model or defaults.defect_model
     if (layer.defect_model is None) != (layer.defect_schema_version is None) or (defects and layer.defect_schema_version is None):
         raise ValueError(f"layers.{layer.id}: microscopic inventory/schema/model is incomplete")
+    version = layer.defect_schema_version
+    if layer.metastable_document is not None:
+        if version is not None or layer.defect_model is not None or defects:
+            raise ValueError(f"layers.{layer.id}: metastable and ordinary defect declarations are exclusive")
+        mode, version = layer.metastable_document.defect_model, layer.metastable_document.schema_version
+    cigs = layer.cigs_graded_optics if "cigs_graded_optics" in layer.model_fields_set else material_cigs
+    cigs_json, cigs_binding = None, None
+    if cigs is not None:
+        effective = CigsOpticsInput.model_validate({**defaults.model_defaults("cigs_graded_optics"), **cigs.normalized_data()})
+        cigs_json = _encode(effective.normalized_data())
+        bindings = [binding for binding in defaults.evidence if binding[0].endswith("physics/cigs_optics.py")]
+        if len(bindings) != 1:
+            raise ValueError("CIGS requires one supplied model resource/source binding")
+        cigs_binding = bindings[0]
     optical = None if values.get("optical_material") is None else resources.get(values["optical_material"], "nk")
     return PreparedLayer(layer.id, layer.name, layer.role, normalize_quantity(layer.thickness, "m"), tuple(values.items()),
-                         tuple(origins.items()), defects, mode, layer.defect_schema_version, layer.material, optical)
+                         tuple(origins.items()), defects, mode, version, layer.material, optical,
+                         bulk_trap_distribution_json=_encode(layer.bulk_trap_distribution.editing_data()) if layer.bulk_trap_distribution is not None else None,
+                         cigs_graded_optics_json=cigs_json, cigs_source_binding=cigs_binding,
+                         metastable_document_json=_encode(layer.metastable_document.editing_data()) if layer.metastable_document is not None else None,
+                         metastable_preparation_json=_encode(layer.metastable_preparation.editing_data()) if layer.metastable_preparation is not None else None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,6 +525,7 @@ class PreparedDevice:
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("device requires nonempty unique layer IDs")
         materials = {}
+        material_cigs = {}
         for material in model.materials:
             if material.id in materials:
                 raise ValueError("duplicate material ID")
@@ -401,12 +533,14 @@ class PreparedDevice:
             if set(values) & LAYER_OWNED_PARAMETERS:
                 raise ValueError(f"materials.{material.id}: doping and defect/lifetime parameters belong to layers")
             materials[material.id] = values
+            material_cigs[material.id] = material.cigs_graded_optics
         layers = []
         for layer in model.layers:
             if layer.material is not None and layer.material not in materials:
                 raise ValueError(f"layers.{layer.id}.material: unknown named material")
             material_values = materials.get(layer.material, {}) if layer.material is not None else {}
-            layers.append(_resolve_layer(layer, material_values, self.defaults, self.resources))
+            layers.append(_resolve_layer(layer, material_values, self.defaults, self.resources,
+                                         material_cigs.get(layer.material) if layer.material is not None else None))
         by_id = {layer.id: layer for layer in layers}
         electrical = [layer for layer in layers if layer.role != "substrate"]
         if not electrical:
@@ -434,6 +568,20 @@ class PreparedDevice:
                               left.role != "substrate" and right.role != "substrate"))
         settings = DeviceSettingsInput.model_validate({**dict(self.defaults.device), **dict(model.settings.normalized_items())})
         setting_values = dict(settings.normalized_items())
+        if setting_values["graded_optics"]:
+            if setting_values["mode"] == "legacy" or not setting_values["band_grading"]:
+                raise ValueError("graded_optics requires band_grading and a non-legacy declared mode")
+            active = [layer for layer in layers if layer.cigs_graded_optics_json is not None]
+            if not active:
+                raise ValueError("graded_optics requires a CIGS optical declaration")
+            for active_layer in active:
+                parameters = dict(active_layer.parameters)
+                if active_layer.role != "absorber" or (parameters["Eg_back"] is None and parameters["chi_back"] is None):
+                    raise ValueError(f"layers.{active_layer.id}: active CIGS optics requires an absorber and an electrical grading endpoint")
+        tunnelling = None
+        if model.tunnelling_channels is not None:
+            tunnelling = validate_resolved_tunnelling(model.tunnelling_channels.resolved_data(
+                {name: self.defaults.model_defaults(name) for name in CHANNEL_TYPES}))
         if setting_values["built_in_potential_mode"] == "metal_work_function" and any(setting_values[name] is None for name in ("work_function_left_eV", "work_function_right_eV")):
             raise ValueError("metal_work_function requires both work functions")
         if setting_values["interface_charge_closure"] == "equilibrium_referenced" and not setting_values["interface_charge_rebaseline_acknowledged"]:
@@ -489,6 +637,31 @@ class PreparedDevice:
             gaps.append("microstructure_requires_lateral_geometry_and_neumann_boundary")
         if any(layer.defects for layer in layers):
             gaps.append("microscopic_defect_execution_requires_qualified_P04_binding")
+        if any(layer.defect_schema_version == MULTIVALENT_VERSION for layer in layers):
+            gaps.append("multivalent_v4_device_binding_and_narrow_QF_DC_scope_not_migrated")
+        if any(layer.bulk_trap_distribution_json is not None for layer in layers):
+            gaps.append("legacy_bulk_trap_restricted_dark_equilibrium_not_a_production_closure")
+        if any(layer.cigs_graded_optics_json is not None for layer in layers):
+            gaps.append("cigs_constitutive_resource_and_optical_evaluation_not_migrated")
+        measurement_bindings: list[dict[str, str]] = []
+        for resolved_layer in layers:
+            if resolved_layer.metastable_document_json is not None:
+                gaps.append("metastable_state_not_prepared_no_stationary_or_dynamic_evaluation")
+                if resolved_layer.metastable_preparation_json is None:
+                    gaps.append("metastable_preparation_protocol_not_supplied")
+                else:
+                    protocol = MetastablePreparationInput.model_validate(_decode(resolved_layer.metastable_preparation_json))
+                    source_matches = [source for source in sources if source.sha256 == protocol.measurement_protocol_sha256]
+                    measurement_bindings.extend({"layer_id": resolved_layer.id, "source_id": source.id, "sha256": source.sha256} for source in source_matches)
+                    if not source_matches:
+                        gaps.append("metastable_measurement_protocol_bytes_not_supplied")
+        if tunnelling is not None:
+            for channel in CHANNEL_TYPES:
+                if tunnelling[channel]["enabled"]:
+                    if channel != "intraband" or tunnelling[channel]["carrier"] != "electron":
+                        gaps.append("device_tunnelling_coupling_unavailable:" + channel)
+                    else:
+                        gaps.append("electron_intraband_requires_qualified_single_barrier_dark_ion_free_QF_DC_binding")
         if any(dict(layer.parameters)["carrier_statistics"] == "fermi_dirac" for layer in layers):
             gaps.append("fermi_dirac_narrow_scope_not_admitted_by_configuration")
         if setting_values["built_in_potential_mode"] != "legacy_manual":
@@ -502,9 +675,13 @@ class PreparedDevice:
                                        "source_sha256": resource.source.sha256, "content_sha256": resource.content_sha256,
                                        "shape": resource.shape, "columns": resource.columns, "units": resource.units}
                                       for name, resource in sorted(selected_resources.items())],
-                "diagnostics": diagnostics, "capability_gaps": sorted(gaps), "can_execute": False,
+                "diagnostics": diagnostics, "capability_gaps": sorted(set(gaps)), "can_execute": False,
                 "default_catalog": self.defaults.to_mapping(),
                 "input_sources": [{"id": source.id, "sha256": source.sha256} for source in sources]}
+        if tunnelling is not None:
+            data["tunnelling_channels"] = tunnelling
+        if any(layer.metastable_document_json is not None for layer in layers):
+            data["metastable_measurement_protocol_bindings"] = measurement_bindings
         object.__setattr__(self, "input_json", _encode(model.editing_data()))
         object.__setattr__(self, "sources", sources)
         object.__setattr__(self, "layers", tuple(layers))

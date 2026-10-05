@@ -9,7 +9,9 @@ import re
 from typing import Any
 
 from solarlab.device.settings import DeviceSettingsInput
+from solarlab.device.tunnelling import CHANNEL_TYPES
 from solarlab.materials.full_parameters import full_parameter_items
+from solarlab.materials.optics import CigsOpticsInput
 from solarlab.materials.parameters import Scalar
 from solarlab.units import normalize_quantity
 
@@ -39,8 +41,37 @@ class DefaultCatalog:
     defect_degeneracy: float
     distribution_width_convention: str
     evidence: tuple[tuple[str, str], ...]
+    complex_defaults: tuple[tuple[str, tuple[tuple[str, Scalar], ...]], ...] = ()
 
     def __post_init__(self) -> None:
+        complex_pairs = tuple(self.complex_defaults)
+        names = [name for name, _ in complex_pairs]
+        if len(names) != len(set(names)) or (names and set(names) != {"cigs_graded_optics", *CHANNEL_TYPES}):
+            raise ValueError("complex default catalog requires the five named model sections")
+        normalized = []
+        for name, values in complex_pairs:
+            data = _pairs(tuple(values))
+            if name == "cigs_graded_optics":
+                if set(data) != {"model", "slices", "kk_quadrature_order"}:
+                    raise ValueError("CIGS defaults must not invent composition endpoints")
+                # Validate only the supplied nonphysical controls, using the
+                # corresponding field adapters rather than invented GGI/CGI.
+                from pydantic import TypeAdapter
+                for field_name, value in data.items():
+                    field_info = CigsOpticsInput.model_fields[field_name]
+                    annotation = field_info.rebuild_annotation()
+                    TypeAdapter(annotation).validate_python(value, strict=True)
+                    if value is None:
+                        raise ValueError("complex defaults cannot contain absent placeholders")
+            else:
+                model = CHANNEL_TYPES[name]
+                if set(data) != set(model.model_fields):
+                    raise ValueError(f"incomplete default channel: {name}")
+                data = model.model_validate(data).normalized_data()
+                if data["enabled"] is not False:
+                    raise ValueError("tunnelling defaults cannot enable a channel")
+            normalized.append((name, tuple(sorted(data.items()))))
+        object.__setattr__(self, "complex_defaults", tuple(sorted(normalized)))
         object.__setattr__(self, "material", full_parameter_items(tuple(_pairs(self.material).items())))
         device = DeviceSettingsInput.model_validate(_pairs(self.device))
         if set(device.model_fields_set) != set(DeviceSettingsInput.model_fields):
@@ -100,25 +131,36 @@ class DefaultCatalog:
                 "defect_model": self.defect_model, "defect_schema_version": self.defect_schema_version,
                 "defect_degeneracy": self.defect_degeneracy,
                 "distribution_width_convention": self.distribution_width_convention,
-                "evidence": [list(pair) for pair in self.evidence]}
+                "evidence": [list(pair) for pair in self.evidence],
+                **({"complex_defaults": {name: dict(values) for name, values in self.complex_defaults}} if self.complex_defaults else {})}
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> DefaultCatalog:
         expected = {"schema", "material", "device", "scaps", "interface", "constants", "contacts", "structural", "defect_model",
                     "defect_schema_version", "defect_degeneracy", "distribution_width_convention", "evidence"}
-        if not isinstance(data, dict) or set(data) != expected or data["schema"] != "solarlab.default-catalog.v1":
+        if not isinstance(data, dict) or set(data) - {"complex_defaults"} != expected or data["schema"] != "solarlab.default-catalog.v1":
             raise ValueError("invalid default catalog schema/keys")
         if any(not isinstance(data[name], dict) for name in ("material", "device", "scaps", "interface", "constants", "contacts", "structural")):
             raise ValueError("catalog sections require explicit mappings")
+        complex_values = data.get("complex_defaults", {})
+        if not isinstance(complex_values, dict) or any(not isinstance(value, dict) for value in complex_values.values()):
+            raise ValueError("complex defaults require named model mappings")
         return cls(material=tuple(data["material"].items()), device=tuple(data["device"].items()),
                    scaps=tuple(data["scaps"].items()), interface=tuple(data["interface"].items()),
                    constants=tuple(data["constants"].items()), contacts=tuple(data["contacts"].items()),
                    structural=tuple(data["structural"].items()), defect_model=data["defect_model"],
                    defect_schema_version=data["defect_schema_version"], defect_degeneracy=data["defect_degeneracy"],
                    distribution_width_convention=data["distribution_width_convention"],
-                   evidence=tuple(tuple(pair) for pair in data["evidence"]))
+                   evidence=tuple(tuple(pair) for pair in data["evidence"]),
+                   complex_defaults=tuple((name, tuple(values.items())) for name, values in complex_values.items()))
 
     @property
     def content_sha256(self) -> str:
         # Effective values are part of identity, not merely their input hash.
         return hashlib.sha256(json.dumps(self.to_mapping(), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+    def model_defaults(self, name: str) -> dict[str, Scalar]:
+        for model, values in self.complex_defaults:
+            if model == name:
+                return dict(values)
+        raise ValueError(f"missing supplied complex model defaults: {name}")

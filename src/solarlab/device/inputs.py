@@ -2,48 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, get_origin
+from typing import Literal
 
-from pydantic import Field, ValidationInfo, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
-from solarlab.materials.full_parameters import FullParameterInput, ParameterFieldsInput, quantity_field as q
+from solarlab.materials.full_parameters import FullParameterInput, Nonempty, StableId, StructuredInput, quantity_field as q
 from solarlab.materials.parameters import QuantityInput
 from solarlab.device.settings import DeviceSettingsInput
-
-StableId = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.:-]*$")]
-Nonempty = Annotated[str, Field(min_length=1)]
-
-
-class StructuredInput(ParameterFieldsInput):
-    @field_validator("*", mode="before")
-    @classmethod
-    def _explicit_sequences(cls, value: object, info: ValidationInfo) -> object:
-        assert info.field_name is not None
-        if get_origin(cls.model_fields[info.field_name].annotation) is tuple:
-            if not isinstance(value, (tuple, list)):
-                raise ValueError("expected an explicit sequence")
-            return tuple(value)
-        return value
-
-    def normalized_data(self) -> dict[str, Any]:
-        checked = type(self).model_validate(self)
-        own = dict(checked.normalized_items())
-        def item(value: Any) -> Any:
-            if isinstance(value, StructuredInput):
-                return value.normalized_data()
-            if isinstance(value, ParameterFieldsInput):
-                return dict(value.normalized_items())
-            if isinstance(value, tuple):
-                return [item(part) for part in value]
-            return value
-        return {name: item(value) for name, value in own.items()}
-
-
-class KineticsInput(StructuredInput):
-    sigma_n_m2: QuantityInput = q("m^2", required=True)
-    sigma_p_m2: QuantityInput = q("m^2", required=True)
-    thermal_velocity_n_m_s: QuantityInput = q("m/s", positive=True, required=True)
-    thermal_velocity_p_m_s: QuantityInput = q("m/s", positive=True, required=True)
+from solarlab.device.defects import (
+    KineticsInput, LegacyBulkTrapInput, MetastableDocumentInput,
+    MetastablePreparationInput, MultivalentDefectInput,
+)
+from solarlab.device.tunnelling import TunnellingInput
+from solarlab.materials.optics import CigsOpticsInput
 
 
 class DistributionInput(StructuredInput):
@@ -177,14 +148,19 @@ class FullLayerInput(StructuredInput):
     parameters: FullParameterInput = Field(default_factory=FullParameterInput)
     defect_schema_version: str | None = None
     defect_model: Literal["effective_lifetime", "explicit_quasi_steady"] | None = None
-    bulk_defects: tuple[BulkDefectInput, ...] = ()
+    bulk_defects: tuple[BulkDefectInput | MultivalentDefectInput, ...] = ()
     scaps_defect_metadata: tuple[ScapsDefectMetadataInput, ...] = ()
+    bulk_trap_distribution: LegacyBulkTrapInput | None = None
+    cigs_graded_optics: CigsOpticsInput | None = None
+    metastable_document: MetastableDocumentInput | None = None
+    metastable_preparation: MetastablePreparationInput | None = None
 
 
 class NamedMaterialInput(StructuredInput):
     id: StableId
     name: Nonempty
     parameters: FullParameterInput
+    cigs_graded_optics: CigsOpticsInput | None = None
 
 
 class SimulationHintsInput(StructuredInput):
@@ -209,6 +185,7 @@ class DeviceInput(StructuredInput):
     simulation_hints: SimulationHintsInput | None = None
     spectrum: str | None = None
     fixed_generation: str | None = None
+    tunnelling_channels: TunnellingInput | None = None
 
 
 class OpticalLayerInput(StructuredInput):

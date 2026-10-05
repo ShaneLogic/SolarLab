@@ -8,7 +8,7 @@ Layer-owned doping and trap-profile values are separated during resolution.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, get_origin
 
 from pydantic import Field, GetJsonSchemaHandler, ValidationInfo, field_validator
 from pydantic.fields import FieldInfo
@@ -18,7 +18,10 @@ from pydantic_core import CoreSchema
 from solarlab.materials.parameters import EditableInput, LayerValuesInput, QuantityInput, Scalar
 from solarlab.units import normalize_quantity
 
-__all__ = ["ParameterFieldsInput", "FullParameterInput", "quantity_field", "LAYER_OWNED_PARAMETERS", "full_parameter_items"]
+__all__ = ["ParameterFieldsInput", "StructuredInput", "StableId", "Nonempty", "FullParameterInput", "quantity_field", "LAYER_OWNED_PARAMETERS", "full_parameter_items"]
+
+StableId = Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.:-]*$")]
+Nonempty = Annotated[str, Field(min_length=1)]
 
 
 def quantity_field(unit: str, *, positive: bool = False, signed: bool = False,
@@ -89,6 +92,33 @@ class ParameterFieldsInput(EditableInput):
                 value = normalize_quantity(value, str(extra["unit"]), path=name, input_unit=extra.get("input_unit"))
             values.append((name, value))
         return tuple(values)
+
+
+class StructuredInput(ParameterFieldsInput):
+    """Named structured input shared by material and device declarations."""
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _explicit_sequences(cls, value: object, info: ValidationInfo) -> object:
+        assert info.field_name is not None
+        if get_origin(cls.model_fields[info.field_name].annotation) is tuple:
+            if not isinstance(value, (tuple, list)):
+                raise ValueError("expected an explicit sequence")
+            return tuple(value)
+        return value
+
+    def normalized_data(self) -> dict[str, Any]:
+        checked = type(self).model_validate(self)
+        own = dict(checked.normalized_items())
+        def item(value: Any) -> Any:
+            if isinstance(value, StructuredInput):
+                return value.normalized_data()
+            if isinstance(value, ParameterFieldsInput):
+                return dict(value.normalized_items())
+            if isinstance(value, tuple):
+                return [item(part) for part in value]
+            return value
+        return {name: item(value) for name, value in own.items()}
 
 
 class FullParameterInput(ParameterFieldsInput):

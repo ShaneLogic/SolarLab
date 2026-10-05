@@ -7,6 +7,7 @@ from typing import Any
 
 from solarlab.config.yaml import load_yaml_mapping
 from solarlab.device.defaults import DefaultCatalog
+from solarlab.device.defects import MULTIVALENT_VERSION
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.materials.full_parameters import FullParameterInput
@@ -73,7 +74,7 @@ def _common_device(
 ) -> DeviceInput:
     raw = _mapping(document["device"], "device")
     contacts_extra = {"contacts", "S_n_left", "S_p_left", "S_n_right", "S_p_right"}
-    _keys(raw, set(DeviceSettingsInput.model_fields) | contacts_extra | {"interfaces", "interface_defects", "V_bi_override"}, set(), "device")
+    _keys(raw, set(DeviceSettingsInput.model_fields) | contacts_extra | {"interfaces", "interface_defects", "V_bi_override", "tunnelling_channels"}, set(), "device")
     settings = {name: raw[name] for name in DeviceSettingsInput.model_fields if name in raw}
     if "V_bi_override" in raw:
         override = _quantity(raw["V_bi_override"], "V", "device.V_bi_override")
@@ -158,6 +159,8 @@ def _common_device(
     data = {"schema_version": "solarlab.device-preparation.v1", "id": id, "source_format": source_format,
             "settings": settings, "layers": layers, "interfaces": interfaces, "contacts": contacts,
             "grain_boundaries": grains, "electrical_grid": grid}
+    if "tunnelling_channels" in raw:
+        data["tunnelling_channels"] = raw["tunnelling_channels"]
     for name in ("name", "description", "simulation_hints"):
         if name in document:
             data[name] = document[name]
@@ -174,10 +177,15 @@ def import_standard_device(source: SourceDocument, *, id: str, defaults: Default
     layers = []
     for i, value in enumerate(_sequence(document["layers"], "layers")):
         row = _mapping(value, f"layers[{i}]")
-        _keys(row, set(FullParameterInput.model_fields) | {"id", "name", "role", "thickness", "defect_schema_version", "defect_model", "bulk_defects"},
+        _keys(row, set(FullParameterInput.model_fields) | {"id", "name", "role", "thickness", "defect_schema_version", "defect_model", "bulk_defects", "bulk_trap_distribution", "cigs_graded_optics"},
               {"name", "role", "thickness"}, f"layers[{i}]")
         layer = {"id": row.get("id", f"layer_{i}"), "name": row["name"], "role": row["role"], "thickness": row["thickness"],
                  "parameters": {name: row[name] for name in FullParameterInput.model_fields if name in row}}
+        for field in ("bulk_trap_distribution", "cigs_graded_optics"):
+            if field in row:
+                # Legacy data loaders require mappings here. The canonical
+                # editable layer separately permits explicit nullable clearing.
+                layer[field] = _mapping(row[field], f"layers[{i}].{field}")
         defect_fields = {"defect_schema_version", "defect_model", "bulk_defects"} & set(row)
         if defect_fields and defect_fields != {"defect_schema_version", "defect_model", "bulk_defects"}:
             raise ValueError(f"layers[{i}]: defect schema/model/inventory must be declared atomically")
@@ -186,7 +194,12 @@ def import_standard_device(source: SourceDocument, *, id: str, defaults: Default
             defects = []
             for j, value in enumerate(_sequence(row["bulk_defects"], f"layers[{i}].bulk_defects")):
                 defect = _mapping(value, f"layers[{i}].bulk_defects[{j}]")
-                defects.append({"id": f"bulk_{j}", "degeneracy": defaults.defect_degeneracy, **defect})
+                implicit = {} if row["defect_schema_version"] == MULTIVALENT_VERSION else {"degeneracy": defaults.defect_degeneracy}
+                defects.append({"id": f"bulk_{j}", **implicit, **defect})
+            if row["defect_schema_version"] == MULTIVALENT_VERSION:
+                names = [value.get("name") for value in defects]
+                if len(names) != len(set(names)):
+                    raise ValueError(f"layers[{i}].bulk_defects: duplicate legacy species name")
             layer["bulk_defects"] = defects
         layers.append(layer)
     return _common_device(document, layers, id, defaults, "standard")
