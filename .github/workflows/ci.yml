@@ -100,6 +100,50 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_public_interface.py tests/numerical_contracts/test_state_authority.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_temporal_interface.py tests/numerical_contracts/test_trial_interface.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_device.py
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_ports.py -k 'not test_rc_ida_trajectory_and_every_native_interval'
+
+  packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv lock --check
+      - run: uv sync --frozen --extra dev --no-editable
+      - name: Package boundaries and dependency continuity
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          tests/refactor/test_package_preparation.py
+      - name: Installed package imports and resources outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I -B - <<'PY'
+          import importlib.metadata
+          import importlib.resources
+          import pathlib
+          import sys
+          import solarlab
+          import solarlab_research
+          import solarlab_server
+          from perovskite_sim.models.parameters import MaterialParams
+
+          prefix = pathlib.Path(sys.prefix).resolve()
+          for module in (solarlab, solarlab_research, solarlab_server):
+              assert pathlib.Path(module.__file__).resolve().is_relative_to(prefix)
+              assert importlib.resources.files(module).joinpath("py.typed").is_file()
+          assert MaterialParams.__module__ == "perovskite_sim.models.parameters"
+          assert importlib.metadata.version("solarlab") == "0.1.0"
+          PY
 
   backend:
     runs-on: ubuntu-24.04
