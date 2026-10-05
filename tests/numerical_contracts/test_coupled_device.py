@@ -1241,3 +1241,47 @@ def test_affine_native_pair_evaluates_once(case_id,monkeypatch,request):
              {"one_evaluation":count[0]==1,"full_public_history_restores":restored[0].identity==pair[0].identity,
               "raw_rates_retained":pair[-1]["history"]["raw_solver"] is not None,
               "separate_tangent_origin":pair[-1]["physical_tangent"]["origin"]=="physical_tangent"})
+
+
+def test_affine_saved_failure_weight_contraction(request):
+    """Tighter numerical weights must not requalify the saved failed path."""
+    from hashlib import sha256
+
+    bundle=json.loads(Path(os.environ["AFFINE_WEIGHT_REGRESSION"]).read_text())
+    data={}
+    for name,record in bundle["files"].items():
+        path=Path(record["path"])
+        assert sha256(path.read_bytes()).hexdigest()==record["sha256"]
+        data[name]=json.loads(path.read_text())
+    base,proposal,failed=data["base_request"],data["proposal_request"],data["failed_result"]
+    old=dict(base["controls"]);new=dict(proposal["controls"])
+    old_r,new_r=old.pop("rtol"),new.pop("rtol")
+    old_a,new_a=old.pop("atol"),new.pop("atol")
+    assert old==new
+    assert Fraction.from_float(new_r)*16==Fraction.from_float(old_r)
+    assert len(old_a)==len(new_a)==45
+    assert all(Fraction.from_float(b)*16==Fraction.from_float(a) and b>0 for a,b in zip(old_a,new_a))
+    for key in ["numeric_packet","segments","z0","zdot0","budgets","observation_times","quadrature","mandatory"]:
+        assert proposal[key]==base[key]
+    # Exact rational denominators, independent of rounded RMS diagnostics.
+    comparisons=0
+    for row in data["fixed_time_controls"]["selected"]:
+        for correction in row["one_correction_controls"]:
+            for a,b,coordinate in zip(old_a,new_a,correction["correction_z_hex"]):
+                z=abs(Fraction.from_float(float.fromhex(coordinate)))
+                before=Fraction.from_float(a)+Fraction.from_float(old_r)*z
+                after=Fraction.from_float(b)+Fraction.from_float(new_r)*z
+                assert after*16==before
+                comparisons+=1
+    charge_budget=Fraction.from_float(base["budgets"]["charge_C"])
+    ledgers=failed["first_failure"]["ledgers"]
+    assert not failed["complete_protocol"]
+    assert all(not values["passed"] and Fraction(values["exact_prefix_total_C"][0])>charge_budget
+               for values in ledgers.values())
+    log_case(request,{"family":"saved_failure_tighter_weights","exact_component_denominators":comparisons,
+                      "contraction_factor":16,"new_rtol_hex":new_r.hex(),"native_trajectory":False,
+                      "old_failed_trajectory_remains_failed":True},
+             {"all_eight_correction_vectors_and45_components":comparisons==8*45,
+              "positive_scalar_and_vector_weights":new_r>0 and min(new_a)>0,
+              "original_physical_and_observation_gates_unchanged":proposal["budgets"]==base["budgets"],
+              "no_new_native_import":"sksundae" not in sys.modules})
