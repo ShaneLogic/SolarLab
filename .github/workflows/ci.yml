@@ -87,6 +87,15 @@ jobs:
           tests/unit/test_blas_marker_selection.py
           tests/unit/physics/test_dynamic_storage.py
           tests/unit/discretization/test_fe_operators.py
+      - name: Public contracts, precision and non-IDA storage
+        working-directory: .
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        # Native IDA qualification campaigns retain their own setting-specific
+        # pass/fail records; these two commands only cover the named slices.
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_contracts.py tests/numerical_contracts/test_precision.py
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_storage.py -k 'not test_nc01_ida_all_native_intervals'
 
   backend:
     runs-on: ubuntu-24.04
