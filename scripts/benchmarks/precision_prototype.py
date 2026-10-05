@@ -185,10 +185,25 @@ def _log_ratio(numerator: DD, denominator: DD) -> DD:
     return DD(high, low)
 
 
+def _binary_sum_is_zero(values) -> bool:
+    """Exact dyadic equality for the bounded input-capacity check only."""
+    total, exponent = 0, 0
+    for value in values:
+        numerator, denominator = value.as_integer_ratio()
+        if not numerator:
+            continue
+        power = denominator.bit_length() - 1
+        if power > exponent:
+            total <<= power - exponent
+            exponent = power
+        total += numerator << (exponent - power)
+    return total == 0
+
+
 def _primitive_words(components: tuple[Vector, ...]) -> tuple[Vector, ...]:
     """Reduce at most eight input words to a fixed four-word exact expansion.
 
-    Four bounded fsum reductions propose the words. Exact binary Fractions only
+    Four bounded fsum reductions propose the words. Exact dyadic integers only
     verify that no remainder was discarded; they do not evaluate physics.
     This verification also fails closed on platform summation differences.
     """
@@ -204,9 +219,7 @@ def _primitive_words(components: tuple[Vector, ...]) -> tuple[Vector, ...]:
                 words.append(fsum([*source, *(-value for value in words)]))
         except OverflowError as error:
             raise ContractError("primitive_expansion_sum_range") from error
-        exact = sum((Fraction.from_float(value) for value in source), Fraction())
-        represented = sum((Fraction.from_float(value) for value in words), Fraction())
-        if exact != represented:
+        if not _binary_sum_is_zero([*source, *(-value for value in words)]):
             raise ContractError("primitive_expansion_capacity_exceeded")
         for target, value in zip(output, words):
             target[index] = value
