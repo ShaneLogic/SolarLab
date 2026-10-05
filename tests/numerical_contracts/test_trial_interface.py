@@ -68,10 +68,12 @@ def test_sibling_trials_bind_predecessor_with_fixed_cumulative_coordinates(mappe
 
 @pytest.mark.parametrize("mapped", [False, True])
 @pytest.mark.parametrize("remainder", [[0., 0.], [-0.25, -0.125], [2., 0.5]])
-def test_trial_physical_fields_keep_reference_and_valid_negative_remainders(mapped, remainder):
+@pytest.mark.parametrize("policy,schema", [(None, "v5"), ("four-word-v1", "v4")])
+def test_trial_physical_fields_keep_reference_and_valid_negative_remainders(mapped, remainder, policy, schema):
     coordinates, reference, _ = setup_reference(mapped)
     before = encode_point(reference)
-    point, change = coordinates.trial(reference, remainder, 1, reference.inputs)
+    kwargs = {} if policy is None else {"transition_representation": policy}
+    point, change = coordinates.trial(reference, remainder, 1, reference.inputs, **kwargs)
     for index, name in enumerate(("n", "phi")):
         expected = exact(reference.state.field(name))[0]+Fraction.from_float(remainder[index])
         assert exact(point.state.field(name)) == [expected]
@@ -80,7 +82,7 @@ def test_trial_physical_fields_keep_reference_and_valid_negative_remainders(mapp
     restored = roundtrip(point)
     assert restored.identity == point.identity
     assert restored.state.authority.fixed_reference.identity == reference.identity
-    assert restored.state.authority.payload()["schema"] == "solarlab.state-authority.v4"
+    assert restored.state.authority.payload()["schema"] == "solarlab.state-authority."+schema
     assert restored.state.authority.payload()["coordinate_contract"]["solver_projection"] == "first-word"
 
 
@@ -164,14 +166,15 @@ def test_trial_rejects_rebasing_nonlinear_modes_bad_shapes_and_physical_domain()
         coordinates.advance(first, [1., 0.], 2)
 
 
-def test_trial_exact_transition_capacity_is_bounded_and_nonmutating():
+def test_legacy_trial_exact_transition_capacity_is_bounded_and_nonmutating():
     coordinates, reference, _ = setup_reference()
     a = PrimitiveExpansion([np.array([v, 0.]) for v in (1., 2.**-54, 2.**-108, 2.**-162)])
     b = PrimitiveExpansion([np.array([v, 0.]) for v in (2., 2.**-100, 2.**-200, 2.**-300)])
-    first, _ = coordinates.trial(reference, a, 1)
+    first, _ = coordinates.trial(reference, a, 1, transition_representation="four-word-v1")
     before = encode_point(first)
     with pytest.raises(ContractError, match="primitive_expansion_capacity_exceeded"):
-        coordinates.trial(reference, b, 2, predecessor=first)
+        coordinates.trial(reference, b, 2, predecessor=first,
+                          transition_representation="four-word-v1")
     assert encode_point(first) == before
 
 
