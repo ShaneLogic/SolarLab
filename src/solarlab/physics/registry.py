@@ -14,7 +14,7 @@ import json
 import re
 from typing import Any
 
-from solarlab.materials.parameters import LayerValuesInput
+from solarlab.materials.parameter_schema import parameter_names, parameter_schema
 from solarlab.units import normalize_quantity, supported_units
 
 __all__ = [
@@ -248,6 +248,7 @@ class ModelDefinition:
     requires: tuple[Requirement, ...] = ()
     conflicts: tuple[ModelRef, ...] = ()
     derivative_support: str = "not_registered"
+    parameter_schema: str = "scalar_layer"
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, ModelRef) or not isinstance(self.capability, CapabilityRule):
@@ -259,7 +260,7 @@ class ModelDefinition:
             object.__setattr__(self, name, _strings(getattr(self, name), name))
         if not self.scopes or set(self.scopes) - _KINDS or self.support not in _SUPPORTS:
             raise ValueError("invalid model scope/support declaration")
-        if set(self.parameters) - set(LayerValuesInput.model_fields):
+        if set(self.parameters) - parameter_names(self.parameter_schema):
             raise ValueError("parameter schema is not available in this scalar preparation slice")
         if self.composition not in {"exclusive", "additive"}:
             raise ValueError("composition must be exclusive or additive")
@@ -297,7 +298,10 @@ class ModelRegistry:
             if any(conflict not in refs for conflict in item.conflicts):
                 raise ValueError(f"{item.ref.id}: unknown conflict")
         object.__setattr__(self, "definitions", tuple(sorted(definitions, key=lambda item: item.ref)))
-        object.__setattr__(self, "_parameter_schema", json.dumps(LayerValuesInput.model_json_schema(), sort_keys=True, allow_nan=False))
+        object.__setattr__(self, "_parameter_schema", json.dumps(self._schemas(), sort_keys=True, allow_nan=False))
+
+    def _schemas(self) -> dict[str, Any]:
+        return {name: parameter_schema(name) for name in sorted({"scalar_layer", *(item.parameter_schema for item in self.definitions)})}
 
     def get(self, ref: ModelRef) -> ModelDefinition:
         for item in self.definitions:
@@ -306,12 +310,13 @@ class ModelRegistry:
         raise ValueError(f"unknown model ID/version: {ref!r}")
 
     def validate_parameter_schema(self) -> None:
-        if json.dumps(LayerValuesInput.model_json_schema(), sort_keys=True, allow_nan=False) != self._parameter_schema:
+        if json.dumps(self._schemas(), sort_keys=True, allow_nan=False) != self._parameter_schema:
             raise ValueError("parameter schema changed after registry construction; rebuild explicitly")
 
     def export(self) -> dict[str, Any]:
         return {"schema": "solarlab.model-registry.v1", "models": metadata_value(self.definitions),
-                "parameter_schema": json.loads(self._parameter_schema), "numerical_graph_compiled": False}
+                "parameter_schema": json.loads(self._parameter_schema)["scalar_layer"],
+                "parameter_schemas": json.loads(self._parameter_schema), "numerical_graph_compiled": False}
 
     @property
     def content_sha256(self) -> str:

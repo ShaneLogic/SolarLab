@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import re
 
-from solarlab.materials.library import validated_parameters
+from solarlab.materials.parameter_schema import parameter_values
 from solarlab.materials.parameters import Scalar
 from solarlab.physics.registry import (
     CapabilityContext, EvidenceRef, ModelRef, ModelRegistry, OwnedVariable,
@@ -63,12 +63,13 @@ class ParameterSource:
     id: str
     values: tuple[tuple[str, Scalar], ...]
     evidence: EvidenceRef
+    parameter_schema: str = "scalar_layer"
 
     def __post_init__(self) -> None:
         _token(self.id, "parameter source")
         if not isinstance(self.evidence, EvidenceRef):
             raise ValueError("parameter source needs evidence")
-        object.__setattr__(self, "values", validated_parameters(self.values))
+        object.__setattr__(self, "values", parameter_values(self.values, self.parameter_schema))
 
     @property
     def content_sha256(self) -> str:
@@ -81,12 +82,13 @@ class ModelChoice:
     model: ModelRef
     parameters: tuple[tuple[str, Scalar], ...] = ()
     field_bindings: tuple[tuple[str, str], ...] = ()
+    parameter_schema: str = "scalar_layer"
 
     def __post_init__(self) -> None:
         _token(self.id, "local model instance ID")
         if not isinstance(self.model, ModelRef):
             raise ValueError("model choice requires an explicit ID/version")
-        object.__setattr__(self, "parameters", validated_parameters(self.parameters))
+        object.__setattr__(self, "parameters", parameter_values(self.parameters, self.parameter_schema))
         if isinstance(self.field_bindings, (str, bytes)):
             raise ValueError("field bindings require explicit pairs")
         entries = tuple(self.field_bindings)
@@ -112,12 +114,13 @@ class SelectedModel:
     overridden_parameters: tuple[str, ...]
     owned_variables: tuple[tuple[str, OwnedVariable], ...]
     read_variables: tuple[str, ...]
+    parameter_schema: str = "scalar_layer"
 
     def __post_init__(self) -> None:
         _token(self.local_id, "selected model instance")
         if not isinstance(self.model, ModelRef) or not isinstance(self.scope, Scope):
             raise ValueError("selected model requires explicit ref and scope")
-        object.__setattr__(self, "parameters", validated_parameters(self.parameters))
+        object.__setattr__(self, "parameters", parameter_values(self.parameters, self.parameter_schema))
         if self.parameter_source_sha256 is not None and re.fullmatch(r"[0-9a-f]{64}", self.parameter_source_sha256) is None:
             raise ValueError("invalid parameter source identity")
         overridden = _strings(self.overridden_parameters, "overridden parameter")
@@ -192,6 +195,8 @@ def _bind(
     source: ParameterSource | None,
 ) -> SelectedModel:
     definition = registry.get(choice.model)
+    if choice.parameter_schema != definition.parameter_schema or (source is not None and source.parameter_schema != definition.parameter_schema):
+        raise ValueError(f"{choice.id}: parameter schema binding mismatch")
     if scope.kind not in definition.scopes:
         raise ValueError(f"{scope.key}/{choice.id}: model does not support this scope")
     explicit = dict(choice.parameters)
@@ -203,7 +208,7 @@ def _bind(
     missing = [name for name in definition.parameters if name not in explicit and name not in inherited]
     if missing:
         raise ValueError(f"{choice.id}: missing consumed parameters {missing}")
-    parameters = validated_parameters(tuple(values.items()))
+    parameters = parameter_values(tuple(values.items()), definition.parameter_schema)
     bindings = dict(choice.field_bindings)
     names = {item.name for item in definition.owns} | set(definition.reads)
     if set(bindings) - names:
@@ -214,7 +219,7 @@ def _bind(
     reads = tuple(bindings.get(name, local_owned.get(name, name)) for name in definition.reads)
     return SelectedModel(choice.id, choice.model, scope, parameters,
                          source.content_sha256 if source is not None else None,
-                         tuple(sorted(explicit)), owned, reads)
+                         tuple(sorted(explicit)), owned, reads, definition.parameter_schema)
 
 
 def _dependency_scope(scope: Scope, relation: str) -> Scope:
@@ -289,7 +294,9 @@ def validate_selection(selection: Selection, registry: ModelRegistry) -> tuple[s
         definition = registry.get(instance.model)
         if instance.scope.kind not in definition.scopes:
             raise ValueError(f"{instance.id}: model does not support this scope")
-        parameters = validated_parameters(instance.parameters)
+        if instance.parameter_schema != definition.parameter_schema:
+            raise ValueError(f"{instance.id}: parameter schema binding mismatch")
+        parameters = parameter_values(instance.parameters, definition.parameter_schema)
         if tuple(name for name, _ in parameters) != definition.parameters:
             raise ValueError(f"{instance.id}: consumed parameter names do not match declaration")
         if instance.parameter_source_sha256 is None and set(definition.parameters) != set(instance.overridden_parameters):

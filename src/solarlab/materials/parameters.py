@@ -44,6 +44,13 @@ class EditableInput(BaseModel):
 
     def editing_data(self) -> dict[str, Any]:
         """Keep child edits even if the containing object began as a default."""
+        def edited(value: Any) -> Any:
+            if isinstance(value, EditableInput):
+                return value.editing_data()
+            if isinstance(value, (tuple, list)):
+                return tuple(edited(item) for item in value)
+            return value
+
         data = self.model_dump(exclude_unset=True, round_trip=True)
         for name in type(self).model_fields:
             value = getattr(self, name)
@@ -51,6 +58,8 @@ class EditableInput(BaseModel):
                 nested = value.editing_data()
                 if nested or name in self.model_fields_set:
                     data[name] = nested
+            elif isinstance(value, (tuple, list)) and name in self.model_fields_set:
+                data[name] = edited(value)
         return data
 
     def validated_update(self, updates: Mapping[str, object]) -> Self:

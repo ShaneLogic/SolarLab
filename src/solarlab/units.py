@@ -31,7 +31,7 @@ class _Unit:
 
 # These are unit definitions, not physical/model defaults. Energy remains eV.
 _GROUPS = {
-    "1": {"1": "1"},
+    "1": {"1": "1", "%": "1e-2"},
     "m": {"m": "1", "cm": "1e-2", "mm": "1e-3", "um": "1e-6", "µm": "1e-6", "nm": "1e-9"},
     "s": {"s": "1", "ms": "1e-3", "us": "1e-6", "µs": "1e-6", "ns": "1e-9", "ps": "1e-12"},
     "m^-1": {"m^-1": "1", "cm^-1": "1e2"},
@@ -44,6 +44,13 @@ _GROUPS = {
     "m^6/s": {"m^6/s": "1", "cm^6/s": "1e-12"},
     "m/s": {"m/s": "1", "cm/s": "1e-2"},
     "K": {"K": "1"},
+    "eV/K": {"eV/K": "1"},
+    "A/(m^2 K^2)": {"A/(m^2 K^2)": "1", "A/(cm^2 K^2)": "1e4"},
+    "(m/V)^0.5": {"(m/V)^0.5": "1", "(V/m)^-0.5": "1"},
+    "m^-2/s": {"m^-2/s": "1", "cm^-2/s": "1e4"},
+    "m^-3/s": {"m^-3/s": "1", "cm^-3/s": "1e6"},
+    "V/m": {"V/m": "1", "V/cm": "1e2"},
+    "Hz": {"Hz": "1", "kHz": "1e3"},
     "V": {"V": "1", "mV": "1e-3"},
     "eV": {"eV": "1", "meV": "1e-3"},
     "A/m^2": {"A/m^2": "1", "mA/cm^2": "10"},
@@ -95,7 +102,7 @@ def supported_units(canonical_unit: str) -> tuple[str, ...]:
 
 
 def normalize_quantity(
-    value: object, canonical_unit: str, *, path: str = "value",
+    value: object, canonical_unit: str, *, path: str = "value", input_unit: str | None = None,
 ) -> float:
     """Resolve one finite input to SI (or eV), rejecting bools and wrong units.
 
@@ -103,13 +110,13 @@ def normalize_quantity(
     expressions are deliberately unsupported; callers must provide Kelvin.
     """
     supported_units(canonical_unit)
-    source_unit = canonical_unit
+    source_unit = input_unit or canonical_unit
     if isinstance(value, str):
         match = _QUANTITY.fullmatch(value)
         if match is None:
             raise QuantityError(f"{path}: invalid finite quantity {value!r}")
         text, suffix = match.groups()
-        source_unit = suffix or canonical_unit
+        source_unit = suffix or input_unit or canonical_unit
         try:
             value = Decimal(text)
         except InvalidOperation as error:
