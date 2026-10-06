@@ -13,6 +13,8 @@ import json
 import math
 import os
 from pathlib import Path
+import random
+import struct
 
 import numpy as np
 import pytest
@@ -423,6 +425,100 @@ def test_finite_range_failures_are_explicit(case):
     action = form(point.state.layout, [LinearTerm(0, "p", 0, factors, divisor=divisor)], PARTICLE / VOLUME)
     with pytest.raises(ContractError, match="overflow|underflow"):
         point.state.linear_form(action, arithmetic=DoubleArithmetic())
+
+
+def product_cases():
+    """Binary64 edge cases and fixed bit patterns, independent of the verifier."""
+    tiny = float.fromhex("0x0.0000000000001p-1022")
+    normal = float.fromhex("0x1p-1022")
+    largest = float.fromhex("0x1.fffffffffffffp+1023")
+    cases = [(a, b) for a in (0.0, -0.0, tiny, -tiny, normal, -normal,
+                              1.0, -1.0, largest, -largest)
+             for b in (0.0, -0.0, 1.0, -1.0, 0.5, 2.0)]
+    cases += [(normal, 2.0**-52), (tiny, 1.0 + 2.0**-52),
+              (1.0 + 2.0**-52, 1.0 - 2.0**-53),
+              (largest, 1.0 - 2.0**-53), (normal, normal)]
+    rng = random.Random(930091)
+    def finite_word():
+        bits = (rng.getrandbits(1) << 63) | (rng.randrange(2047) << 52) | rng.getrandbits(52)
+        return struct.unpack(">d", bits.to_bytes(8, "big"))[0]
+    return cases + [(finite_word(), finite_word()) for _ in range(192)]
+
+
+def test_dyadic_product_verifier_matches_fraction_decimal_and_false_words(request):
+    from scripts.benchmarks.contract_prototype import _dyadic_product_matches
+
+    cases = [(1.0, 1.0, 1.0, 2.0**-54),  # Rounded high+low alone would accept.
+             (0.0, -1.0, 1.0, -1.0),
+             (2.0**-1074, 2.0, 2.0**-1074, 2.0**-1074),
+             (2.0**-1074, 0.5, 0.0, -0.0)]
+    for a, b in product_cases():
+        exact = f(a) * f(b)
+        try:
+            high = float(exact)
+        except OverflowError:
+            continue
+        low = float(exact - f(high))
+        cases.append((a, b, high, low))
+        for hi, lo in ((math.nextafter(high, math.inf), low),
+                       (high, math.nextafter(low, math.inf))):
+            if math.isfinite(hi) and math.isfinite(lo):
+                cases.append((a, b, hi, lo))
+    accepted = rejected = 0
+    with localcontext() as ctx:
+        ctx.prec = 2500
+        for a, b, high, low in cases:
+            expected = f(a) * f(b) == f(high) + f(low)
+            decimal_equal = (Decimal.from_float(a) * Decimal.from_float(b)
+                             == Decimal.from_float(high) + Decimal.from_float(low))
+            assert decimal_equal == expected
+            assert _dyadic_product_matches(a, b, high, low) == expected
+            accepted += expected
+            rejected += not expected
+    assert accepted and rejected
+    record(request, {"oracle": "independent Fraction and Decimal(2500)",
+                     "finite_quadruples": len(cases), "exact": accepted, "inexact": rejected})
+
+
+def test_scaled_dekker_return_bits_and_rejections_match_original_check(monkeypatch, request):
+    from scripts.benchmarks import contract_prototype as contract
+
+    cases = product_cases() + [(0.0, math.inf), (math.nan, 1.0), (1.0, -math.inf)]
+    def outcome(a, b):
+        try:
+            high, low = contract._finite_two_product(a, b)
+        except ContractError as error:
+            return ("rejected", str(error))
+        return ("returned", struct.pack(">dd", high, low).hex(), high, low)
+    candidate = [outcome(a, b) for a, b in cases]
+    # Reuse the unchanged floating operations with the original independent
+    # exact verifier to compare every return bit and rejection reason.
+    def original(a, b, high, low):
+        return (contract._word_integer((a,)) * contract._word_integer((b,))
+                == contract._word_integer((high, low)) << 1074)
+    with monkeypatch.context() as patch:
+        patch.setattr(contract, "_dyadic_product_matches", original)
+        baseline = [outcome(a, b) for a, b in cases]
+    assert candidate == baseline
+    statuses = {}
+    with localcontext() as ctx:
+        ctx.prec = 2500
+        for (a, b), result in zip(cases, candidate, strict=True):
+            key = result[0] if result[0] == "returned" else result[1]
+            statuses[key] = statuses.get(key, 0) + 1
+            if result[0] == "returned":
+                _, bits, high, low = result
+                assert f(a) * f(b) == f(high) + f(low)
+                assert (Decimal.from_float(a) * Decimal.from_float(b)
+                        == Decimal.from_float(high) + Decimal.from_float(low))
+                if a == 0.0 or b == 0.0:
+                    assert bits == "0" * 32  # Preserve the original +0,+0 branch.
+                elif b in {-1.0, 1.0}:
+                    assert bits == struct.pack(">dd", a * b, 0.0).hex()
+    assert set(statuses) == {"returned", "linear_product_nonfinite", "linear_product_overflow",
+                             "linear_product_underflow_or_inexact"}
+    record(request, {"bitwise_original_verifier_equivalence": True,
+                     "cases": len(cases), "outcomes": statuses})
 
 
 def test_output_keeps_existing_dd_range_limits_without_float_fallback():

@@ -983,6 +983,27 @@ def _linear_sum(words) -> float:
     return value
 
 
+def _dyadic_product_matches(a: float, b: float, high: float, low: float) -> bool:
+    """Compare finite binary64 a*b == high+low without a universal 2**-1074 scale.
+
+    frexp gives x = m*2**e; m*2**53 is an exact signed integer, including
+    subnormals. Only these short integers are multiplied. Aligning exponents
+    then compares the exact real values, without rounding the high/low sum.
+    """
+    ma, ea = math.frexp(a)
+    mb, eb = math.frexp(b)
+    mh, eh = math.frexp(high)
+    ml, el = math.frexp(low)
+    product = int(ma * 2**53) * int(mb * 2**53)
+    hi, lo = int(mh * 2**53), int(ml * 2**53)
+    ep, eh, el = ea + eb - 106, eh - 53, el - 53
+    common = min(ep, eh if hi else ep, el if lo else ep)
+    return (product << (ep - common)) == (
+        (hi << (eh - common) if hi else 0)
+        + (lo << (el - common) if lo else 0)
+    )
+
+
 def _finite_two_product(a: float, b: float) -> tuple[float, float]:
     """Scaled Dekker product with an exact range/underflow verification.
 
@@ -1009,7 +1030,7 @@ def _finite_two_product(a: float, b: float) -> tuple[float, float]:
         raise ContractError("linear_product_overflow") from error
     if not math.isfinite(high) or not math.isfinite(low):
         raise ContractError("linear_product_overflow")
-    if _word_integer((a,)) * _word_integer((b,)) != _word_integer((high, low)) << 1074:
+    if not _dyadic_product_matches(a, b, high, low):
         raise ContractError("linear_product_underflow_or_inexact")
     return high, low
 

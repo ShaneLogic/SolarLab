@@ -1193,11 +1193,17 @@ def test_affine_bound_evaluation_reuses_exact_values(case_id,family,monkeypatch,
     quality=affine_state_quality_evidence(m,p,proposal["budgets"])
     bound=m.affine_constraint_error(p)
     actual_evaluate=m.evaluate;count=[0]
+    actual_action=m.linear_action;action_counts={}
+    def counted_action(name,point,**kwargs):
+        kind="rate" if kwargs.get("rate") is not None else "state"
+        key=(kind,name);action_counts[key]=action_counts.get(key,0)+1
+        return actual_action(name,point,**kwargs)
     def counted(*args,**kwargs):
         count[0]+=1
         return actual_evaluate(*args,**kwargs)
     monkeypatch.setattr(m,"evaluate",counted)
-    evaluation=m.observation_evaluation(p)
+    monkeypatch.setattr(m,"linear_action",counted_action)
+    evaluation=m.observation_evaluation(p,state_actions=True)
     shared_raw=m.observe(p,rate,adot,evaluation=evaluation)
     shared_rate=m.tangent_rate(p,adot,evaluation=evaluation)
     shared_tangent=m.observe(p,shared_rate,adot,"physical_tangent",evaluation=evaluation)
@@ -1208,14 +1214,41 @@ def test_affine_bound_evaluation_reuses_exact_values(case_id,family,monkeypatch,
         m.observe(other,rate,adot,evaluation=evaluation)
     with pytest.raises(ContractError,match="foreign_or_stale_observation_evaluation"):
         m.tangent_rate(p,adot,evaluation=replace(evaluation,source_identity="foreign"))
+    with pytest.raises(ContractError,match="foreign_or_stale_observation_evaluation"):
+        m.observe(p,rate,adot,evaluation=replace(evaluation,source_identity="foreign"))
     with pytest.raises(ValueError):evaluation.values.algebraic.high.setflags(write=True)
     with pytest.raises(TypeError):evaluation.values.nodal_rates["n_m3"]=None
+    with pytest.raises(TypeError):evaluation.values.linear_actions["body_charge"]=None
+    state_names=("metal_charge","body_charge","gauss_defect")
+    rate_names=("body_charge","metal_charge","constraints","conduction","total_current",
+                "charge_integrands","interior_total_current")
     log_case(request,{"family":"bound_affine_evaluation","case":case_id,"point_family":family,
-                      "point_identity":p.identity,"full_evaluation_count":count[0],"native_trajectory":False},
+                      "point_identity":p.identity,"full_evaluation_count":count[0],"native_trajectory":False,
+                      "shared_state_action_counts":{name:action_counts[("state",name)] for name in state_names},
+                      "separate_rate_action_counts":{name:action_counts[("rate",name)] for name in rate_names}},
              {"one_evaluation":count[0]==1,"raw_words_equal":affine_observation_payload(shared_raw)==affine_observation_payload(raw),
               "tangent_words_equal":affine_observation_payload(shared_tangent)==affine_observation_payload(tangent),
               "rates_bitwise_equal":np.array_equal(shared_rate,tangent_rate),"quality_equal":shared_quality==quality,
-              "constraint_bound_equal":shared_bound==bound,"no_mutable_sparse_cache":evaluation.values.rate_jacobian is None})
+               "constraint_bound_equal":shared_bound==bound,"no_mutable_sparse_cache":evaluation.values.rate_jacobian is None,
+               "three_state_actions_once":all(action_counts[("state",name)]==1 for name in state_names),
+               "same_state_action_objects":all(shared_raw.linear_actions[name] is shared_tangent.linear_actions[name]
+                                               for name in state_names),
+               "seven_rate_actions_remain_separate":all(action_counts[("rate",name)]==2 and
+                   shared_raw.linear_actions[name+"_rate"] is not shared_tangent.linear_actions[name+"_rate"]
+                   for name in rate_names)})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_affine_observation_state_actions_do_not_expand_residual_context(case_id,monkeypatch):
+    m=affine_model(case_id);p=m.reference
+    actual=m.linear_action;names=[]
+    def counted(name,*args,**kwargs):
+        names.append(name)
+        return actual(name,*args,**kwargs)
+    monkeypatch.setattr(m,"linear_action",counted)
+    evaluation=m.observation_evaluation(p)
+    assert set(names)=={"charge_density","displacement","constraints"}
+    assert set(evaluation.values.linear_actions)==set(names)
 
 
 @pytest.mark.parametrize("case_id", CASES)

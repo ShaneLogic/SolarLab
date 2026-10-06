@@ -7,7 +7,7 @@ explicitly limited to the first N8 diagnostic; scaling belongs to the adapter.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from fractions import Fraction
 from hashlib import sha256
 import json
@@ -1199,9 +1199,19 @@ class AffineCoupledSlab(CoupledSlab):
                                 point_validator=self.validate, arithmetic=self.arithmetic,
                                 accepted_rate_mapping_identity=accepted_rate_mapping_identity)
 
-    def observation_evaluation(self, point):
-        """Evaluate/validate once; callers explicitly carry this local value."""
-        return AffinePointEvaluation(point, self.source_identity, self.evaluate(point))
+    def observation_evaluation(self, point, *, state_actions=False):
+        """Carry one point-bound value; optionally prepare shared observation actions.
+
+        Residual-only callers keep the value-only path. Raw/tangent observation
+        pairs may share the three state actions; rate actions remain separate.
+        """
+        values = self.evaluate(point)
+        if state_actions:
+            linear = dict(values.linear_actions)
+            linear.update({name: self.linear_action(name, point)
+                           for name in ("metal_charge", "body_charge", "gauss_defect")})
+            values = replace(values, linear_actions=MappingProxyType(linear))
+        return AffinePointEvaluation(point, self.source_identity, values)
 
     def evaluated_values(self, point, evaluation=None):
         if evaluation is None:
@@ -1233,11 +1243,12 @@ class AffineCoupledSlab(CoupledSlab):
             raise ContractError("unknown_event_side")
         rate = self.physical_rate_view(point, derivative, input_rate)
         input_rate = rate.input_rate
-        evaluation = self.observation_evaluation(point) if evaluation is None else evaluation
+        evaluation = self.observation_evaluation(point, state_actions=True) if evaluation is None else evaluation
         e = self.evaluated_values(point, evaluation)
         linear = dict(e.linear_actions)
         linear.update({name: self.linear_action(name, point)
-                       for name in ("metal_charge", "body_charge", "gauss_defect")})
+                       for name in ("metal_charge", "body_charge", "gauss_defect")
+                       if name not in linear})
         linear.update({name+"_rate": self.linear_action(name, point, rate=rate, evaluation=evaluation)
                        for name in ("body_charge", "metal_charge", "constraints", "conduction",
                                     "total_current", "charge_integrands", "interior_total_current")})
@@ -2246,7 +2257,7 @@ def affine_native_sample(model: AffineCoupledSlab, history: AffineDeviceHistory,
     if origin == "segment_initial" and any(np.any(increment.field(v.id).as_dd() != 0)
                                           for v in model.layout.variables):
         raise ContractError("native_restart_changed_physical_state")
-    evaluation = model.observation_evaluation(point)
+    evaluation = model.observation_evaluation(point, state_actions=True)
     raw = model.observe(point, rate, input_rate, origin, side, evaluation=evaluation)
     tangent = model.observe(point, model.tangent_rate(point, input_rate, evaluation=evaluation), input_rate,
                             "physical_tangent", side, evaluation=evaluation)
@@ -3249,7 +3260,7 @@ def voltage_lift_native_sample(binding: VoltageLiftSegmentAdapter, history: Volt
             np.any(increment.field(v.id).high) or np.any(increment.field(v.id).low)
             for v in model.layout.variables):
         raise ContractError("voltage_lift_restart_changed_physical_state")
-    evaluation = model.observation_evaluation(point)
+    evaluation = model.observation_evaluation(point, state_actions=True)
     raw = model.observe(point, mapping.bind_rate(point, z, zdot, input_rate),
                         input_rate, origin, side, evaluation=evaluation)
     tangent = model.observe(point, model.tangent_rate(point, input_rate, evaluation=evaluation),
