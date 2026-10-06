@@ -9226,7 +9226,7 @@
   "capability_reconciliation": {
     "comparison_map": {
       "path": "reproducibility/RefactorComparisonMapV1.json",
-      "sha256": "56a2188f487914de469899fb5b60c12b4a6cae818b5967cb14044bdf1f80ec43",
+      "sha256": "2a025bcd23314c8f791835883f9a318f3517efbed524ca171c7608e412cc886d",
       "schema": "solarlab.refactor_comparison_map.v1",
       "status": "planning_map_with_explicit_blocked_prospective_comparisons",
       "validator": "scripts/benchmarks/reference_map.py",
@@ -36804,7 +36804,12 @@
       ],
       "scope": "Isolated T1 only with exact frozen gate, source/environment/coverage/used binding and own task prerequisites"
     },
-    "recorded_at": "2026-10-05T08:47:10.249964+00:00"
+    "recorded_at": "2026-10-05T08:47:10.249964+00:00",
+    "comparison_scopes": {
+      "path": "reproducibility/RefactorComparisonScopesV1.json",
+      "sha256": "d233413398317e010e74d21d95e5d66701399d12df8e5707bcfec0649eb08035",
+      "scope": "prospective physical rules and explicit unresolved input obligations; not scientific qualification"
+    }
   },
   "governance": {
     "activity_ledger_root": "archive",

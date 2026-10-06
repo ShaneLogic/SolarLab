@@ -1429,7 +1429,8 @@
         "rule-de84436923d472b02395d3d4",
         "rule-3746b743a7e1386bd7b84977",
         "rule-52fe9511afc886df127f5fef"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-4105876c56341ee0"
     },
     {
       "capability_id": "benchmark-f2d15ebbf5e588cf",
@@ -1519,7 +1520,8 @@
         "rule-bae2ec1dcddc2fcd51e5241b",
         "rule-a9fc9eae45911019c52da928",
         "rule-c0080a626521977b435ed7f0"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-f2d15ebbf5e588cf"
     },
     {
       "capability_id": "benchmark-83c17bf82672772f",
@@ -1700,7 +1702,8 @@
         "rule-38b799a9f173eba3f020cf0c",
         "rule-c225ca73f009ddab8a9ae0dd",
         "rule-94d52870440505f27c8dd411"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-83c17bf82672772f"
     },
     {
       "capability_id": "benchmark-ee312eb2fea8c21f",
@@ -1855,7 +1858,8 @@
         "rule-2876916d8ce6c5bb14cd36b4",
         "rule-10d7925f9bf5fb3f294db07f",
         "rule-15d7f499fb7256e0f1903b99"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-ee312eb2fea8c21f"
     },
     {
       "capability_id": "benchmark-ffe6aa8aa40ed1bc",
@@ -2109,7 +2113,8 @@
         "rule-860a4cbf07e378073bc12ba7",
         "rule-1db937a60794381011793de8",
         "rule-135c1e245889b63452bfca34"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-ffe6aa8aa40ed1bc"
     },
     {
       "capability_id": "benchmark-a12ead2b6fe7e734",
@@ -2201,7 +2206,8 @@
         "rule-20533e8a524de13cc7c36914",
         "rule-8df4514933f66768954d1483",
         "rule-e2083f1c15eefafacab67de1"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-a12ead2b6fe7e734"
     },
     {
       "capability_id": "benchmark-f050f4122cc07b66",
@@ -2385,7 +2391,8 @@
         "rule-09a9ebac3b0482414392762b",
         "rule-1d74fb3c4e06a98baead150d",
         "rule-4583bc9e2b06a22f3c690e9c"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-f050f4122cc07b66"
     },
     {
       "capability_id": "benchmark-2944ea519ddd6969",
@@ -2613,7 +2620,8 @@
         "rule-800a971daecb6cf724fe6c8b",
         "rule-1b8fd6ce9c9cdcff5b3fe1f6",
         "rule-489141761c9c79a7d7c1f320"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-2944ea519ddd6969"
     },
     {
       "capability_id": "benchmark-3ece4d3a78f8823e",
@@ -2862,7 +2870,8 @@
         "rule-a9c60e672cda2332f38dc38f",
         "rule-71eb4fd9f2c5289bc0eef2e3",
         "rule-872025c1ea928e2745983605"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-3ece4d3a78f8823e"
     },
     {
       "capability_id": "benchmark-3ca07445f8402d7d",
@@ -3076,7 +3085,8 @@
         "rule-958329188f904fe7fb465ccc",
         "rule-93d7e9bc059d91578ac362b7",
         "rule-38f4deda8c725ccc2c5b59c8"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-3ca07445f8402d7d"
     },
     {
       "capability_id": "benchmark-9ffebfadd845315b",
@@ -3215,7 +3225,8 @@
         "rule-ae2d86dc962a9311cdbb858c",
         "rule-ac4c7fe471b32bad28d8705f",
         "rule-0e160a19c9f4ac8cba2e0b1b"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-9ffebfadd845315b"
     },
     {
       "capability_id": "benchmark-f55a467e6d6c9e27",
@@ -3391,7 +3402,8 @@
         "rule-b946adffbdd19fc79dc1359a",
         "rule-9dd8cabd9b342890d7b6b2a7",
         "rule-a7e3840f3f72fbde1a0cc051"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-f55a467e6d6c9e27"
     },
     {
       "capability_id": "benchmark-94f2fd2efa41f878",
@@ -3558,7 +3570,8 @@
         "rule-ed08cb3d296bb522313cba10",
         "rule-f184774cdf83eb9e669406dd",
         "rule-3c1d832d0d7e19ad9acf4415"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-94f2fd2efa41f878"
     },
     {
       "capability_id": "benchmark-f2259e41f3b75254",
@@ -3766,7 +3779,8 @@
         "rule-4600ba43fdfbf3f24c917280",
         "rule-ea2147cb4b1302b36520efb9",
         "rule-a4d172240d490b2fbda28745"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-f2259e41f3b75254"
     },
     {
       "capability_id": "benchmark-4322a9e3b442d931",
@@ -3987,7 +4001,8 @@
         "rule-9dae3449b19968464adabc70",
         "rule-7907532dd755ff309553db55",
         "rule-00ee335dab4e4a56853fd199"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-4322a9e3b442d931"
     },
     {
       "capability_id": "benchmark-cc91d2d42ff5757d",
@@ -4147,7 +4162,8 @@
         "rule-114a0b02543ba2ed9b7a0a73",
         "rule-62d40b54fe9c5b0bc91742fe",
         "rule-419d37db0bd3ddd73ec6928d"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-cc91d2d42ff5757d"
     },
     {
       "capability_id": "benchmark-86e2e70943004434",
@@ -4354,7 +4370,8 @@
         "rule-4b5cff2ad90a87cc7ca99e37",
         "rule-b50023c9c0f24373af436db2",
         "rule-708172345ad2547484916a33"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-86e2e70943004434"
     },
     {
       "capability_id": "benchmark-00cbe610b0bd55b6",
@@ -4530,7 +4547,8 @@
         "rule-f430934fd28fb096e44787dc",
         "rule-464d9934fb97376f40746e78",
         "rule-ec1dd948f2534f7bd7e6a834"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-00cbe610b0bd55b6"
     },
     {
       "capability_id": "benchmark-5c45d777007899c9",
@@ -4725,7 +4743,8 @@
         "rule-b58846ab122d5a273c9a7109",
         "rule-1091bd49a904573078aeef89",
         "rule-b04321d1502c3e749342bb8c"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-5c45d777007899c9"
     },
     {
       "capability_id": "benchmark-5223cbf1b1ff2fbd",
@@ -4916,7 +4935,8 @@
         "rule-6ba65fe83ae52ea630168d4d",
         "rule-68bb0a68424341aa50c1c413",
         "rule-6cf695e7b480742f7e25f4de"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-5223cbf1b1ff2fbd"
     },
     {
       "capability_id": "benchmark-d84b2405628c3df6",
@@ -5091,7 +5111,8 @@
         "rule-f430934fd28fb096e44787dc",
         "rule-464d9934fb97376f40746e78",
         "rule-ec1dd948f2534f7bd7e6a834"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-d84b2405628c3df6"
     },
     {
       "capability_id": "benchmark-ae94b012055aa10b",
@@ -5273,7 +5294,8 @@
         "rule-308684d43b6825a77d2f7467",
         "rule-3716f228d64a770b1e6ba9c0",
         "rule-6048fb347780e4674c9a045c"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-ae94b012055aa10b"
     },
     {
       "capability_id": "benchmark-afaed356d2fa81de",
@@ -5450,7 +5472,8 @@
         "rule-39f042990bc3ae3442ab871a",
         "rule-708b54777a4f9a20125b654c",
         "rule-2da2d988f3bc130c8e747296"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-afaed356d2fa81de"
     },
     {
       "capability_id": "benchmark-8d1003366b1bcb44",
@@ -5575,7 +5598,8 @@
         "rule-ea3267006797e4b088c7162e",
         "rule-8d3c5c8be07b0f133b467adc",
         "rule-01feeaa69ec9d71619c2b1a2"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-8d1003366b1bcb44"
     },
     {
       "capability_id": "benchmark-66079d06baa87db2",
@@ -5751,7 +5775,8 @@
         "rule-26d78449a2ae12bb8cc81342",
         "rule-b43a01d029c4e6be6070bf6e",
         "rule-dc390075f1af30a7919a82f1"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-66079d06baa87db2"
     },
     {
       "capability_id": "benchmark-d421981a0850b957",
@@ -5864,7 +5889,8 @@
         "rule-1b7d8227781dbabb5d201211",
         "rule-b5a429e57ead73d9dc750042",
         "rule-b06d896b151ef9a940140ca6"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-d421981a0850b957"
     },
     {
       "capability_id": "benchmark-1006540a4310894f",
@@ -6009,7 +6035,8 @@
         "rule-6e6ae10bd14b0a8c686b7381",
         "rule-1b0267c70d8d473e751be89b",
         "rule-52337b0a775d83b49cc04cea"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-1006540a4310894f"
     },
     {
       "capability_id": "benchmark-ccce54aef1456ee8",
@@ -6283,7 +6310,8 @@
         "rule-e8a7a4b0b0e21052e6b3837c",
         "rule-a6a8ec1e1e0254694826910a",
         "rule-8a07aba6bcfe423ecf18e047"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-ccce54aef1456ee8"
     },
     {
       "capability_id": "benchmark-9413c6e9be031fbb",
@@ -6482,7 +6510,8 @@
         "rule-03e2c7532eb199b301c79c0a",
         "rule-82374a3d37f75b7140d01db4",
         "rule-5f8e40fe2c823acbd6a75a6a"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-9413c6e9be031fbb"
     },
     {
       "capability_id": "benchmark-a9fb1ab48c74827c",
@@ -6627,7 +6656,8 @@
         "rule-2ebe08b846b75bb426ad0ab0",
         "rule-af31c1af971122dae3596704",
         "rule-5bb18d8b36555d4049926638"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-a9fb1ab48c74827c"
     },
     {
       "capability_id": "benchmark-ac54a8e323f74ee0",
@@ -6866,7 +6896,8 @@
         "rule-fc090835ed6dd6e1cf469c8f",
         "rule-9a6b373888d9592c0c555b5d",
         "rule-90de4ab6502d7d5e9d41b150"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-ac54a8e323f74ee0"
     },
     {
       "capability_id": "benchmark-5ddcacfc324796c7",
@@ -6947,7 +6978,8 @@
         "rule-d828cc4ef5681aa2ff849537",
         "rule-b57168752d5baee19b6c3dc5",
         "rule-798f898fca41c0c146139dc9"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-5ddcacfc324796c7"
     },
     {
       "capability_id": "benchmark-f243dcb4f5a72c41",
@@ -7153,7 +7185,8 @@
         "rule-7380daffd6b857767a8eb0c5",
         "rule-55e49fdbd829985d2d824c1b",
         "rule-61ec908b2466bf13aabd52d3"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-f243dcb4f5a72c41"
     },
     {
       "capability_id": "benchmark-ac91c699b18d14f4",
@@ -7377,7 +7410,8 @@
         "rule-012877e59710e7a1d768d061",
         "rule-10574d4ca6720d7f4cd741c3",
         "rule-f9e0322b487ed18c81ab30ce"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-ac91c699b18d14f4"
     },
     {
       "capability_id": "benchmark-beb35201a660895f",
@@ -7488,7 +7522,8 @@
         "rule-53924af4ac546af9ae3a8d6d",
         "rule-4cfb2360003cf93e856bc757",
         "rule-94ccecc3784e3c00fd7e5f56"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-beb35201a660895f"
     },
     {
       "capability_id": "benchmark-64d717e2afaf62b7",
@@ -7592,7 +7627,8 @@
         "rule-2f04326121a19bb663651428",
         "rule-02a2d8e22e148ceadce3708f",
         "rule-1c665ebd6f66b247f004eff3"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-64d717e2afaf62b7"
     },
     {
       "capability_id": "benchmark-4e5dfc48e60736d0",
@@ -7736,7 +7772,8 @@
         "rule-863cbea9d1dcff6a5a86984d",
         "rule-a4b536d4936b616d55145974",
         "rule-0c1c0ebe9f1b234f6bb70a64"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-4e5dfc48e60736d0"
     },
     {
       "capability_id": "benchmark-a8032d8160a5c7e3",
@@ -7837,7 +7874,8 @@
       "rule_ids": [
         "rule-74f8b42db9841a2cc1cfebd0",
         "rule-99f83be95993e47c08fc1d8c"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-a8032d8160a5c7e3"
     },
     {
       "capability_id": "benchmark-63f25334baabb168",
@@ -7989,7 +8027,8 @@
         "rule-d647aa93fd55fed595b50bdc",
         "rule-be242b75c3b52c7dfe07eb30",
         "rule-c11585b2d54ad642f5d18a03"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-63f25334baabb168"
     },
     {
       "capability_id": "benchmark-979ee3060444ba30",
@@ -8068,7 +8107,8 @@
       "planning_resolution_is_not_threshold_qualification": true,
       "rule_ids": [
         "rule-c300e86126808221195bf6fc"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-979ee3060444ba30"
     },
     {
       "capability_id": "benchmark-7e320e9d039d49bd",
@@ -8153,7 +8193,8 @@
         "rule-6e16a219a7d274a8f8cc5446",
         "rule-6594d86721e663337ff9855c",
         "rule-5a234a396f0ec85886c3829a"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-7e320e9d039d49bd"
     },
     {
       "capability_id": "benchmark-a1a396a1f7b2045c",
@@ -8346,7 +8387,8 @@
         "rule-1fe7144296e69367f7000ad9",
         "rule-922d6d897b6f0ede6409b4d1",
         "rule-ec08d64bf456f128148bf5bc"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-a1a396a1f7b2045c"
     },
     {
       "capability_id": "benchmark-e049e24da73bc454",
@@ -8518,7 +8560,8 @@
         "rule-c2c034804bf0cb7a24623867",
         "rule-ab22c6c1fecea6995b8633aa",
         "rule-300b2055270ebc19686bdc9d"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-e049e24da73bc454"
     },
     {
       "capability_id": "benchmark-5ac658e026793692",
@@ -8750,7 +8793,8 @@
         "rule-cdd4542e58be63d4422aa848",
         "rule-32974b7ffc6656454270931e",
         "rule-b46d090c90a528138aa30e1d"
-      ]
+      ],
+      "comparison_scope_id": "scope-benchmark-5ac658e026793692"
     },
     {
       "capability_id": "lane-3eb9325a1d09f96f",
@@ -8863,7 +8907,8 @@
         "rule-32b1f921d606f0a7e0bad003",
         "rule-f6c2d52a5fa6be8266cc46ea",
         "rule-dabdee2150ea3c1131544d70"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-3eb9325a1d09f96f"
     },
     {
       "capability_id": "lane-74c8fcdda1607b00",
@@ -8964,7 +9009,8 @@
         "rule-359c38c0b461035d01927cb1",
         "rule-b9013c2a044249c7d67c6fb2",
         "rule-aeb44696b3c48c61d3faa639"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-74c8fcdda1607b00"
     },
     {
       "capability_id": "lane-30c624efe3f8467f",
@@ -9079,7 +9125,8 @@
         "rule-09274696bb0039c32742e9c9",
         "rule-89b4948400f10e53fdf240c5",
         "rule-4752284e0b415f5fab1be5db"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-30c624efe3f8467f"
     },
     {
       "capability_id": "lane-d0db2268d3d111e7",
@@ -9175,7 +9222,8 @@
         "rule-ac1fd2b09706081097f94121",
         "rule-be483a43c396877330cf0778",
         "rule-1dd9d9737e0b0479c75aaf42"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-d0db2268d3d111e7"
     },
     {
       "capability_id": "lane-1c11f3ec305c3631",
@@ -9262,7 +9310,8 @@
         "rule-fbc60ddef221d66e310bcdbb",
         "rule-eab38c6ba67bcb6dc2b2d659",
         "rule-3081dcf8b271ac33fe651a49"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-1c11f3ec305c3631"
     },
     {
       "capability_id": "lane-1f48a67f12b83f3b",
@@ -9347,7 +9396,8 @@
         "rule-66beed05916616caab56d92f",
         "rule-93bf85353ef693617f19e575",
         "rule-d8a6f879b5e3372af7918e1f"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-1f48a67f12b83f3b"
     },
     {
       "capability_id": "lane-1dfc4e4b19df86e8",
@@ -9439,7 +9489,8 @@
         "rule-558906d7b34db38684bdf4be",
         "rule-8eb1ea4bb6fe04fe56742432",
         "rule-2f79e9cd8836190f59e0a15b"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-1dfc4e4b19df86e8"
     },
     {
       "capability_id": "lane-b7e62a98398228f0",
@@ -9563,7 +9614,8 @@
         "rule-938fa5f34860473edd4052c5",
         "rule-f5ed390e79602b6b95f2ec1d",
         "rule-2edc40979ec352cc025733cf"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-b7e62a98398228f0"
     },
     {
       "capability_id": "lane-6c70228c5f2817ea",
@@ -9687,7 +9739,8 @@
         "rule-464d92fb761630eb1f1680b1",
         "rule-e7e77f5e98b7323910776f33",
         "rule-47354dca211bfe7222347fd7"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-6c70228c5f2817ea"
     },
     {
       "capability_id": "lane-5ff1ae9d34dfa46d",
@@ -9788,7 +9841,8 @@
         "rule-fbb1c11609aaa77d3e406146",
         "rule-57296dbdbc0403cb68063224",
         "rule-59eccb393ae545a5b42dbad0"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-5ff1ae9d34dfa46d"
     },
     {
       "capability_id": "lane-def3952fd4d218a3",
@@ -9920,7 +9974,8 @@
         "rule-f285b65c4662b18c669d995d",
         "rule-6c68d1b6e619a4fa680956d3",
         "rule-de1da831eaea01d4c0330908"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-def3952fd4d218a3"
     },
     {
       "capability_id": "lane-b61bf1fc1c5146b5",
@@ -10052,7 +10107,8 @@
         "rule-70fb60ec809e6ff7e96b3f45",
         "rule-df6957825c6e011087268634",
         "rule-d23c470b0dec16dac7a28d3b"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-b61bf1fc1c5146b5"
     },
     {
       "capability_id": "lane-119dbf12fc26bf9b",
@@ -10180,7 +10236,8 @@
         "rule-ff8eec45eae75369834e5911",
         "rule-8ad31db41113aae409b6d09e",
         "rule-01e6a96b673358ac260adb61"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-119dbf12fc26bf9b"
     },
     {
       "capability_id": "lane-c2f00d60b696be35",
@@ -10313,7 +10370,8 @@
         "rule-d2994f200276eeee8cf46295",
         "rule-c519324bcb463356150fe50c",
         "rule-29efb1f7e7e83008ec9fbb03"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-c2f00d60b696be35"
     },
     {
       "capability_id": "lane-2e2c396de43bcf73",
@@ -10444,7 +10502,8 @@
         "rule-f98f126cd7790f846a4c4670",
         "rule-fa6eaa33cbb3971f1ed0fd8c",
         "rule-e29d16a0f62dd5d815467c6a"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-2e2c396de43bcf73"
     },
     {
       "capability_id": "lane-f63c8cad0bf211ec",
@@ -10571,7 +10630,8 @@
         "rule-2c833e5dfb3c88f599c4df6e",
         "rule-129ab4fd0a1eaa5b74cc3065",
         "rule-64c45610fce64f69d1ae5f56"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-f63c8cad0bf211ec"
     },
     {
       "capability_id": "lane-5d1d62edf010a604",
@@ -10680,7 +10740,8 @@
         "rule-1d46ac780872dd6856cd4f1f",
         "rule-4bf913faa3a99351cdb9c4af",
         "rule-b5a87e4cc247e28376aa481d"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-5d1d62edf010a604"
     },
     {
       "capability_id": "lane-b37e800920a3345f",
@@ -10789,7 +10850,8 @@
         "rule-60307c42eb7c2decb307c862",
         "rule-456b632f82f05ed1332e8977",
         "rule-43424e1dee9e5e1a270de2b4"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-b37e800920a3345f"
     },
     {
       "capability_id": "lane-b89615cfbbfe0045",
@@ -10898,7 +10960,8 @@
         "rule-bfa48211ee48b94870ee60ab",
         "rule-99b4ce8752d0bf184b462ec2",
         "rule-4a6504ff53f27cef4f3d2732"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-b89615cfbbfe0045"
     },
     {
       "capability_id": "lane-8ecc1df7d72fa132",
@@ -11002,7 +11065,8 @@
         "rule-48b068eb7e343977bee69633",
         "rule-c3953e6e0cc345fa9ca0aa60",
         "rule-84c56e7423b640325f152ff2"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-8ecc1df7d72fa132"
     },
     {
       "capability_id": "lane-c8c8e3698ef7d8d7",
@@ -11104,7 +11168,8 @@
         "rule-04f72b8d573939e9b4dd85d1",
         "rule-48692c91bbf2d3712caa9754",
         "rule-f0cef4f61ed4baf8d8243b66"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-c8c8e3698ef7d8d7"
     },
     {
       "capability_id": "lane-db3616410333cfd2",
@@ -11237,7 +11302,8 @@
         "rule-6ba1ab7608a40c450c127a9a",
         "rule-4f27a0e8b5f5d69b5b827e5e",
         "rule-5afc8154ebb5b51eacdeb919"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-db3616410333cfd2"
     },
     {
       "capability_id": "lane-1bbf89ccef7a7815",
@@ -11368,7 +11434,8 @@
         "rule-2011718624321daf9b70dce8",
         "rule-ee82add0bcf07d507886598e",
         "rule-44a888741a2d03ce19c0d408"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-1bbf89ccef7a7815"
     },
     {
       "capability_id": "lane-42bf2b940134e62c",
@@ -11468,7 +11535,8 @@
         "rule-0919e71000637fe9957ba59f",
         "rule-5367e5131ede5d9e782343aa",
         "rule-f38b9291805362fb431405ca"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-42bf2b940134e62c"
     },
     {
       "capability_id": "lane-b0877f36f5bf04e5",
@@ -11564,7 +11632,8 @@
         "rule-89bba4b93ae56f0c46731f89",
         "rule-b416b5ceb6f98d6d0328aece",
         "rule-1e14d25eac5dba2682f938a0"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-b0877f36f5bf04e5"
     },
     {
       "capability_id": "lane-f3d0d1307884e5e8",
@@ -11686,7 +11755,8 @@
         "rule-75b10581e969f78810a9e45c",
         "rule-7f0a5978207fdb98d239d39b",
         "rule-5e66064040c6b12d3d6e3c9b"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-f3d0d1307884e5e8"
     },
     {
       "capability_id": "lane-e95ec3a450b16504",
@@ -11802,7 +11872,8 @@
         "rule-ffba42f17d69f21be5ba26ee",
         "rule-42c6a8c7a592d8f5d1068e3f",
         "rule-5866e5b61eb2ab5e672750c8"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-e95ec3a450b16504"
     },
     {
       "capability_id": "lane-5da5b7d376d6e06e",
@@ -11912,7 +11983,8 @@
         "rule-3841048ff23c4704dcc08f90",
         "rule-23cbb026c91f691f392a38fb",
         "rule-029fb5011a1f0ad278706f31"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-5da5b7d376d6e06e"
     },
     {
       "capability_id": "lane-54128f5212664526",
@@ -12033,7 +12105,8 @@
         "rule-e7a0c25d5a74f220df3e76a0",
         "rule-c3c27d58c0ad96f4ac51fc39",
         "rule-204a0d20ebd6d1136a82028d"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-54128f5212664526"
     },
     {
       "capability_id": "lane-ee113ad477b8697e",
@@ -12133,7 +12206,8 @@
         "rule-a589724931a1792601cb3adb",
         "rule-519f54a9e5479f63e6df88ce",
         "rule-c76e415499e0b9ef1aa5801c"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-ee113ad477b8697e"
     },
     {
       "capability_id": "lane-84ef85f524daf74b",
@@ -12235,7 +12309,8 @@
         "rule-4ba2e701837dc876ec95f527",
         "rule-05952dc96c0b172ae33102df",
         "rule-4515053eb8faf0850594e0aa"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-84ef85f524daf74b"
     },
     {
       "capability_id": "lane-c5f63593f6609839",
@@ -12334,7 +12409,8 @@
         "rule-d83fe5108835980b2f80ac2a",
         "rule-ad3ac41edebfa1afc2bff814",
         "rule-6b3103f263bd658d6ed07183"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-c5f63593f6609839"
     },
     {
       "capability_id": "lane-500d85c643804b4b",
@@ -12431,7 +12507,8 @@
         "rule-12bf50e66fba4d6718da39b0",
         "rule-2db1d2a8a58df1563d720f5d",
         "rule-8d62b7f9717742c37a8f0214"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-500d85c643804b4b"
     },
     {
       "capability_id": "lane-b59b8f0f474425b0",
@@ -12528,7 +12605,8 @@
         "rule-d856bee5c4f6d807d5b79716",
         "rule-83ead8e0cecb69d443b82c2d",
         "rule-9cab4511182045b67742f4d8"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-b59b8f0f474425b0"
     },
     {
       "capability_id": "lane-077aabd76066b531",
@@ -12621,7 +12699,8 @@
         "rule-ebab2c73853b2d0c1b0dc699",
         "rule-f633642f2a2174b3777721e3",
         "rule-076888baf15575cc6521a4ab"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-077aabd76066b531"
     },
     {
       "capability_id": "lane-f7e0f3e0963801d8",
@@ -12738,7 +12817,8 @@
         "rule-a2e46125ee0d801dc258d5e6",
         "rule-4dcde47c26532a615a647e2e",
         "rule-5baa310b44592a107368cf19"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-f7e0f3e0963801d8"
     },
     {
       "capability_id": "lane-d78898d8e12e7813",
@@ -12843,7 +12923,8 @@
         "rule-82e9d631991844d2122e1690",
         "rule-f82d1dda6cd69c6de4620163",
         "rule-69bb183694ffb905829a19d5"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-d78898d8e12e7813"
     },
     {
       "capability_id": "lane-5547d9e78904e730",
@@ -12932,7 +13013,8 @@
         "rule-3c01f128cd7da9883d67481d",
         "rule-efa560b2ed3c1bbcc06f9f0e",
         "rule-e71d78fa33b69c4deffefea8"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-5547d9e78904e730"
     },
     {
       "capability_id": "lane-0350f1d065d6fedc",
@@ -13060,7 +13142,8 @@
         "rule-41d61f9a5f3cc4c25c7bd8cb",
         "rule-0c618d92d310883de99b92fe",
         "rule-67e290b44f6f84078ad9996a"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-0350f1d065d6fedc"
     },
     {
       "capability_id": "lane-1816209e76bb9ac0",
@@ -13186,7 +13269,8 @@
         "rule-310a1077a0c5287276ecdf00",
         "rule-340a01279c12d4dd131fbca2",
         "rule-afcf12bdde8f6ea374bd7b69"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-1816209e76bb9ac0"
     },
     {
       "capability_id": "lane-db596cd22f67423d",
@@ -13300,7 +13384,8 @@
         "rule-3f391f22f9f97b04a84d9c52",
         "rule-c814246aea0faec7632b06da",
         "rule-0a9707ddcdd8f55557afd348"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-db596cd22f67423d"
     },
     {
       "capability_id": "lane-ea8013ec21a124fd",
@@ -13431,7 +13516,8 @@
         "rule-46db4835b42843ded35e9cd6",
         "rule-dbe975b42fa157bbf2c0d909",
         "rule-3da0af6c9f68dfa1348e53dd"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-ea8013ec21a124fd"
     },
     {
       "capability_id": "lane-b6717f964e395329",
@@ -13564,7 +13650,8 @@
         "rule-6965da0953c0dd8860494484",
         "rule-887886d2f300cd65222166ec",
         "rule-0219217404fb81a0eda702e6"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-b6717f964e395329"
     },
     {
       "capability_id": "lane-13c1b80fd89d147a",
@@ -13668,7 +13755,8 @@
         "rule-0b39361aab311c79b90bdd07",
         "rule-04e38abdac8abec7cf57b4b5",
         "rule-be37ad1e3505c362326e6855"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-13c1b80fd89d147a"
     },
     {
       "capability_id": "lane-6dbb672b6062d764",
@@ -13759,7 +13847,8 @@
         "rule-29514c0546c437777fdb9f8b",
         "rule-a0a29e258b24d630607bdfd3",
         "rule-8e1792fa2b8fe9eac8a5ad76"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-6dbb672b6062d764"
     },
     {
       "capability_id": "lane-6b64d0fcde4053b6",
@@ -13878,7 +13967,8 @@
         "rule-ac15eb93227ef05b675945c3",
         "rule-42a96ee4d2a668b8d233e0ff",
         "rule-05abcfebe196be0183642bf4"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-6b64d0fcde4053b6"
     },
     {
       "capability_id": "lane-16771a29387cfdae",
@@ -13981,7 +14071,8 @@
         "rule-ea0e753eadd16cd41894e7e8",
         "rule-03b56b21ba8c6ff03cc0d2dd",
         "rule-423242ee512ff91c3c5440fa"
-      ]
+      ],
+      "comparison_scope_id": "scope-lane-16771a29387cfdae"
     },
     {
       "capability_id": "oracle-43431083ae91b1d5",
@@ -14244,7 +14335,8 @@
         "rule-4d6e178b4201f8ddf5df62bf",
         "rule-676106201779d4d6c315acda",
         "rule-645bb73a70026e91635f9c37"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-43431083ae91b1d5"
     },
     {
       "capability_id": "oracle-33512d14951f648d",
@@ -14440,7 +14532,8 @@
         "rule-655e64927a126de9a1d6ac5d",
         "rule-e3016ec8d7513d0215fd434b",
         "rule-3460ddc4209ef2e91028af50"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-33512d14951f648d"
     },
     {
       "capability_id": "oracle-88ce0e7749381acf",
@@ -14636,7 +14729,8 @@
         "rule-655e64927a126de9a1d6ac5d",
         "rule-e3016ec8d7513d0215fd434b",
         "rule-3460ddc4209ef2e91028af50"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-88ce0e7749381acf"
     },
     {
       "capability_id": "oracle-2859c329278ce3e0",
@@ -14940,7 +15034,8 @@
         "rule-51b09516f8caf4cfdaecd096",
         "rule-3811817a2b002d443b354e80",
         "rule-df0f6406a9596378fa6907a8"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-2859c329278ce3e0"
     },
     {
       "capability_id": "oracle-c749a00822ac300a",
@@ -15251,7 +15346,8 @@
         "rule-bbeac014e60cb22834017d36",
         "rule-de30f732091c4c6e675bdce5",
         "rule-7eda32a1d62c48d54ea9362a"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-c749a00822ac300a"
     },
     {
       "capability_id": "oracle-c398ee1f8377a8ac",
@@ -15448,7 +15544,8 @@
         "rule-1676e5e81057eb956a6e2145",
         "rule-5f5ae68faef0a367c90e9336",
         "rule-f324013f6ff4245942da0b02"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-c398ee1f8377a8ac"
     },
     {
       "capability_id": "oracle-a34b44c50d3476cf",
@@ -15706,7 +15803,8 @@
         "rule-364930f72905eefd1c9275f7",
         "rule-84cd3c280c68f630871c899e",
         "rule-c4ab76651b130c8512580b2f"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-a34b44c50d3476cf"
     },
     {
       "capability_id": "oracle-23a290eced9bdb76",
@@ -15885,7 +15983,8 @@
         "rule-5b82c76817e22c952eca29c6",
         "rule-46c6cd96015a9bb70d94d255",
         "rule-765fcbadfbcc7dea4c7e3bec"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-23a290eced9bdb76"
     },
     {
       "capability_id": "oracle-798d4d77d48ec274",
@@ -16163,7 +16262,8 @@
         "rule-4cf91e44769198113be22d05",
         "rule-b8daf4eb48ef9f3629dc7bc6",
         "rule-b8e45fe851df9007afba30ed"
-      ]
+      ],
+      "comparison_scope_id": "scope-oracle-798d4d77d48ec274"
     },
     {
       "capability_id": "experiment-0b68a79f94a0d4b1",
@@ -16355,7 +16455,8 @@
         "rule-997b2c054a2d50ef9f8043e3",
         "rule-501ebe43fe82e419a26871ec",
         "rule-d6a0f91e8be63510105ca85b"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-0b68a79f94a0d4b1"
     },
     {
       "capability_id": "experiment-ad1acb5693be96d2",
@@ -16672,7 +16773,8 @@
         "rule-8509184a402b902ba6e1c2c0",
         "rule-8ca8cad87bd02298608e7505",
         "rule-cea70ec6f53833a98e41293a"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-ad1acb5693be96d2"
     },
     {
       "capability_id": "experiment-ba216e01ceaa8b2a",
@@ -16895,7 +16997,8 @@
         "rule-663fbb6b6eac7fc99c405d9d",
         "rule-744f61b6fa458a4c7d1d9f92",
         "rule-b8f3df8c3a4f40147b765d72"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-ba216e01ceaa8b2a"
     },
     {
       "capability_id": "experiment-310cf19000c8ed90",
@@ -17194,7 +17297,8 @@
         "rule-9abc311fb60bd38ca2818a59",
         "rule-0ebb41659b1ad69b5b1b27af",
         "rule-5e7ae34999676f50e74e6220"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-310cf19000c8ed90"
     },
     {
       "capability_id": "experiment-194369582907aec9",
@@ -17333,7 +17437,8 @@
         "rule-9b798c7134730ebaf706e171",
         "rule-d9b2e80a1af17667373d4648",
         "rule-66db989c4988956fc42384bd"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-194369582907aec9"
     },
     {
       "capability_id": "experiment-2424e5f405ddaf84",
@@ -17625,7 +17730,8 @@
         "rule-91f28831502976f4a7b4cb93",
         "rule-d41e8c9c5475ebfdacb999e6",
         "rule-955b2c8d31ac60093f6e7ecf"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-2424e5f405ddaf84"
     },
     {
       "capability_id": "experiment-cd24e07da754c0f7",
@@ -17947,7 +18053,8 @@
         "rule-30240a3601aa8b26cd62fd33",
         "rule-4c2b2545e1e3b8217f32726e",
         "rule-0c0b0da4e4ccf5a074dd96b0"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-cd24e07da754c0f7"
     },
     {
       "capability_id": "experiment-c642a1b0b63e51ee",
@@ -18256,7 +18363,8 @@
         "rule-18510f9741c7694ff8ca56de",
         "rule-1bf0186423a956124ea734a4",
         "rule-81c89f1db3a90309d81f9f63"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-c642a1b0b63e51ee"
     },
     {
       "capability_id": "experiment-1bb0f41ff6da57f3",
@@ -18526,7 +18634,8 @@
         "rule-607fbdf650468eea4e1dd5ad",
         "rule-2ec109be560d890e7c204681",
         "rule-29d27f12095adcd12f8affcc"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-1bb0f41ff6da57f3"
     },
     {
       "capability_id": "experiment-eed05d86c5378218",
@@ -18856,7 +18965,8 @@
         "rule-117cac111ddab60b14037e34",
         "rule-b6854a5fb3550b35c4fa0085",
         "rule-bbc365e60830e5b5179c107f"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-eed05d86c5378218"
     },
     {
       "capability_id": "experiment-57b0e21dbe6c3130",
@@ -18990,7 +19100,8 @@
         "rule-baf982fd33574a4d2a4e0caf",
         "rule-a16248a6a745a081daa324e6",
         "rule-9e3fd39304943ae3c202ccce"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-57b0e21dbe6c3130"
     },
     {
       "capability_id": "experiment-ddece0c2ae0c1f35",
@@ -19262,7 +19373,8 @@
         "rule-3e7bd1ea6c8821036c34ef7c",
         "rule-e281039630acd106b2238d35",
         "rule-a6b5fb694566e90b56c460bc"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-ddece0c2ae0c1f35"
     },
     {
       "capability_id": "experiment-cff445ec1e0effe0",
@@ -19551,7 +19663,8 @@
         "rule-83cf51236a2b3ea2e51781ea",
         "rule-c9bf156f7f06a64fc3e73bf6",
         "rule-bac689902ff64168260b5009"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-cff445ec1e0effe0"
     },
     {
       "capability_id": "experiment-d99a1dd374330649",
@@ -19823,7 +19936,8 @@
         "rule-d410f8a29076f664c0d9e2e0",
         "rule-0657d4287ecb44b016727641",
         "rule-3852f042662ac9dfb7386b1f"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-d99a1dd374330649"
     },
     {
       "capability_id": "experiment-5228757a6f9c21fa",
@@ -20117,7 +20231,8 @@
         "rule-edef41ce8352902389c73e6e",
         "rule-dde5badb0bc882a0fac48edc",
         "rule-20141391c6cf5412c018eb93"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-5228757a6f9c21fa"
     },
     {
       "capability_id": "experiment-671a7a898134a9d4",
@@ -20432,7 +20547,8 @@
         "rule-1bab95ed94289682c3769985",
         "rule-94fd63cb136a9449645e4bb7",
         "rule-12abf3ef014f256fe1ebd2da"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-671a7a898134a9d4"
     },
     {
       "capability_id": "experiment-ff8c4a6873bfed44",
@@ -20778,7 +20894,8 @@
         "rule-5634c48244093af249331ef5",
         "rule-60361af9c01249d87ae12248",
         "rule-818e0f7c555918b8b7625be9"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-ff8c4a6873bfed44"
     },
     {
       "capability_id": "experiment-c4cd5cd89842d858",
@@ -20944,7 +21061,8 @@
         "rule-62ed588b9674de0d1641c1c3",
         "rule-16163834997f672a8a9ab96b",
         "rule-18d3ea827d2b139f27120fd9"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-c4cd5cd89842d858"
     },
     {
       "capability_id": "experiment-bfd110fe2e409927",
@@ -21225,7 +21343,8 @@
         "rule-117cac111ddab60b14037e34",
         "rule-b6854a5fb3550b35c4fa0085",
         "rule-bbc365e60830e5b5179c107f"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-bfd110fe2e409927"
     },
     {
       "capability_id": "experiment-997377217803970d",
@@ -21498,7 +21617,8 @@
         "rule-e11b100a7b8a7e0930c899a9",
         "rule-1b24fa587433dc965c0b1710",
         "rule-52fe46d477c80a1649ea30f8"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-997377217803970d"
     },
     {
       "capability_id": "experiment-f3f73781e494a4fe",
@@ -21832,7 +21952,8 @@
         "rule-1435e79f45b24bc34ecf9337",
         "rule-f4689c3810cdc076c0f3372d",
         "rule-1cb532928d3d9cbfd620b4dc"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-f3f73781e494a4fe"
     },
     {
       "capability_id": "experiment-29a84beaf4041cba",
@@ -22147,7 +22268,8 @@
         "rule-446880dc9a70b697dd4606ac",
         "rule-f1ec7303da9f399ab6e633f7",
         "rule-b7c84575d4686b9c8ed85cf9"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-29a84beaf4041cba"
     },
     {
       "capability_id": "experiment-5dad4016f96a21d7",
@@ -22385,7 +22507,8 @@
         "rule-71428b51cb81795b9d11ac4e",
         "rule-9bb607ddc63547cca3514f1c",
         "rule-455ea4b04e1f4b7a1b6671b3"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-5dad4016f96a21d7"
     },
     {
       "capability_id": "experiment-10d2cde17eaa6e01",
@@ -22789,7 +22912,8 @@
         "rule-4a1c9984b2bda33e737a2071",
         "rule-f7ffd96ad348a2ab6e2ff1cf",
         "rule-88fdedb3e9e843ad2300263b"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-10d2cde17eaa6e01"
     },
     {
       "capability_id": "experiment-68757a97c60b3660",
@@ -23193,7 +23317,8 @@
         "rule-4a1c9984b2bda33e737a2071",
         "rule-f7ffd96ad348a2ab6e2ff1cf",
         "rule-88fdedb3e9e843ad2300263b"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-68757a97c60b3660"
     },
     {
       "capability_id": "experiment-ce4180bc09955f54",
@@ -23597,7 +23722,8 @@
         "rule-4a1c9984b2bda33e737a2071",
         "rule-f7ffd96ad348a2ab6e2ff1cf",
         "rule-88fdedb3e9e843ad2300263b"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-ce4180bc09955f54"
     },
     {
       "capability_id": "experiment-00db5ef5f7a28a1c",
@@ -24001,7 +24127,8 @@
         "rule-4a1c9984b2bda33e737a2071",
         "rule-f7ffd96ad348a2ab6e2ff1cf",
         "rule-88fdedb3e9e843ad2300263b"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-00db5ef5f7a28a1c"
     },
     {
       "capability_id": "experiment-d2c61896a1893f64",
@@ -24327,7 +24454,8 @@
         "rule-406f441c134483a0271a2a1d",
         "rule-94341ebe7942d5f8b77ca08c",
         "rule-c1ee8a889400af779619dda0"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-d2c61896a1893f64"
     },
     {
       "capability_id": "experiment-3820972478a89255",
@@ -24639,7 +24767,8 @@
         "rule-8012cf7021bc8fa8724ca215",
         "rule-fdb150ed0a8cb7f0fbb32e62",
         "rule-419893ff9f61f8fe9e8c7cbe"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-3820972478a89255"
     },
     {
       "capability_id": "experiment-330be0d05e1b31a9",
@@ -24827,7 +24956,8 @@
         "rule-bd6cac3b2daaa646ee3d332a",
         "rule-73cc7a3b9546c7bddde60be0",
         "rule-12a5d45a5cdfa48b73b1aaf7"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-330be0d05e1b31a9"
     },
     {
       "capability_id": "experiment-fbf41e2889c53cad",
@@ -25014,7 +25144,8 @@
         "rule-5b82c76817e22c952eca29c6",
         "rule-46c6cd96015a9bb70d94d255",
         "rule-765fcbadfbcc7dea4c7e3bec"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-fbf41e2889c53cad"
     },
     {
       "capability_id": "experiment-3bf95a0df12a0f9f",
@@ -25370,7 +25501,8 @@
         "rule-4a1c9984b2bda33e737a2071",
         "rule-f7ffd96ad348a2ab6e2ff1cf",
         "rule-88fdedb3e9e843ad2300263b"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-3bf95a0df12a0f9f"
     },
     {
       "capability_id": "experiment-d2ac87c25de5f542",
@@ -25653,7 +25785,8 @@
         "rule-160bdada1ee5df7166df1231",
         "rule-080be4abf76ef3b0edcdddbb",
         "rule-51b95d65fd1d085c148526e4"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-d2ac87c25de5f542"
     },
     {
       "capability_id": "experiment-61d3af054e6a1f6d",
@@ -26026,7 +26159,8 @@
         "rule-f91e20df80f1f0e8445fd58f",
         "rule-ffc3064037551e1aea19671f",
         "rule-fd238b10b9e20eb2dc613838"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-61d3af054e6a1f6d"
     },
     {
       "capability_id": "experiment-7fed102e77dec518",
@@ -26318,7 +26452,8 @@
         "rule-6e16a219a7d274a8f8cc5446",
         "rule-6594d86721e663337ff9855c",
         "rule-5a234a396f0ec85886c3829a"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-7fed102e77dec518"
     },
     {
       "capability_id": "experiment-f390da9f265f080b",
@@ -26606,7 +26741,8 @@
         "rule-777046c78fdfd3e914e7b5b8",
         "rule-e7295bbc7467e58cb2392548",
         "rule-4f35c93d3534ad3be32f28cc"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-f390da9f265f080b"
     },
     {
       "capability_id": "experiment-d1aee10f514c8af5",
@@ -26880,7 +27016,8 @@
         "rule-7242b2aaaece78b1107b5334",
         "rule-6255132e7ae8c2cb51935ef5",
         "rule-af1216a96f16eea3ab4004bc"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-d1aee10f514c8af5"
     },
     {
       "capability_id": "experiment-e903c8755d4a8729",
@@ -27214,7 +27351,8 @@
         "rule-d8479f2399e98e030f29b9d5",
         "rule-6064c71a2e8db0d08d3a78ad",
         "rule-b17e605d0c3fb8f414c7aa53"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-e903c8755d4a8729"
     },
     {
       "capability_id": "experiment-a3f3bb449a2f34d7",
@@ -27294,7 +27432,8 @@
       "rule_ids": [
         "rule-f33e5d9a79c5cf55385ec8e4",
         "rule-444b64a7e469fb4b07bc1175"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-a3f3bb449a2f34d7"
     },
     {
       "capability_id": "experiment-a4dd600fc6d409df",
@@ -27404,7 +27543,8 @@
         "rule-f53b84fe35ed9b0009a631eb",
         "rule-546dda7c70e3c1d383075b47",
         "rule-1970adb506a9cbd27027ef57"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-a4dd600fc6d409df"
     },
     {
       "capability_id": "experiment-906f1e5fff63647f",
@@ -27633,7 +27773,8 @@
         "rule-74f5c672899a4f562e592af0",
         "rule-4c5a1d36e49df630546b57ab",
         "rule-bed3041fbfb271c4837aa603"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-906f1e5fff63647f"
     },
     {
       "capability_id": "experiment-a69d51ff462cc36a",
@@ -27830,7 +27971,8 @@
         "rule-9d2fa40e544b8edd870d094d",
         "rule-9672480aa5194b6e0a6dc8f2",
         "rule-81d84338172ce9ae818836b4"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-a69d51ff462cc36a"
     },
     {
       "capability_id": "experiment-4e372a3e04e0faca",
@@ -27959,7 +28101,8 @@
         "rule-e54bf0f662a329583d2b8426",
         "rule-86fde112efaafe22e7f70879",
         "rule-a3da36a67a9c5dca20953b96"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-4e372a3e04e0faca"
     },
     {
       "capability_id": "experiment-35bac077cd83f54c",
@@ -28053,7 +28196,8 @@
       ],
       "new_source_qualified": false,
       "planning_resolution_is_not_threshold_qualification": true,
-      "rule_ids": []
+      "rule_ids": [],
+      "comparison_scope_id": "scope-experiment-35bac077cd83f54c"
     },
     {
       "capability_id": "experiment-43a0424529f1528e",
@@ -28439,7 +28583,8 @@
         "rule-8eddd45f2241ee992b72f055",
         "rule-fed87e9da182ca40c46a1373",
         "rule-213fd4a5b6ef14c7b93ebfb5"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-43a0424529f1528e"
     },
     {
       "capability_id": "experiment-5dc2e7f6a62669ce",
@@ -28810,7 +28955,8 @@
         "rule-42cea6798f8fa85de952c249",
         "rule-e2e4b6280d53ff2e4d87b68e",
         "rule-b048596a01159f6015697deb"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-5dc2e7f6a62669ce"
     },
     {
       "capability_id": "experiment-79d7d88479557cc0",
@@ -29100,7 +29246,8 @@
         "rule-3c9ddcfcc1a3fa42b1738fa2",
         "rule-7f63ae7e3f9d8c1f6bcdd7ea",
         "rule-43ab2da4b766b4d2cae75265"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-79d7d88479557cc0"
     },
     {
       "capability_id": "experiment-f13798efea3b69ba",
@@ -29207,7 +29354,8 @@
         "rule-896f8c712da299bd4c298659",
         "rule-acb523625c43d8d14b4ae190",
         "rule-14315affe15319619ec7e31b"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-f13798efea3b69ba"
     },
     {
       "capability_id": "experiment-4f8f2c0e1fbe098f",
@@ -29594,7 +29742,8 @@
         "rule-7c815c861be28a18be27c365",
         "rule-583e72804a0f54f9b4c6791d",
         "rule-5f8db9692652f3bf21654539"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-4f8f2c0e1fbe098f"
     },
     {
       "capability_id": "experiment-089f551cef6acbef",
@@ -29944,7 +30093,8 @@
         "rule-74d2270cf64252fda09aeb7a",
         "rule-0ee3d37358d181869dfebb76",
         "rule-97a063803fa9d31ace4f6824"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-089f551cef6acbef"
     },
     {
       "capability_id": "experiment-be0a906d081824ea",
@@ -30271,7 +30421,8 @@
         "rule-61a55c161b2c7e7fb3768689",
         "rule-a5a8d3970c89c50ac5cbe7ff",
         "rule-06a2e997736c2deccab4bc61"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-be0a906d081824ea"
     },
     {
       "capability_id": "experiment-c363c4d6b2f1e7a9",
@@ -30616,7 +30767,8 @@
         "rule-77649d5bc087253def462057",
         "rule-6606183069ac70e091b17a35",
         "rule-b0fce5610ec1de3bfc0660a1"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-c363c4d6b2f1e7a9"
     },
     {
       "capability_id": "experiment-dc4f01b0782f66c3",
@@ -30913,7 +31065,8 @@
         "rule-96f2e6452bb4c35a1d1dd81b",
         "rule-519b5904c14226f0800a874f",
         "rule-c35cd219d9c3936f6df67853"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-dc4f01b0782f66c3"
     },
     {
       "capability_id": "experiment-7a4e421429ce76e9",
@@ -31231,7 +31384,8 @@
         "rule-c2cb13677db49a2ed6d93062",
         "rule-9fcb17d622af424efa4ae219",
         "rule-117cac111ddab60b14037e34"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-7a4e421429ce76e9"
     },
     {
       "capability_id": "experiment-e5baf86a6d60f39c",
@@ -31544,7 +31698,8 @@
         "rule-26d78449a2ae12bb8cc81342",
         "rule-b43a01d029c4e6be6070bf6e",
         "rule-dc390075f1af30a7919a82f1"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-e5baf86a6d60f39c"
     },
     {
       "capability_id": "experiment-2013b85fee4526d6",
@@ -31850,7 +32005,8 @@
         "rule-d3dba7b745f286a1e31f34b5",
         "rule-2299581574619015dfb57493",
         "rule-77df755a2936bed2e0d9f864"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-2013b85fee4526d6"
     },
     {
       "capability_id": "experiment-06f3862814316e87",
@@ -32162,7 +32318,8 @@
         "rule-e66640f04f9f2e147f8a6a39",
         "rule-14e4a21d9de312ab3a750891",
         "rule-c689fcda756e9ea2aaaa8c68"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-06f3862814316e87"
     },
     {
       "capability_id": "experiment-950330e143988071",
@@ -32446,7 +32603,8 @@
         "rule-03785660f2fa6f14c64cc16e",
         "rule-9449c7bab431ce0513e076f0",
         "rule-665768419af762bc0f63891d"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-950330e143988071"
     },
     {
       "capability_id": "experiment-8c6cbf43a9370396",
@@ -32719,7 +32877,8 @@
         "rule-6bdba3fa320fbe81c771922c",
         "rule-f5f840299f5fc9fd876592b6",
         "rule-860354c314a2652c67b51799"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-8c6cbf43a9370396"
     },
     {
       "capability_id": "experiment-ded0cdfd37fe1002",
@@ -32946,7 +33105,8 @@
         "rule-03785660f2fa6f14c64cc16e",
         "rule-9449c7bab431ce0513e076f0",
         "rule-665768419af762bc0f63891d"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-ded0cdfd37fe1002"
     },
     {
       "capability_id": "experiment-db0ae95bf832243f",
@@ -33225,7 +33385,8 @@
         "rule-a42447da13bf0304ce2b1f57",
         "rule-eb44d50a75c773b3f6fcc631",
         "rule-df142d10f9204ad57e7db88f"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-db0ae95bf832243f"
     },
     {
       "capability_id": "experiment-25bf35be6cfb7cb9",
@@ -33515,7 +33676,8 @@
         "rule-fc090835ed6dd6e1cf469c8f",
         "rule-9a6b373888d9592c0c555b5d",
         "rule-90de4ab6502d7d5e9d41b150"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-25bf35be6cfb7cb9"
     },
     {
       "capability_id": "experiment-06dfc808cd746b55",
@@ -33686,7 +33848,8 @@
         "rule-e5df3d118bdbb641c9941a2e",
         "rule-527ff1ffcb2eccf80c6bd0c2",
         "rule-dd0fad27fb6c2c2ebde8308d"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-06dfc808cd746b55"
     },
     {
       "capability_id": "experiment-facd10fc2e2e1c6d",
@@ -33885,7 +34048,8 @@
         "rule-6f957250ecf35b78f4c91fd5",
         "rule-c5e0386f0474253e3690ef21",
         "rule-ff1ac0a27510edb86de72a68"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-facd10fc2e2e1c6d"
     },
     {
       "capability_id": "experiment-dc01ed047a39ee7c",
@@ -34160,7 +34324,8 @@
         "rule-4182fd23f2dc797ab35ce2ce",
         "rule-a0e287916dbeeea2852711a8",
         "rule-e0309149b5e51cf45b5e68f9"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-dc01ed047a39ee7c"
     },
     {
       "capability_id": "experiment-472f6c8eae927acf",
@@ -34363,7 +34528,8 @@
         "rule-939d7a6c74501d9ea9542b7c",
         "rule-33575482b8359f03a171eb4c",
         "rule-038e57ec03f6557a648b791c"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-472f6c8eae927acf"
     },
     {
       "capability_id": "experiment-9a960d36087c2646",
@@ -34639,7 +34805,8 @@
         "rule-3896c651219dcf5ca040ffd8",
         "rule-5b0a77d277fcae36fc31a8ce",
         "rule-7c9982d501533d9a7f2e943d"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-9a960d36087c2646"
     },
     {
       "capability_id": "experiment-eb6d533237d11167",
@@ -34761,7 +34928,8 @@
         "rule-ed6e26f7262cd3fe8d889259",
         "rule-1dbf233ec76fdb09a92f9c57",
         "rule-1e202b7ff6e60e8006436014"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-eb6d533237d11167"
     },
     {
       "capability_id": "experiment-25b0a1305c41dcb4",
@@ -35060,7 +35228,8 @@
         "rule-db454c4246c80ac747ceb19f",
         "rule-5225dcd52df180b37157e8a0",
         "rule-1025f63a6fbc253041b67d05"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-25b0a1305c41dcb4"
     },
     {
       "capability_id": "experiment-5939aecfa4284195",
@@ -35140,7 +35309,8 @@
         "rule-563fdf4309ea3c29c5fa6abc",
         "rule-05c06641770788acc99815c2",
         "rule-5cea7c16f6c5c42fe11826cd"
-      ]
+      ],
+      "comparison_scope_id": "scope-experiment-5939aecfa4284195"
     }
   ],
   "engineering_routes": {
@@ -142562,5 +142732,10 @@
       "meaning": "Engineering route checks are additional obligations; these linked original scientific gates retain their independent scope and qualification requirements."
     }
   ],
-  "remaining_consumer_semantics": "The7698 remaining consumers have engineering-route checks; this does not classify their physics as non-scientific or replace configuration/test/executor/model parent qualification links."
+  "remaining_consumer_semantics": "The7698 remaining consumers have engineering-route checks; this does not classify their physics as non-scientific or replace configuration/test/executor/model parent qualification links.",
+  "comparison_scopes": {
+    "path": "reproducibility/RefactorComparisonScopesV1.json",
+    "sha256": "d233413398317e010e74d21d95e5d66701399d12df8e5707bcfec0649eb08035",
+    "scope": "prospective physical rules and explicit unresolved input obligations; not scientific qualification"
+  }
 }

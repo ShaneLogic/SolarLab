@@ -3,11 +3,14 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.benchmarks.reference_map import MapError, check_comparison, digest, validate_map
+from scripts.benchmarks.reference_map import (
+    MapError, check_comparison, digest, validate_comparison_scopes, validate_map,
+)
 
 
 class ReferenceMapTests(unittest.TestCase):
@@ -226,6 +229,113 @@ class ReferenceMapTests(unittest.TestCase):
         self.mapping["consumer_scientific_links"][0]["scientific_record_ids"] = []
         with self.assertRaisesRegex(MapError, "wrong_consumer_science_links"):
             self.validate()
+
+
+class ComparisonScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.base = ReferenceMapTests("test_complete_partition_retains_pending_evidence")
+        self.base.setUp()
+        self.addCleanup(self.base.doCleanups)
+        self.base.record["comparison_scope_id"] = "scope-science"
+        self.scopes = {
+            "schema": "solarlab.refactor_comparison_scopes.v1", "sources": self.base.sources,
+            "rules": {"exact": {
+                "id": "exact", "status": "numeric_parameters_frozen", "quantity": "semantic payload",
+                "unit": "typed payload", "norm": "exact_structure_and_words", "scale": 0,
+                "zero_policy": "exact", "threshold": 0, "scope_boundary": "synthetic engineering fixture only",
+                "parameter_justification": "Exact metadata identity; no physical tolerance",
+                "comparator": {"source_id": "code", "symbol": "compare"},
+            }},
+            "records": [{"id": "scope-science", "capability_id": "science", "route_id": "s",
+                         "origin_key": "test:science", "disposition": "engineering_only",
+                         "positive_physical_obligation": False, "engineering_expected": {"count": 1},
+                         "classification_basis": "Synthetic schema-only fixture",
+                         "rule_ids": ["exact"], "active_comparison": None, "scientific_qualification_granted": False,
+                         "remaining_inputs": [{"field": "source bound M output", "needed_from": "fixture",
+                                               "blocked_use": "claiming execution was checked"}]}],
+        }
+
+    def validate(self):
+        return validate_comparison_scopes(self.scopes, self.base.mapping, self.base.root, self.base.root)
+
+    def test_scoped_partition_keeps_qualification_closed(self):
+        self.assertEqual(self.validate()["records"], 1)
+        self.assertEqual(self.validate()["active_new_comparisons"], 0)
+
+    def test_unknown_numeric_field_and_vague_pending_record_reject(self):
+        for field in ("quantity", "unit", "norm", "scale", "threshold", "zero_policy"):
+            saved = self.scopes["rules"]["exact"].pop(field)
+            with self.assertRaises(MapError):
+                self.validate()
+            self.scopes["rules"]["exact"][field] = saved
+        self.scopes["records"][0]["remaining_inputs"][0].pop("needed_from")
+        with self.assertRaisesRegex(MapError, "scope_vague_missing_input"):
+            self.validate()
+
+    def test_changed_source_wrong_scope_and_unadmitted_active_gate_reject(self):
+        self.scopes["sources"]["code"]["sha256"] = "0"*64
+        with self.assertRaisesRegex(MapError, "scope_source_changed"):
+            self.validate()
+        self.base.write_source("code", "oracle.py", "def compare():\n    assert 1 == 1\n")
+        self.scopes["records"][0]["route_id"] = "other"
+        with self.assertRaisesRegex(MapError, "scope_wrong_route"):
+            self.validate()
+        self.scopes["records"][0]["route_id"] = "s"
+        self.scopes["records"][0]["active_comparison"] = {"threshold": 1}
+        with self.assertRaisesRegex(MapError, "scope_unadmitted_active_comparison"):
+            self.validate()
+
+    def test_dangling_comparator_and_unmarked_missing_parameters_reject(self):
+        rule = self.scopes["rules"]["exact"]
+        rule["comparator"]["symbol"] = "absent"
+        with self.assertRaisesRegex(MapError, "scope_dangling_symbol"):
+            self.validate()
+        rule["comparator"]["symbol"] = "compare"
+        rule["status"] = "missing_parameters"
+        with self.assertRaisesRegex(MapError, "scope_unmarked_missing_parameters"):
+            self.validate()
+        rule.update(active=False, missing_fields=["numeric reference scale"])
+        self.assertEqual(self.validate()["rules"], 1)
+
+    def test_original_rule_value_is_not_silently_rebound(self):
+        rule = self.scopes["rules"]["exact"]
+        rule.update(status="original_contract_only", original_rule_ids=["q"],
+                    original_rules_sha256=digest({"q": self.base.mapping["rule_catalog"]["q"]}))
+        self.assertEqual(self.validate()["rules"], 1)
+        self.base.mapping["rule_catalog"]["q"]["gate_value"]["limit"] = 0.1
+        with self.assertRaisesRegex(MapError, "scope_original_rule_changed"):
+            self.validate()
+
+    def test_actual_scope_links_and_protected_payloads(self):
+        repo = Path(__file__).resolve().parents[2]
+        scopes = json.loads((repo/"reproducibility/RefactorComparisonScopesV1.json").read_text())
+        mapping = json.loads((repo/"reproducibility/RefactorComparisonMapV1.json").read_text())
+        archive = Path(os.environ.get("SOLARLAB_ARCHIVE", str(
+            Path.home()/"Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab")))
+        if not archive.is_dir():
+            self.skipTest("Source-bound archive is verified separately when available")
+        result = validate_comparison_scopes(scopes, mapping, repo, archive)
+        self.assertEqual(result["records"], 170)
+        manifest = json.loads((repo/"reproducibility/RefactorReferenceManifestV1.json").read_text())
+        self.assertEqual(digest(manifest["scaps"]["groups"]), scopes["protected_manifest_payload_sha256"]["/scaps/groups"])
+        self.assertEqual(digest(manifest["hi"]["cases"]), scopes["protected_manifest_payload_sha256"]["/hi/cases"])
+        self.assertEqual(sum(r["disposition"] == "engineering_only" for r in scopes["records"]), 2)
+
+    def test_actual_short_R1_source_is_bound_without_inventing_a_test(self):
+        import ast
+        repo = Path(__file__).resolve().parents[2]
+        scopes = json.loads((repo/"reproducibility/RefactorComparisonScopesV1.json").read_text())
+        rule = scopes["rules"]["R1_short_original"]
+        source = scopes["sources"]["r1_short"]
+        raw = (repo/source["path"]).read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), source["sha256"])
+        function = next(n for n in ast.parse(raw).body if isinstance(n, ast.FunctionDef) and n.name == "run_coupled")
+        limits = next(ast.literal_eval(n.value) for n in ast.walk(function)
+                      if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "limits" for t in n.targets))
+        self.assertEqual(rule["source_limits"], limits)
+        self.assertIsNone(rule["existing_test_for_wrapper"])
+        self.assertEqual(rule["times_s"], [0, 1e-8, 1e-6, 1e-4])
+        self.assertIn("Not R1-1", rule["scope_boundary"])
 
 
 if __name__ == "__main__":

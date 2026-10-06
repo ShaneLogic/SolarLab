@@ -105,6 +105,92 @@ def check_comparison(record, supplied):
     return {"metadata_eligible": True, "scientific_qualification_granted": False}
 
 
+def validate_comparison_scopes(scopes, mapping, repo, archive):
+    """Validate the small prospective rule table, not the scientific results.
+
+    Existing lane rules retain their own meaning. Missing physical scale/floor
+    values remain named blockers rather than being filled by test truth values.
+    """
+    _require(scopes.get("schema") == "solarlab.refactor_comparison_scopes.v1", "scope_schema")
+    repo, archive = Path(repo), Path(archive)
+    cache, trees = {}, {}
+    sources = scopes["sources"]
+    for sid, entry in sources.items():
+        _require(entry.get("root") in {"repository", "archive"}, "scope_source_root")
+        path = (repo if entry["root"] == "repository" else archive)/entry["path"]
+        _require(path.is_file(), "scope_source_missing")
+        raw = path.read_bytes()
+        _require(hashlib.sha256(raw).hexdigest() == entry["sha256"], "scope_source_changed")
+        cache[sid] = raw
+
+    def cite(ref):
+        _require(ref.get("source_id") in cache, "scope_dangling_source")
+        raw = cache[ref["source_id"]]
+        if "symbol" in ref:
+            sid = ref["source_id"]
+            if sid not in trees:
+                trees[sid] = _symbols(ast.parse(raw))
+            _require(ref["symbol"] in trees[sid], "scope_dangling_symbol")
+        if "lines" in ref:
+            lo, hi = ref["lines"]; lines = raw.decode().splitlines()
+            _require(1 <= lo <= hi <= len(lines), "scope_source_lines")
+            _require(hashlib.sha256("\n".join(lines[lo-1:hi]).encode()).hexdigest() == ref["text_sha256"],
+                     "scope_source_text_changed")
+
+    rules = scopes["rules"]
+    for rid, rule in rules.items():
+        _require(rule.get("id") == rid, "scope_rule_identity")
+        _require(rule.get("status") in {"numeric_parameters_frozen", "original_contract_only", "missing_parameters"},
+                 "scope_rule_status")
+        cite(rule["comparator"])
+        _require(bool(rule.get("scope_boundary")), "scope_rule_boundary")
+        for binding in rule.get("citations", []):
+            cite(binding)
+        if rule["status"] == "numeric_parameters_frozen":
+            for key in ("quantity", "unit", "norm", "scale", "zero_policy", "threshold"):
+                _require(rule.get(key) is not None, "scope_missing_"+key)
+            def finite_numbers(value):
+                if isinstance(value, dict):
+                    return bool(value) and all(finite_numbers(v) for v in value.values())
+                if isinstance(value, list):
+                    return bool(value) and all(finite_numbers(v) for v in value)
+                return type(value) in (int, float) and math.isfinite(value) and value >= 0
+            _require(finite_numbers(rule["scale"]), "scope_unknown_scale")
+            _require(finite_numbers(rule["threshold"]), "scope_unknown_threshold")
+            _require(bool(rule.get("parameter_justification")), "scope_parameter_basis")
+        elif rule["status"] == "missing_parameters":
+            _require(bool(rule.get("missing_fields")) and rule.get("active") is False, "scope_unmarked_missing_parameters")
+        if rule.get("original_rule_ids"):
+            _require(set(rule["original_rule_ids"]) <= mapping["rule_catalog"].keys(), "scope_original_rule_missing")
+            _require(rule.get("original_rules_sha256") == digest({k: mapping["rule_catalog"][k] for k in rule["original_rule_ids"]}),
+                     "scope_original_rule_changed")
+
+    original = {r["capability_id"]: r for r in mapping["scientific_records"]}
+    records = scopes["records"]
+    _require(len({r["capability_id"] for r in records}) == len(records) and
+             {r["capability_id"] for r in records} == original.keys(), "scope_record_coverage")
+    for row in records:
+        old = original[row["capability_id"]]
+        _require(row["route_id"] == old["route_id"] and row["origin_key"] == old["origin_key"], "scope_wrong_route")
+        _require(old.get("comparison_scope_id") == row["id"], "scope_link_mismatch")
+        _require(set(row["rule_ids"]) <= rules.keys() and bool(row["rule_ids"]), "scope_dangling_rule")
+        _require(row.get("active_comparison") is None and row.get("scientific_qualification_granted") is False,
+                 "scope_unadmitted_active_comparison")
+        _require(bool(row.get("classification_basis")), "scope_classification_basis")
+        for binding in row.get("citations", []):
+            cite(binding)
+        _require(bool(row.get("remaining_inputs")), "scope_missing_qualification_obligation")
+        for need in row["remaining_inputs"]:
+            _require(all(need.get(k) for k in ("field", "needed_from", "blocked_use")), "scope_vague_missing_input")
+        if row.get("disposition") == "engineering_only":
+            _require(row.get("positive_physical_obligation") is False and bool(row.get("engineering_expected")),
+                     "scope_engineering_disposition")
+        else:
+            _require(row.get("positive_physical_obligation") is True, "scope_physics_obligation_erased")
+    return {"records": len(records), "rules": len(rules), "source_files_checked": len(cache),
+            "active_new_comparisons": 0, "scientific_qualification_granted": False}
+
+
 def validate_map(mapping, repo, archive):
     """Resolve every citation and partition against the frozen coverage index."""
     repo, archive = Path(repo), Path(archive)
@@ -278,6 +364,11 @@ def validate_map(mapping, repo, archive):
             citation(ref)
         _require(bool(item["chains"]) or bool(item.get("missing_test_artifact")),
                  "missing_test_disposition")
+    scope_link = mapping.get("comparison_scopes")
+    if scope_link:
+        scope_bytes = (repo / scope_link["path"]).read_bytes()
+        _require(hashlib.sha256(scope_bytes).hexdigest() == scope_link["sha256"], "scope_link_hash_mismatch")
+        validate_comparison_scopes(json.loads(scope_bytes), mapping, repo, archive)
     return {"status": "valid_planning_map", "scientific_records": len(records),
             "engineering_capabilities": len(caps) - len(expected),
             "sources_checked": len(blobs), "active_comparisons": sum(r["state"] == "active" for r in records),
