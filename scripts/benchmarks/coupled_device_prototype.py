@@ -1016,11 +1016,12 @@ class AffineCoupledSlab(CoupledSlab):
             raise ContractError("explicit_double_output_required")
         return frozen_array(value.high + value.low)
 
-    def _capture(self, point):
+    def _capture(self, point, *, derivatives=True):
         """Reference plus finite bilinear changes; original imbalance retained."""
         from scripts.benchmarks.precision_prototype import DD
 
         m = self.definition
+        partial_n = partial_p = None
         delta = self.remainders(point)
         n0, p0 = (self.field(self.reference, name).as_dd() for name in ("n_m3", "p_m3"))
         dn, dp = (delta[name].as_dd() for name in ("n_m3", "p_m3"))
@@ -1034,8 +1035,9 @@ class AffineCoupledSlab(CoupledSlab):
             drn = cn*((1-f0)*dn-(n0+n1)*df-dn*df)
             drp = cp*(f0*dp+(p0+p1)*df+dp*df)
             rn, rp = rn0+drn, rp0+drp
-            partial_n = {"n_m3": cn*(1-f), "f": -cn*(n+n1)}
-            partial_p = {"p_m3": cp*f, "f": cp*(p+p1)}
+            if derivatives:
+                partial_n = {"n_m3": cn*(1-f), "f": -cn*(n+n1)}
+                partial_p = {"p_m3": cp*f, "f": cp*(p+p1)}
         else:
             lam0 = cn*(n0+n1)+cp*(p0+p1)
             dlambda = cn*dn+cp*dp
@@ -1045,9 +1047,10 @@ class AffineCoupledSlab(CoupledSlab):
             rn0 = rp0 = cn*cp*numerator0/lam0
             drn = drp = (cn*cp*dnumerator-rn0*dlambda)/lam
             rn = rp = rn0+drn
-            partial_n = {"n_m3": cn*cp*p/lam-rn*cn/lam,
-                         "p_m3": cn*cp*n/lam-rn*cp/lam}
-            partial_p = partial_n
+            if derivatives:
+                partial_n = {"n_m3": cn*cp*p/lam-rn*cn/lam,
+                             "p_m3": cn*cp*n/lam-rn*cp/lam}
+                partial_p = partial_n
         return rn, rp, partial_n, partial_p, rn0, rp0, drn, drp
 
     def evaluate(self, point: Point, *, derivatives: bool = False) -> AffineDeviceEvaluation:
@@ -1065,17 +1068,19 @@ class AffineCoupledSlab(CoupledSlab):
         b = bernoulli(pack(xi)).as_dd()
         # The analytic derivative is nonsingular and is projected only for
         # the sparse binary64 Jacobian. Values use retained physical deltas.
-        bp = DD(bernoulli_with_derivative(self.project_output(pack(xi)))[1])
+        if derivatives:
+            bp = DD(bernoulli_with_derivative(self.project_output(pack(xi)))[1])
         pref_n, pref_p = DD(m.mu_n)*m.vt/DD(self.dx), DD(m.mu_p)*m.vt/DD(self.dx)
         jn = Q*pref_n*(b*dn-xi*n[:-1])
         jp = Q*pref_p*(-b*dp-xi*p[1:])
         flows = {"n_m3": -jn/Q, "p_m3": jp/Q}
-        flow_derivatives = {
-            "n_m3": {"n_m3": (pref_n*(b+xi), -pref_n*b),
-                      "phi_V": (pref_n*(bp*dn-n[:-1])/m.vt, -pref_n*(bp*dn-n[:-1])/m.vt)},
-            "p_m3": {"p_m3": (pref_p*b, -pref_p*(b+xi)),
-                      "phi_V": (-pref_p*(-bp*dp-p[1:])/m.vt, pref_p*(-bp*dp-p[1:])/m.vt)},
-        }
+        if derivatives:
+            flow_derivatives = {
+                "n_m3": {"n_m3": (pref_n*(b+xi), -pref_n*b),
+                          "phi_V": (pref_n*(bp*dn-n[:-1])/m.vt, -pref_n*(bp*dn-n[:-1])/m.vt)},
+                "p_m3": {"p_m3": (pref_p*b, -pref_p*(b+xi)),
+                          "phi_V": (-pref_p*(-bp*dp-p[1:])/m.vt, pref_p*(-bp*dp-p[1:])/m.vt)},
+            }
         if m.dynamic:
             c = self.field(point, "c_m3").as_dd()
             dc = point.state.face_difference("c_m3", self.face_pairs).as_dd()
@@ -1084,19 +1089,22 @@ class AffineCoupledSlab(CoupledSlab):
             chemical_change = -(-dc/(DD(m.ion_capacity)-c[:-1])).log1p()
             xi_ion = xi+chemical_change
             bi = bernoulli(pack(xi_ion)).as_dd()
-            bip = DD(bernoulli_with_derivative(self.project_output(pack(xi_ion)))[1])
+            if derivatives:
+                bip = DD(bernoulli_with_derivative(self.project_output(pack(xi_ion)))[1])
             pref = DD(m.diffusion_ion)/DD(self.dx)
             fi = pref*(-bi*dc-xi_ion*c[1:])
-            drive = pref*(-bip*dc-c[1:])
+            if derivatives:
+                drive = pref*(-bip*dc-c[1:])
             flows["c_m3"] = fi
-            flow_derivatives["c_m3"] = {
-                "c_m3": (pref*bi-drive/(DD(m.ion_capacity)-c[:-1]),
-                           -pref*(bi+xi_ion)+drive/(DD(m.ion_capacity)-c[1:])),
-                "phi_V": (-drive/m.vt, drive/m.vt),
-            }
+            if derivatives:
+                flow_derivatives["c_m3"] = {
+                    "c_m3": (pref*bi-drive/(DD(m.ion_capacity)-c[:-1]),
+                               -pref*(bi+xi_ion)+drive/(DD(m.ion_capacity)-c[1:])),
+                    "phi_V": (-drive/m.vt, drive/m.vt),
+                }
         else:
             fi = DD(np.zeros(N-1))
-        rn, rp, partial_n, partial_p, rn0, rp0, drn, drp = self._capture(point)
+        rn, rp, partial_n, partial_p, rn0, rp0, drn, drp = self._capture(point, derivatives=derivatives)
         rates = {}
         derivative_entries = {}
 

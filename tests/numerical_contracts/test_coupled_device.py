@@ -2500,3 +2500,159 @@ def test_logical_initialization_statistics_keep_legacy_reader_scope(request):
               "actual_native_generation_not_invented":"native_generation" not in after,
               "within_owner_counter_delta_preserved":after["work_since_before"]["num_steps"]==1,
               "raw_values_preserved":after["raw_statistics"]["current_time"]==2.1})
+
+
+def _assert_affine_value_words(actual, full):
+    """Compare every returned value, including zero signs and action evidence."""
+    assert actual.rate_jacobian is None and not actual.nodal_derivatives
+    assert full.rate_jacobian is not None and full.nodal_derivatives
+    assert vars(actual).keys() == vars(full).keys()
+    for name, value in vars(actual).items():
+        reference = getattr(full, name)
+        if name in {"rate_jacobian", "nodal_derivatives"}:
+            continue
+        if name == "linear_actions":
+            assert value.keys() == reference.keys()
+            for key, action in value.items():
+                other = reference[key]
+                assert action.value.identity_bytes() == other.value.identity_bytes()
+                assert action.absolute_error_bound.identity_bytes() == other.absolute_error_bound.identity_bytes()
+                for attribute in ("units", "form_identity", "operand_identity", "source_identities", "arithmetic_policy"):
+                    assert getattr(action, attribute) == getattr(other, attribute)
+        elif name in {"nodal_rates", "nodal_input"}:
+            assert value.keys() == reference.keys()
+            for key, array in value.items():
+                other = reference[key]
+                if name == "nodal_rates":
+                    assert array.identity_bytes() == other.identity_bytes()
+                else:
+                    assert array.shape == other.shape and array.dtype == other.dtype
+                    assert array.tobytes() == other.tobytes()
+        elif name == "input_jacobian":
+            assert value.shape == reference.shape and value.dtype == reference.dtype
+            assert value.tobytes() == reference.tobytes()
+        else:
+            assert value.identity_bytes() == reference.identity_bytes(), name
+
+
+@pytest.mark.parametrize("case_id", CASES)
+@pytest.mark.parametrize("family", [*GATES["points"], "tiny_positive", "tiny_negative"])
+def test_affine_value_only_preserves_complete_words(case_id, family, request):
+    from scripts.benchmarks.precision_prototype import DoubleArithmetic, PrimitiveExpansion
+
+    m = affine_model(case_id)
+    if family.startswith("tiny_"):
+        common = np.zeros(m.layout.size)
+        common[m.layout.offsets["p_m3"]] = 1.0
+        previous, _ = m.trial(common, 1e-3, (0.0, 0.0))
+        weak = np.zeros(m.layout.size)
+        weak[m.layout.offsets["p_m3"].start+1] = 1e-40 if family == "tiny_positive" else -1e-40
+        arithmetic = DoubleArithmetic()
+        cumulative = PrimitiveExpansion.from_value(arithmetic.freeze(
+            arithmetic.add(arithmetic.array(common), arithmetic.array(weak))))
+        p, _ = m.trial(cumulative, 2e-3, (0.0, 0.0), predecessor=previous)
+    else:
+        p, _ = affine_point(m, family)
+    source, identity = m.source_identity, p.identity
+    before = tuple(m.field(p, v.id).identity_bytes() for v in m.layout.variables)
+    full = m.evaluate(p, derivatives=True)
+    actual = m.evaluate(p)
+    _assert_affine_value_words(actual, full)
+    log_case(request, {"family": "affine_value_only_words", "case": case_id,
+                       "point_family": family, "point_identity": identity, "source_identity": source,
+                       "returned_value_fields": sorted(set(vars(actual)) - {"rate_jacobian", "nodal_derivatives"})},
+             {"every_value_word_and_action_evidence": True,
+              "state_words_unchanged": before == tuple(m.field(p, v.id).identity_bytes() for v in m.layout.variables),
+              "identities_unchanged": source == m.source_identity and identity == p.identity})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_affine_focused_signed_jacobian_and_input_directions(case_id, request):
+    """Use the existing independent finite-volume oracle, with unchanged gates."""
+    m = affine_model(case_id)
+    p, u = affine_point(m, "near_boundary")
+    rate = m.S*(0.17+np.sin(np.arange(m.layout.size)))
+    adot = np.array([0.1, 0.3*m.definition.photon_reference])
+    linear = m.public_problem().linearize(p, rate, adot)
+    y, a, v = affine_exact_input(m, u), list(map(dec, p.inputs)), list(map(dec, rate))
+    cj = GATES["cj_s_inv"][0]
+    directions = [(name, sign, d, np.zeros(2)) for name, sign, d in affine_directions(m)]
+    for column, scale in enumerate((m.definition.vt, m.definition.photon_reference)):
+        for sign in (-1, 1):
+            direction = np.zeros(2); direction[column] = sign*scale
+            directions.append((f"input_{column}", sign, np.zeros(m.layout.size), direction))
+    evidence = []
+    with localcontext() as ctx:
+        ctx.prec = 100
+        h = Decimal("1e-22")
+        for name, sign, d, da in directions:
+            refs = {}
+            for precision in (80, 100):
+                yp = [x+h*dec(z) for x, z in zip(y, d)]
+                ym = [x-h*dec(z) for x, z in zip(y, d)]
+                vp = [x+h*dec(cj)*dec(z) for x, z in zip(v, d)]
+                vm = [x-h*dec(cj)*dec(z) for x, z in zip(v, d)]
+                ap = [x+h*dec(z) for x, z in zip(a, da)]
+                am = [x-h*dec(z) for x, z in zip(a, da)]
+                plus = decimal_kernel(m, yp, ap, vp, precision)["F"]
+                minus = decimal_kernel(m, ym, am, vm, precision)["F"]
+                refs[precision] = [(x-z)/(2*h)*dec(s) for x, z, s in zip(plus, minus, m.Drow)]
+            actual = m.Drow*(linear.ida_matrix(cj) @ d + linear.inputs @ da)
+            limits = [dec(GATES["jacobian_scaled_atol"])+dec(GATES["jacobian_scaled_rtol"])*abs(z)
+                      for z in refs[100]]
+            errors = [abs(dec(x)-z) for x, z in zip(actual, refs[100])]
+            uncertainty = [abs(x-z) for x, z in zip(refs[80], refs[100])]
+            assert all(e <= b and un <= b/3 for e, un, b in zip(errors, uncertainty, limits)), (name, sign)
+            evidence.append({"direction": name, "sign": sign,
+                             "max_gate_fraction": max(float(e/b) for e, b in zip(errors, limits))})
+    log_case(request, {"family": "affine_focused_jacobian", "case": case_id,
+                       "point_family": "near_boundary", "cj_s_inv": cj, "directions": evidence},
+             {"signed_physical_and_input_directions": True, "Decimal80_100_agree_within_gate_share": True,
+              "native_not_imported": "sksundae" not in sys.modules})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+@pytest.mark.parametrize("derivatives", [False, True])
+def test_affine_value_only_keeps_physical_domain_errors(case_id, derivatives, request):
+    m = affine_model(case_id)
+    cases = [(None, 0.0, (0.0, -1.0), "negative_photon_flux"),
+             ("n_m3", -m.definition.n_eq, (0.0, 0.0), "nonpositive_active_carrier"),
+             ("p_m3", -m.definition.p_eq, (0.0, 0.0), "nonpositive_active_carrier")]
+    if m.definition.dynamic:
+        cases += [("c_m3", -2*m.definition.ion_initial, (0.0, 0.0), "physical_state_outside_domain"),
+                  ("c_m3", 2*m.definition.ion_capacity, (0.0, 0.0), "physical_state_outside_domain"),
+                  ("f", -1.0, (0.0, 0.0), "physical_state_outside_domain"),
+                  ("f", 1.0, (0.0, 0.0), "physical_state_outside_domain")]
+    for variable, delta, inputs, reason in cases:
+        u = np.zeros(m.layout.size)
+        if variable is not None:
+            u[m.layout.offsets[variable]] = delta
+        # The public authority rejects inadmissible mapped fields first.
+        with pytest.raises(ContractError, match=f"^{reason}$"):
+            p, _ = m.trial(u, 0.0, inputs)
+            m.evaluate(p, derivatives=derivatives)
+    log_case(request, {"family": "affine_value_only_domains", "case": case_id,
+                       "derivatives": derivatives, "expected_errors": [row[3] for row in cases]},
+             {"physical_domain_errors_preserved": True})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_affine_value_only_skips_derivative_underflow(case_id, request):
+    """A valid tiny gradient can underflow unused binary64 derivative powers."""
+    m = affine_model(case_id)
+    u = np.zeros(m.layout.size)
+    u[m.layout.offsets["phi_V"]] = m.definition.vt*1e-40*np.arange(m.count)
+    p, _ = m.trial(u, 0.0, (0.0, 0.0))
+    m.validate(p)
+    with np.errstate(under="ignore"):
+        full = m.evaluate(p, derivatives=True)
+    with np.errstate(under="raise"):
+        actual = m.evaluate(p)
+        with pytest.raises(FloatingPointError, match="underflow"):
+            m.evaluate(p, derivatives=True)
+    _assert_affine_value_words(actual, full)
+    log_case(request, {"family": "affine_derivative_only_exception", "case": case_id,
+                       "gradient_scale": 1e-40, "numpy_underflow_policy": "raise",
+                       "derivative_error": "FloatingPointError: underflow", "value_only_error": None},
+             {"valid_physical_point": True, "unchanged_value_words": True,
+              "derivative_exception_explicitly_preserved_when_requested": True})
