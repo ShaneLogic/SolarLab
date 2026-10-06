@@ -306,13 +306,30 @@ def _regular_bytes(path: Path, maximum: int) -> bytes:
 
 
 def _directory_bytes(path: Path) -> int:
-    total = 0
-    for file in path.rglob("*"):
-        info = file.lstat()
-        if stat.S_ISLNK(info.st_mode):
-            raise ValueError("worker output must not contain links")
-        if stat.S_ISREG(info.st_mode):
-            total += info.st_size
+    """Measure existing files, reobserving once if atomic publication races us.
+
+    A directory census is not an atomic filesystem snapshot. Keep the larger
+    observation and let the supervisor retain its historical peak; permission
+    and other I/O errors still propagate instead of becoming a zero reading.
+    """
+    def observe() -> tuple[int, bool]:
+        total, changed = 0, False
+        for file in path.rglob("*"):
+            try:
+                info = file.lstat()
+            except FileNotFoundError:
+                changed = True
+                continue
+            if stat.S_ISLNK(info.st_mode):
+                raise ValueError("worker output must not contain links")
+            if stat.S_ISREG(info.st_mode):
+                total += info.st_size
+        return total, changed
+
+    total, changed = observe()
+    if changed:
+        repeated, _ = observe()
+        return max(total, repeated)
     return total
 
 

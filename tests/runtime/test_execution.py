@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError, asdict, replace
 import hashlib
 import json
 import os
+from pathlib import Path
 import signal
 import sqlite3
 import struct
@@ -14,7 +15,7 @@ import pytest
 import execution_workers as workers
 import solarlab.experiments.execution as execution_module
 from solarlab.experiments.execution import ProcessSupervisor, QueueFull
-from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerRequest, _process_info
+from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerRequest, _directory_bytes, _process_info
 from solarlab.io.run_store import RunStore, StateConflict
 from solarlab.materials.source import SourceDocument
 
@@ -275,9 +276,11 @@ def test_recovery_never_kills_a_restored_pid_and_only_reserves_affected_slot(tmp
         token = make_uncertain_intent(store, tmp_path / "work", reused=reused)
         calls = []
         real_kill = os.kill
+        restored_pid = os.getpid()
         def presence_only(pid, sig):
-            calls.append((pid, sig))
-            assert sig == 0, "an unowned restored PID must never be signalled"
+            if pid == restored_pid:
+                calls.append((pid, sig))
+                assert sig == 0, "an unowned restored PID must never be signalled"
             return real_kill(pid, sig)
         monkeypatch.setattr(os, "kill", presence_only)
         with supervisor(store, tmp_path / "work", max_active=2) as pool:
@@ -380,3 +383,34 @@ def test_post_spawn_setup_failure_reaps_only_affected_child(tmp_path, monkeypatc
         assert "injected" in value["worker_result"]["setup_error"]
         release(tmp_path, store, independent)
         assert pool.wait(independent, 3).data["store_state"] == "succeeded"
+
+
+def test_directory_census_reobserves_an_atomic_publication(tmp_path, monkeypatch):
+    partial, published = tmp_path / "started.json.part", tmp_path / "started.json"
+    payload = b'{"state":"ready"}'
+    partial.write_bytes(payload)
+    (tmp_path / "stable.bin").write_bytes(b"stable")
+    original = Path.lstat
+    renamed = False
+    def publish_before_stat(path, *args, **kwargs):
+        nonlocal renamed
+        if path == partial and not renamed:
+            partial.replace(published)
+            renamed = True
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "lstat", publish_before_stat)
+    assert _directory_bytes(tmp_path) == len(payload) + len(b"stable")
+    assert renamed and published.read_bytes() == payload and not partial.exists()
+
+
+def test_directory_census_preserves_other_stat_errors(tmp_path, monkeypatch):
+    target = tmp_path / "unreadable.bin"
+    target.write_bytes(b"data")
+    original = Path.lstat
+    def denied(path, *args, **kwargs):
+        if path == target:
+            raise PermissionError("fixture access denied")
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "lstat", denied)
+    with pytest.raises(PermissionError, match="fixture access denied"):
+        _directory_bytes(tmp_path)
