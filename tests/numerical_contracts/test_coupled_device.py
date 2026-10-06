@@ -2411,3 +2411,59 @@ def test_full_word_rate_producer_rejects_wrong_raw_point(case_id, request):
               "weak_mismatch_hidden_in_float_projection": np.array_equal(different.y, p.y),
               "original_state_and_predecessor_unchanged": encode_point(p) == before,
               "actual_mapped_rate_unchanged": accepted.values.identity_bytes() == actual_weak.values.identity_bytes()})
+
+
+@pytest.mark.parametrize("case_id", CASES)
+def test_declared_polynomial_sample_retains_distinct_history_origin(case_id, request):
+    from scripts.benchmarks.coupled_device_prototype import (
+        AffineSamplingContext, VoltageLiftAdapter,
+        VoltageLiftSegmentAdapter, VoltageLiftHistory, voltage_lift_native_sample,
+    )
+    spec = importlib.util.spec_from_file_location("solarlab_interval_inputs", Path(__file__).with_name("test_native_observation.py"))
+    support = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(support)
+    m, mapping, _, proposal, _, _ = support.current_controller_input(case_id)
+    context = AffineSamplingContext(m, proposal)
+    segment = context.segments[0]
+    binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), context, segment)
+    history = VoltageLiftHistory(mapping)
+    t = (segment.start+segment.end)/2
+    native = {"time": t, "z": np.zeros(m.layout.size), "zdot": np.zeros(m.layout.size),
+              "success": True, "status": 0, "message": "explicit algebraic reconstruction; no native call"}
+    pair = voltage_lift_native_sample(binding, history, native, m.reference, origin="declared_polynomial")
+    record = pair[-1]
+    restored = history.restore(history.reference_record, record["history"], m.reference)
+    log_case(request, {"family": "declared_polynomial_history", "case": case_id,
+                       "sample": record, "actual_native_calls": 0},
+             {"new_origin_is_explicit": record["raw"]["origin"] == record["history"]["origin"] == "declared_polynomial",
+              "named_tangent_retained": record["physical_tangent"]["origin"] == "physical_tangent",
+              "all_four_rate_words": len(record["history"]["physical_rate_words_hex"]) == 4,
+              "point_reconstructed_exactly": restored[0].identity == pair[0].identity,
+              "history_reference_not_reset": record["history"]["predecessor_identity"] == m.reference.identity,
+              "original_state_checks_applied": record["state_checks"]["passed"],
+              "no_interval_award": record["interval_or_prefix_charge_certified"] is False})
+
+
+def test_logical_initialization_statistics_keep_legacy_reader_scope(request):
+    from scripts.benchmarks.coupled_device_prototype import ida_statistics_snapshot
+
+    raw={"num_steps":0,"residual_evals":0,"linear_setups":0,"error_test_fails":0,
+         "nonlinear_iters":0,"nonlinear_conv_fails":0,"jacobian_evals":0,
+         "last_order":0,"current_order":1,"initial_step":.1,"last_step":0.,
+         "current_step":.1,"current_time":2.,"current_cj":0.}
+    solver=SimpleNamespace(statistics=lambda:raw)
+    legacy=ida_statistics_snapshot(solver,"second_segment",2,"init",2.,2.)
+    before=ida_statistics_snapshot(solver,"second_segment",2,"init",2.,2.,logical_initialization=True)
+    raw.update(num_steps=1,residual_evals=2,current_time=2.1)
+    after=ida_statistics_snapshot(solver,"second_segment",2,"onestep",2.1,2.1,
+                                  before=before,logical_initialization=True)
+    with pytest.raises(ContractError,match="generation_mismatch"):
+        ida_statistics_snapshot(solver,"second_segment",2,"onestep",2.1,2.1,
+                                before=legacy,logical_initialization=True)
+    log_case(request,{"family":"logical_initialization_metadata","legacy":legacy,"current":after,
+                      "actual_native_calls":0},
+             {"legacy_record_shape_preserved":"initialization_generation" in legacy and "logical_initialization_index" not in legacy,
+              "current_counter_explicitly_logical":after["logical_initialization_index"]==2 and "initialization_generation" not in after,
+              "actual_native_generation_not_invented":"native_generation" not in after,
+              "within_owner_counter_delta_preserved":after["work_since_before"]["num_steps"]==1,
+              "raw_values_preserved":after["raw_statistics"]["current_time"]==2.1})
