@@ -33,7 +33,7 @@ from scripts.benchmarks.contract_prototype import (
     EquationSpec, FloatArray, Geometry, ImmutableArrays, ImplicitSystem,
     Layout, LinearCoordinates, LinearFactor, LinearSourceSpec, LinearStorage,
     LinearTerm, PhysicalLinearForm, Point, RateView, StateIncrement, Support,
-    TerminalPort, VariableSpec, frozen_array,
+    TerminalPort, VariableSpec, frozen_array, _linear_arithmetic_identity,
 )
 from scripts.benchmarks.port_prototype import PortSample
 from scripts.benchmarks.sparse_prototype import SparseGraph, TermSupport, factorize
@@ -278,7 +278,8 @@ class CoupledSlab:
         self.topology = digest({"definition": m.identity, "x_hex": [float(v).hex() for v in x],
                                 "area_hex": m.area.hex(), "layout": self.layout.identity})
         self.source_identity = digest({"definition": m.identity, "topology": self.topology,
-                                       "kernel_sha256": sha256(Path(__file__).read_bytes()).hexdigest()})
+                                       "kernel_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
+                                       "linear_arithmetic": _linear_arithmetic_identity()})
         self.supports = self._supports()
         self.graph = SparseGraph(self.layout, self.supports, topology_identity=self.topology)
         mass_rows, mass_cols, mass_values = [], [], []

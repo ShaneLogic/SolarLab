@@ -6,6 +6,10 @@ interfaces and candidate arithmetic, never reference answers or acceptance gates
 
 from __future__ import annotations
 
+from scripts.benchmarks._integer_product_backend import (
+    CHECKER as _integer_product_checker, backend_identity as _integer_product_identity,
+)
+
 from dataclasses import dataclass, field
 from hashlib import sha256
 import math
@@ -1004,6 +1008,21 @@ def _dyadic_product_matches(a: float, b: float, high: float, low: float) -> bool
     )
 
 
+def _exact_product_matches(a: float, b: float, high: float, low: float) -> bool:
+    if _integer_product_checker is not None:
+        result = _integer_product_checker(a, b, high, low)
+        if result is not NotImplemented:
+            return result
+    return _dyadic_product_matches(a, b, high, low)
+
+
+def _linear_arithmetic_identity() -> dict:
+    from pathlib import Path
+
+    return {"contract_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
+            "product_backend": _integer_product_identity()}
+
+
 def _finite_two_product(a: float, b: float) -> tuple[float, float]:
     """Scaled Dekker product with an exact range/underflow verification.
 
@@ -1030,7 +1049,7 @@ def _finite_two_product(a: float, b: float) -> tuple[float, float]:
         raise ContractError("linear_product_overflow") from error
     if not math.isfinite(high) or not math.isfinite(low):
         raise ContractError("linear_product_overflow")
-    if not _dyadic_product_matches(a, b, high, low):
+    if not _exact_product_matches(a, b, high, low):
         raise ContractError("linear_product_underflow_or_inexact")
     return high, low
 
