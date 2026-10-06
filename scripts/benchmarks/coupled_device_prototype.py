@@ -7,6 +7,8 @@ explicitly limited to the first N8 diagnostic; scaling belongs to the adapter.
 
 from __future__ import annotations
 
+from scripts.benchmarks.native_history import HistoryLimitError, emit_record
+
 from dataclasses import asdict, dataclass, field, replace
 from fractions import Fraction
 from hashlib import sha256
@@ -2429,12 +2431,14 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
     algebraic = np.setdiff1d(np.arange(model.layout.size), differential).tolist()
 
     def save(record):
-        size = len(json.dumps(record, separators=(",", ":"), allow_nan=False).encode())+1
-        # Reserve a bounded tail for the first failure and final receipts.
-        if counts["history_bytes"]+size > budgets["total_output_bytes"]-1048576:
-            raise ContractError("affine_native_history_budget")
-        emit(record)
-        counts["history_bytes"] += size
+        try:
+            position = emit_record(record, emit, logical_bytes=counts["history_bytes"],
+                                   total_output_bytes=budgets["total_output_bytes"])
+        except HistoryLimitError as error:
+            raise ContractError("affine_native_history_budget") from error
+        counts["history_bytes"] = position.logical_bytes
+        if position.encoding == "gzip":
+            counts["history_encoded_bytes"] = position.encoded_bytes
 
     def resource_check():
         if time.perf_counter()-started > budgets["wall_s"]:
@@ -3524,11 +3528,14 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     algebraic = np.setdiff1d(np.arange(model.layout.size), differential).tolist()
 
     def save(record):
-        size = len(json.dumps(record, separators=(",", ":"), allow_nan=False).encode())+1
-        if counts["history_bytes"]+size > budgets["total_output_bytes"]-1048576:
-            raise ContractError("voltage_lift_history_budget")
-        emit(record)
-        counts["history_bytes"] += size
+        try:
+            position = emit_record(record, emit, logical_bytes=counts["history_bytes"],
+                                   total_output_bytes=budgets["total_output_bytes"])
+        except HistoryLimitError as error:
+            raise ContractError("voltage_lift_history_budget") from error
+        counts["history_bytes"] = position.logical_bytes
+        if position.encoding == "gzip":
+            counts["history_encoded_bytes"] = position.encoded_bytes
 
     def resource_check():
         if cancellation is not None and cancellation.exists():

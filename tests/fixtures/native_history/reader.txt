@@ -1,0 +1,44 @@
+kind_counts, kind_bytes = Counter(), Counter()
+kind_schema, statistics, accepted_by_phase, intervals_by_phase = {}, {}, Counter(), Counter()
+requested, unexpected, trailing, parse_failure = defaultdict(list), [], b"", None
+last_interval, last_complete_kind, last_complete_offset, total_bytes, records, maximum_line_bytes = None, None, 0, 0, 0, 0
+history_digest = hashlib.sha256()
+accepted_pointer_record = None
+passed_values = defaultdict(Counter)
+with (CASE / "NativeHistory.jsonl").open("rb") as stream:
+    for line in stream:
+        total_bytes += len(line)
+        maximum_line_bytes = max(maximum_line_bytes, len(line))
+        history_digest.update(line)
+        if not line.endswith(b"\n"):
+            trailing = line
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError) as error:
+            parse_failure = {"byte_offset": total_bytes - len(line), "reason": str(error)}
+            break
+        records += 1
+        kind = row.get("kind", "missing_kind")
+        kind_counts[kind] += 1
+        kind_bytes[kind] += len(line)
+        kind_schema.setdefault(kind, list(row))
+        last_complete_kind, last_complete_offset = kind, total_bytes
+        if kind == "requested_sample":
+            requested[row["segment_id"]].append({"time_s": row["time_s"], "time_hex": float(row["time_s"]).hex(),
+                                                 "origin": row["origin"], "point_identity": row["point_identity"],
+                                                 "record_sha256": row["record_sha256"]})
+        elif kind == "native_statistics":
+            statistics[str(row["logical_initialization_index"])] = row
+        elif kind == "voltage_lift_interval_charge":
+            phase = row["segment_id"]
+            intervals_by_phase[phase] += 1
+            passed = row.get("observation", {}).get("passed")
+            passed_values[kind][str(passed)] += 1
+            accepted_by_phase[phase] += int(passed is True)
+            last_interval = {key: row.get(key) for key in ("segment_id", "left", "right", "coefficient_frame_identity")}
+            last_interval["observation_passed"] = passed
+            if total_bytes == last_accepted["pointer"]["history_byte_offset_after_record"]:
+                accepted_pointer_record = last_interval
+        elif kind == "voltage_lift_polynomial_domain":
+            passed_values[kind][str(row.get("evidence", {}).get("passed"))] += 1
