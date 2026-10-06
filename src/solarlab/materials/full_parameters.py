@@ -175,8 +175,8 @@ class FullParameterInput(ParameterFieldsInput):
     incoherent: bool | None = None
     v_sat_n: QuantityInput | None = quantity_field("m/s")
     v_sat_p: QuantityInput | None = quantity_field("m/s")
-    ct_beta_n: QuantityInput | None = quantity_field("1", positive=True)
-    ct_beta_p: QuantityInput | None = quantity_field("1", positive=True)
+    ct_beta_n: QuantityInput | None = quantity_field("1")
+    ct_beta_p: QuantityInput | None = quantity_field("1")
     pf_gamma_n: QuantityInput | None = quantity_field("(m/V)^0.5")
     pf_gamma_p: QuantityInput | None = quantity_field("(m/V)^0.5")
     Eg_back: QuantityInput | None = quantity_field("eV", nullable=True)

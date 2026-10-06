@@ -134,12 +134,13 @@ jobs:
           tests/refactor/test_complex_configuration_preparation.py
           tests/refactor/test_structured_registry_preparation.py
           tests/refactor/test_execution_identity_preparation.py
+          tests/refactor/test_behavior_context.py
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
           tests/runtime/test_event_service.py
       - name: Check typed configuration, registry and runtime preparation
         run: |
-          uv run --frozen --no-sync ruff check --no-cache src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
+          uv run --frozen --no-sync ruff check --no-cache src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
           uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab src/solarlab_server
       - name: Installed package imports and resources outside the checkout
         working-directory: ${{ runner.temp }}
@@ -152,6 +153,7 @@ jobs:
           import solarlab
           import solarlab_research
           import solarlab_server
+          from solarlab.config import behavior
           from solarlab_server.app import create_app
           from perovskite_sim.models.parameters import MaterialParams
 
@@ -161,6 +163,7 @@ jobs:
               assert importlib.resources.files(module).joinpath("py.typed").is_file()
           assert MaterialParams.__module__ == "perovskite_sim.models.parameters"
           assert create_app.__module__ == "solarlab_server.app"
+          assert pathlib.Path(behavior.__file__).resolve().is_relative_to(prefix)
           assert importlib.metadata.version("solarlab") == "0.1.0"
           PY
 
