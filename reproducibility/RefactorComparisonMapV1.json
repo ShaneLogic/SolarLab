@@ -7,7 +7,7 @@
     "manifest_payload_hashes": {
       "/scaps/groups": "1ecb0dd74497ac8a4195e2cd063ea4acd342d723a53b70d14ea8c9eaae5ac472",
       "/hi/cases": "646d85ce8f72ee23fb289e0ba604b30136f8f86d595bb0bd5d6e8e43c3c43300",
-      "/capability_reconciliation/slice_references": "5c52d11e10c03e08fbf7becbe2e21aada9f1e76d89f0c1e25a8c8cf395621f51",
+      "/capability_reconciliation/slice_references": "94ca5e556867547b092ea348c3e25744a045970b6cbe167cff84b832c3c352fa",
       "/capability_reconciliation/experiment_bindings": "2b522bd39925e4c26f4828decabe91b740c525784bf7b50e423fd34004fda8c0"
     },
     "manifest_before_map_link_sha256": "5438f22bee9626a9ae5640df1300e0ea1c8313621095051a731e619a322d1247"
@@ -554,9 +554,11 @@
       "sha256": "b3ab0cf0054d5aa1ec7e5fcd27b93d2ed09b137d043080a0310a219d3ff1154f"
     },
     "repository:perovskite-sim/tests/unit/discretization/test_fe_operators.py": {
-      "root": "repository",
-      "path": "perovskite-sim/tests/unit/discretization/test_fe_operators.py",
-      "sha256": "d39e8e151f692cfc24945daa6b7210ef6cd7dfd2ac4e8cf170e31e371979f965"
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/AnalyticReferenceDefinitionsV1/Source/repository/perovskite-sim/tests/unit/discretization/test_fe_operators.py",
+      "sha256": "d39e8e151f692cfc24945daa6b7210ef6cd7dfd2ac4e8cf170e31e371979f965",
+      "source_role": "frozen_original_assertions",
+      "original_repository_path": "perovskite-sim/tests/unit/discretization/test_fe_operators.py"
     },
     "repository:perovskite-sim/perovskite_sim/physics/dynamic_storage.py": {
       "root": "repository",
@@ -142735,7 +142737,7 @@
   "remaining_consumer_semantics": "The7698 remaining consumers have engineering-route checks; this does not classify their physics as non-scientific or replace configuration/test/executor/model parent qualification links.",
   "comparison_scopes": {
     "path": "reproducibility/RefactorComparisonScopesV1.json",
-    "sha256": "0a08862901003591ebdf85b64e919162b59c045326f0c67cc279a4f2d634e61b",
+    "sha256": "b3b27a10099e847a196c91c57cb6b92dafd81e0be1ef1fe2570733fe9de7626f",
     "scope": "prospective physical rules and explicit unresolved input obligations; not scientific qualification"
   }
 }

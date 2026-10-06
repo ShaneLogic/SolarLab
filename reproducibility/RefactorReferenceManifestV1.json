@@ -9226,7 +9226,7 @@
   "capability_reconciliation": {
     "comparison_map": {
       "path": "reproducibility/RefactorComparisonMapV1.json",
-      "sha256": "96998b693eba12966fec78827e17ddbda3b0556bccf9f31b07aff7503c80b3b1",
+      "sha256": "ab269dff5764517292b7baee11967cc920a003f968f6048179890734b1186fe6",
       "schema": "solarlab.refactor_comparison_map.v1",
       "status": "planning_map_with_explicit_blocked_prospective_comparisons",
       "validator": "scripts/benchmarks/reference_map.py",
@@ -23208,10 +23208,11 @@
         ],
         "test_inputs": [
           {
-            "root": "repository",
-            "path": "perovskite-sim/tests/unit/discretization/test_fe_operators.py",
+            "root": "archive",
+            "path": "test/ArchitectureRefactor/Stage00/AnalyticReferenceDefinitionsV1/Source/repository/perovskite-sim/tests/unit/discretization/test_fe_operators.py",
             "sha256": "d39e8e151f692cfc24945daa6b7210ef6cd7dfd2ac4e8cf170e31e371979f965",
-            "role": "oracle_test_or_config"
+            "role": "oracle_test_or_config",
+            "original_repository_path": "perovskite-sim/tests/unit/discretization/test_fe_operators.py"
           }
         ],
         "related_analytic_gate_ids": [
@@ -36807,7 +36808,7 @@
     "recorded_at": "2026-10-05T08:47:10.249964+00:00",
     "comparison_scopes": {
       "path": "reproducibility/RefactorComparisonScopesV1.json",
-      "sha256": "0a08862901003591ebdf85b64e919162b59c045326f0c67cc279a4f2d634e61b",
+      "sha256": "b3b27a10099e847a196c91c57cb6b92dafd81e0be1ef1fe2570733fe9de7626f",
       "scope": "prospective physical rules and explicit unresolved input obligations; not scientific qualification"
     }
   },

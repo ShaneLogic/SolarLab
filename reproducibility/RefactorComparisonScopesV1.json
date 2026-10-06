@@ -21,7 +21,7 @@
     "formal": {
       "root": "archive",
       "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
-      "sha256": "f9839d12c72bf26dbbc043f01c7c7aa7d538de8274bd6ffdf45a2b013d39dc9a"
+      "sha256": "03c87e93ce6d32f71f219bdfdf09295a39401992263ae9b84b9399233f85022f"
     },
     "lane_evaluator": {
       "root": "repository",
@@ -36,7 +36,7 @@
     "sg_test": {
       "root": "repository",
       "path": "perovskite-sim/tests/unit/discretization/test_fe_operators.py",
-      "sha256": "d39e8e151f692cfc24945daa6b7210ef6cd7dfd2ac4e8cf170e31e371979f965"
+      "sha256": "c86e9d222595ccad990e4a2a4b7cd2365d6ffb986b1d4a05dbf92ecbdb4b484c"
     },
     "thermal_test": {
       "root": "repository",
@@ -24253,8 +24253,8 @@
           "source_id": "sg_test",
           "symbol": "test_sg_flux_n_equilibrium",
           "lines": [
-            164,
-            173
+            232,
+            241
           ],
           "text_sha256": "9ddef8162a7b8a5d1a44f8845cc4dcdf662888f17ed626abc6f4b8bd6d222eee"
         },
@@ -24262,8 +24262,8 @@
           "source_id": "sg_test",
           "symbol": "test_sg_flux_p_equilibrium",
           "lines": [
-            176,
-            184
+            244,
+            252
           ],
           "text_sha256": "01b6404916d4b24dcdca64aee8c057213c25cf2fcbd7f5576000d25340ecab75"
         },
@@ -24537,8 +24537,8 @@
               "source_id": "sg_test",
               "symbol": "test_sg_flux_n_equilibrium",
               "lines": [
-                164,
-                173
+                232,
+                241
               ],
               "text_sha256": "9ddef8162a7b8a5d1a44f8845cc4dcdf662888f17ed626abc6f4b8bd6d222eee"
             },
@@ -24546,8 +24546,8 @@
               "source_id": "sg_test",
               "symbol": "test_sg_flux_p_equilibrium",
               "lines": [
-                176,
-                184
+                244,
+                252
               ],
               "text_sha256": "01b6404916d4b24dcdca64aee8c057213c25cf2fcbd7f5576000d25340ecab75"
             },
