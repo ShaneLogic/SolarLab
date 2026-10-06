@@ -36819,5 +36819,28 @@
     "preparation_dispatch_id": "ctx_c6ab1616be0f"
   },
   "dependency_snapshot_policy": "Dependency labels record the supplied P00-01/P00-02 evidence at preparation time; consult the authoritative activity ledger for current task/gate state",
-  "updated_at": "2026-10-05T10:00:38.815696+00:00"
+  "updated_at": "2026-10-05T10:00:38.815696+00:00",
+  "analytic_reference_definitions": {
+    "root": "repository",
+    "path": "reproducibility/RefactorAnalyticReferencesV1.json",
+    "sha256": "f707d3a22a706f7c6880163e8edc8849aaa6786e7cc5c2f1431ae62c4fd3d330",
+    "definition_count": 7,
+    "definition_ids": [
+      "poisson_affine_51_stored_nodes",
+      "bernoulli_0",
+      "bernoulli_50",
+      "bernoulli_minus20",
+      "thermal_zero_heat_steady",
+      "thermal_linear_steady",
+      "thermal_linear_transient_200s_41"
+    ],
+    "status": "listed_analytic_subgates_independently_reviewed;full_GateSpec_and_candidate_binding_pending",
+    "independent_review": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/AnalyticReferenceDefinitionsV1/RootReview.json",
+      "sha256": "4580ffc6b91d8b174a9cc1521ae28f4193ac11bae3668cb71cb79075530ad7e4"
+    },
+    "scope": "Original stored-grid affine Poisson, three Bernoulli points and linear/zero-heat thermal fixtures only",
+    "G0_G2_or_external_qualification_granted": false
+  }
 }
