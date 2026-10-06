@@ -37,7 +37,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true",
                         help="fail if output is absent or differs; never write")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--json", action="store_true",
+                        help="write the public metadata bundle as JSON to stdout")
     args = parser.parse_args(argv)
+    if args.json:
+        if args.check or args.output != DEFAULT_OUTPUT:
+            parser.error("--json writes stdout and cannot use --check or --output")
+        print(json.dumps(export_configuration_schema(), sort_keys=True,
+                         ensure_ascii=True, allow_nan=False))
+        return 0
     expected = render()
     if args.check:
         if not args.output.is_file() or args.output.read_bytes() != expected:

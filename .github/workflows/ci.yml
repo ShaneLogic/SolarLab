@@ -137,12 +137,13 @@ jobs:
           tests/refactor/test_execution_identity_preparation.py
           tests/refactor/test_behavior_context.py
           tests/refactor/test_configuration_schema_export.py
+          tests/refactor/test_configuration_input_types.py::test_json_mode_matches_public_metadata_and_preserves_default
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
           tests/runtime/test_event_service.py
       - name: Check typed configuration, registry and runtime preparation
         run: |
-          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
+          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_input_types.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
           uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab src/solarlab_server
       - name: Check generated configuration schema
         run: uv run --frozen --no-sync python scripts/generate_configuration_schema.py --check
@@ -227,6 +228,19 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - name: Install the locked Python schema producer
+        working-directory: .
+        run: uv sync --frozen --extra dev --no-editable
+      - name: Verify generated input types and compile-time contracts
+        working-directory: .
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          --confcutdir=tests/refactor -o addopts=
+          tests/refactor/test_configuration_input_types.py
       - run: npm run test:run
       - run: npm run build
 
