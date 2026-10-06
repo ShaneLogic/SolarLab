@@ -1,7 +1,8 @@
 """Offline, source-pinned preparation and separately admitted IDA wheel pilot.
 
-No dependencies or SDKs are downloaded or installed. The pilot compiles only
-_cy_ida, preserving the RECORD-verified qualified runtime and other extensions.
+No dependencies or SDKs are downloaded or installed. The pilot compiles
+_cy_ida and its source-owned SuperLUMT constructor/free, preserving the
+RECORD-verified runtime libraries and other extensions byte for byte.
 freeze requires every SDK, private source, tool and runtime identity; build
 requires the independently reviewed plan digest and Root's start message ID.
 """
@@ -46,6 +47,11 @@ def pins() -> dict:
         raise ValueError("patch differs from source manifest")
     if digest(HERE / "ida_observation_copy.h") != data["copy_header_sha256"]:
         raise ValueError("copy header differs from source manifest")
+    for name, identity in data["native_cleanup"]["files"].items():
+        if name not in {"ida_superlumt_cleanup.c", "ida_superlumt_cleanup.h"} or digest(HERE / name) != identity:
+            raise ValueError("native cleanup source differs from source manifest")
+    if set(data["native_cleanup"]["files"]) != {"ida_superlumt_cleanup.c", "ida_superlumt_cleanup.h"}:
+        raise ValueError("incomplete native cleanup source manifest")
     return data
 
 
@@ -130,6 +136,8 @@ def prepare(archive: Path, work: Path, build_id: str | None = None) -> dict:
                 path.write_bytes(tar.extractfile(member).read())
     apply_patch(source, manifest)
     (source / "src/sksundae/ida_observation_copy.h").write_bytes((HERE / "ida_observation_copy.h").read_bytes())
+    for name in manifest["native_cleanup"]["files"]:
+        (source / "src/sksundae" / name).write_bytes((HERE / name).read_bytes())
     if build_id is not None:
         path = source / "src/sksundae/_cy_ida.pyx"
         code = path.read_text()
@@ -140,6 +148,7 @@ def prepare(archive: Path, work: Path, build_id: str | None = None) -> dict:
     receipt = {"source": str(source), "archive_sha256": digest(archive),
                "patch_sha256": manifest["patch_sha256"], "build_recipe_sha256": build_id,
                "source_hashes": {name: digest(source / name) for name in manifest["files"]},
+               "native_cleanup_hashes": dict(manifest["native_cleanup"]["files"]),
                "compiler_run": False, "native_calls": 0}
     (work / "Preparation.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
@@ -252,7 +261,7 @@ def validate_recipe(recipe: dict) -> None:
     if (recipe["environment"]["MACOSX_DEPLOYMENT_TARGET"] != "11.0"
             or digest(Path(recipe["environment"]["SDKROOT"]) / "SDKSettings.json") != recipe["environment"]["SDKSettings_sha256"]):
         raise ValueError("macOS SDK or deployment target changed")
-    if recipe["wheel_filename"] != "scikit_sundae-1.1.3-1ida75obs-cp313-cp313-macosx_11_0_arm64.whl":
+    if recipe["wheel_filename"] != "scikit_sundae-1.1.3-2ida75composed-cp313-cp313-macosx_11_0_arm64.whl":
         raise ValueError("unexpected pilot wheel tag")
 
 
@@ -310,14 +319,16 @@ def freeze(recipe_path: Path, recipe_sha: str, archive: Path, work: Path) -> Pat
     includes += sorted({str(Path(p).parent) for p in recipe["private_files"]})
     for path in includes:
         compile_command += ["-I", path]
-    compile_command += [str(generated), "-o", str(extension)]
+    compile_command += [str(generated), str(source / "src/sksundae/ida_superlumt_cleanup.c"),
+                        "-o", str(extension)]
     compile_command += [str(site / item["path"]) for item in recipe["link_libraries"]]
     repair = ["/usr/bin/install_name_tool"]
     for item in recipe["link_libraries"]:
         repair += ["-change", item["install_name"], "@loader_path/.dylibs/" + Path(item["path"]).name]
     repair += [str(extension)]
     commands = [generate, compile_command, repair,
-                ["/usr/bin/codesign", "--force", "--sign", "-", str(extension)]]
+                ["/usr/bin/codesign", "--force", "--sign", "-", str(extension)],
+                ["/usr/bin/codesign", "--verify", "--strict", str(extension)]]
     env = {"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1",
            "TMPDIR": str(work / "tmp"), "SDKROOT": recipe["environment"]["SDKROOT"],
            "MACOSX_DEPLOYMENT_TARGET": "11.0", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
@@ -326,6 +337,7 @@ def freeze(recipe_path: Path, recipe_sha: str, archive: Path, work: Path) -> Pat
             "recipe_path": str(recipe_path), "recipe_sha256": recipe_sha, "prepared": prepared,
             "work": str(work), "commands": commands, "environment": env, "extension": str(extension),
             "helper_sha256": digest(Path(__file__)), "source_pins_sha256": digest(HERE / "SourcePinsV1.json"),
+            "requires_external_process_group_supervision": True,
             "limits": {"seconds": MAX_SECONDS, "rss_bytes": MAX_RSS, "combined_retained_bytes": MAX_BYTES}}
     path = work / "FrozenBuild.json"
     path.write_text(json.dumps(plan, indent=2) + "\n")
@@ -340,11 +352,13 @@ def pack_overlay(plan: dict) -> dict:
     for name in pins()["files"]:
         files[name.removeprefix("src/")] = source / name
     files["sksundae/ida_observation_copy.h"] = source / "src/sksundae/ida_observation_copy.h"
+    for name in pins()["native_cleanup"]["files"]:
+        files["sksundae/" + name] = source / "src/sksundae" / name
     files["sksundae/_cy_ida.cpython-313-darwin.so"] = Path(plan["extension"])
     wheel_meta = "scikit_sundae-1.1.3.dist-info/WHEEL"
     record_name = "scikit_sundae-1.1.3.dist-info/RECORD"
-    overrides = {wheel_meta: ("Wheel-Version: 1.0\nGenerator: solarlab-ida75-observation-pilot.v1\n"
-                             "Root-Is-Purelib: false\nBuild: 1ida75obs\nTag: cp313-cp313-macosx_11_0_arm64\n").encode()}
+    overrides = {wheel_meta: ("Wheel-Version: 1.0\nGenerator: solarlab-ida75-composed-binding.v1\n"
+                             "Root-Is-Purelib: false\nBuild: 2ida75composed\nTag: cp313-cp313-macosx_11_0_arm64\n").encode()}
     overlay = work / "overlay"
     overlay.mkdir()
     (work / "wheel").mkdir()
@@ -382,11 +396,45 @@ def pack_overlay(plan: dict) -> dict:
             "overlay": str(overlay), "overlay_reuses_qualified_payload_read_only": True}
 
 
-def cleanup_owned(process) -> dict:
+def install_verified_wheel(packed: dict, destination: Path) -> dict:
+    """Materialize a new installation so every loader-relative path is local.
+
+    An overlay symlink to an old extension may expand @loader_path at its old
+    location. Native checks use this complete immutable installation instead.
+    The wheel is SHA-bound and every extracted payload is checked by RECORD.
+    """
+    wheel = Path(packed["wheel"])
+    if destination.exists() or digest(wheel) != packed["wheel_sha256"]:
+        raise ValueError("installation exists or wheel identity changed")
+    record_name = "scikit_sundae-1.1.3.dist-info/RECORD"
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)) or set(names) != set(packed["wheel_files"]) | {record_name}:
+            raise ValueError("wheel inventory differs from packed payload")
+        for name in names:
+            relative = PurePosixPath(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("unsafe wheel path")
+        destination.mkdir()
+        for name in names:
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(name))
+    record = destination / record_name
+    verified = verify_record(destination, record, digest(record))
+    if verified != packed["wheel_files"]:
+        raise ValueError("installed payload differs from the frozen built wheel")
+    return {"installed": str(destination), "installed_record_sha256": digest(record),
+            "installed_files": verified, "installation_has_no_symlinks": True}
+
+
+def cleanup_owned(process, *, external_process_group=False) -> dict:
     """Retain ownership and errors even when termination or reaping fails."""
     if process is None:
         return {"status": "no_active_process"}
-    result = {"pid": process.pid, "pgid": process.pid, "status": "cleanup-unverified", "errors": []}
+    result = {"pid": process.pid, "pgid": os.getpgrp() if external_process_group else process.pid,
+              "status": "cleanup-unverified", "errors": [],
+              "group_cleanup_owner": "external_supervisor" if external_process_group else "builder"}
     try:
         returncode = process.poll()
     except BaseException as error:
@@ -394,9 +442,15 @@ def cleanup_owned(process) -> dict:
         return result
     if returncode is None:
         try:
-            os.killpg(process.pid, signal.SIGKILL)  # Only the supervisor's owned new group.
+            if external_process_group:
+                # Killing this shared group would kill the builder before its receipt.
+                # The admitted outer owner terminates/checks all remaining group members.
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
         except BaseException as error:
-            result["errors"].append({"operation": "killpg", "type": type(error).__name__, "message": str(error)})
+            result["errors"].append({"operation": "kill_child" if external_process_group else "killpg",
+                                     "type": type(error).__name__, "message": str(error)})
         try:
             returncode = process.wait(timeout=1)
         except BaseException as error:
@@ -404,13 +458,20 @@ def cleanup_owned(process) -> dict:
     result["returncode"] = returncode
     if returncode is not None and not result["errors"]:
         result["status"] = "exited"
+    result["direct_child_reaped"] = returncode is not None
+    if external_process_group:
+        result["group_empty"] = None  # Only the external owner's receipt establishes this.
     return result
 
 
-def run_build(plan_path: Path, expected: str, start_message: str) -> dict:
+def run_build(plan_path: Path, expected: str, start_message: str, *, external_process_group=False) -> dict:
     if not re.fullmatch(r"msg_[0-9a-f]+", start_message or ""):
         raise ValueError("Root start-message identity is required")
     plan = load_pinned(plan_path, expected)
+    if plan.get("requires_external_process_group_supervision") and not external_process_group:
+        raise ValueError("this build requires the admitted external process-group supervisor")
+    if external_process_group and os.getpgrp() != os.getpid():
+        raise ValueError("externally supervised builder must be its newly owned group leader")
     if plan["helper_sha256"] != digest(Path(__file__)) or plan["source_pins_sha256"] != digest(HERE / "SourcePinsV1.json"):
         raise ValueError("helper/source manifest changed since freeze")
     recipe = load_pinned(Path(plan["recipe_path"]), plan["recipe_sha256"])
@@ -422,7 +483,9 @@ def run_build(plan_path: Path, expected: str, start_message: str) -> dict:
         raise ValueError("no retry or overwrite of an attempted pilot")
     started = time.monotonic()
     receipt = {"status": "failed", "root_start_message": start_message, "plan_sha256": expected,
-               "commands": [], "peak_group_rss_bytes": 0, "retries": 0, "native_solver_calls": 0}
+               "commands": [], "peak_group_rss_bytes": 0, "retries": 0, "native_solver_calls": 0,
+               "external_process_group_supervision": external_process_group,
+               "timing_scope": "builder command period; whole launch/finalization belongs to external receipt"}
     process = None
     previous_alarm = signal.getsignal(signal.SIGALRM)
     def deadline(signum, frame):
@@ -437,14 +500,16 @@ def run_build(plan_path: Path, expected: str, start_message: str) -> dict:
             log = work / f"command{number}.log"
             with log.open("xb") as output:
                 process = subprocess.Popen(argv, cwd=work, env=plan["environment"],
-                                           stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
-                entry = {"argv": argv, "owned_process_group": process.pid, "log": str(log)}
+                                           stdout=output, stderr=subprocess.STDOUT,
+                                           start_new_session=not external_process_group)
+                pgid = os.getpgrp() if external_process_group else process.pid
+                entry = {"argv": argv, "pid": process.pid, "owned_process_group": pgid, "log": str(log)}
                 receipt["commands"].append(entry)
                 while process.poll() is None:
                     listing = subprocess.run(["/bin/ps", "-axo", "pgid=,rss="],
                                              capture_output=True, text=True, timeout=2)
                     rss = sum(int(row.split()[1])*1024 for row in listing.stdout.splitlines()
-                              if len(row.split()) == 2 and int(row.split()[0]) == process.pid)
+                              if len(row.split()) == 2 and int(row.split()[0]) == pgid)
                     receipt["peak_group_rss_bytes"] = max(receipt["peak_group_rss_bytes"], rss)
                     if rss > MAX_RSS or combined_bytes(recipe["accounting_roots"]) > MAX_BYTES - 65536:
                         raise RuntimeError("combined pilot resource limit exceeded")
@@ -464,10 +529,19 @@ def run_build(plan_path: Path, expected: str, start_message: str) -> dict:
         symbols = subprocess.run(["/usr/bin/nm", "-u", plan["extension"]], check=True,
                                  capture_output=True, text=True, timeout=5).stdout
         receipt["undefined_symbols"] = symbols
-        for symbol in ("_SUNLinSol_SuperLUMT", "_SUNLinSol_LapackDense", "_SUNLinSol_LapackBand"):
+        for symbol in ("_SUNLinSolSetup_SuperLUMT", "_SUNLinSolSolve_SuperLUMT",
+                       "_SUNLinSol_LapackDense", "_SUNLinSol_LapackBand"):
             if symbol not in symbols:
                 raise ValueError("optional solver compiled to an unavailable stub")
+        if re.search(r"\b_SUNLinSol_SuperLUMT\s*$", symbols, re.M):
+            raise ValueError("the owning extension still calls the unpatched sparse constructor")
+        defined = subprocess.run(["/usr/bin/nm", "-gU", plan["extension"]], check=True,
+                                 capture_output=True, text=True, timeout=5).stdout
+        receipt["defined_symbols"] = defined
+        if "_sl_SUNLinSol_SuperLUMT" not in defined:
+            raise ValueError("source-owned sparse lifetime entry is absent")
         receipt.update(pack_overlay(plan))
+        receipt.update(install_verified_wheel(receipt, work / "installed"))
         receipt.update(status="wheel_built_unqualified", compiled_config=pins()["required_config"],
                        scientific_qualification=False, private_abi_independently_qualified=False)
     except BaseException as error:
@@ -475,7 +549,7 @@ def run_build(plan_path: Path, expected: str, start_message: str) -> dict:
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_alarm)
-        receipt["cleanup"] = cleanup_owned(process)
+        receipt["cleanup"] = cleanup_owned(process, external_process_group=external_process_group)
         if receipt["cleanup"]["status"] == "cleanup-unverified":
             receipt["status"] = "failed_cleanup_unverified"
         receipt["elapsed_s"] = time.monotonic() - started
@@ -504,6 +578,7 @@ def main() -> int:
     build_parser.add_argument("--plan", type=Path, required=True)
     build_parser.add_argument("--plan-sha256", required=True)
     build_parser.add_argument("--start-message", required=True)
+    build_parser.add_argument("--external-process-group", action="store_true")
     args = parser.parse_args()
     if args.operation == "prepare":
         print(json.dumps(prepare(args.archive.resolve(), args.work.absolute()), indent=2))
@@ -511,7 +586,8 @@ def main() -> int:
         path = freeze(args.recipe.resolve(), args.recipe_sha256, args.archive.resolve(), args.work.absolute())
         print(json.dumps({"plan": str(path), "sha256": digest(path)}))
     else:
-        result = run_build(args.plan.resolve(), args.plan_sha256, args.start_message)
+        result = run_build(args.plan.resolve(), args.plan_sha256, args.start_message,
+                           external_process_group=args.external_process_group)
         print(json.dumps(result, indent=2))
         return 0 if result["status"] == "wheel_built_unqualified" else 1
     return 0

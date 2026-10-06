@@ -1,6 +1,22 @@
 --- a/src/sksundae/c_ida.pxd
 +++ b/src/sksundae/c_ida.pxd
-@@ -65,6 +65,14 @@
+@@ -50,6 +50,15 @@
+     int IDASetMaxConvFails(void* mem, int max_conv_fails)
+     int IDASetMaxNonlinIters(void* mem, int max_nonlin_iters)
+ 
++    int IDASetNonlinConvCoef(void* mem, sunrealtype epcon)
++    int IDAGetIntegratorStats(void* mem, long int* nsteps, long int* nrevals,
++                             long int* nlinsetups, long int* netfails,
++                             int* qlast, int* qcur, sunrealtype* hinused,
++                             sunrealtype* hlast, sunrealtype* hcur,
++                             sunrealtype* tcur)
++    int IDAGetNonlinSolvStats(void* mem, long int* nniters, long int* nnfails)
++    int IDAGetCurrentCj(void* mem, sunrealtype* cj)
++
+     # rootfinding initialization function
+     int IDARootInit(void* mem, int nrtfn, IDARootFn eventsfn)
+ 
+@@ -65,6 +74,14 @@
      int IDAGetRootInfo(void* mem, int* rootsfound)
      int IDAGetNumResEvals(void* mem, long int* nrevals)
      int IDAGetCurrentStep(void* mem, sunrealtype* hcur)
@@ -15,7 +31,7 @@
      
      # free functions
      void IDAFree(void** mem)
-@@ -103,3 +111,15 @@
+@@ -103,3 +120,21 @@
  
      # optional outputs from LS interface
      int IDAGetNumJacEvals(void* mem, long int* njevals)
@@ -31,6 +47,12 @@
 +                      sunrealtype* phi, size_t phi_count,
 +                      sunrealtype* psi, size_t psi_count,
 +                      sunrealtype* uround)
++
++
++# Only allocation/free are source-owned; numerical operations use pinned native exports.
++cdef extern from "ida_superlumt_cleanup.h":
++    SUNLinearSolver sl_SUNLinSol_SuperLUMT(N_Vector y, SUNMatrix A,
++                                           int nthreads, SUNContext ctx)
 --- a/src/sksundae/_cy_ida.pyx
 +++ b/src/sksundae/_cy_ida.pyx
 @@ -6,6 +6,11 @@
@@ -45,7 +67,15 @@
  
  from warnings import warn
  from numbers import Integral, Real
-@@ -34,6 +39,29 @@
+@@ -21,6 +26,7 @@
+ 
+ # Extern cdef headers
+ from .c_ida cimport *
++from libc.math cimport isfinite
+ from .c_nvector cimport *
+ from .c_sundials cimport *
+ from .c_sunmatrix cimport *
+@@ -34,6 +40,29 @@
  from .utils import RichResult
  from .ida._precond import IDAPrecond
  from .ida._jactimes import IDAJacTimes
@@ -75,7 +105,7 @@
  
  
  # Messages shorted from documentation online:
-@@ -464,8 +492,17 @@
+@@ -464,8 +493,17 @@
      cdef object _malloc         # bool - flag for memory allocation
      cdef object _options        # dict[str, Any]
      cdef object _initialized    # bool - flag for init_step completion
@@ -93,7 +123,24 @@
          self._free_memory()
          
          self._options = {
-@@ -587,6 +624,9 @@
+@@ -488,6 +526,7 @@
+             "max_order": 5,
+             "max_num_steps": 500,
+             "max_nonlin_iters": 4,
++            "nonlin_conv_coef": None,
+             "max_conv_fails": 10,
+             "constraints_idx": None,
+             "constraints_type": None,
+@@ -544,7 +583,7 @@
+             nthreads = <int> self._options["nthreads"]
+ 
+             self.A = SUNSparseMatrix(self.NEQ, self.NEQ, nnz, CSC_MAT, self.ctx)
+-            self.LS = SUNLinSol_SuperLUMT(self.yy, self.A, nthreads, self.ctx)
++            self.LS = sl_SUNLinSol_SuperLUMT(self.yy, self.A, nthreads, self.ctx)
+ 
+         elif linsolver == "gmres":
+             self.LS = SUNLinSol_SPGMR(self.yy, prectype, maxl, self.ctx)
+@@ -587,42 +626,48 @@
              raise RuntimeError("IDAtolerances - " + IDAMESSAGES[flag])
  
      cdef _free_memory(self):
@@ -103,7 +150,88 @@
          if self.mem is not NULL:
              IDAFree(&self.mem)
              self.mem = NULL
-@@ -820,6 +860,10 @@
+ 
++        # Dependencies outlive their native consumers.
++        if self.LS is not NULL:
++            SUNLinSolFree(self.LS)
++            self.LS = NULL
++
++        if self.A is not NULL:
++            SUNMatDestroy(self.A)
++            self.A = NULL
++
++        if self.atol is not NULL:
++            N_VDestroy(self.atol)
++            self.atol = NULL
++
++        if self.algidx is not NULL:
++            N_VDestroy(self.algidx)
++            self.algidx = NULL
++
++        if self.constraints is not NULL:
++            N_VDestroy(self.constraints)
++            self.constraints = NULL
++
++        if self.yy is not NULL:
++            N_VDestroy(self.yy)
++            self.yy = NULL
++
++        if self.yp is not NULL:
++            N_VDestroy(self.yp)
++            self.yp = NULL
++
++        
+         if self.ctx is not NULL:
+             SUNContext_Free(&self.ctx)
+             self.ctx = NULL
+ 
+-        if self.atol is not NULL:
+-            N_VDestroy(self.atol)
+-            self.atol = NULL
+-
+-        if self.algidx is not NULL:
+-            N_VDestroy(self.algidx)
+-            self.algidx = NULL
+-
+-        if self.constraints is not NULL:
+-            N_VDestroy(self.constraints)
+-            self.constraints = NULL
+-
+-        if self.yy is not NULL:
+-            N_VDestroy(self.yy)
+-            self.yy = NULL
+-
+-        if self.yp is not NULL:
+-            N_VDestroy(self.yp)
+-            self.yp = NULL
+-
+-        if self.A is not NULL:
+-            SUNMatDestroy(self.A)
+-            self.A = NULL
+-
+-        if self.LS is not NULL:
+-            SUNLinSolFree(self.LS)
+-            self.LS = NULL
+-        
++        self._initialized = False
+         self._size = None
+         self._malloc = False
+ 
+@@ -732,6 +777,13 @@
+         if flag < 0:
+             raise RuntimeError("IDASetMaxNonlinIters - " + IDAMESSAGES[flag])
+ 
++        cdef sunrealtype nonlin_conv_coef
++        if self._options["nonlin_conv_coef"] is not None:
++            nonlin_conv_coef = <sunrealtype> self._options["nonlin_conv_coef"]
++            flag = IDASetNonlinConvCoef(self.mem, nonlin_conv_coef)
++            if flag < 0:
++                raise RuntimeError("IDASetNonlinConvCoef - " + IDAMESSAGES[flag])
++
+         cdef int max_conv_fails = <int> self._options["max_conv_fails"]
+         flag = IDASetMaxConvFails(self.mem, max_conv_fails)
+         if flag < 0:
+@@ -820,6 +872,10 @@
          cdef int ic_opt
          cdef sunrealtype ic_t0
  
@@ -114,7 +242,7 @@
          yy_tmp = y0.copy()
          yp_tmp = yp0.copy()
  
-@@ -878,6 +922,7 @@
+@@ -878,6 +934,7 @@
              nfev=nfev, njev=njev,
          )
  
@@ -122,7 +250,7 @@
          return result
  
      cdef _step(self, sunrealtype tt, object method, object tstop):
-@@ -899,11 +944,13 @@
+@@ -899,11 +956,13 @@
          yp_tmp = self.aux.np_yp
          
          # 17) Advance solution in time
@@ -136,7 +264,7 @@
          svec2np(self.yy, yy_tmp)
          svec2np(self.yp, yp_tmp)
  
-@@ -968,11 +1015,13 @@
+@@ -968,11 +1027,13 @@
          while True:
              tend = tspan[ind]
  
@@ -150,7 +278,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1059,11 +1108,13 @@
+@@ -1059,11 +1120,13 @@
  
          # 17) Advance solution in time
          while True:
@@ -164,7 +292,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1111,49 +1162,319 @@
+@@ -1111,49 +1174,363 @@
  
          return result
  
@@ -415,6 +543,8 @@
 +                return self._init_step(t0, y0, yp0)
 +
 +            except BaseException:
++                # Release a partial setup, then preserve the initiating error.
++                self._free_memory()
 +                self._obs_endpoint = None
 +                self._obs_previous = None
 +                self._obs_reason = ("operation_failed", None)
@@ -516,15 +646,102 @@
 +                raise
 +            finally:
 +                self._obs_busy = False
++
++    def statistics(self):
++        """Read native counters under the same owner lock; do not advance.
++
++        BR01: method fields remain raw at zero steps and after reinit.
++        BR02: the window is init_step/step, not after batch solve.
++        BR03: counters/cj do not reconstruct Newton iteration history.
++        """
++        cdef long int nsteps, nres, nsetups, netfails, nniters, nnfails, njac
++        cdef int qlast, qcur, flag
++        cdef sunrealtype hinused, hlast, hcur, tcur, cj
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            if not self._initialized or self.mem == NULL:
++                raise RuntimeError("IDA must be initialized before reading statistics.")
++            flag = IDAGetIntegratorStats(self.mem, &nsteps, &nres, &nsetups,
++                                        &netfails, &qlast, &qcur, &hinused,
++                                        &hlast, &hcur, &tcur)
++            if flag < 0:
++                raise RuntimeError("IDAGetIntegratorStats - " + IDAMESSAGES[flag])
++            flag = IDAGetNonlinSolvStats(self.mem, &nniters, &nnfails)
++            if flag < 0:
++                raise RuntimeError("IDAGetNonlinSolvStats - " + IDAMESSAGES[flag])
++            flag = IDAGetCurrentCj(self.mem, &cj)
++            if flag < 0:
++                raise RuntimeError("IDAGetCurrentCj - " + IDAMESSAGES[flag])
++            flag = IDAGetNumJacEvals(self.mem, &njac)
++            if flag < 0:
++                raise RuntimeError("IDAGetNumJacEvals - " + LSMESSAGES[flag])
++            return {"num_steps": nsteps, "residual_evals": nres,
++                    "linear_setups": nsetups, "error_test_fails": netfails,
++                    "last_order": qlast, "current_order": qcur,
++                    "initial_step": hinused, "last_step": hlast,
++                    "current_step": hcur, "current_time": tcur,
++                    "current_cj": cj, "nonlinear_iters": nniters,
++                    "nonlinear_conv_fails": nnfails, "jacobian_evals": njac,
++                    "nonlin_conv_coef_requested": self._options["nonlin_conv_coef"],
++                    "coefficient_getter_available": False,
++                    "observation_owner": self._obs_instance,
++                    "observation_generation": self._obs_generation,
++                    "method_fields_valid": nsteps > 0}
  
      def __dealloc__(self):
          self._free_memory()
+@@ -1484,6 +1861,14 @@
+     elif not options["max_nonlin_iters"] > 0:
+         raise ValueError("'max_nonlin_iters' must be > 0.")
+ 
++    # nonlin_conv_coef: None preserves the native library default.
++    coefficient = options["nonlin_conv_coef"]
++    if coefficient is not None:
++        if isinstance(coefficient, bool) or not isinstance(coefficient, Real):
++            raise TypeError("'nonlin_conv_coef' must be a real number or None.")
++        if not isfinite(coefficient) or coefficient <= 0.:
++            raise ValueError("'nonlin_conv_coef' must be finite and positive.")
++
+     # max_conv_fails
+     if not isinstance(options["max_conv_fails"], Integral):
+         raise TypeError("'max_conv_fails' must be type int.")
 --- a/src/sksundae/ida/_solver.py
 +++ b/src/sksundae/ida/_solver.py
-@@ -407,6 +407,30 @@
+@@ -93,6 +93,10 @@
+         max_nonlin_iters : int, optional
+             Specifies the maximum number of nonlinear solver iterations in one
+             step. The default is 4.
++        nonlin_conv_coef : float or None, optional
++            Positive finite coefficient for IDASetNonlinConvCoef. None preserves
++            the linked native library default. This changes nonlinear stopping,
++            independently of the local integration error tolerances.
+         max_conv_fails : int, optional
+             Specifies the max number of nonlinear solver convergence failures
+             in one step. The default is 10.
+@@ -282,6 +286,17 @@
+         """
+         self._IDA = _IDA(resfn, **options)
+ 
++    def statistics(self) -> dict:
++        """Read actual native counters and cj after init_step/step.
++
++        Zero-step method fields may be sentinels or retained from reinit;
++        method_fields_valid only reports whether this generation stepped.
++        Batch solve closes this access window. Requested coefficient metadata
++        is not a native coefficient getter. Callback cj and returned/requested
++        times remain separately owned by the caller. No history is mutated.
++        """
++        return self._IDA.statistics()
++
+     def init_step(self, t0: float, y0: ndarray, yp0: ndarray) -> IDAResult:
+         """
+         Initialize the solver.
+@@ -406,6 +421,30 @@
+ 
          """
          return self._IDA.solve(tspan, y0, yp0)
- 
++
 +    def last_step_snapshot(self, *, expected_step=None):
 +        """Observe one fully witnessed accepted interval without advancing it.
 +
@@ -548,7 +765,6 @@
 +        bound by its accompanying reproducible build helper.
 +        """
 +        return self._IDA.last_step_snapshot(expected_step=expected_step)
-+
+ 
  
  class IDAResult(_IDAResult):
-     """Results container."""

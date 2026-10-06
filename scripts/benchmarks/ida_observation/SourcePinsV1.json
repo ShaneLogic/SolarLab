@@ -11,18 +11,18 @@
   "files": {
     "src/sksundae/c_ida.pxd": {
       "original_sha256": "7f1443a261d3e65aecc57dafd2e5632a474f750822ded8867bb68ada55078236",
-      "patched_sha256": "28c8802290397369cef40a6b6bb3b5b7dc69015b831e074ba0fa47f80b4a1a43"
+      "patched_sha256": "2732aa43069b2437638a7d86a79be307ccff6b671d3cf43911c400841d0b23ab"
     },
     "src/sksundae/_cy_ida.pyx": {
       "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
-      "patched_sha256": "4f0a47b79a115fa987c9b7a4c439188d05d070620f8e4e1ddd245572adf59a95"
+      "patched_sha256": "384be71710649d75a250ac1fa802fc36758838a5acd087ed778544a7a06cd442"
     },
     "src/sksundae/ida/_solver.py": {
       "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
-      "patched_sha256": "f248bd165cbeb71ff2c97eed8fe45a7e9ba7a36449545cc5ff37fc9614f168f6"
+      "patched_sha256": "3b5b9a9b09c8e2638f8753d36cc00f478ca30958f4d683ebe94b34390ee937ae"
     }
   },
-  "patch_sha256": "40a56e0252f3fe04753161607aa3a1ec6e29f063b789b8525b0f6d8eeb9fcb48",
+  "patch_sha256": "b6ef74bce1d55906c6bada39a1a1235896c21ed5ee68551b01986aec353a1c78",
   "build_binding_token": "_OBSERVATION_BUILD_ID = None",
   "required_config": {
     "SUNDIALS_VERSION": "7.5.0",
@@ -51,5 +51,38 @@
     "sundials_ida"
   ],
   "copy_header_sha256": "4bd6548314a3ccd948b0d15a5b1d0821b3ecca1b8a1c45b651600becb8ff28af",
-  "private_header_sha256": "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce"
+  "private_header_sha256": "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce",
+  "composed_controls_patch_sha256": "7841508829e5226cc4de3aa0808aaf9a16ef7217cbbfc99e57f8c8955dbfd44b",
+  "native_cleanup": {
+    "kind": "source-owned constructor, factor-retiring initialize and free; unchanged numerical native routines",
+    "files": {
+      "ida_superlumt_cleanup.c": "ba89c6670e89a858406db56c451d03451a3e1e3c4b0b80bb8a565099e464f643",
+      "ida_superlumt_cleanup.h": "4c312f009208a5ffb86090fb2e2eb64222f8aaf7e20a093673c481c3c8e97d14"
+    },
+    "upstream_sundials_source_sha256": "5f8f4d9d3cb5871c58254b99d26b675c131e7d9322565809ebb047834e3b2a4e",
+    "superlu_mt_commit": "3d805210e95bb5b86b9ec3ade0e200714b6964dc",
+    "upstream_finalize_sha256": "df9e0edfebbf00f68bfae6b4d6c459820fa0292803b2a011f37740a916efacc7",
+    "upstream_destructors_sha256": "8ccd860b67bd5814c6cb357a89b81a4f7c9b9b9a9fb18ef16834e54d2facf347",
+    "unchanged_native_operations": [
+      "SUNLinSolGetType_SuperLUMT",
+      "SUNLinSolGetID_SuperLUMT",
+      "SUNLinSolInitialize_SuperLUMT",
+      "SUNLinSolSetOptions_SuperLUMT",
+      "SUNLinSolSetup_SuperLUMT",
+      "SUNLinSolSolve_SuperLUMT",
+      "SUNLinSolLastFlag_SuperLUMT",
+      "SUNLinSolSpace_SuperLUMT"
+    ],
+    "old_installation_mutated": false,
+    "native_initialize_delegated_after_factor_retirement": "SUNLinSolInitialize_SuperLUMT",
+    "direct_native_operations": [
+      "SUNLinSolGetType_SuperLUMT",
+      "SUNLinSolGetID_SuperLUMT",
+      "SUNLinSolSetOptions_SuperLUMT",
+      "SUNLinSolSetup_SuperLUMT",
+      "SUNLinSolSolve_SuperLUMT",
+      "SUNLinSolLastFlag_SuperLUMT",
+      "SUNLinSolSpace_SuperLUMT"
+    ]
+  }
 }

@@ -49,7 +49,13 @@ class TestSourcePreparation:
         assert code.count("self._obs_after_step(observation_before,") == 3
         assert code.count("self._obs_busy = True") == 3
         assert "_OBSERVATION_BUILD_ID = None" in code
-        ast.parse((source / "src/sksundae/ida/_solver.py").read_text())
+        wrapper = ast.parse((source / "src/sksundae/ida/_solver.py").read_text())
+        public = next(node for node in wrapper.body if isinstance(node, ast.ClassDef) and node.name == "IDA")
+        assert {"statistics", "last_step_snapshot"} <= {node.name for node in public.body if isinstance(node, ast.FunctionDef)}
+        for name, identity in pins["native_cleanup"]["files"].items():
+            assert builder.digest(source / "src/sksundae" / name) == identity
+        assert "self.LS = sl_SUNLinSol_SuperLUMT(" in code
+        assert "self.LS = SUNLinSol_SuperLUMT(" not in code
         assert result["compiler_run"] is False
 
     def test_bound_build_identity_is_explicit(self, builder, archive, tmp_path):
@@ -168,6 +174,24 @@ class TestSourcePreparation:
         result = builder.cleanup_owned(Child())
         assert result["status"] == "exited" and result["returncode"] == 2
 
+    def test_external_group_cleanup_reaps_direct_child_without_killing_builder(self, builder, monkeypatch):
+        called = []
+        class Child:
+            pid = 43210
+            def poll(self):
+                return None
+            def kill(self):
+                called.append("kill_direct_child")
+            def wait(self, timeout):
+                called.append("wait_direct_child")
+                return -9
+        monkeypatch.setattr(builder.os, "getpgrp", lambda: 12345)
+        monkeypatch.setattr(builder.os, "killpg", lambda *a: pytest.fail("would kill the builder before its receipt"))
+        result = builder.cleanup_owned(Child(), external_process_group=True)
+        assert called == ["kill_direct_child", "wait_direct_child"]
+        assert result["pgid"] == 12345 and result["direct_child_reaped"]
+        assert result["group_cleanup_owner"] == "external_supervisor" and result["group_empty"] is None
+
     def test_build_receipt_survives_cleanup_errors(self, builder, tmp_path, monkeypatch):
         recipe = {"accounting_roots": [str(tmp_path)]}
         plan = {"helper_sha256": builder.digest(Path(builder.__file__)),
@@ -214,7 +238,7 @@ class TestSourcePreparation:
         header.write_bytes(b"source-metadata-fixture")
         extension = work / "_cy_ida.cpython-313-darwin.so"
         extension.write_bytes(b"compiled-image-metadata-fixture")
-        monkeypatch.setattr(builder, "pins", lambda: {"files": {}})
+        monkeypatch.setattr(builder, "pins", lambda: {"files": {}, "native_cleanup": {"files": {}}})
         result = builder.pack_overlay({"work": str(work), "extension": str(extension),
             "prepared": {"source": str(source)}, "recipe": {"native_site": str(site),
             "native_files": {str(p.relative_to(site)): builder.digest(p) for p in (library, meta)},
@@ -230,6 +254,13 @@ class TestSourcePreparation:
             assert archive.read("sksundae/_cy_ida.cpython-313-darwin.so") == image.read_bytes()
         record = overlay / "scikit_sundae-1.1.3.dist-info/RECORD"
         builder.verify_record(overlay, record, builder.digest(record))
+        installed = builder.install_verified_wheel(result, work / "installed")
+        destination = Path(installed["installed"])
+        assert installed["installed_files"] == result["wheel_files"]
+        assert not any(p.is_symlink() for p in destination.rglob("*"))
+        assert (destination / library.relative_to(site)).read_bytes() == library.read_bytes()
+        with pytest.raises(ValueError, match="installation exists"):
+            builder.install_verified_wheel(result, destination)
 
 
 @pytest.fixture
@@ -239,18 +270,25 @@ def native():
     import numpy as np
     from sksundae.ida import IDA
     assert hasattr(IDA, "last_step_snapshot"), "the admitted patched wheel is required"
+    assert callable(getattr(IDA, "statistics", None)), "both reviewed APIs must exist before construction"
 
-    def make(callback=None):
+    def make(callback=None, *, sparse=False, cj_log=None, **options):
         def residual(t, y, yp, out):
             if callback is not None:
                 callback()
             out[:] = [yp[0] - (1 + 2*t), y[1] - 2*y[0]]
 
         def jacobian(t, y, yp, out, cj, jac):
-            jac[:] = [[cj, 0], [-2, 1]]
+            if cj_log is not None:
+                cj_log.append((float(t), float(cj)))
+            jac[:] = [cj, -2, 1] if sparse else [[cj, 0], [-2, 1]]
 
-        return IDA(residual, jacfn=jacobian, algebraic_idx=[1],
-                   rtol=1e-8, atol=1e-10, first_step=2**-10, max_step=2**-5, max_order=3)
+        settings = dict(jacfn=jacobian, algebraic_idx=[1], rtol=1e-8, atol=1e-10,
+                        first_step=2**-10, max_step=2**-5, max_order=3)
+        if sparse:
+            settings.update(linsolver="sparse", sparsity=np.array([[1, 0], [1, 1]]), nthreads=1)
+        settings.update(options)
+        return IDA(residual, **settings)
     return np, make
 
 
@@ -372,3 +410,154 @@ class TestNativeObservation:
         owner[0].init_step(0., [1., 2.], [1., 2.])
         owner[0].step(.1, method="onestep")
         assert rejected == ["operation_in_progress"]
+
+
+class TestNativeCompositionLifetime:
+    """Binding-only sparse lifetime cases, never a SolarLab device protocol."""
+
+    def test_sparse_init_statistics_and_normal_no_factorization_destruction(self, native):
+        import gc
+        import weakref
+        np, make = native
+        called = []
+        solver = make(lambda: called.append("residual"), sparse=True)
+        y, yp = np.array([1., 2.]), np.array([1., 2.])
+        y.flags.writeable = yp.flags.writeable = False
+        original = (y.tobytes(), yp.tobytes())
+        result = solver.init_step(0., y, yp)
+        assert result.success and result.status == 0
+        stats = solver.statistics()
+        assert stats["num_steps"] == stats["linear_setups"] == stats["jacobian_evals"] == 0
+        assert stats["method_fields_valid"] is False
+        assert stats["nonlin_conv_coef_requested"] is None
+        assert stats["coefficient_getter_available"] is False
+        assert stats["observation_generation"] == 1
+        with pytest.raises(RuntimeError, match=r"^no_accepted_interval:"):
+            solver.last_step_snapshot()
+        assert stats == solver.statistics()
+        assert not called and original == (y.tobytes(), yp.tobytes())
+        reference = weakref.ref(solver)
+        del solver
+        gc.collect()
+        assert reference() is None
+        print("NO_FACTORIZATION_NORMAL_DESTRUCTION", json.dumps(stats, allow_nan=False))
+
+    def test_failed_atol_setup_preserves_exception_and_cleans_partial_solver(self, native):
+        import gc
+        import weakref
+        _, make = native
+        solver = make(sparse=True, atol=[1e-10])
+        # _set_tolerances is reached after the real sparse LS and IDA allocations.
+        with pytest.raises(ValueError, match="'atol' length .* differs from problem size") as error:
+            solver.init_step(0., [1., 2.], [1., 2.])
+        assert "(1)" in str(error.value) and "(2)" in str(error.value)
+        with pytest.raises(RuntimeError, match="must be initialized"):
+            solver.statistics()
+        with pytest.raises(RuntimeError):
+            solver.last_step_snapshot()
+        # The caught traceback can hold solver locals; release it before deallocation.
+        del error
+        reference = weakref.ref(solver)
+        del solver
+        gc.collect()
+        assert reference() is None
+        print("PARTIAL_ATOL_FAILURE_NORMAL_DESTRUCTION")
+
+    def test_sparse_factorization_statistics_snapshot_and_default_none_agree(self, native):
+        import gc
+        import weakref
+        np, make = native
+        callback_cj = []
+        default = make(sparse=True, cj_log=callback_cj)
+        explicit_none = make(sparse=True, nonlin_conv_coef=None)
+        results, stats, packets = [], [], []
+        for solver in (default, explicit_none):
+            solver.init_step(0., [1., 2.], [1., 2.])
+            result = solver.step(.125, method="onestep", tstop=.125)
+            assert result.success
+            snapshot = solver.last_step_snapshot()
+            statistics = solver.statistics()
+            assert statistics == solver.statistics()
+            assert solver.last_step_snapshot(expected_step=snapshot["step_key"])["basis"] == snapshot["basis"]
+            assert statistics["num_steps"] > 0 and statistics["linear_setups"] > 0
+            assert statistics["jacobian_evals"] > 0 and statistics["method_fields_valid"]
+            assert statistics["observation_owner"] == snapshot["owner"]
+            assert statistics["observation_generation"] == snapshot["generation"]
+            results.append(result)
+            stats.append(statistics)
+            packets.append(snapshot)
+        assert callback_cj and all(np.isfinite(cj) and cj > 0 for _, cj in callback_cj)
+        assert results[0].t == results[1].t and results[0].status == results[1].status
+        assert results[0].y.tobytes() == results[1].y.tobytes()
+        assert results[0].yp.tobytes() == results[1].yp.tobytes()
+        assert {k: v for k, v in stats[0].items() if k != "observation_owner"} == {
+            k: v for k, v in stats[1].items() if k != "observation_owner"}
+        old_bytes = packets[0]["raw_y"]
+        refs = [weakref.ref(default), weakref.ref(explicit_none)]
+        del solver, default, explicit_none
+        gc.collect()
+        assert all(ref() is None for ref in refs)
+        assert packets[0]["raw_y"] == old_bytes
+        print("FACTORIZATION_NORMAL_DESTRUCTION", json.dumps({
+            "statistics": stats, "callback_cj": callback_cj,
+            "binding": dict(packets[0]["binding"])}, allow_nan=False))
+
+    @pytest.mark.parametrize("coefficient", [True, False, "0.2", 0., -1., float("nan"), float("inf"), -float("inf")])
+    def test_invalid_coefficient_is_rejected_before_initialization(self, native, coefficient):
+        _, make = native
+        with pytest.raises((TypeError, ValueError), match="nonlin_conv_coef"):
+            make(sparse=True, nonlin_conv_coef=coefficient)
+
+    def test_explicit_coefficient_and_reentrant_statistics_guard(self, native):
+        _, make = native
+        owner, rejected = [], []
+        def callback():
+            if not rejected:
+                with pytest.raises(RuntimeError) as error:
+                    owner[0].statistics()
+                rejected.append(error.value.code)
+        owner.append(make(callback, sparse=True, nonlin_conv_coef=0.2))
+        owner[0].init_step(0., [1., 2.], [1., 2.])
+        assert owner[0].statistics()["nonlin_conv_coef_requested"] == 0.2
+        owner[0].step(.125, method="onestep", tstop=.125)
+        assert rejected == ["operation_in_progress"]
+        assert owner[0].statistics()["coefficient_getter_available"] is False
+        owner.clear()
+
+    def test_reinit_and_batch_statistics_windows_remain_explicit(self, native):
+        import gc
+        import weakref
+        _, make = native
+        solver = make(sparse=True)
+        solver.init_step(0., [1., 2.], [1., 2.])
+        solver.step(.125, method="onestep", tstop=.125)
+        packet = solver.last_step_snapshot()
+        original_history = (packet["raw_y"], packet["basis"]["phi"], packet["predecessor"]["raw_y"])
+        solver.init_step(0., [1., 2.], [1., 2.])
+        stats = solver.statistics()
+        assert stats["num_steps"] == 0 and stats["method_fields_valid"] is False
+        assert stats["observation_owner"] == packet["owner"]
+        assert stats["observation_generation"] == packet["generation"] + 1
+        with pytest.raises(RuntimeError):
+            solver.last_step_snapshot(expected_step=packet["step_key"])
+        # IDAReInit retains the LS: its next initialize must retire old factors
+        # before the native refact=NO path creates replacements.
+        second = solver.step(.125, method="onestep", tstop=.125)
+        assert second.success
+        after = solver.statistics()
+        second_packet = solver.last_step_snapshot()
+        assert after["num_steps"] > 0 and after["linear_setups"] > 0 and after["jacobian_evals"] > 0
+        assert second_packet["owner"] == packet["owner"]
+        assert second_packet["generation"] == packet["generation"] + 1
+        assert second_packet["step_key"] != packet["step_key"]
+        reference = weakref.ref(solver)
+        del solver
+        gc.collect()
+        assert reference() is None
+        assert (packet["raw_y"], packet["basis"]["phi"], packet["predecessor"]["raw_y"]) == original_history
+        print("REINIT_SECOND_FACTORIZATION_NORMAL_DESTRUCTION", json.dumps({"before_step": stats, "after_step": after}, allow_nan=False))
+        # Use a fresh dense marker for the existing batch-solve access limitation.
+        batch = make()
+        assert batch.solve([0., 2**-10], [1., 2.], [1., 2.]).success
+        with pytest.raises(RuntimeError, match="must be initialized"):
+            batch.statistics()
