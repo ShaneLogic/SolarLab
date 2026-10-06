@@ -123,7 +123,7 @@ jobs:
           version: "0.12.13"
           python-version: ${{ matrix.python }}
       - run: uv lock --check
-      - run: uv sync --frozen --extra dev --no-editable
+      - run: uv sync --frozen --extra dev --extra server --no-editable
       - name: Package boundaries and dependency continuity
         run: >-
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
@@ -136,10 +136,11 @@ jobs:
           tests/refactor/test_execution_identity_preparation.py
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
-      - name: Check typed configuration, registry and persistence preparation
+          tests/runtime/test_event_service.py
+      - name: Check typed configuration, registry and runtime preparation
         run: |
-          uv run --frozen --no-sync ruff check --no-cache src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py
-          uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab
+          uv run --frozen --no-sync ruff check --no-cache src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
+          uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab src/solarlab_server
       - name: Installed package imports and resources outside the checkout
         working-directory: ${{ runner.temp }}
         run: |
@@ -151,6 +152,7 @@ jobs:
           import solarlab
           import solarlab_research
           import solarlab_server
+          from solarlab_server.app import create_app
           from perovskite_sim.models.parameters import MaterialParams
 
           prefix = pathlib.Path(sys.prefix).resolve()
@@ -158,6 +160,7 @@ jobs:
               assert pathlib.Path(module.__file__).resolve().is_relative_to(prefix)
               assert importlib.resources.files(module).joinpath("py.typed").is_file()
           assert MaterialParams.__module__ == "perovskite_sim.models.parameters"
+          assert create_app.__module__ == "solarlab_server.app"
           assert importlib.metadata.version("solarlab") == "0.1.0"
           PY
 
@@ -208,14 +211,14 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: perovskite-sim/frontend
+        working-directory: web
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.21.0"
           cache: npm
-          cache-dependency-path: perovskite-sim/frontend/package-lock.json
+          cache-dependency-path: web/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm run test:run
       - run: npm run build

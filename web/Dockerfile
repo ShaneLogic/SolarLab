@@ -2,10 +2,10 @@ FROM public.ecr.aws/docker/library/node:22-slim
 
 WORKDIR /app
 
-COPY perovskite-sim/frontend/package*.json ./
+COPY web/package*.json ./
 RUN npm ci
 
-COPY perovskite-sim/frontend/ ./
+COPY web/ ./
 
 EXPOSE 5173
 

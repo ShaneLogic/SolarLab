@@ -168,7 +168,6 @@ SolarLab/
     perovskite_sim/                Python models, physics, discretization,
                                   solvers, experiments, 2D, and screening
     backend/                      FastAPI API and SSE job dispatch
-    frontend/                     Vite/TypeScript/Plotly/GoldenLayout UI
     configs/                      Three shipped research YAMLs
     tests/fixtures/configs/       Historical/test-only device definitions
     reproducibility/              Schema, benchmark matrix, hashes, baselines
@@ -177,6 +176,7 @@ SolarLab/
     tests/                        Unit, integration, regression, validation
     notebooks/                    Exploratory workflows
     pyproject.toml                Core package and test dependencies
+  web/                            Vite/TypeScript/Plotly/GoldenLayout UI
   scripts/                        Repository support utilities
   docker-compose.yml              Backend/frontend development stack
   CLAUDE.md                       Repository guidance and archive location
@@ -222,8 +222,9 @@ The editable core package installs NumPy, SciPy, PyYAML, Matplotlib, and the sel
 ### 3. Install frontend dependencies
 
 ```bash
-cd frontend
+cd ../web
 npm ci
+cd ../perovskite-sim
 ```
 
 ### 4. Verify the install
@@ -267,7 +268,7 @@ You should get JSON listing the shipped presets.
 In a second terminal:
 
 ```bash
-cd perovskite-sim/frontend
+cd web
 npm run dev
 ```
 

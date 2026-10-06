@@ -7,7 +7,7 @@
  * plane states" checkbox on the solver selection.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import figureReferenceJSON from '../../../../tests/fixtures/IonDiffusivityFigureReference.json?raw'
+import figureReferenceJSON from '../../../../perovskite-sim/tests/fixtures/IonDiffusivityFigureReference.json?raw'
 
 vi.mock('../../job-stream', () => ({
   startJob: vi.fn(),

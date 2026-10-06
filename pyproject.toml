@@ -133,6 +133,7 @@ only-include = [
     "tests/runtime/test_run_store.py",
     "tests/runtime/test_execution.py",
     "tests/runtime/execution_workers.py",
+    "tests/runtime/test_event_service.py",
 ]
 
 [tool.importlinter]

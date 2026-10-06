@@ -118,7 +118,7 @@ def jv_definition() -> ExperimentDefinition:
         evidence("perovskite-sim/backend/api_schema.py", "JVResultOut"),
         evidence(LEGACY + "experiments/protocol.py", "resolve_experiment_protocol"),
         evidence(LEGACY + "experiments/jv_sweep.py", "run_jv_sweep"),
-        "jv", evidence("perovskite-sim/frontend/src/panels/jv.ts", "renderJVResults"),
+        "jv", evidence("web/src/panels/jv.ts", "renderJVResults"),
         declared_rule(), (TRANSPORT,),
     )
 

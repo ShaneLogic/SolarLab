@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-Single project tree: `perovskite-sim/` (the whole simulator) plus `docs/figures/`
+Project trees: `perovskite-sim/` (Python simulator and backend), root `web/`
+(the frontend), plus `docs/figures/`
 (only the PNGs the root README embeds). **`perovskite-sim/` has its own `CLAUDE.md`** with exhaustive architecture notes (solver hot paths, TMM optics, backend SSE pattern, frontend panel structure, test BLAS-pinning gotcha, etc.). **Always read `perovskite-sim/CLAUDE.md`** — it is the authoritative guide.
 
 Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR #11) and Phase 2b Layer Builder UI (PR #2) merged into `main`. Short-lived feature isolation now uses `.worktrees/<name>/` (gitignored).
@@ -27,7 +28,7 @@ test, and be understood:
 | What | Where | Name |
 |---|---|---|
 | Python / TypeScript / MATLAB code, tests, backend, frontend | language folders | language convention (`snake_case.py`, `test_*.py`, kebab-case `.ts`) — never CamelCase |
-| Shipped device presets (the research entry points the frontend catalogue lists) | `perovskite-sim/configs/` + `frontend/src/preset-catalog.ts` | existing scheme (`snake_case.yaml`) |
+| Shipped device presets (the research entry points the frontend catalogue lists) | `perovskite-sim/configs/` + `web/src/preset-catalog.ts` | existing scheme (`snake_case.yaml`) |
 | Test-only / historical device presets | `perovskite-sim/tests/fixtures/configs/` (never served by the API; API tests use the `serve_all_presets` fixture) | existing scheme |
 | Package data, tooling files | `perovskite_sim/data/`, tool-fixed names | as the tool or existing scheme requires |
 | Physics contract / policy / protocol / schema / certificate docs that code, tests or configs cite | `perovskite-sim/docs/` | multi-word CamelCase, versions as `V1`, `V2` (`TwodTransportContract.md`, `ExplicitDefectSchemaV2.md`) |

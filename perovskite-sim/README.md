@@ -1,7 +1,7 @@
 # perovskite-sim
 
-The Python simulation package, FastAPI backend, and Vite/TypeScript
-frontend that make up the SolarLab simulator.
+The Python simulation package and FastAPI backend for SolarLab.
+The Vite/TypeScript frontend lives in the root [`web/`](../web/) directory.
 
 > **Start here:** the [root README](../README.md) covers installation,
 > physics, equations, UI walkthrough, and shipped presets. This file is
@@ -17,7 +17,6 @@ frontend that make up the SolarLab simulator.
 perovskite-sim/
 ├── perovskite_sim/   Python library: models, physics, solvers, experiments, 2D
 ├── backend/          FastAPI HTTP wrapper and SSE job dispatch
-├── frontend/         Vite + TypeScript + Plotly workstation
 ├── configs/          Three shipped research YAMLs; two frontend catalog entries
 ├── reproducibility/  Frozen baselines, schemas, hashes, benchmarks, P1 gaps
 ├── docs/             Package-specific model, benchmark, and implementation docs
@@ -44,8 +43,9 @@ From this directory, use an activated Python 3.11+ environment and Node.js 22.12
 ```bash
 python -m pip install -e ".[dev]"
 python -m pip install -r backend/requirements.txt
-cd frontend
+cd ../web
 npm ci
+cd ../perovskite-sim
 ```
 
 <br>
@@ -623,7 +623,7 @@ unavailable, the y-axis uses autorange and the voltage cap is omitted.
 All raw V/J samples and computed metrics are preserved.
 
 *Source:* `perovskite_sim/experiments/jv_sweep.py::compute_metrics`,
-`frontend/src/workstation/panes/main-plot-pane.ts::renderJV2D`
+`../web/src/workstation/panes/main-plot-pane.ts::renderJV2D`
 
 <br>
 
