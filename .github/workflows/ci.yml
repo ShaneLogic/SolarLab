@@ -136,13 +136,16 @@ jobs:
           tests/refactor/test_structured_registry_preparation.py
           tests/refactor/test_execution_identity_preparation.py
           tests/refactor/test_behavior_context.py
+          tests/refactor/test_configuration_schema_export.py
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
           tests/runtime/test_event_service.py
       - name: Check typed configuration, registry and runtime preparation
         run: |
-          uv run --frozen --no-sync ruff check --no-cache src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
+          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
           uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab src/solarlab_server
+      - name: Check generated configuration schema
+        run: uv run --frozen --no-sync python scripts/generate_configuration_schema.py --check
       - name: Installed package imports and resources outside the checkout
         working-directory: ${{ runner.temp }}
         run: |
