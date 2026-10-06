@@ -1,6 +1,6 @@
 """Bounded lossless native JSONL recording; no numerical imports or implicit codec.
 
-Pointers retain logical uncompressed offsets. Gzip is level 1, mtime 0, empty
+Pointers retain logical uncompressed offsets. Gzip is level 6, mtime 0, empty
 filename, with Z_SYNC_FLUSH per record. A failed writer retains its readable
 prefix and does not append a misleading footer. The outer artifact census still
 owns logs/results and the total run cap; this writer reserves their original tail.
@@ -101,7 +101,7 @@ class HistoryWriter:
                     raise HistoryLimitError("existing first failure exceeds metadata reservation")
             if encoding == "gzip":
                 self._gzip = gzip.GzipFile(filename="", mode="wb", fileobj=self._buffer,
-                                           compresslevel=1, mtime=0)
+                                           compresslevel=6, mtime=0)
             header = self._take()
             self._admit(len(header), finishing=False)
             self._file = self.path.open("xb", buffering=0)
