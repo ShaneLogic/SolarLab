@@ -133,9 +133,10 @@ jobs:
           tests/refactor/test_device_configuration_preparation.py
           tests/refactor/test_complex_configuration_preparation.py
           tests/refactor/test_structured_registry_preparation.py
-      - name: Check typed configuration, material and registry preparation
+          tests/runtime/test_run_store.py
+      - name: Check typed configuration, registry and persistence preparation
         run: |
-          uv run --frozen --no-sync ruff check src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py
+          uv run --frozen --no-sync ruff check src tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/runtime/test_run_store.py
           uv run --frozen --no-sync mypy src/solarlab
       - name: Installed package imports and resources outside the checkout
         working-directory: ${{ runner.temp }}
