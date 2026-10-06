@@ -338,5 +338,137 @@ class ComparisonScopeTests(unittest.TestCase):
         self.assertIn("Not R1-1", rule["scope_boundary"])
 
 
+class NumericParameterPreparationTests(unittest.TestCase):
+    """Actual source-bound parameters stay separate from reference admission."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = Path(__file__).resolve().parents[2]
+        cls.scopes_path = cls.repo / "reproducibility/RefactorComparisonScopesV1.json"
+        cls.scopes = json.loads(cls.scopes_path.read_text())
+        cls.mapping_path = cls.repo / "reproducibility/RefactorComparisonMapV1.json"
+        cls.mapping = json.loads(cls.mapping_path.read_text())
+        cls.manifest = json.loads((cls.repo / "reproducibility/RefactorReferenceManifestV1.json").read_text())
+        cls.analytic = json.loads((cls.repo / "reproducibility/RefactorAnalyticReferencesV1.json").read_text())
+        cls.packets = [p for row in cls.scopes["records"] for p in row.get("parameter_bindings", [])]
+
+    def test_parameter_sources_and_analytic_pointers_are_bound(self):
+        import ast
+        for packet in self.packets:
+            self.assertIn(packet["family_rule_id"], self.scopes["rules"])
+            self.assertTrue(packet["applicability"])
+            self.assertTrue(packet["remaining_parameters"])
+            for citation in packet["citations"]:
+                source = self.scopes["sources"][citation["source_id"]]
+                if source["root"] != "repository":
+                    continue  # The existing archive-aware scope test checks the plan.
+                raw = (self.repo / source["path"]).read_bytes()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), source["sha256"])
+                if "lines" in citation:
+                    lo, hi = citation["lines"]
+                    text = "\n".join(raw.decode().splitlines()[lo - 1:hi])
+                    self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), citation["text_sha256"])
+                if "symbol" in citation:
+                    self.assertIn(citation["symbol"], {n.name for n in ast.walk(ast.parse(raw))
+                                                      if isinstance(n, (ast.FunctionDef, ast.ClassDef))})
+            if "analytic_reference_binding" in packet:
+                binding = packet["analytic_reference_binding"]
+                index = int(binding["pointer"].rsplit("/", 1)[1])
+                original = self.analytic["definitions"][index]
+                self.assertEqual(original["id"], binding["definition_id"])
+                self.assertEqual(digest(original), binding["value_sha256"])
+
+    def test_limits_are_finite_with_named_units_and_fixed_scales(self):
+        import math
+
+        def check(value):
+            if isinstance(value, dict):
+                if "atol" in value:
+                    self.assertTrue(value["unit"])
+                    for key in ("atol", "rtol"):
+                        self.assertIn(type(value[key]), (int, float))
+                        self.assertTrue(math.isfinite(value[key]) and value[key] >= 0)
+                    scale = value.get("scale", value.get("fixed_reference_scale"))
+                    self.assertIn(type(scale), (int, float))
+                    self.assertTrue(math.isfinite(scale) and scale >= 0)
+                for child in value.values():
+                    check(child)
+            elif isinstance(value, list):
+                for child in value:
+                    check(child)
+
+        for packet in self.packets:
+            check(packet["limits"])
+            eligibility = packet["reference_eligibility"]
+            self.assertIsNone(eligibility["reference_error_bound"])
+            self.assertFalse(eligibility["reference_qualified"])
+            self.assertIsNone(eligibility["active_comparison"])
+            self.assertEqual(eligibility["default_reference_error_share"], "1/3")
+        self.assertEqual({p["family_rule_id"] for p in self.packets}, {
+            "potential_packet", "density_inventory_packet", "current_packet",
+            "operator_packet", "JV_metric_packet", "complex_packet",
+            "projection_packet", "spectrum_packet", "transient_packet", "thermal_packet",
+        })
+
+    def test_affine_geometry_is_original_and_numeric_definition_does_not_admit_use(self):
+        from physical_comparison import compare_physical, definition_fingerprint, validate_definition
+        from reference_comparison import Rejected
+        original = next(d for d in self.analytic["definitions"]
+                        if d["id"] == "poisson_affine_51_stored_nodes")
+        for packet in self.packets:
+            if "physical_definition" not in packet:
+                continue
+            gate = copy.deepcopy(packet["physical_definition"])
+            self.assertTrue(validate_definition(gate))
+            self.assertEqual(gate["coordinates_m"], original["inputs"]["x_m"]["values"])
+            weights = original["inputs"]["CV_weights"]["binary64"]
+            self.assertEqual(gate["volumes"], weights["values"] if isinstance(weights, dict) else weights)
+            self.assertEqual(len(gate["volumes"]), 51)
+            self.assertTrue(all(gate["mask"]))
+            self.assertEqual(gate["gauge"]["value_V"], 0.0)
+            gate["definition_sha256"] = definition_fingerprint(gate)
+            table = {"definition_sha256": gate["definition_sha256"]}
+            result = compare_physical(table, table, gate)
+            self.assertFalse(result["accepted"])
+            self.assertEqual(result["code"], "unreviewed_gate")
+            gate.pop("thresholds")
+            with self.assertRaises(Rejected):
+                validate_definition(gate)
+
+    def test_source_inventory_zero_and_phase_branches_remain_distinct(self):
+        import math
+        cases = {p["case_id"]: p for p in self.packets}
+        inventory = cases["mobile_single_and_dual_absorber_inventory"]
+        values = inventory["known_parameters"]
+        self.assertEqual(values["positive_inventory_m2"], 4e15)
+        self.assertEqual(values["negative_inventory_m2_dual"], 2.8e15)
+        self.assertEqual(inventory["limits"]["positive_drift"]["scale"], 4e15)
+        self.assertEqual(inventory["limits"]["negative_drift_dual"]["scale"], 2.8e15)
+        self.assertEqual(inventory["limits"]["inactive_density"]["atol"], 0.0)
+        self.assertEqual(inventory["limits"]["positive_drift"]["operator"], "lt")
+        lockin = cases["ion_aware_lockin_three_frequencies"]
+        self.assertEqual(lockin["limits"]["frequency_phase"]["atol"], 0.01 * math.pi / 180.0)
+        self.assertEqual(lockin["limits"]["frequency_phase"]["unit"], "rad")
+        self.assertEqual(lockin["limits"]["frequency_phase"]["rtol"], 0.0)
+        self.assertEqual(lockin["numeric_parameter_status"], "partially_specified")
+        transient = cases["original_clean_exponential_fit_and_zero_perturbation"]
+        self.assertIsNone(transient["known_parameters"]["zero_case_lifetime"])
+        self.assertEqual(transient["known_parameters"]["zero_case_samples"], 100)
+
+    def test_links_and_protected_payloads_match_and_every_scope_stays_closed(self):
+        scopes_hash = hashlib.sha256(self.scopes_path.read_bytes()).hexdigest()
+        map_hash = hashlib.sha256(self.mapping_path.read_bytes()).hexdigest()
+        self.assertEqual(self.mapping["comparison_scopes"]["sha256"], scopes_hash)
+        self.assertEqual(self.manifest["capability_reconciliation"]["comparison_scopes"]["sha256"], scopes_hash)
+        self.assertEqual(self.manifest["capability_reconciliation"]["comparison_map"]["sha256"], map_hash)
+        protected = self.scopes["protected_manifest_payload_sha256"]
+        self.assertEqual(digest(self.manifest["scaps"]["groups"]), protected["/scaps/groups"])
+        self.assertEqual(digest(self.manifest["hi"]["cases"]), protected["/hi/cases"])
+        self.assertEqual(sum(r["status"] == "missing_parameters" for r in self.scopes["rules"].values()), 10)
+        for row in self.mapping["scientific_records"]:
+            with self.assertRaisesRegex(MapError, "comparison_blocked"):
+                check_comparison(row, {})
+
+
 if __name__ == "__main__":
     unittest.main()
