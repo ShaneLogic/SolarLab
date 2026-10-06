@@ -1,0 +1,554 @@
+--- a/src/sksundae/c_ida.pxd
++++ b/src/sksundae/c_ida.pxd
+@@ -65,6 +65,14 @@
+     int IDAGetRootInfo(void* mem, int* rootsfound)
+     int IDAGetNumResEvals(void* mem, long int* nrevals)
+     int IDAGetCurrentStep(void* mem, sunrealtype* hcur)
++    int IDAGetNumSteps(void* mem, long int* nsteps)
++    int IDAGetCurrentTime(void* mem, sunrealtype* tcur)
++    int IDAGetLastStep(void* mem, sunrealtype* hlast)
++    int IDAGetLastOrder(void* mem, int* klast)
++    int IDAGetCurrentOrder(void* mem, int* kcur)
++    int IDAGetDky(void* mem, sunrealtype t, int k, N_Vector dky)
++    int IDAGetErrWeights(void* mem, N_Vector eweight)
++    int IDAGetEstLocalErrors(void* mem, N_Vector ele)
+     
+     # free functions
+     void IDAFree(void** mem)
+@@ -103,3 +111,15 @@
+ 
+     # optional outputs from LS interface
+     int IDAGetNumJacEvals(void* mem, long int* njevals)
++
++
++# Source-owned 7.5.0 serial-word copier, compiled in this owning extension.
++from libc.stddef cimport size_t
++cdef extern from "ida_observation_copy.h":
++    const char* sl_ida75_library_path()
++    int sl_ida75_copy(void* memory, sunindextype n, long ns,
++                      sunrealtype tn, sunrealtype hu, int qu,
++                      sunrealtype hn, int qn,
++                      sunrealtype* phi, size_t phi_count,
++                      sunrealtype* psi, size_t psi_count,
++                      sunrealtype* uround)
+--- a/src/sksundae/_cy_ida.pyx
++++ b/src/sksundae/_cy_ida.pyx
+@@ -6,6 +6,11 @@
+ # Standard library
+ import os
+ import inspect
++from hashlib import sha256
++from pathlib import Path
++from threading import RLock
++from types import MappingProxyType
++from uuid import uuid4
+ 
+ from warnings import warn
+ from numbers import Integral, Real
+@@ -34,6 +39,29 @@
+ from .utils import RichResult
+ from .ida._precond import IDAPrecond
+ from .ida._jactimes import IDAJacTimes
++
++# Replaced only by the source/hash-checked observation build helper.
++_OBSERVATION_BUILD_ID = None
++_OBSERVATION_LIBRARIES = ()
++_OBSERVATION_CONFIG_SHA256 = None
++_OBSERVATION_HEADER_SHA256 = "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce"
++_OBSERVATION_SCHEMA = "sksundae.ida.accepted-step-observation.v1"
++_OBSERVATION_CONFIG = tuple(sorted(config.items()))
++
++
++class IDAObservationError(RuntimeError):
++    """Unavailable observation or native getter failure; status is retained."""
++    def __init__(self, code, operation=None, native_status=None):
++        self.code = code
++        self.operation = operation
++        self.native_status = native_status
++        super().__init__(f"{code}: {operation}, native_status={native_status}")
++
++
++def _observation_status(operation, status):
++    if status != 0:
++        raise IDAObservationError("native_getter_failed", operation, int(status))
++    return (operation, int(status))
+ 
+ 
+ # Messages shorted from documentation online:
+@@ -464,8 +492,17 @@
+     cdef object _malloc         # bool - flag for memory allocation
+     cdef object _options        # dict[str, Any]
+     cdef object _initialized    # bool - flag for init_step completion
++    cdef object _obs_lock, _obs_instance, _obs_endpoint, _obs_previous
++    cdef object _obs_reason, _obs_binding
++    cdef long _obs_generation
++    cdef bint _obs_busy
+ 
+     def __cinit__(self, object resfn, **options):
++        self._obs_lock = RLock()
++        self._obs_instance = uuid4().hex
++        self._obs_generation = 0
++        self._obs_busy = False
++        self._obs_binding = None
+         self._free_memory()
+         
+         self._options = {
+@@ -587,6 +624,9 @@
+             raise RuntimeError("IDAtolerances - " + IDAMESSAGES[flag])
+ 
+     cdef _free_memory(self):
++        self._obs_endpoint = None
++        self._obs_previous = None
++        self._obs_reason = ("no_accepted_step", None)
+         if self.mem is not NULL:
+             IDAFree(&self.mem)
+             self.mem = NULL
+@@ -820,6 +860,10 @@
+         cdef int ic_opt
+         cdef sunrealtype ic_t0
+ 
++        self._obs_generation += 1
++        self._obs_endpoint = None
++        self._obs_previous = None
++        self._obs_reason = ("no_accepted_step", None)
+         yy_tmp = y0.copy()
+         yp_tmp = yp0.copy()
+ 
+@@ -878,6 +922,7 @@
+             nfev=nfev, njev=njev,
+         )
+ 
++        self._obs_endpoint = self._obs_point(0, t0, t0, flag)
+         return result
+ 
+     cdef _step(self, sunrealtype tt, object method, object tstop):
+@@ -899,11 +944,13 @@
+         yp_tmp = self.aux.np_yp
+         
+         # 17) Advance solution in time
++        observation_before = self._obs_before_step()
+         flag = IDASolve(self.mem, tt, &tout, self.yy, self.yp, itask)
+ 
+         if PyErr_Occurred():
+             _pyerr_handler()
+ 
++        self._obs_after_step(observation_before, tout, flag)
+         svec2np(self.yy, yy_tmp)
+         svec2np(self.yp, yp_tmp)
+ 
+@@ -968,11 +1015,13 @@
+         while True:
+             tend = tspan[ind]
+ 
++            observation_before = self._obs_before_step()
+             flag = IDASolve(self.mem, tend, &tt, self.yy, self.yp, IDA_NORMAL)
+ 
+             if PyErr_Occurred():
+                 _pyerr_handler()
+ 
++            self._obs_after_step(observation_before, tt, flag)
+             svec2np(self.yy, yy_tmp)
+             svec2np(self.yp, yp_tmp)
+ 
+@@ -1059,11 +1108,13 @@
+ 
+         # 17) Advance solution in time
+         while True:
++            observation_before = self._obs_before_step()
+             flag = IDASolve(self.mem, tend, &tt, self.yy, self.yp, IDA_ONE_STEP)
+ 
+             if PyErr_Occurred():
+                 _pyerr_handler()
+ 
++            self._obs_after_step(observation_before, tt, flag)
+             svec2np(self.yy, yy_tmp)
+             svec2np(self.yp, yp_tmp)
+ 
+@@ -1111,49 +1162,319 @@
+ 
+         return result
+ 
++    cdef _obs_raw(self):
++        yy = np.empty(self.NEQ, DTYPE)
++        yp = np.empty(self.NEQ, DTYPE)
++        svec2np(self.yy, yy)
++        svec2np(self.yp, yp)
++        return yy.tobytes(), yp.tobytes()
++
++    cdef _obs_point(self, long nsteps, sunrealtype tn, sunrealtype tret, int flag):
++        yy, yp = self._obs_raw()
++        return MappingProxyType({
++            "owner": self._obs_instance, "generation": self._obs_generation,
++            "nsteps": int(nsteps), "internal_t": float(tn),
++            "output_t": float(tret), "native_status": int(flag),
++            "raw_y": yy, "raw_yp": yp,
++            "identity": (self._obs_instance, self._obs_generation, int(nsteps),
++                         float(tn).hex(), float(tret).hex(), sha256(yy + yp).hexdigest()),
++        })
++
++    cdef _obs_before_step(self):
++        cdef long nsteps
++        cdef sunrealtype tn
++        # Metadata failure must not replace an existing solve result/status.
++        if IDAGetNumSteps(self.mem, &nsteps) != 0:
++            return None
++        if IDAGetCurrentTime(self.mem, &tn) != 0:
++            return None
++        endpoint = self._obs_endpoint
++        if (endpoint is None or endpoint["generation"] != self._obs_generation
++                or endpoint["nsteps"] != nsteps
++                or endpoint["internal_t"].hex() != float(tn).hex()):
++            endpoint = None
++        return int(nsteps), float(tn), endpoint
++
++    cdef _obs_after_step(self, before, sunrealtype tret, int flag):
++        cdef long nsteps
++        cdef sunrealtype tn
++        cdef int status
++        self._obs_endpoint = None
++        self._obs_previous = None
++        self._obs_reason = ("integration_failed", int(flag))
++        if flag < 0:
++            return
++        status = IDAGetNumSteps(self.mem, &nsteps)
++        if status != 0:
++            self._obs_reason = ("IDAGetNumSteps", int(status))
++            return
++        status = IDAGetCurrentTime(self.mem, &tn)
++        if status != 0:
++            self._obs_reason = ("IDAGetCurrentTime", int(status))
++            return
++        self._obs_reason = ("output_not_at_accepted_time", None)
++        if float(tret).hex() != float(tn).hex():
++            return
++        self._obs_endpoint = self._obs_point(nsteps, tn, tret, flag)
++        self._obs_reason = ("predecessor_not_observed", None)
++        if before is not None and before[2] is not None and nsteps == before[0] + 1:
++            self._obs_previous = before[2]
++            self._obs_reason = None
++
++    cdef _obs_stamp(self):
++        cdef long nsteps
++        cdef sunrealtype tn, hused, hh
++        cdef int kused, kk
++        statuses = (
++            _observation_status("IDAGetNumSteps", IDAGetNumSteps(self.mem, &nsteps)),
++            _observation_status("IDAGetCurrentTime", IDAGetCurrentTime(self.mem, &tn)),
++            _observation_status("IDAGetLastStep", IDAGetLastStep(self.mem, &hused)),
++            _observation_status("IDAGetLastOrder", IDAGetLastOrder(self.mem, &kused)),
++            _observation_status("IDAGetCurrentStep", IDAGetCurrentStep(self.mem, &hh)),
++            _observation_status("IDAGetCurrentOrder", IDAGetCurrentOrder(self.mem, &kk)),
++        )
++        if nsteps < 1 or hused == 0 or not 1 <= kused <= 5:
++            raise IDAObservationError("no_accepted_interval")
++        if not (np.isfinite(tn) and np.isfinite(hused) and np.isfinite(hh)):
++            raise IDAObservationError("nonfinite_interval")
++        return MappingProxyType({"nsteps": int(nsteps), "tn": float(tn),
++            "hused": float(hused), "kused": int(kused), "hh": float(hh),
++            "kk": int(kk), "statuses": statuses})
++
++    cdef _obs_vector(self, sunrealtype tn, int kind, int k, bint allow_failure=False):
++        cdef N_Vector scratch = NULL
++        cdef int status
++        scratch = N_VNew_Serial(self.NEQ, self.ctx)
++        if scratch is NULL:
++            raise MemoryError("observation N_Vector allocation failed")
++        try:
++            if kind == 0:
++                operation = f"IDAGetDky[{k}]"
++                status = IDAGetDky(self.mem, tn, k, scratch)
++            elif kind == 1:
++                operation = "IDAGetErrWeights"
++                status = IDAGetErrWeights(self.mem, scratch)
++            else:
++                operation = "IDAGetEstLocalErrors"
++                status = IDAGetEstLocalErrors(self.mem, scratch)
++            if allow_failure and status != 0:
++                return None, (operation, int(status))
++            receipt = _observation_status(operation, status)
++            values = np.empty(self.NEQ, DTYPE)
++            svec2np(scratch, values)
++            if not np.all(np.isfinite(values)):
++                raise IDAObservationError("nonfinite_vector", operation, int(status))
++            if kind == 1 and not np.all(values > 0):
++                raise IDAObservationError("invalid_error_weights", operation, int(status))
++            return values.tobytes(), receipt
++        finally:
++            N_VDestroy(scratch)
++
++    cdef _obs_basis(self, stamp):
++        cdef int q = stamp["kused"]
++        cdef sunrealtype uround
++        cdef np.ndarray phi = np.empty((q + 1, int(self.NEQ)), DTYPE, order="C")
++        cdef np.ndarray psi = np.empty(q, DTYPE)
++        cdef int status
++        if np.dtype(DTYPE).str != "<f8" or np.dtype(INT_TYPE).itemsize != 4:
++            raise IDAObservationError("unsupported_copy_precision")
++        status = sl_ida75_copy(self.mem, self.NEQ, stamp["nsteps"],
++            stamp["tn"], stamp["hused"], q, stamp["hh"], stamp["kk"],
++            <sunrealtype*>phi.data, phi.size, <sunrealtype*>psi.data, psi.size, &uround)
++        if status != 0:
++            raise IDAObservationError("native_basis_copy_failed", "sl_ida75_copy", int(status))
++        return MappingProxyType({"kind": "ida75_phi_psi_copy_v1", "status": int(status),
++            "dtype": np.dtype(DTYPE).str, "phi_shape": (q + 1, int(self.NEQ)),
++            "phi": phi.tobytes(order="C"), "psi_shape": (q,), "psi": psi.tobytes(),
++            "uround": float(uround), "source_header_sha256": _OBSERVATION_HEADER_SHA256,
++            "source_config_sha256": _OBSERVATION_CONFIG_SHA256,
++            "build_identity": self._obs_binding["identity"]})
++
++    def last_step_snapshot(self, *, expected_step=None):
++        cdef int k
++        cdef const char* native_library
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            if (_OBSERVATION_BUILD_ID is None or not _OBSERVATION_LIBRARIES
++                    or _OBSERVATION_CONFIG_SHA256 is None):
++                raise IDAObservationError("unbound_build_identity")
++            if self.mem is NULL or not self._malloc:
++                raise IDAObservationError("no_accepted_step")
++            if self._obs_binding is None:
++                native_library = sl_ida75_library_path()
++                if native_library is NULL:
++                    raise IDAObservationError("native_library_identity_unavailable")
++                library_path = Path(os.fsdecode(native_library)).resolve(strict=True)
++                library_root = Path(__file__).parent / ".dylibs"
++                if library_path != (library_root / "libsundials_ida.7.5.0.dylib").resolve(strict=True):
++                    raise IDAObservationError("different_native_library_loaded")
++                libraries = tuple((name, sha256((library_root / name).read_bytes()).hexdigest())
++                                  for name, _ in _OBSERVATION_LIBRARIES)
++                if libraries != _OBSERVATION_LIBRARIES:
++                    raise IDAObservationError("native_library_payload_changed")
++                binary_id = sha256(Path(__file__).read_bytes()).hexdigest()
++                source = (_OBSERVATION_SCHEMA, "scikit-sundae=1.1.3",
++                          _OBSERVATION_BUILD_ID, binary_id, _OBSERVATION_CONFIG,
++                          _OBSERVATION_HEADER_SHA256, _OBSERVATION_CONFIG_SHA256, libraries)
++                self._obs_binding = MappingProxyType({"source": source,
++                    "identity": sha256(repr(source).encode()).hexdigest(),
++                    "build_recipe_sha256": _OBSERVATION_BUILD_ID,
++                    "native_library_path": str(library_path), "libraries": libraries})
++            before = self._obs_stamp()
++            key = (self._obs_binding["identity"], self._obs_instance,
++                   self._obs_generation, before["nsteps"], before["tn"].hex(),
++                   before["hused"].hex(), before["kused"], before["hh"].hex(), before["kk"])
++            if expected_step is not None:
++                if (type(expected_step) is not tuple or len(expected_step) != len(key)
++                        or any(type(a) is not type(b) for a, b in zip(expected_step, key))):
++                    raise IDAObservationError("invalid_step_key")
++                if expected_step != key:
++                    raise IDAObservationError("stale_instance_generation_or_step")
++            if self._obs_reason is not None:
++                raise IDAObservationError(self._obs_reason[0], native_status=self._obs_reason[1])
++            endpoint, previous = self._obs_endpoint, self._obs_previous
++            if (endpoint is None or previous is None
++                    or endpoint["nsteps"] != before["nsteps"]
++                    or endpoint["internal_t"].hex() != before["tn"].hex()
++                    or previous["nsteps"] + 1 != before["nsteps"]):
++                raise IDAObservationError("predecessor_not_observed")
++            if (not np.isfinite(previous["internal_t"])
++                    or (before["hused"] > 0 and before["tn"] <= previous["internal_t"])
++                    or (before["hused"] < 0 and before["tn"] >= previous["internal_t"])):
++                raise IDAObservationError("invalid_observed_interval")
++            # tn is the sole query anchor; no arbitrary time/order is accepted.
++            # Keep the signed native interval and witnessed predecessor separate.
++            raw = self._obs_raw()
++            if raw != (endpoint["raw_y"], endpoint["raw_yp"]):
++                raise IDAObservationError("raw_endpoint_changed")
++            for buffer in raw + (previous["raw_y"], previous["raw_yp"]):
++                if not np.all(np.isfinite(np.frombuffer(buffer, dtype=DTYPE))):
++                    raise IDAObservationError("nonfinite_raw_endpoint")
++            basis = self._obs_basis(before)
++            derivative_buffers, statuses = [], []
++            for k in range(before["kused"] + 1):
++                values, status = self._obs_vector(before["tn"], 0, k)
++                derivative_buffers.append(values)
++                statuses.append(status)
++            weights, weight_status = self._obs_vector(before["tn"], 1, 0)
++            errors, error_status = self._obs_vector(before["tn"], 2, 0)
++            predecessor_before = self._obs_stamp()
++            predecessor_buffers, predecessor_statuses = [], []
++            for k in (0, 1):
++                values, status = self._obs_vector(previous["internal_t"], 0, k, True)
++                predecessor_buffers.append(values)
++                predecessor_statuses.append(status[1])
++            predecessor_after = self._obs_stamp()
++            predecessor_dky = MappingProxyType({
++                "query_t": previous["internal_t"], "query_t_hex": previous["internal_t"].hex(),
++                "orders": (0, 1), "buffers": tuple(predecessor_buffers),
++                "statuses": tuple(predecessor_statuses),
++                "native_eligible": all(status == 0 for status in predecessor_statuses),
++                "step_before": predecessor_before, "step_after": predecessor_after})
++            after = self._obs_stamp()
++            if (dict(before) != dict(after) or self._obs_raw() != raw
++                    or dict(before) != dict(predecessor_before)
++                    or dict(before) != dict(predecessor_after)
++                    or basis != self._obs_basis(after)):
++                raise IDAObservationError("accepted_step_or_raw_buffer_changed")
++            return MappingProxyType({"schema": _OBSERVATION_SCHEMA,
++                "binding": self._obs_binding, "step_key": key,
++                "owner": self._obs_instance, "generation": self._obs_generation,
++                "native_before": before, "native_after": after,
++                "predecessor": previous, "endpoint": endpoint,
++                "dtype": np.dtype(DTYPE).str, "shape": (int(self.NEQ),),
++                "raw_y": raw[0], "raw_yp": raw[1],
++                "dky": tuple(derivative_buffers), "error_weights": weights,
++                "estimated_local_errors": errors,
++                "vector_statuses": tuple(statuses) + (weight_status, error_status),
++                "native_left_terms": (before["tn"], -before["hused"]),
++                "clock_gap_terms": (before["tn"], -before["hused"], -previous["internal_t"]),
++                "coefficient_kind": "copied_phi_psi_words_with_rounded_Dky_receipts",
++                "basis": basis, "predecessor_dky": predecessor_dky, "event_metadata": None})
++
+     def init_step(self, DTYPE_t t0, object y0, object yp0):
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            self._obs_busy = True
++            try:
+         
+-        y0 = np.asarray(y0, DTYPE)
+-        yp0 = np.asarray(yp0, DTYPE)
++                y0 = np.asarray(y0, DTYPE)
++                yp0 = np.asarray(yp0, DTYPE)
+         
+-        return self._init_step(t0, y0, yp0)
++                return self._init_step(t0, y0, yp0)
++
++            except BaseException:
++                self._obs_endpoint = None
++                self._obs_previous = None
++                self._obs_reason = ("operation_failed", None)
++                raise
++            finally:
++                self._obs_busy = False
+ 
+     def step(self, DTYPE_t t, object method, object tstop):
+-
+-        method = method.lower()
+-        valid = {"normal", "onestep"}
+-        if method not in valid:
+-            raise ValueError(f"'method' is invalid. Valid values are {valid}.")
+-        elif not self._initialized:
+-            raise ValueError("'init_step' must be run prior to 'step'.")
+-
+-        if tstop is None:
+-            pass
+-        elif not isinstance(tstop, Real):
+-            raise TypeError("'tstop' must be type float, or None.")
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            self._obs_busy = True
++            try:
++
++                method = method.lower()
++                valid = {"normal", "onestep"}
++                if method not in valid:
++                    raise ValueError(f"'method' is invalid. Valid values are {valid}.")
++                elif not self._initialized:
++                    raise ValueError("'init_step' must be run prior to 'step'.")
++
++                if tstop is None:
++                    pass
++                elif not isinstance(tstop, Real):
++                    raise TypeError("'tstop' must be type float, or None.")
+         
+-        return self._step(t, method, tstop)
++                return self._step(t, method, tstop)
++
++            except BaseException:
++                self._obs_endpoint = None
++                self._obs_previous = None
++                self._obs_reason = ("operation_failed", None)
++                raise
++            finally:
++                self._obs_busy = False
+ 
+     def solve(self, object tspan, object y0, object yp0):
+-
+-        tspan = np.asarray(tspan, DTYPE)
+-        y0 = np.asarray(y0, DTYPE)
+-        yp0 = np.asarray(yp0, DTYPE)
+-
+-        diff = np.diff(tspan)
+-        if not all(diff > 0) ^ all(diff < 0):
+-            raise ValueError("'tspan' must stictly increase or decrease.")
+-
+-        if tspan.size > 2:
+-            soln = self._normal_solve(tspan, y0, yp0)
+-        elif tspan.size == 2:
+-            soln = self._onestep_solve(tspan, y0, yp0)
+-        else:
+-            raise ValueError("'tspan' length must be >= 2.")
+-
+-        self._initialized = False 
+-
+-        return soln
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            self._obs_busy = True
++            try:
++
++                tspan = np.asarray(tspan, DTYPE)
++                y0 = np.asarray(y0, DTYPE)
++                yp0 = np.asarray(yp0, DTYPE)
++
++                diff = np.diff(tspan)
++                if not all(diff > 0) ^ all(diff < 0):
++                    raise ValueError("'tspan' must stictly increase or decrease.")
++
++                if tspan.size > 2:
++                    soln = self._normal_solve(tspan, y0, yp0)
++                elif tspan.size == 2:
++                    soln = self._onestep_solve(tspan, y0, yp0)
++                else:
++                    raise ValueError("'tspan' length must be >= 2.")
++
++                self._initialized = False 
++
++                return soln
++
++            except BaseException:
++                self._obs_endpoint = None
++                self._obs_previous = None
++                self._obs_reason = ("operation_failed", None)
++                raise
++            finally:
++                self._obs_busy = False
+ 
+     def __dealloc__(self):
+         self._free_memory()
+--- a/src/sksundae/ida/_solver.py
++++ b/src/sksundae/ida/_solver.py
+@@ -407,6 +407,30 @@
+         """
+         return self._IDA.solve(tspan, y0, yp0)
+ 
++    def last_step_snapshot(self, *, expected_step=None):
++        """Observe one fully witnessed accepted interval without advancing it.
++
++        The returned mapping and nested metadata are read-only. Vector buffers
++        are immutable bytes; decode with ``np.frombuffer(buffer, dtype=...
++        ).reshape(shape)`` using the packet's dtype and shape. ``dky[k]`` is
++        the rounded native derivative of order k at tn, not an exact internal
++        coefficient export. Error weights and local estimates are diagnostic.
++
++        Only adjacent, actually observed native endpoints with a step-count
++        increment of one are eligible. NORMAL calls that hide intermediate
++        steps, or returns at a time different from tn, can make the snapshot
++        unavailable. Subsequent observed consecutive endpoints restore it;
++        this operation never changes NORMAL behavior or invents a predecessor.
++        Both predecessor time and tn-hused terms are retained independently.
++
++        Pass a previously returned step_key as expected_step to reject a stale
++        owner, generation or step. Arbitrary query times and orders are not
++        accepted: all legal orders are read at tn. Event sides and input laws
++        belong to the caller. This experimental patch requires a build identity
++        bound by its accompanying reproducible build helper.
++        """
++        return self._IDA.last_step_snapshot(expected_step=expected_step)
++
+ 
+ class IDAResult(_IDAResult):
+     """Results container."""

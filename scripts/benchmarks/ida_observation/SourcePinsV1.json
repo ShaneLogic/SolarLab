@@ -1,0 +1,55 @@
+{
+  "schema": "solarlab.ida-observation-source-pins.v1",
+  "binding_version": "1.1.3",
+  "sundials_version": "7.5.0",
+  "source_archive": {
+    "filename": "scikit_sundae-1.1.3.tar.gz",
+    "url": "https://files.pythonhosted.org/packages/a2/2f/669f410f7a151874af1d6ff91e3d129bf80f989e92da3fb8c77f8496f718/scikit_sundae-1.1.3.tar.gz",
+    "sha256": "e3d06de0da6715d51310b2cea3835c495e6613d8c19ccbbf1f278aabe7e8f3d6",
+    "bytes": 58460
+  },
+  "files": {
+    "src/sksundae/c_ida.pxd": {
+      "original_sha256": "7f1443a261d3e65aecc57dafd2e5632a474f750822ded8867bb68ada55078236",
+      "patched_sha256": "28c8802290397369cef40a6b6bb3b5b7dc69015b831e074ba0fa47f80b4a1a43"
+    },
+    "src/sksundae/_cy_ida.pyx": {
+      "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
+      "patched_sha256": "4f0a47b79a115fa987c9b7a4c439188d05d070620f8e4e1ddd245572adf59a95"
+    },
+    "src/sksundae/ida/_solver.py": {
+      "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
+      "patched_sha256": "f248bd165cbeb71ff2c97eed8fe45a7e9ba7a36449545cc5ff37fc9614f168f6"
+    }
+  },
+  "patch_sha256": "40a56e0252f3fe04753161607aa3a1ec6e29f063b789b8525b0f6d8eeb9fcb48",
+  "build_binding_token": "_OBSERVATION_BUILD_ID = None",
+  "required_config": {
+    "SUNDIALS_VERSION": "7.5.0",
+    "SUNDIALS_FLOAT_TYPE": "double",
+    "SUNDIALS_INT_TYPE": "int",
+    "SUNDIALS_SUPERLUMT_ENABLED": "True",
+    "SUNDIALS_SUPERLUMT_THREAD_TYPE": "OPENMP",
+    "SUNDIALS_BLAS_LAPACK_ENABLED": "True"
+  },
+  "required_libraries": [
+    "sundials_core",
+    "sundials_nvecserial",
+    "sundials_sunlinsoldense",
+    "sundials_sunlinsolband",
+    "sundials_sunmatrixdense",
+    "sundials_sunmatrixband",
+    "sundials_sunmatrixsparse",
+    "sundials_sunlinsolspgmr",
+    "sundials_sunlinsolspbcgs",
+    "sundials_sunlinsolsptfqmr",
+    "sundials_sunlinsolsuperlumt",
+    "superlu_mt_OPENMP",
+    "sundials_sunlinsollapackdense",
+    "sundials_sunlinsollapackband",
+    "sundials_cvode",
+    "sundials_ida"
+  ],
+  "copy_header_sha256": "4bd6548314a3ccd948b0d15a5b1d0821b3ecca1b8a1c45b651600becb8ff28af",
+  "private_header_sha256": "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce"
+}
