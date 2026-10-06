@@ -470,5 +470,131 @@ class NumericParameterPreparationTests(unittest.TestCase):
                 check_comparison(row, {})
 
 
+class ComparisonScaleClosureTests(unittest.TestCase):
+    """Concrete source geometry/operators, without importing the old engine."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = Path(__file__).resolve().parents[2]
+        cls.scopes = json.loads((cls.repo / "reproducibility/RefactorComparisonScopesV1.json").read_text())
+        cls.mapping = json.loads((cls.repo / "reproducibility/RefactorComparisonMapV1.json").read_text())
+        cls.closures = {c["id"]: c for row in cls.scopes["records"] for c in row.get("scale_closures", [])}
+
+    def test_original_full_endpoint_measure_and_signed_boundary_are_bound(self):
+        import ast
+        from fractions import Fraction
+        from physical_comparison import _potential, validate_definition
+
+        item = self.closures["foundation_v1_uniform44_potential"]
+        gate = item["physical_definition"]
+        self.assertTrue(validate_definition(gate))
+        x, w = gate["coordinates_m"], gate["volumes"]
+        self.assertEqual(len(x), 45)
+        self.assertEqual(w[0], x[1] - x[0])
+        self.assertEqual(w[-1], x[-1] - x[-2])
+        self.assertNotEqual(w[0], (x[1] - x[0]) / 2)
+        self.assertGreater(sum(w), x[-1] - x[0])
+        source = self.scopes["sources"]["legacy_dual_measure"]
+        raw = (self.repo / source["path"]).read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), source["sha256"])
+        function = next(n for n in ast.parse(raw).body
+                        if isinstance(n, ast.FunctionDef) and n.name == "dual_cell_widths")
+        self.assertIn("w[0] = dx[0]", ast.unparse(function))
+        self.assertIn("w[-1] = dx[-1]", ast.unparse(function))
+        material = self.scopes["sources"]["legacy_material_geometry"]
+        tree = ast.parse((self.repo / material["path"]).read_bytes())
+        boundary = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                        and n.name == "poisson_right_boundary")
+        self.assertIn("mat.V_bi_bc - mat.junction_polarity * float(V_app)", ast.unparse(boundary))
+        # A right-end perturbation discriminates the full and half measures.
+        reference = {"values": [0.0] * 45, "volumes": w}
+        candidate = {"values": [0.0] * 44 + [1e-8], "volumes": w}
+        measured = _potential(reference, candidate, gate)
+        expected_squared = Fraction(w[-1]) * Fraction(1e-8) ** 2 / sum(map(Fraction, w))
+        self.assertEqual(measured["rms"][1], expected_squared)
+        affine = next(p["physical_definition"] for row in self.scopes["records"]
+                      for p in row.get("parameter_bindings", []) if "physical_definition" in p)
+        self.assertNotEqual(affine["comparison_target"], gate["comparison_target"])
+        self.assertEqual(len(affine["volumes"]), 51)
+        self.assertEqual(affine["zero_policy"], "fixed_physical_scale")
+
+    def test_zero_species_definition_and_unreviewed_use_are_separate(self):
+        from fractions import Fraction
+        from physical_comparison import _density, compare_physical, definition_fingerprint, validate_definition
+
+        gate = copy.deepcopy(self.closures["foundation_v1_uniform44_zero_positive_ion"]["physical_definition"])
+        self.assertTrue(validate_definition(gate))
+        reference = {"values": [0.0] * 45, "volumes": gate["volumes"], "components": gate["components"]}
+        candidate = copy.deepcopy(reference)
+        candidate["values"][10] = 0.25
+        metrics = _density(reference, candidate, gate)
+        self.assertEqual(metrics["zero_density_max"], Fraction(0.25))
+        self.assertEqual(metrics["inventory:positive_ion_device"], Fraction(gate["volumes"][10]) / 4)
+        self.assertEqual(gate["thresholds"]["zero_density_max"]["atol"], 0)
+        gate["definition_sha256"] = definition_fingerprint(gate)
+        for table in (reference, candidate):
+            table["definition_sha256"] = gate["definition_sha256"]
+        result = compare_physical(reference, candidate, gate)
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["code"], "unreviewed_gate")
+
+    def test_all47_original_lane_definitions_reuse_exact_operators_and_limits(self):
+        from collections import Counter
+        lanes = [r for r in self.scopes["records"] if r["origin_key"].startswith("lane:")]
+        self.assertEqual(len(lanes), 47)
+        counts = Counter()
+        for row in lanes:
+            definition = row["original_numeric_definition"]
+            group = self.scopes["rules"][definition["rule_group_id"]]
+            self.assertEqual(definition["original_rules_sha256"], group["original_rules_sha256"])
+            ids = [rid for values in definition["operators"].values() for rid in values]
+            self.assertCountEqual(ids, group["original_rule_ids"])
+            self.assertEqual(len(ids), len(set(ids)))
+            self.assertEqual(definition["remaining_numeric_parameters_for_original_target"], [])
+            self.assertFalse(definition["new_N_applicability_approved"])
+            self.assertIsNone(definition["eligibility"]["reference_error_bound"])
+            for operator, values in definition["operators"].items():
+                for rid in values:
+                    bound = self.mapping["rule_catalog"][rid]["gate_value"]
+                    self.assertEqual(operator, bound.get("comparison", bound.get("operator")))
+                    self.assertTrue(bound["units"])
+                    counts[operator] += 1
+        self.assertEqual(dict(counts), self.scopes["comparison_scale_closure"]["original_lane_operator_counts"])
+        self.assertEqual(counts["absolute_linf"], 299)
+        self.assertEqual(counts["relative_linf"] + counts["pointwise_relative_linf"], 78)
+
+    def test_reference_only_TPV_scale_units_and_gap_categories(self):
+        import ast
+        tpv = self.closures["original_tpv_reference_amplitude_waveform"]
+        definition = tpv["definition"]
+        self.assertEqual(definition["amplitude_scale_formula"], "A_ref=max(abs(reference.delta_V))")
+        self.assertFalse(definition["scale_depends_on_candidate_output"])
+        self.assertEqual(definition["reference_terminal_charge_voltage_error"]["limit_formula"], "min(1e-6,0.01*A_ref)")
+        source = self.scopes["sources"]["original_tpv_refinement"]
+        tree = ast.parse((self.repo / source["path"]).read_bytes())
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "_require_converged_waveform")
+        amplitude = next(n for n in fn.body if isinstance(n, ast.Assign)
+                         and any(isinstance(t, ast.Name) and t.id == "amplitude" for t in n.targets))
+        self.assertIn("fine.delta_V", ast.unparse(amplitude.value))
+        self.assertNotIn("coarse", ast.unparse(amplitude.value))
+        units = self.closures["EL_exact_output_units"]["definition"]
+        self.assertEqual(units["spectrum_output_unit"], "photons m-2 s-1 nm-1")
+        self.assertEqual(units["per_nm_to_per_m_multiplier"], 1e9)
+        self.assertEqual(units["lambda_nm_to_m_multiplier"], 1e-9)
+        self.assertEqual(len(self.scopes["records"]), 170)
+        for row in self.scopes["records"]:
+            gap = row["gap_classification"]
+            self.assertIsNone(gap["reference_error_bound"])
+            self.assertFalse(gap["fixed_discrete_target_requires_continuum_qualification"])
+            self.assertTrue(gap["reference_eligibility_is_separate"])
+            for need in gap["scope_specific_prior_gaps"]:
+                self.assertTrue(need["categories"])
+                self.assertTrue(need["needed_from"])
+        for closure in self.closures.values():
+            self.assertFalse(closure["eligibility"]["reference_qualified"])
+            self.assertIsNone(closure["eligibility"]["reference_error_bound"])
+
+
 if __name__ == "__main__":
     unittest.main()
