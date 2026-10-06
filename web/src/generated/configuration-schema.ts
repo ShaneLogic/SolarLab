@@ -22359,4 +22359,6 @@ export const configurationSchema = {
   }
 } as const;
 
+export const configurationSchemaSha256 = "b7966bcf9a73251c4c58d4c095d8acd01642fb730946eb825609c7f06272fc96";
+
 export type ConfigurationSchemaMetadata = typeof configurationSchema;

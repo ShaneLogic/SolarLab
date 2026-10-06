@@ -9,6 +9,8 @@ authoritative for semantic constraints that JSON Schema cannot express.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from hashlib import sha256
+import json
 from typing import TYPE_CHECKING, Any
 
 from solarlab.config.inputs import LayerInput
@@ -31,7 +33,7 @@ from solarlab.units import UNIT_SCHEMA_VERSION, supported_units
 if TYPE_CHECKING:
     from solarlab.physics.registry import StructuredSchema
 
-__all__ = ["export_configuration_schema"]
+__all__ = ["export_configuration_schema", "configuration_schema_representation"]
 
 # Explicit coverage of existing editing entry points, not a model catalogue.
 # Their nested DTOs remain in each entry point's own $defs namespace.
@@ -105,3 +107,19 @@ def export_configuration_schema(
             "P03-07_and_P06-08_integration_and_G3_G6_qualification",
         ],
     }
+
+
+def configuration_schema_representation(
+    *, structured_schemas: Iterable[StructuredSchema] = (),
+) -> tuple[bytes, str]:
+    """Return immutable compact UTF-8 JSON and its metadata-only SHA-256.
+
+    Identity covers these exact bytes, including each independent schema's
+    references and source metadata. It confers no solver/science qualification.
+    No mutable schema object or cached caller-owned record is returned.
+    """
+    data = json.dumps(
+        export_configuration_schema(structured_schemas=structured_schemas),
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    return data, sha256(data).hexdigest()

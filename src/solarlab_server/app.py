@@ -9,7 +9,7 @@ separate integration work.
 
 Runs and attempt records include stored opaque execution metadata and results.
 Event pages span a run's history; SSE URLs explicitly select one attempt.
-Legacy result/error/done framing, submission, configuration and registry
+Legacy result/error/done framing, submission, configuration editing and registry
 routes remain upstream integration obligations.
 """
 
@@ -29,6 +29,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from solarlab.io.artifacts import ArtifactIntegrityError
 from solarlab.io.run_store import RunStore, StateConflict
 from solarlab_server.events import MAX_SEQUENCE, attempt_record, event_stream, replay_cursor
+from solarlab_server.schema import router as schema_router
 
 
 def _store(request: Request) -> RunStore:
@@ -85,6 +86,7 @@ def create_app(
 
     app = FastAPI(title="SolarLab stored runs", lifespan=lifespan)
     app.state.run_store = None
+    app.include_router(schema_router)
 
     @app.exception_handler(KeyError)
     async def not_found(request: Request, error: KeyError) -> JSONResponse:

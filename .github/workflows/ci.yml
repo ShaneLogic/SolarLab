@@ -141,9 +141,10 @@ jobs:
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
           tests/runtime/test_event_service.py
+          tests/runtime/test_configuration_schema_service.py
       - name: Check typed configuration, registry and runtime preparation
         run: |
-          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_input_types.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py
+          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_input_types.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py tests/runtime/test_configuration_schema_service.py
           uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab src/solarlab_server
       - name: Check generated configuration schema
         run: uv run --frozen --no-sync python scripts/generate_configuration_schema.py --check
@@ -241,7 +242,7 @@ jobs:
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
           --confcutdir=tests/refactor -o addopts=
           tests/refactor/test_configuration_input_types.py
-      - run: npm run test:run
+      - run: SOLARLAB_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python" npm run test:run
       - run: npm run build
 
   coverage:

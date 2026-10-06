@@ -1,6 +1,7 @@
 """Source fidelity and metadata-only generation; no device or solver run."""
 
 from dataclasses import replace
+from hashlib import sha256
 import importlib
 import importlib.util
 import json
@@ -10,7 +11,9 @@ import sys
 
 import pytest
 
-from solarlab.config.schema import export_configuration_schema
+from solarlab.config.schema import (
+    configuration_schema_representation, export_configuration_schema,
+)
 from solarlab.config.yaml import load_yaml_mapping
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.device.tunnelling import TunnellingInput
@@ -74,6 +77,18 @@ def test_existing_parameter_metadata_units_and_detached_exports():
     assert export_configuration_schema()["dto_schemas"]["DeviceInput"]["schema"]["$defs"]
 
 
+def test_compact_representation_has_exact_identity_and_detached_payload():
+    data, digest = configuration_schema_representation()
+    decoded = json.loads(data)
+    assert decoded == export_configuration_schema()
+    assert isinstance(data, bytes)
+    assert data == json.dumps(decoded, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=False, allow_nan=False).encode("utf-8")
+    assert digest == sha256(data).hexdigest()
+    decoded["dto_schemas"]["DeviceInput"]["schema"]["$defs"].clear()
+    assert configuration_schema_representation() == (data, digest)
+
+
 def test_omission_null_zero_false_and_signed_unit_semantics():
     fields = export_configuration_schema()["dto_schemas"]["FullParameterInput"]["schema"]["properties"]
     assert "default" not in fields["mu_n"]
@@ -116,6 +131,8 @@ def test_supplied_structured_schema_exports_existing_normalization_and_identity(
                      TunnellingInput.model_fields["schema_version"].default)
     expected = schema.export()
     result = export_configuration_schema(structured_schemas=(schema, schema))
+    data, _ = configuration_schema_representation(structured_schemas=(schema, schema))
+    assert json.loads(data) == result
     key = f"{schema.id}@{schema.version}"
     assert result["structured_parameter_schemas"] == {key: expected}
     for name in ("input_schema", "normalized_parameter_schema"):
