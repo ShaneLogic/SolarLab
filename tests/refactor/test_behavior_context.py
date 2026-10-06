@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -388,6 +389,21 @@ def test_actual_conditioning_retains_three_materials_and_analytic_seed_without_c
         context(device, sources, driver="scaps_steady_state", capture=record)
 
 
-def test_import_boundary_has_no_legacy_or_scientific_solver():
-    forbidden = {"perovskite_sim", "scipy", "sksundae", "flint", "backend", "solarlab_server", "solarlab_research"}
-    assert not {name.split(".")[0] for name in sys.modules}.intersection(forbidden)
+def test_import_boundary_has_no_legacy_or_scientific_solver(tmp_path):
+    module_path = Path(sys.modules[inspect_historical_behavior.__module__].__file__).resolve()
+    code = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import solarlab.config.behavior as behavior
+forbidden = {"perovskite_sim", "scipy", "sksundae", "flint", "backend", "solarlab_server", "solarlab_research"}
+assert not {name.split(".")[0] for name in sys.modules}.intersection(forbidden)
+assert Path(behavior.__file__).resolve() == Path(sys.argv[2])
+"""
+    # Other tests may legitimately import a server or solver in the parent.
+    # Inspect this exact implementation in a clean interpreter outside the repo.
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", code, str(module_path.parents[2]), str(module_path)],
+        cwd=tmp_path, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
