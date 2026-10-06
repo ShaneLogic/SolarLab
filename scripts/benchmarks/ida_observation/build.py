@@ -364,7 +364,9 @@ def pack_overlay(plan: dict) -> dict:
             archive.writestr(item, data)
             target = overlay / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            if name in overrides:
+            # dyld resolves an extension symlink before expanding @loader_path.
+            # Keep the newly linked image next to the overlay's .dylibs directory.
+            if name in overrides or name == "sksundae/_cy_ida.cpython-313-darwin.so":
                 target.write_bytes(data)
             else:
                 target.symlink_to(files[name])

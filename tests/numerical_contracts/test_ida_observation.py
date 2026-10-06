@@ -198,6 +198,39 @@ class TestSourcePreparation:
         assert result["cleanup"]["pgid"] == Child.pid
         assert json.loads((tmp_path / "BuildReceipt.json").read_text()) == result
 
+    def test_overlay_materializes_new_extension_but_reuses_original_payload(self, builder, tmp_path, monkeypatch):
+        import zipfile
+        work, site = tmp_path / "work", tmp_path / "original"
+        work.mkdir()
+        library = site / "sksundae/.dylibs/qualified.dylib"
+        library.parent.mkdir(parents=True)
+        library.write_bytes(b"qualified-library-metadata-fixture")
+        meta = site / "scikit_sundae-1.1.3.dist-info/WHEEL"
+        meta.parent.mkdir()
+        meta.write_bytes(b"original-wheel-metadata")
+        source = work / "source"
+        header = source / "src/sksundae/ida_observation_copy.h"
+        header.parent.mkdir(parents=True)
+        header.write_bytes(b"source-metadata-fixture")
+        extension = work / "_cy_ida.cpython-313-darwin.so"
+        extension.write_bytes(b"compiled-image-metadata-fixture")
+        monkeypatch.setattr(builder, "pins", lambda: {"files": {}})
+        result = builder.pack_overlay({"work": str(work), "extension": str(extension),
+            "prepared": {"source": str(source)}, "recipe": {"native_site": str(site),
+            "native_files": {str(p.relative_to(site)): builder.digest(p) for p in (library, meta)},
+            "wheel_filename": "metadata-fixture.whl"}})
+        overlay = Path(result["overlay"])
+        image = overlay / "sksundae/_cy_ida.cpython-313-darwin.so"
+        assert image.is_file() and not image.is_symlink()
+        assert image.read_bytes() == extension.read_bytes()
+        borrowed = overlay / library.relative_to(site)
+        assert borrowed.is_symlink() and borrowed.resolve() == library.resolve()
+        assert borrowed.read_bytes() == b"qualified-library-metadata-fixture"
+        with zipfile.ZipFile(result["wheel"]) as archive:
+            assert archive.read("sksundae/_cy_ida.cpython-313-darwin.so") == image.read_bytes()
+        record = overlay / "scikit_sundae-1.1.3.dist-info/RECORD"
+        builder.verify_record(overlay, record, builder.digest(record))
+
 
 @pytest.fixture
 def native():
