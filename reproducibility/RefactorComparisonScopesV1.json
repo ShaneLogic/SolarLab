@@ -21,7 +21,7 @@
     "formal": {
       "root": "archive",
       "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
-      "sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef"
+      "sha256": "36942cbcae7ab01a2302e09c73bdfc365b730f830f0500b2c4150073558b2a3f"
     },
     "lane_evaluator": {
       "root": "repository",
@@ -212,6 +212,16 @@
       "root": "archive",
       "path": "test/ArchitectureRefactor/Stage00/ThermalChannelFreezeV1.json",
       "sha256": "427019bb6a568a5ccc47627b059dc48df6155ea76ec4aad6c5a19b92ba6382d8"
+    },
+    "sg_action_fixture": {
+      "root": "repository",
+      "path": "perovskite-sim/tests/fixtures/sg_action_reference_v1.json",
+      "sha256": "b875d10d86736e6d88ebc460a895e36608b4e3de6b6a2204ff40b5a17bcfd0e2"
+    },
+    "sg_action_review": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/SGActionReferenceV1/Review.json",
+      "sha256": "aed1eeff40845207fc6bb6792488d7cfa98d8b380535842490c10efb7fd3ef4d"
     }
   },
   "rules": {
@@ -24597,6 +24607,75 @@
             "reference_qualified": false,
             "active_comparison": null
           }
+        },
+        {
+          "family_rule_id": "operator_packet",
+          "case_id": "sg_original_three_node_frozen_actions",
+          "applicability": "Only the original two-carrier, three-node, fixed-grid SG comparison, with the direction-scope clarification below and the recorded exact rational limits adopted as a candidate-independent numerical requirement.",
+          "numeric_parameter_status": "specified_for_listed_subgates",
+          "known_parameters": {
+            "source_id": "sg_action_fixture",
+            "fixture_pointer": "/fixture",
+            "fixture_value_sha256": "4e8e67c7deba3e02421e8ca02a73f2151d912bb353bbb9dd7335e021165dfe28",
+            "carriers": [
+              "n",
+              "p"
+            ],
+            "nodes": 3,
+            "faces": 2,
+            "signed_actions": 96,
+            "finite_difference_entries": 24,
+            "candidate_independent": true
+          },
+          "limits": {
+            "signed_actions": {
+              "unit": "A m-2",
+              "source_id": "sg_action_fixture",
+              "pointer": "/signed_actions",
+              "allowance_field": "conditional_absolute_allowance_A_m2",
+              "reference_field": "reference_action",
+              "exact_zero_when": "classification == exact_zero",
+              "method": "Two binary64 products and one binary64 addition; finite output interpreted as an exact dyadic and compared to the exact rational midpoint and frozen absolute allowance. No weak-signal relative floor."
+            },
+            "finite_difference_entries": {
+              "units_by_block": {
+                "density": "A m",
+                "potential": "A m-2 V-1"
+              },
+              "source_id": "sg_action_fixture",
+              "pointer": "/finite_difference_decomposition",
+              "allowance_field": "conditional_comparison_allowance",
+              "zero_field": "exact_zero",
+              "method": "Original represented perturbations and FD steps, exact dyadic observed-minus-implemented-coefficient error; exact structural zeros and flux-equality subgate retained."
+            }
+          },
+          "citations": [
+            {
+              "source_id": "sg_action_fixture"
+            },
+            {
+              "source_id": "sg_action_review"
+            }
+          ],
+          "remaining_parameters": [
+            "Bind each new implementation and actual arithmetic/inputs to the frozen direct requirements before accepting its numerical outputs; this definition does not qualify a candidate.",
+            "Other fixtures and models in the original SG scope keep their existing outstanding obligations. The separate conditional forward-error theorem still requires its stated exp/expm1 premises."
+          ],
+          "reference_eligibility": {
+            "status": "definition_frozen_reference_use_requires_bound_implementation_review",
+            "reference_error_bound": null,
+            "default_reference_error_share": "1/3",
+            "stronger_original_channel_allocations_retained": true,
+            "unused_error_shares_redistributed": false,
+            "reference_qualified": false,
+            "active_comparison": null
+          },
+          "interpretation": {
+            "frozen_direct_requirement": "The recorded conditional allowances are accepted as candidate-independent accuracy requirements; direct comparison of observed outputs does not assume the unproved elementary-function forward-error contract.",
+            "forward_error_theorem": "Claiming the conditional forward-error theorem still requires separately proving its stated NumPy exp/expm1 and basic-arithmetic premises; a passing unit comparison does not establish those premises.",
+            "block_scale_domain": "The direction-specific absolute sum is bounded by the block scale only inside that block component box: absolute density components at most their original nodal densities, or absolute potential components at most the fixture thermal voltage; weak/out-of-box directions keep their own recorded scales and limits.",
+            "comparison": "Finite observed binary64 values are exact dyadics. Compare the two-product/one-add action against the exact rational reference midpoint and its unchanged absolute allowance; structural/gauge zeros are exact. FD comparisons use the recorded per-entry allowances. Weak actions have no relative-resolution claim."
+          }
         }
       ],
       "gap_classification": {
@@ -24687,13 +24766,15 @@
             "classification_basis": "mixed original source/identity/use-review obligation; no new tolerance inferred"
           }
         ],
-        "new_source_resolved_cases": [],
+        "new_source_resolved_cases": [
+          "sg_original_three_node_frozen_actions"
+        ],
         "prior_gaps_apply_outside_listed_source_resolved_cases": true,
         "reference_error_bound": null,
         "reference_eligibility_is_separate": true,
         "fixed_discrete_target_requires_continuum_qualification": false,
         "scope_extension_or_tolerance_decisions": [],
-        "current_numeric_status": "prior_exact_scope_gaps_retained_and_classified"
+        "current_numeric_status": "three_node_SG_direct_definition_frozen;other_original_case_and_reference_use_gaps_retained"
       }
     },
     {
@@ -41576,10 +41657,17 @@
       },
       "unchanged_prefix_bytes": 138722,
       "latest_preparation_update": {
-        "prior_sha256": "6445d0e6d3c53ae31933001eb1df0c73cd05baad27a4bcdfe88829bc56166627",
-        "current_sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef",
-        "scope": "Section19.15 read-only stored-run client scheduling; existing scientific criterion text unchanged."
-      }
+        "prior_sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef",
+        "current_sha256": "36942cbcae7ab01a2302e09c73bdfc365b730f830f0500b2c4150073558b2a3f",
+        "scope": "Root-authorized engineering resources, explicit UI preparation and TimeWeights prototype schedule; all13 source-bound formal citation texts rechecked unchanged."
+      },
+      "preparation_updates": [
+        {
+          "prior_sha256": "6445d0e6d3c53ae31933001eb1df0c73cd05baad27a4bcdfe88829bc56166627",
+          "current_sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef",
+          "scope": "Section19.15 read-only stored-run client scheduling; existing scientific criterion text unchanged."
+        }
+      ]
     }
   },
   "numeric_parameter_preparation": {
@@ -41721,6 +41809,15 @@
       },
       "reason": "Root-authorized engineering policy additions in sections19.22/19.23; original scientific criterion citations are checked unchanged by the scope validator."
     },
+    "reference_qualified": false,
+    "scientific_gates_awarded": []
+  },
+  "sg_action_criteria_freeze": {
+    "scope_id": "scope-oracle-c398ee1f8377a8ac",
+    "case_id": "sg_original_three_node_frozen_actions",
+    "source_id": "sg_action_fixture",
+    "review_source_id": "sg_action_review",
+    "old_scope_sha256": "7c1354aceb4ac58b579f6340494df7cc0928d6a085fa67f4a67da97097dbbb1f",
     "reference_qualified": false,
     "scientific_gates_awarded": []
   }

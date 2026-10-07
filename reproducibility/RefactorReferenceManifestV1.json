@@ -9226,7 +9226,7 @@
   "capability_reconciliation": {
     "comparison_map": {
       "path": "reproducibility/RefactorComparisonMapV1.json",
-      "sha256": "59090388354e7ea82124529e9e41dc77bcf062a13148e0829886a43d0befe6f3",
+      "sha256": "67d84f12abf8374e9c3de32196e68cc7cf9ef95d0a6e089d2279601fa928735b",
       "schema": "solarlab.refactor_comparison_map.v1",
       "status": "planning_map_with_explicit_blocked_prospective_comparisons",
       "validator": "scripts/benchmarks/reference_map.py",
@@ -36808,7 +36808,7 @@
     "recorded_at": "2026-10-05T08:47:10.249964+00:00",
     "comparison_scopes": {
       "path": "reproducibility/RefactorComparisonScopesV1.json",
-      "sha256": "7c1354aceb4ac58b579f6340494df7cc0928d6a085fa67f4a67da97097dbbb1f",
+      "sha256": "ee7b79a20eb531aae69e0c6becbd4cd175ec72422b8edba6f49b022f3b68af09",
       "scope": "prospective physical rules and explicit unresolved input obligations; not scientific qualification"
     }
   },
