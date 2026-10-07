@@ -3398,6 +3398,27 @@ def _voltage_lift_nonlinear_guard(previous_controls, ancestor_sha256, policy, ca
             "ancestor_request_sha256": ancestor_sha256}
 
 
+def _voltage_lift_startup_step(previous_controls, ancestor_sha256, value):
+    """Bind an explicit initial step without replacing the inherited controls."""
+    previous = previous_controls.get("first_step", 0.0)
+    maximum = previous_controls.get("max_step", 0.0)
+    if (isinstance(previous, bool) or not isinstance(previous, (int, float))
+            or not math.isfinite(previous) or previous < 0
+            or isinstance(maximum, bool) or not isinstance(maximum, (int, float))
+            or not math.isfinite(maximum) or maximum < 0
+            or isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or value <= 0
+            or (maximum > 0 and value > maximum)
+            or not isinstance(ancestor_sha256, str) or len(ancestor_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in ancestor_sha256)):
+        raise ContractError("voltage_lift_invalid_startup_step")
+    return {"schema": "solarlab.voltage-lift-startup-step.v1", "field": "first_step",
+            "previous_value": float(previous), "value": float(value),
+            "application": "every_protocol_initialization",
+            "previous_controls_sha256": digest(dict(previous_controls)),
+            "ancestor_request_sha256": ancestor_sha256}
+
+
 def _voltage_lift_guard_applied(raw_statistics, controls):
     """Requested policy alone cannot establish actual installation or tracing."""
     policy = controls.get("nonlin_guard")
@@ -3420,7 +3441,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         previous_request: Mapping, *,
                                         nonlin_conv_coef: float | None = None,
                                         nonlin_guard: str | None = None,
-                                        nonlin_trace_capacity: int = 4096) -> dict:
+                                        nonlin_trace_capacity: int = 4096,
+                                        first_step: float | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     if (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3
@@ -3452,6 +3474,10 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
         controls.update(nonlin_guard=guard["policy"], nonlin_trace_capacity=guard["trace_capacity"])
     elif type(nonlin_trace_capacity) is not int or nonlin_trace_capacity != 4096:
         raise ContractError("voltage_lift_invalid_nonlinear_guard")
+    startup = None
+    if first_step is not None:
+        startup = _voltage_lift_startup_step(old["controls"], digest(old), first_step)
+        controls["first_step"] = startup["value"]
     request = {
         "schema": "solarlab.voltage-lift-native-request.v1", "case_id": model.definition.id,
         "prior_request_sha256": digest(old), "numeric_packet": packet,
@@ -3489,6 +3515,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
         request["nonlinear_control_refinement"] = refinement
     if guard is not None:
         request["nonlinear_guard_policy"] = guard
+    if startup is not None:
+        request["startup_step_policy"] = startup
     # This preparation context deliberately precedes the final request. Its
     # digest remains labelled as such; no self-referential hash is invented.
     context = AffineSamplingContext(model, request)
@@ -3533,6 +3561,15 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
         if digest(guard) != digest(expected):
             raise ContractError("voltage_lift_nonlinear_guard_binding")
         controls.update(nonlin_guard=expected["policy"], nonlin_trace_capacity=expected["trace_capacity"])
+    if "startup_step_policy" in request:
+        startup = request["startup_step_policy"]
+        if not isinstance(startup, Mapping):
+            raise ContractError("voltage_lift_invalid_startup_step")
+        expected = _voltage_lift_startup_step(
+            request["previous_controls"], request["prior_request_sha256"], startup.get("value"))
+        if digest(startup) != digest(expected):
+            raise ContractError("voltage_lift_startup_step_binding")
+        controls["first_step"] = expected["value"]
     if (digest(proof) != digest(request["weight_certificate"])
             or digest(controls) != digest(request["controls"])
             or controls.get("calc_initcond") is not None

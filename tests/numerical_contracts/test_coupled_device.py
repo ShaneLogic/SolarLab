@@ -2201,6 +2201,7 @@ def test_voltage_lift_complete_native_request(case_id, request):
     assert proposal["quadrature"] == previous["quadrature"]
     assert proposal["previous_controls"] == previous["controls"]
     assert "nonlinear_control_refinement" not in proposal
+    assert "startup_step_policy" not in proposal
     assert all(proposal["mandatory"].get(k) == v for k, v in previous["mandatory"].items())
     assert np.all(np.asarray(proposal["z0"]) == 0)
     assert not proposal["initial_preparation"]["native_initialization_performed"]
@@ -2348,6 +2349,98 @@ def test_voltage_lift_nonlinear_guard_provenance_and_physical_projection(request
                        "request_sha256": digest(guarded), "policy": proof, "native_steps": 0},
              {"original_controls_and_physical_projection_retained": True,
               "explicit_policy_identity": True, "unbound_changes_rejected": True})
+
+
+def test_voltage_lift_startup_step_default_and_physical_projection(request):
+    from copy import deepcopy
+    from scripts.benchmarks.coupled_device_prototype import (
+        prepare_voltage_lift_native_request, validate_voltage_lift_native_request,
+    )
+
+    case_id = "DynamicAcceptorIonPublicDeviceV1"
+    _, mapping, _, _, context = lift_controller_fixture(case_id)
+    paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(paths[case_id]).read_text())
+    original = deepcopy(previous)
+    options = {"nonlin_conv_coef": 1e-8, "nonlin_guard": "first-correction-wrms-v1"}
+    baseline = prepare_voltage_lift_native_request(mapping, context.segments, previous, **options)
+    default = prepare_voltage_lift_native_request(
+        mapping, context.segments, previous, **options, first_step=None)
+    selected = prepare_voltage_lift_native_request(
+        mapping, context.segments, previous, **options, first_step=7.8125e-7)
+    validate_voltage_lift_native_request(mapping, context.segments, baseline)
+    validate_voltage_lift_native_request(mapping, context.segments, selected)
+    assert default == baseline and "startup_step_policy" not in baseline
+    assert previous == original and selected["previous_controls"] == original["controls"]
+    assert selected["controls"] == dict(baseline["controls"], first_step=7.8125e-7)
+    changed = {key for key in selected if selected[key] != baseline.get(key)}
+    assert changed == {"controls", "startup_step_policy", "preparation_context_sha256", "initial_preparation"}
+    for key in ("point_identity", "raw_z_hex", "raw_zdot_hex", "inputs_hex", "input_rates_hex",
+                "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
+                "desired_tangent_residual_SI", "represented_rate_residual_SI"):
+        assert selected["initial_preparation"][key] == baseline["initial_preparation"][key], key
+    proof = selected["startup_step_policy"]
+    assert proof["ancestor_request_sha256"] == digest(previous)
+    assert proof["previous_controls_sha256"] == digest(previous["controls"])
+    assert proof["previous_value"] == 0.0 and proof["value"] == 7.8125e-7
+    assert proof["application"] == "every_protocol_initialization"
+    assert digest(selected) != digest(baseline)
+    assert selected["initial_preparation"]["request_sha256"] == selected["preparation_context_sha256"]
+    log_case(request, {"family": "startup_step_request", "case": case_id,
+                       "baseline_sha256": digest(baseline), "selected_sha256": digest(selected),
+                       "policy": proof, "changed_top_level_fields": sorted(changed), "native_steps": 0},
+             {"default_request_exact": True, "one_active_control_changed": True,
+              "all_other_request_fields_and_initial_words_unchanged": True,
+              "original_parent_retained": True, "no_native_import": "sksundae" not in sys.modules})
+
+
+def test_voltage_lift_startup_step_rejects_unbound_or_invalid_policy(request):
+    from copy import deepcopy
+    from scripts.benchmarks.coupled_device_prototype import (
+        prepare_voltage_lift_native_request, validate_voltage_lift_native_request,
+    )
+
+    case_id = "DynamicAcceptorIonPublicDeviceV1"
+    _, mapping, _, _, context = lift_controller_fixture(case_id)
+    paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(paths[case_id]).read_text())
+    options = {"nonlin_conv_coef": 1e-8, "nonlin_guard": "first-correction-wrms-v1"}
+    selected = prepare_voltage_lift_native_request(
+        mapping, context.segments, previous, **options, first_step=7.8125e-7)
+    for field, value in (("schema", "unbound"), ("field", "max_step"),
+                         ("previous_value", 1e-4), ("value", 1.5625e-6),
+                         ("application", "ramp_only"), ("ancestor_request_sha256", "0"*64),
+                         ("previous_controls_sha256", "0"*64), ("extra", True)):
+        changed = deepcopy(selected)
+        changed["startup_step_policy"][field] = value
+        with pytest.raises(ContractError, match="startup_step_binding|native_controls_changed"):
+            validate_voltage_lift_native_request(mapping, context.segments, changed)
+    for policy in (None, True, [], "first_step", {}):
+        changed = deepcopy(selected)
+        changed["startup_step_policy"] = policy
+        with pytest.raises(ContractError, match="invalid_startup_step"):
+            validate_voltage_lift_native_request(mapping, context.segments, changed)
+    changed = deepcopy(selected)
+    del changed["startup_step_policy"]
+    with pytest.raises(ContractError, match="native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    for field, value in (("first_step", 1.5625e-6), ("max_step", 0.2),
+                         ("rtol", selected["controls"]["rtol"]*2), ("nonlin_conv_coef", 1e-7)):
+        changed = deepcopy(selected)
+        changed["controls"][field] = value
+        with pytest.raises(ContractError, match="native_controls_changed"):
+            validate_voltage_lift_native_request(mapping, context.segments, changed)
+    changed = deepcopy(selected)
+    changed["controls"]["atol"][0] *= 2
+    with pytest.raises(ContractError, match="native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    for value in (True, False, "7.8125e-7", 0.0, -1.0, 0.2, float("nan"), float("inf")):
+        with pytest.raises(ContractError, match="invalid_startup_step"):
+            prepare_voltage_lift_native_request(
+                mapping, context.segments, previous, **options, first_step=value)
+    log_case(request, {"family": "startup_step_rejection", "case": case_id, "native_steps": 0},
+             {"malformed_and_forged_policy_rejected": True, "bare_override_rejected": True,
+              "unrelated_controls_rejected": True, "invalid_initial_steps_rejected": True})
 
 
 def full_word_fractions(value):
