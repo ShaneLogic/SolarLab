@@ -2200,6 +2200,7 @@ def test_voltage_lift_complete_native_request(case_id, request):
     assert proposal["observation_times"] == previous["observation_times"]
     assert proposal["quadrature"] == previous["quadrature"]
     assert proposal["previous_controls"] == previous["controls"]
+    assert "nonlinear_control_refinement" not in proposal
     assert all(proposal["mandatory"].get(k) == v for k, v in previous["mandatory"].items())
     assert np.all(np.asarray(proposal["z0"]) == 0)
     assert not proposal["initial_preparation"]["native_initialization_performed"]
@@ -2234,6 +2235,66 @@ def test_voltage_lift_complete_native_request(case_id, request):
                        "native_steps": 0, "native_controller_executed": False},
              {"full_original_protocol_and_points": True, "all_physical_gates_unchanged": True,
               "explicit_preparation_identity": True, "native_admission_guard_precedes_import": "sksundae" not in sys.modules})
+
+
+def test_voltage_lift_explicit_nonlinear_control_refinement(request):
+    from copy import deepcopy
+    from scripts.benchmarks.coupled_device_prototype import (
+        prepare_voltage_lift_native_request, validate_voltage_lift_native_request,
+    )
+
+    case_id = "DynamicAcceptorIonPublicDeviceV1"
+    _, mapping, _, _, context = lift_controller_fixture(case_id)
+    paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(paths[case_id]).read_text())
+    original = deepcopy(previous)
+    assert previous["controls"]["nonlin_conv_coef"] == 1e-6
+    baseline = prepare_voltage_lift_native_request(mapping, context.segments, previous)
+    refined = prepare_voltage_lift_native_request(
+        mapping, context.segments, previous, nonlin_conv_coef=1e-8)
+    validate_voltage_lift_native_request(mapping, context.segments, refined)
+    assert previous == original
+    assert refined["previous_controls"] == previous["controls"]
+    assert refined["controls"] == dict(baseline["controls"], nonlin_conv_coef=1e-8)
+    for key in ("segments", "observation_times", "quadrature", "budgets", "original_budgets",
+                "mandatory", "physical_domain_policy", "observation_policy", "weight_certificate",
+                "numeric_packet", "voltage_lift_map", "z0", "zdot0"):
+        assert refined[key] == baseline[key], key
+    provenance = refined["nonlinear_control_refinement"]
+    assert provenance["ancestor_request_sha256"] == digest(previous)
+    assert provenance["previous_controls_sha256"] == digest(previous["controls"])
+    assert provenance["previous_value"] == 1e-6 and provenance["value"] == 1e-8
+    assert digest(refined) != digest(baseline)
+    assert refined["preparation_context_sha256"] != baseline["preparation_context_sha256"]
+    assert refined["initial_preparation"]["request_sha256"] == refined["preparation_context_sha256"]
+
+    changed = deepcopy(baseline)
+    changed["controls"]["nonlin_conv_coef"] = 1e-8
+    with pytest.raises(ContractError, match="voltage_lift_native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    for field, value in (("field", "rtol"), ("previous_value", 1e-5),
+                         ("previous_controls_sha256", "0"*64), ("ancestor_request_sha256", "0"*64)):
+        changed = deepcopy(refined)
+        changed["nonlinear_control_refinement"][field] = value
+        with pytest.raises(ContractError, match="voltage_lift_nonlinear_refinement_binding"):
+            validate_voltage_lift_native_request(mapping, context.segments, changed)
+    changed = deepcopy(refined)
+    changed["controls"]["rtol"] *= 2
+    with pytest.raises(ContractError, match="voltage_lift_native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    for value in (True, False, "1e-8", 0., -1., 1e-6, 1e-5, float("nan"), float("inf")):
+        with pytest.raises(ContractError, match="voltage_lift_invalid_nonlinear_refinement"):
+            prepare_voltage_lift_native_request(mapping, context.segments, previous, nonlin_conv_coef=value)
+    unknown = deepcopy(previous)
+    unknown["controls"]["nonlin_conv_coef"] = None
+    with pytest.raises(ContractError, match="voltage_lift_invalid_nonlinear_refinement"):
+        prepare_voltage_lift_native_request(mapping, context.segments, unknown, nonlin_conv_coef=1e-8)
+    log_case(request, {"family": "explicit_native_nonlinear_control", "case": case_id,
+                       "baseline_sha256": digest(baseline), "refined_sha256": digest(refined),
+                       "refinement": provenance, "native_steps": 0},
+             {"one_active_control_changed": True, "ancestor_controls_unchanged": True,
+              "weight_physics_samples_and_allocations_unchanged": True,
+              "unrecorded_or_invalid_changes_rejected": True})
 
 
 def full_word_fractions(value):

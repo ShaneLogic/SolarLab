@@ -3368,9 +3368,26 @@ def voltage_lift_charge_accounting(model, delta, integrals, projection_integrals
     return base
 
 
+def _voltage_lift_nonlinear_refinement(previous_controls, ancestor_sha256, value):
+    """Bind one explicitly stricter coefficient without changing its ancestor."""
+    previous = previous_controls.get("nonlin_conv_coef")
+    if (isinstance(previous, bool) or not isinstance(previous, (int, float))
+            or not math.isfinite(previous) or previous <= 0
+            or isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or not 0 < value < previous
+            or not isinstance(ancestor_sha256, str) or len(ancestor_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in ancestor_sha256)):
+        raise ContractError("voltage_lift_invalid_nonlinear_refinement")
+    return {"schema": "solarlab.voltage-lift-nonlinear-refinement.v1",
+            "field": "nonlin_conv_coef", "previous_value": float(previous),
+            "value": float(value), "previous_controls_sha256": digest(dict(previous_controls)),
+            "ancestor_request_sha256": ancestor_sha256}
+
+
 def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         segments: tuple[ProtocolSegment, ...],
-                                        previous_request: Mapping) -> dict:
+                                        previous_request: Mapping, *,
+                                        nonlin_conv_coef: float | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     if (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3
@@ -3390,6 +3407,11 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
     proof = voltage_lift_wrms_policy(mapping, old["controls"], segments)
     controls = dict(old["controls"])
     controls.update(rtol=proof["rtol"], atol=proof["atol"])
+    refinement = None
+    if nonlin_conv_coef is not None:
+        refinement = _voltage_lift_nonlinear_refinement(
+            old["controls"], digest(old), nonlin_conv_coef)
+        controls["nonlin_conv_coef"] = refinement["value"]
     request = {
         "schema": "solarlab.voltage-lift-native-request.v1", "case_id": model.definition.id,
         "prior_request_sha256": digest(old), "numeric_packet": packet,
@@ -3423,6 +3445,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
             "source-bound observation policy and whole-protocol independent time/state/space qualification"],
         "native_admission": False,
     }
+    if refinement is not None:
+        request["nonlinear_control_refinement"] = refinement
     # This preparation context deliberately precedes the final request. Its
     # digest remains labelled as such; no self-referential hash is invented.
     context = AffineSamplingContext(model, request)
@@ -3448,6 +3472,15 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
         raise ContractError("voltage_lift_native_scope")
     proof = voltage_lift_wrms_policy(mapping, request["previous_controls"], tuple(segments))
     controls = dict(request["previous_controls"], rtol=proof["rtol"], atol=proof["atol"])
+    refinement = request.get("nonlinear_control_refinement")
+    if refinement is not None:
+        if not isinstance(refinement, Mapping):
+            raise ContractError("voltage_lift_invalid_nonlinear_refinement")
+        expected = _voltage_lift_nonlinear_refinement(
+            request["previous_controls"], request["prior_request_sha256"], refinement.get("value"))
+        if digest(refinement) != digest(expected):
+            raise ContractError("voltage_lift_nonlinear_refinement_binding")
+        controls["nonlin_conv_coef"] = expected["value"]
     if (digest(proof) != digest(request["weight_certificate"])
             or digest(controls) != digest(request["controls"])
             or controls.get("calc_initcond") is not None
