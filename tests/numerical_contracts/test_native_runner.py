@@ -232,6 +232,67 @@ def test_failed_controller_retains_explicit_incomplete_result(tmp_path):
     assert native_runner.output_bytes(tmp_path, ()) <= cap
 
 
+@pytest.mark.parametrize("explicit_limit", [False, True])
+def test_runner_main_record_limit_forwarding_and_exact_large_record(tmp_path, explicit_limit):
+    # Evaluate the maintained entry's real recording keywords without executing
+    # its model/native construction. The production writer and reader are real.
+    tree = ast.parse(Path(native_runner.__file__).read_text())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    call = next(n for n in ast.walk(main) if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name) and n.func.id == "run_recorded")
+    cap = 4 * METADATA_RESERVE
+    freeze = {"watchdog": {"input_file_names": []}}
+    if explicit_limit:
+        freeze["writer_limits"] = {"max_record_bytes": 16 * METADATA_RESERVE}
+    env = {"freeze": freeze, "request": {"budgets": {"total_output_bytes": cap}}}
+    kwargs = {kw.arg: eval(compile(ast.Expression(kw.value), native_runner.__file__, "eval"), env)
+              for kw in call.keywords}
+    record = {"kind": "infrastructure_large_record", "high": [1.0, -0.0],
+              "low": [2.0 ** -100, -2.0 ** -100], "payload": "x" * METADATA_RESERVE}
+    raw = (json.dumps(record, separators=(",", ":"), allow_nan=False) + "\n").encode()
+    assert len(raw) > METADATA_RESERVE
+    before_footer = []
+    def controller(writer):
+        assert writer.metadata_reserve_bytes == METADATA_RESERVE
+        writer(record)
+        before_footer.append(writer.encoded_bytes)
+        return {"status": native_runner.COMPLETED_STATUS,
+                "counts": {"history_bytes": writer.logical_bytes}}
+    if not explicit_limit:
+        with pytest.raises(HistoryLimitError):
+            native_runner.run_recorded(tmp_path, controller, **kwargs)
+        assert not before_footer and not (tmp_path / "NativeResult.json").exists()
+        failure = json.loads((tmp_path / "RunnerFailure.json").read_text())
+        assert failure["history"]["max_record_bytes"] == METADATA_RESERVE
+        assert failure["history"]["records"] == 0
+        return
+    result = native_runner.run_recorded(tmp_path, controller, **kwargs)
+    path = tmp_path / "NativeHistory.jsonl.gz"
+    with HistoryReader(path, encoding="gzip", max_record_bytes=16 * METADATA_RESERVE,
+                       max_logical_bytes=2 * METADATA_RESERVE) as reader:
+        assert list(reader) == [raw]  # Includes every numeric word and signed zero.
+        assert reader.container_complete is True  # Validates EOF, CRC and trailer.
+    assert result["history"]["max_record_bytes"] == 16 * METADATA_RESERVE
+    assert result["history"]["logical_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert result["history"]["logical_bytes"] == len(raw)
+    assert result["history"]["records"] == 1
+    assert result["counts"]["history_encoded_bytes"] == path.stat().st_size > before_footer[0]
+    pointer = json.loads((tmp_path / "LastRecord.json").read_text())
+    assert pointer["history_byte_offset_after_record"] == len(raw)
+    assert native_runner.output_bytes(tmp_path, ()) <= cap
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5, "16777216", None])
+def test_runner_rejects_invalid_record_limits_before_controller(tmp_path, limit):
+    def controller(_writer):
+        raise AssertionError("invalid resource limit reached the controller")
+    with pytest.raises(ValueError, match="max_record_bytes"):
+        native_runner.run_recorded(tmp_path, controller, total_output_bytes=2 * METADATA_RESERVE,
+                                   input_names=(), max_record_bytes=limit)
+    assert not (tmp_path / "NativeResult.json").exists()
+    assert not (tmp_path / "NativeHistory.jsonl.gz").exists()
+
+
 def test_maintained_runner_import_is_isolated_from_scientific_backends():
     code = ("import sys; sys.path.insert(0,sys.argv[1]); import scripts.benchmarks.native_runner; "
             "assert not any(name in sys.modules for name in ('numpy','scipy','flint','sksundae'))")

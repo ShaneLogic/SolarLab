@@ -64,6 +64,7 @@ def _write_document(folder: Path, name: str, value: Any, *, total_output_bytes: 
 
 def _history_state(writer: HistoryWriter) -> dict[str, Any]:
     return {"encoding": writer.encoding, "path": writer.path.name,
+            "max_record_bytes": writer.max_record_bytes,
             "logical_bytes": writer.logical_bytes, "encoded_bytes": writer.encoded_bytes,
             "logical_sha256": writer.logical_sha256, "records": writer.records,
             "closed": writer.closed, "container_complete": writer.container_complete,
@@ -90,7 +91,8 @@ def _record_exception(folder: Path, error: BaseException, *, total_output_bytes:
 
 
 def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, Any]], *,
-                 total_output_bytes: int, input_names: Collection[str]) -> dict[str, Any]:
+                 total_output_bytes: int, input_names: Collection[str],
+                 max_record_bytes: int = 1048576) -> dict[str, Any]:
     """Run the real controller with the writer itself, finalize, then publish.
 
     An already failed controller may retain an explicitly incomplete container;
@@ -103,7 +105,8 @@ def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, A
         if any((folder / name).exists() for name in ("NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json", "RunnerFailure.json")):
             raise FileExistsError("native attempt output already exists")
         writer = HistoryWriter(folder / "NativeHistory.jsonl.gz", encoding="gzip",
-                               total_output_bytes=total_output_bytes)
+                               total_output_bytes=total_output_bytes,
+                               max_record_bytes=max_record_bytes)
         result = controller(writer)  # Do not wrap this object in an untyped callback.
         if result.get("first_failure") is not None:
             writer.publish_first_failure(result["first_failure"])
@@ -226,7 +229,8 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
      result=run_recorded(folder,
                          lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model),segments,request,admission,emit),
                          total_output_bytes=request["budgets"]["total_output_bytes"],
-                         input_names=freeze["watchdog"]["input_file_names"])
+                         input_names=freeze["watchdog"]["input_file_names"],
+                         max_record_bytes=freeze.get("writer_limits", {}).get("max_record_bytes", 1048576))
      code=0 if result["status"]=="completed_bounded_voltage_lift_native_pilot" else 1
     except BaseException as error:
      primary_error=error
