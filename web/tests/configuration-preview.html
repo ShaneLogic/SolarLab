@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuration preview infrastructure fixture</title>
+    <link rel="stylesheet" href="/src/style.css">
+  </head>
+  <body>
+    <main style="max-width: 1040px; margin: 24px auto; padding: 16px">
+      <h2>Configuration preview fixture</h2>
+      <p>Existing configuration documents are resolved as preparation data. This page does not run a simulation.</p>
+      <div class="actions" style="flex-wrap: wrap">
+        <label for="fixture">Configuration</label>
+        <select id="fixture" aria-label="Configuration"></select>
+        <button class="btn btn-ghost" id="preview">Preview configuration</button>
+        <button class="btn btn-ghost" id="reopen">Reopen preview</button>
+      </div>
+      <p id="fixture-error" class="status error" role="alert"></p>
+      <div id="configuration-preview"></div>
+    </main>
+    <script type="module">
+      import { mountConfigurationPreviewPanel } from '/src/panels/configuration-preview.ts'
+      try {
+        const response = await fetch('/fixture-inputs')
+        if (!response.ok) throw new Error(`Fixture inputs: HTTP ${response.status}`)
+        const choices = await response.json()
+        const select = document.querySelector('#fixture')
+        for (const choice of choices) select.add(new Option(choice.name, choice.name))
+        const root = document.querySelector('#configuration-preview')
+        const selection = () => {
+          const choice = choices.find(item => item.name === select.value)
+          return { endpoint: choice.endpoint, kind: choice.kind, input: choice.input }
+        }
+        const fixture = { panel: mountConfigurationPreviewPanel(root, selection()), selection }
+        document.querySelector('#preview').addEventListener('click', () => { void fixture.panel.select(selection()) })
+        document.querySelector('#reopen').addEventListener('click', () => {
+          fixture.panel.dispose()
+          fixture.panel = mountConfigurationPreviewPanel(root, selection())
+        })
+        window.configurationPreviewFixture = fixture
+      } catch (error) { document.querySelector('#fixture-error').textContent = String(error) }
+    </script>
+  </body>
+</html>
