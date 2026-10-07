@@ -149,11 +149,17 @@ only-include = [
     "perovskite-sim/tests/fixtures/IonDiffusivityFigureReference.json",
     "perovskite-sim/tests/fixtures/configs/cigs_graded_optics.yaml",
     "perovskite-sim/tests/fixtures/configs/wkb_resolved_electron_barrier.yaml",
+    "perovskite-sim/tests/fixtures/configs/nip_MAPbI3.yaml",
+    "perovskite-sim/tests/fixtures/configs/tandem_lin2019.yaml",
+    "perovskite-sim/tests/fixtures/configs/nip_wideGap_FACs_1p77.yaml",
+    "perovskite-sim/tests/fixtures/configs/nip_SnPb_1p22.yaml",
+    "perovskite-sim/configs/scaps_mirror_v2.yaml",
     "tests/runtime/test_run_store.py",
     "tests/runtime/test_execution.py",
     "tests/runtime/execution_workers.py",
     "tests/runtime/test_event_service.py",
     "tests/runtime/test_configuration_schema_service.py",
+    "tests/runtime/test_configuration_preview.py",
 ]
 
 [tool.importlinter]

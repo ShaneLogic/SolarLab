@@ -28,6 +28,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from solarlab.io.artifacts import ArtifactIntegrityError
 from solarlab.io.run_store import RunStore, StateConflict
+from solarlab_server.configuration import ConfigurationPreviewContext, router as configuration_router
 from solarlab_server.events import MAX_SEQUENCE, attempt_record, event_stream, replay_cursor
 from solarlab_server.schema import router as schema_router
 
@@ -53,6 +54,7 @@ def create_app(
     store_root: str | Path, *, event_page_size: int = 100,
     poll_interval: float = 0.1, keepalive_interval: float = 15.0,
     max_artifact_bytes: int = 16 * 1024**2,
+    configuration_preview: ConfigurationPreviewContext | None = None,
 ) -> FastAPI:
     """Build a local reader; start/stop its owned handle with ASGI lifespan.
 
@@ -60,6 +62,8 @@ def create_app(
     Limits describe transport, not numerical controls or physical defaults.
     JSON pages accept ``after``/``limit``; SSE accepts ``after`` and gives
     ``Last-Event-ID`` precedence. Artifact bodies are exact validated bytes.
+    Preview POSTs resolve DTOs only when the caller supplies trusted catalog
+    and resource data through ``configuration_preview``; they never execute.
     """
     if type(event_page_size) is not int or not 1 <= event_page_size <= 1000:
         raise ValueError("event_page_size must be between 1 and 1000")
@@ -68,6 +72,8 @@ def create_app(
             raise ValueError("poll/keepalive intervals must be positive and finite")
     if type(max_artifact_bytes) is not int or max_artifact_bytes < 0:
         raise ValueError("max_artifact_bytes must be a nonnegative integer")
+    if configuration_preview is not None and not isinstance(configuration_preview, ConfigurationPreviewContext):
+        raise TypeError("configuration_preview must be an explicit ConfigurationPreviewContext")
     root = Path(store_root)
     if not root.is_absolute():
         raise ValueError("store_root must be an explicit absolute local path")
@@ -86,7 +92,9 @@ def create_app(
 
     app = FastAPI(title="SolarLab stored runs", lifespan=lifespan)
     app.state.run_store = None
+    app.state.configuration_preview = configuration_preview
     app.include_router(schema_router)
+    app.include_router(configuration_router)
 
     @app.exception_handler(KeyError)
     async def not_found(request: Request, error: KeyError) -> JSONResponse:
