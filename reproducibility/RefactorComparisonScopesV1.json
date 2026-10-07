@@ -21,7 +21,7 @@
     "formal": {
       "root": "archive",
       "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
-      "sha256": "6445d0e6d3c53ae31933001eb1df0c73cd05baad27a4bcdfe88829bc56166627"
+      "sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef"
     },
     "lane_evaluator": {
       "root": "repository",
@@ -41574,7 +41574,12 @@
         "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
         "sha256": "edb7bb738a21fc779b5f95ecfcb414ed04585271fa38fa6b7806e492f3df3060"
       },
-      "unchanged_prefix_bytes": 138722
+      "unchanged_prefix_bytes": 138722,
+      "latest_preparation_update": {
+        "prior_sha256": "6445d0e6d3c53ae31933001eb1df0c73cd05baad27a4bcdfe88829bc56166627",
+        "current_sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef",
+        "scope": "Section19.15 read-only stored-run client scheduling; existing scientific criterion text unchanged."
+      }
     }
   },
   "numeric_parameter_preparation": {
