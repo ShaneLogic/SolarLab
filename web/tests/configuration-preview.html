@@ -8,153 +8,64 @@
   </head>
   <body>
     <main style="max-width: 1040px; margin: 24px auto; padding: 16px">
-      <h2>Configuration preview fixture</h2>
-      <p>Existing configuration documents are resolved as preparation data. This page does not run a simulation.</p>
+      <h2>Configuration editor</h2>
+      <p>Select a supplied configuration, edit its draft, and apply it to inspect resolved values and field origins.</p>
       <div class="actions" style="flex-wrap: wrap">
         <label for="fixture">Configuration</label>
         <select id="fixture" aria-label="Configuration"></select>
         <button class="btn btn-ghost" id="preview">Preview configuration</button>
-        <button class="btn btn-ghost" id="reopen">Reopen preview</button>
+        <button class="btn btn-ghost" id="reopen">Reopen applied preview</button>
       </div>
       <p id="fixture-error" class="status error" role="alert"></p>
-      <section class="card" id="quantity-editor">
-        <h3>Edit one supplied quantity</h3>
-        <label for="quantity-field">Field</label>
-        <select id="quantity-field">
-          <option value="thickness">Layer thickness</option>
-          <option value="mu_n">Layer electron mobility override</option>
-          <option value="phi_left">Signed left voltage</option>
-          <option value="Nc300">Nullable conduction density of states</option>
-        </select>
-        <p id="quantity-target" class="status"></p>
-        <div id="quantity-control"></div>
-        <button class="btn btn-ghost" id="apply-quantity">Apply field and preview</button>
-        <p id="quantity-edit-state" class="status" role="status"></p>
-      </section>
+      <div id="device-editor"></div>
       <div id="configuration-preview"></div>
     </main>
     <script type="module">
       // @ts-check
       import { mountConfigurationPreviewPanel } from '../src/panels/configuration-preview.ts'
-      import { mountQuantityInput } from '../src/editors/quantity-input.ts'
-      import { configurationSchema } from '../src/generated/configuration-schema.ts'
-      /** @typedef {import('../src/generated/configuration-inputs').DeviceInput} DeviceInput */
-      /** @typedef {import('../src/generated/configuration-inputs').TandemInput} TandemInput */
+      import { mountDeviceEditor } from '../src/editors/device-editor.ts'
       /** @typedef {import('../src/panels/configuration-preview').ConfigurationPreviewSelection & {name: string}} Choice */
-      /** @typedef {import('../src/editors/quantity-input').QuantityEdit} QuantityEdit */
-      /** @typedef {'thickness' | 'mu_n' | 'phi_left' | 'Nc300'} Field */
-      /** @param {DeviceInput | TandemInput} input @returns {DeviceInput} */
-      function device(input) {
-        return input.schema_version === 'solarlab.device-preparation.v1' ? input : input.top_cell
-      }
-      /** @param {object} schema @param {string} field */
-      function required(schema, field) {
-        const names = Reflect.get(schema, 'required')
-        return Array.isArray(names) && names.includes(field)
-      }
+      /** @typedef {import('../src/editors/device-edits').EditorInput} EditorInput */
       /** @param {string} id */
       function node(id) {
         const result = document.getElementById(id)
-        if (!result) throw new Error(`Missing fixture element ${id}`)
+        if (!result) throw new Error(`Missing page element ${id}`)
         return result
       }
       try {
         const response = await fetch('/fixture-inputs')
-        if (!response.ok) throw new Error(`Fixture inputs: HTTP ${response.status}`)
+        if (!response.ok) throw new Error(`Configurations: HTTP ${response.status}`)
         const choices = /** @type {Choice[]} */ (await response.json())
         const select = /** @type {HTMLSelectElement} */ (node('fixture'))
         for (const choice of choices) select.add(new Option(choice.name, choice.name))
-        const root = node('configuration-preview')
-        const fields = /** @type {HTMLSelectElement} */ (node('quantity-field'))
-        const apply = /** @type {HTMLButtonElement} */ (node('apply-quantity'))
         let current = structuredClone(choices[0])
-        /** @type {import('../src/editors/quantity-input').QuantityInput | undefined} */
-        let control
-        /** @returns {Field} */
-        function field() {
-          const value = fields.value
-          if (value !== 'thickness' && value !== 'mu_n' && value !== 'phi_left' && value !== 'Nc300') {
-            throw new Error('Unsupported fixture field')
-          }
-          return value
-        }
         const selection = () => structuredClone(current)
-        const fixture = { panel: mountConfigurationPreviewPanel(root, selection()), selection }
-
-        function updateEditState() {
-          const edit = control?.read()
-          apply.disabled = !edit || edit.kind === 'incomplete'
-          node('quantity-edit-state').textContent = edit?.kind === 'incomplete' ? edit.message
-            : 'Only this field is applied. Python validates units and physical constraints.'
+        const previewRoot = node('configuration-preview')
+        const fixture = {
+          panel: mountConfigurationPreviewPanel(previewRoot, selection()),
+          editor: mountDeviceEditor(node('device-editor'), { input: current.input, onApply: apply }),
+          selection,
         }
-        function renderControl() {
-          control?.dispose()
-          const target = device(current.input), layer = target.layers[0], key = field()
-          const full = configurationSchema.dto_schemas.FullParameterInput.schema
-          const layerSchema = configurationSchema.dto_schemas.FullLayerInput.schema
-          const settings = configurationSchema.dto_schemas.DeviceSettingsInput.schema
-          const schema = key === 'thickness' ? layerSchema : key === 'phi_left' ? settings : full
-          const metadata = key === 'thickness' ? layerSchema.properties.thickness
-            : key === 'phi_left' ? settings.properties.phi_left : full.properties[key]
-          const owner = key === 'thickness' ? layer : key === 'phi_left' ? target.settings : layer.parameters
-          const present = owner !== undefined && Object.hasOwn(owner, key)
-          const value = present ? Reflect.get(owner, key) : undefined
-          node('quantity-target').textContent = `Input ${target.id}; ${key === 'phi_left' ? 'settings' : `layer ${layer.id}`}; field ${key}`
-          control = mountQuantityInput(node('quantity-control'), {
-            name: key, metadata, required: required(schema, key),
-            initial: present ? { kind: 'value', value } : { kind: 'omit' },
-            onChange: updateEditState,
-          })
-          updateEditState()
+        /** @param {EditorInput} input */
+        function apply(input) {
+          current = input.schema_version === 'solarlab.device-preparation.v1'
+            ? { name: current.name, endpoint: current.endpoint, kind: 'device', input }
+            : { name: current.name, endpoint: current.endpoint, kind: 'tandem', input }
+          void fixture.panel.select(selection())
         }
-
-        /** Patch one field on a copy; no resolved defaults are copied back.
-         * @param {QuantityEdit} edit @returns {Choice} */
-        function patched(edit) {
-          if (edit.kind === 'incomplete') throw new Error(edit.message)
-          const next = structuredClone(current), target = device(next.input), layer = target.layers[0], key = field()
-          if (key === 'thickness') {
-            if (edit.kind !== 'value' || edit.value === null) throw new Error('Thickness requires a value')
-            layer.thickness = edit.value
-          } else if (key === 'phi_left') {
-            if (edit.kind === 'omit') {
-              if (target.settings) delete target.settings.phi_left
-            } else {
-              if (edit.value === null) throw new Error('Signed voltage does not accept null')
-              target.settings = { ...target.settings, phi_left: edit.value }
-            }
-          } else if (edit.kind === 'omit') {
-            if (layer.parameters) delete layer.parameters[key]
-          } else if (key === 'mu_n') {
-            if (edit.value === null) throw new Error('Mobility does not accept null')
-            layer.parameters = { ...layer.parameters, mu_n: edit.value }
-          } else layer.parameters = { ...layer.parameters, Nc300: edit.value }
-          return next
-        }
-
-        node('preview').addEventListener('click', () => { void fixture.panel.select(selection()) })
+        node('preview').addEventListener('click', () => { fixture.editor.apply() })
         node('reopen').addEventListener('click', () => {
           fixture.panel.dispose()
-          fixture.panel = mountConfigurationPreviewPanel(root, selection())
-          renderControl()
+          fixture.panel = mountConfigurationPreviewPanel(previewRoot, selection())
         })
         select.addEventListener('change', () => {
           const choice = choices.find(item => item.name === select.value)
           if (!choice) return
           current = structuredClone(choice)
-          renderControl()
+          fixture.editor.setInput(current.input)
+          void fixture.panel.select(selection())
         })
-        fields.addEventListener('change', renderControl)
-        apply.addEventListener('click', () => {
-          try {
-            if (!control) return
-            current = patched(control.read())
-            renderControl()
-            void fixture.panel.select(selection())
-          } catch (error) { node('quantity-edit-state').textContent = String(error) }
-        })
-        window.addEventListener('pagehide', () => { control?.dispose(); fixture.panel.dispose() }, { once: true })
-        renderControl()
+        window.addEventListener('pagehide', () => { fixture.editor.dispose(); fixture.panel.dispose() }, { once: true })
         Reflect.set(window, 'configurationPreviewFixture', fixture)
       } catch (error) { node('fixture-error').textContent = String(error) }
     </script>
