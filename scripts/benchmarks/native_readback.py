@@ -534,8 +534,10 @@ class _Protocol:
         _require(inputs["path_identity"] == self.path_id and inputs["mapping_identity"] == self.map_id
                  and inputs["native_admitted"] is False and inputs["endpoint_error_still_required"] is True
                  and inputs["native_readback_error_still_required"] is True, "interval_input_binding")
-        for name in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C", "raw_tangent_L1_additional_error_C"):
+        for name in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C"):
             _nonnegative(inputs[name], 3)
+        # Charge balances have three ledger rows; the L1 departure has two ports.
+        _nonnegative(inputs["raw_tangent_L1_additional_error_C"], 2)
         _require(set(evidence["ledgers"]) == set(_LEDGERS), "missing_charge_ledger")
         for key in _LEDGERS:
             ledger = evidence["ledgers"][key]
@@ -576,6 +578,13 @@ class _Protocol:
         calls = row["arithmetic_calls"]
         _require(type(calls) is list and bool(calls), "arithmetic_receipts_missing")
         for call in calls:
+            if call.get("purpose") == "full-real-interval-precheck":
+                # BallIntegrator.absolute_bound first checks a real enclosure;
+                # this receipt is not an integral value/error estimate.
+                _require(call == {"evaluations": 1, "purpose": "full-real-interval-precheck", "working_bits": 512}
+                         and type(call["evaluations"]) is int and type(call["working_bits"]) is int,
+                         "arithmetic_precheck_receipt")
+                continue
             actual, requested = Fraction(*call["actual_error"]), Fraction(*call["requested_error"])
             _require(type(call["evaluations"]) is int and call["evaluations"] > 0
                      and 0 <= actual <= requested, "arithmetic_receipt_error")

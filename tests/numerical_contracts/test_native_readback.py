@@ -20,7 +20,7 @@ from unittest.mock import patch
 import zlib
 
 from scripts.benchmarks.native_history import HistoryWriter
-from scripts.benchmarks.native_readback import HistoryVerificationError, verify_history
+from scripts.benchmarks.native_readback import HistoryVerificationError, verify_history, _Protocol, _native_packet
 
 
 def digest(value):
@@ -304,13 +304,14 @@ def fixture():
             observation["input_error"] = {"path_identity": path, "mapping_identity": request["map_identity"],
                                           "native_admitted": False, "endpoint_error_still_required": True,
                                           "native_readback_error_still_required": True,
-                                          **{k: zeros for k in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C",
-                                                               "raw_tangent_L1_additional_error_C")}}
+                                          **{k: zeros for k in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C")},
+                                          "raw_tangent_L1_additional_error_C": zeros[:2]}
             rows.append({"kind": "voltage_lift_interval_charge", "segment_id": segment["id"],
                          "left": ptr(left), "right": ptr(right), "coefficient_frame_identity": fid,
                          "observation": tag(observation), "endpoint_restore": None, "normal_query_performed": False,
                          "states_projected": False, "reference_estimates_are_continuum_certificates": False,
-                         "arithmetic_calls": [{"evaluations": 1, "actual_error": [0, 1], "requested_error": [1, 32]}]})
+                         "arithmetic_calls": [{"evaluations": 1, "actual_error": [0, 1], "requested_error": [1, 32]},
+                                              {"evaluations": 1, "purpose": "full-real-interval-precheck", "working_bits": 512}]})
             total_intervals += 1
             left, now = right, then
         predecessor = left["history"]["point_identity"]
@@ -551,6 +552,81 @@ print(json.dumps([name for name in names if name in sys.modules]))
                 (self.folder / "NativeResult.json").write_text(json.dumps(self.result))
                 self.bad(code)
 
+
+
+# NativeAttempt06 S0, first complete interval, record126 at logical3260611.
+# Historical saved data only: no model/solver is constructed by these checks.
+# Exact record SHA b937e7d2d41d06b4f4cbad923def8a3ed5ea46d6c693b3b3a4923f0886228498.
+# The bundle retains its actual request, native packet, domain and endpoint rows.
+_NATIVE06_BUNDLE_SHA256 = '3aa5d6a789f48144fe68a78aaacbfde04717955eee0775451579475f3ce7a2b8'
+
+
+def saved_native_interval():
+    raw = (Path(__file__).with_name("fixtures") / "native_interval_charge.json").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == _NATIVE06_BUNDLE_SHA256
+    data = json.loads(raw)
+    interval_line = (json.dumps(data["interval"], separators=(",", ":"), allow_nan=False) + "\n").encode()
+    assert hashlib.sha256(interval_line).hexdigest() == "b937e7d2d41d06b4f4cbad923def8a3ed5ea46d6c693b3b3a4923f0886228498"
+    return data
+
+
+def verify_saved_interval(data):
+    class SavedRows:
+        def take(self, kind):
+            if data["interval"]["kind"] != kind:
+                raise AssertionError("saved record kind")
+            return deepcopy(data["interval"])
+
+    verifier = _Protocol(data["request"], SavedRows())
+    verifier.segment = data["request"]["segments"][0]
+    verifier.path_id = data["domain"]["evidence"]["path_identity"]
+    frame, verifier.frame_id = _native_packet(data["packet"], verifier.policy, verifier.size)
+    verifier._interval(data["left"], data["right"], frame)
+    return verifier
+
+
+class RecordedNativeIntervalTests(unittest.TestCase):
+    def test_real_complete_interval_and_adjacent_arithmetic_receipts(self):
+        result = verify_saved_interval(saved_native_interval())
+        self.assertEqual(result.intervals, 1)
+
+    def test_real_input_error_dimensions_remain_strict(self):
+        for key in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C", "raw_tangent_L1_additional_error_C"):
+            for change in ("missing", "extra"):
+                with self.subTest(field=key, change=change):
+                    data = saved_native_interval()
+                    values = data["interval"]["observation"]["input_error"][key]["tuple"]
+                    if change == "missing":
+                        values.pop()
+                    else:
+                        values.append({"rational": [0, 1]})
+                    with self.assertRaisesRegex(HistoryVerificationError, "vector_shape"):
+                        verify_saved_interval(data)
+
+    def test_real_input_errors_reject_negative_values(self):
+        for key in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C", "raw_tangent_L1_additional_error_C"):
+            with self.subTest(field=key):
+                data = saved_native_interval()
+                data["interval"]["observation"]["input_error"][key]["tuple"][0] = {"rational": [-1, 1]}
+                with self.assertRaisesRegex(HistoryVerificationError, "nonnegative_rational_vector"):
+                    verify_saved_interval(data)
+
+    def test_real_precheck_receipt_is_not_an_integral_error_estimate(self):
+        for field, value in (("working_bits", 256), ("evaluations", True), ("evaluations", 0), ("actual_error", [0, 1])):
+            with self.subTest(field=field, value=value):
+                data = saved_native_interval()
+                call = next(row for row in data["interval"]["arithmetic_calls"] if row.get("purpose") == "full-real-interval-precheck")
+                call[field] = value
+                with self.assertRaisesRegex(HistoryVerificationError, "arithmetic_precheck_receipt"):
+                    verify_saved_interval(data)
+
+    def test_real_integral_error_budget_is_still_enforced(self):
+        data = saved_native_interval()
+        call = next(row for row in data["interval"]["arithmetic_calls"] if "actual_error" in row)
+        bound = Fraction(*call["requested_error"])
+        call["actual_error"] = [2 * bound.numerator, bound.denominator]
+        with self.assertRaisesRegex(HistoryVerificationError, "arithmetic_receipt_error"):
+            verify_saved_interval(data)
 
 if __name__ == "__main__":
     unittest.main()
