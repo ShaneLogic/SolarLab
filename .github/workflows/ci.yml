@@ -233,15 +233,21 @@ jobs:
         with:
           version: "0.12.13"
           python-version: "3.13.15"
-      - name: Install the locked Python schema producer
+      - name: Install locked Python schema and service dependencies
         working-directory: .
-        run: uv sync --frozen --extra dev --no-editable
+        run: uv sync --frozen --extra dev --extra server --no-editable
       - name: Verify generated input types and compile-time contracts
         working-directory: .
         run: >-
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
           --confcutdir=tests/refactor -o addopts=
           tests/refactor/test_configuration_input_types.py
+      - name: Stored-run client with a real loopback service
+        working-directory: .
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          --confcutdir=tests/runtime -o addopts=
+          tests/runtime/test_run_client_contract.py
       - run: SOLARLAB_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python" npm run test:run
       - run: npm run build
 

@@ -111,11 +111,14 @@ def create_app(
 
     @app.get("/runs/{run_id}")
     def run(request: Request, run_id: str) -> JSONResponse:
-        return JSONResponse(_store(request).get_run(run_id))
+        store = _store(request)
+        return JSONResponse(store.get_run(run_id), headers={"X-RunStore-ID": store.store_id})
 
     @app.get("/runs/{run_id}/attempts/{attempt_id}")
     def attempt(request: Request, run_id: str, attempt_id: str) -> JSONResponse:
-        return JSONResponse(attempt_record(_store(request), run_id, attempt_id))
+        store = _store(request)
+        return JSONResponse(attempt_record(store, run_id, attempt_id),
+                            headers={"X-RunStore-ID": store.store_id})
 
     @app.get("/runs/{run_id}/events")
     def events(
@@ -127,7 +130,8 @@ def create_app(
         store.get_run(run_id)
         page = store.events(after=after, limit=limit, run_id=run_id)
         return JSONResponse({"store_id": store.store_id, "events": page,
-                             "next_cursor": page[-1]["sequence"] if page else after})
+                             "next_cursor": page[-1]["sequence"] if page else after},
+                            headers={"X-RunStore-ID": store.store_id})
 
     @app.get("/runs/{run_id}/attempts/{attempt_id}/events")
     async def stream(
@@ -153,13 +157,15 @@ def create_app(
 
     @app.get("/artifacts/{artifact_id}")
     def artifact(request: Request, artifact_id: str) -> JSONResponse:
-        record, _ = _verified_artifact(_store(request), artifact_id, max_artifact_bytes)
-        return JSONResponse(record)
+        store = _store(request)
+        record, _ = _verified_artifact(store, artifact_id, max_artifact_bytes)
+        return JSONResponse(record, headers={"X-RunStore-ID": store.store_id})
 
     @app.get("/artifacts/{artifact_id}/content")
     def content(request: Request, artifact_id: str) -> Response:
-        record, data = _verified_artifact(_store(request), artifact_id, max_artifact_bytes)
+        store = _store(request)
+        record, data = _verified_artifact(store, artifact_id, max_artifact_bytes)
         return Response(data, media_type="application/octet-stream",
-                        headers={"ETag": f'"{record["sha256"]}"'})
+                        headers={"ETag": f'"{record["sha256"]}"', "X-RunStore-ID": store.store_id})
 
     return app

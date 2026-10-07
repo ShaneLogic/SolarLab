@@ -26,6 +26,7 @@ import uvicorn
 
 from solarlab.io.artifacts import array_artifact, bytes_artifact
 from solarlab.io.run_store import RunStore
+from solarlab_server import app as service_app
 from solarlab_server.app import create_app
 
 
@@ -268,7 +269,7 @@ def test_bounded_pages_terminal_replay_and_server_restart(store):
             response = client.get("/runs/fixture/events", params={"after": cursor, "limit": 2})
             assert response.status_code == 200
             page = response.json()
-            assert page["store_id"] == store.store_id
+            assert page["store_id"] == response.headers["X-RunStore-ID"] == store.store_id
             assert len(page["events"]) <= 2
             if not page["events"]:
                 assert page["next_cursor"] == cursor
@@ -282,15 +283,20 @@ def test_bounded_pages_terminal_replay_and_server_restart(store):
     root = store.root
     store.close()
     with _HTTPServer(root) as restarted, restarted.client() as client:
-        run = client.get("/runs/fixture").json()
+        response = client.get("/runs/fixture")
+        assert response.headers["X-RunStore-ID"] == store.store_id
+        run = response.json()
         assert run["request"] == expected_run["request"]
         assert run["state"] == "succeeded"
-        attempt = client.get(f"/runs/fixture/attempts/{token.attempt_id}").json()
+        response = client.get(f"/runs/fixture/attempts/{token.attempt_id}")
+        assert response.headers["X-RunStore-ID"] == store.store_id
+        attempt = response.json()
         assert attempt["terminal"]["result"] == {"zero": 0, "null": None}
         with client.stream("GET", _url(token) + "?after=0", headers={"Last-Event-ID": str(progress)}) as response:
             assert _all_events(response) == expected[-1:]
         acknowledged = client.get(_url(token), headers={"Last-Event-ID": str(terminal)})
         assert acknowledged.status_code == 204 and acknowledged.content == b""
+        assert acknowledged.headers["X-RunStore-ID"] == store.store_id
         with client.stream("GET", _url(token)) as response:
             assert _all_events(response) == expected
 
@@ -336,6 +342,7 @@ def test_artifacts_exact_array_words_publication_and_later_integrity_errors(stor
         meta = client.get(f"/artifacts/{array['artifact_id']}")
         body = client.get(f"/artifacts/{array['artifact_id']}/content")
         assert meta.status_code == body.status_code == 200
+        assert meta.headers["X-RunStore-ID"] == body.headers["X-RunStore-ID"] == store.store_id
         assert meta.json() == store.artifact(array["artifact_id"])
         assert meta.json()["metadata"]["missing_reason"] is None
         assert body.content == payload.data
@@ -365,6 +372,42 @@ def test_artifact_transport_cap_does_not_serve_partial_or_unverified_bytes(store
             assert response.status_code == 413
             assert "byte limit" in response.json()["detail"]
         assert store.read_artifact(record["artifact_id"]) == b"x" * 32
+
+
+def test_each_successful_read_captures_one_store_for_body_and_header(store, tmp_path, monkeypatch):
+    _enqueue(store)
+    token = _claim(store)
+    artifact = store.publish(token, "bytes", bytes_artifact(b"fixture", metadata={}))
+    terminal = store.complete(token, state="succeeded", result={}, artifacts=[artifact["artifact_id"]])
+    expected_events = store.events(run_id="fixture")
+    with RunStore((tmp_path / "other-store").resolve()) as other:
+        assert other.store_id != store.store_id
+        resolutions = []
+
+        def changing_store(request):
+            # A second lookup within this request would see another store.
+            selected = store if not resolutions else other
+            resolutions.append(selected.store_id)
+            return selected
+
+        monkeypatch.setattr(service_app, "_store", changing_store)
+        cases = [
+            ("/runs/fixture", {}, store.get_run("fixture")),
+            (f"/runs/fixture/attempts/{token.attempt_id}", {}, store.attempts("fixture")[0]),
+            ("/runs/fixture/events", {}, {"store_id": store.store_id, "events": expected_events[:2],
+                                          "next_cursor": expected_events[1]["sequence"]}),
+            (f"/artifacts/{artifact['artifact_id']}", {}, store.artifact(artifact["artifact_id"])),
+            (f"/artifacts/{artifact['artifact_id']}/content", {}, b"fixture"),
+            (_url(token), {"Last-Event-ID": str(terminal)}, b""),
+        ]
+        with _HTTPServer(store.root) as server, server.client() as client:
+            for path, headers, expected in cases:
+                resolutions.clear()
+                response = client.get(path, headers=headers)
+                assert response.status_code == (204 if expected == b"" else 200)
+                assert response.headers["X-RunStore-ID"] == store.store_id
+                assert resolutions == [store.store_id]
+                assert (response.content if isinstance(expected, bytes) else response.json()) == expected
 
 
 def test_rolled_back_terminal_is_not_published_then_real_failure_is_replayed(store, monkeypatch):
