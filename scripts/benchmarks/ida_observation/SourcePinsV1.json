@@ -11,18 +11,18 @@
   "files": {
     "src/sksundae/c_ida.pxd": {
       "original_sha256": "7f1443a261d3e65aecc57dafd2e5632a474f750822ded8867bb68ada55078236",
-      "patched_sha256": "f05558e0e49354f2bc6583a643b3b4f85f7ffbab0cc24e7297341ccc49ac60ee"
+      "patched_sha256": "ac9bcd999b0499c62d28ca4ce8a90aeb8588cab8ebcce0c27597e9c9084617b6"
     },
     "src/sksundae/_cy_ida.pyx": {
       "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
-      "patched_sha256": "a86c7fcb214ff134374b2cb1b29c4b47e28ed58e8347b8f100f250e9dca01daf"
+      "patched_sha256": "f218ddf2fa09f29d37cea19076c09599124854d6609686ba24bf414c6328ddc5"
     },
     "src/sksundae/ida/_solver.py": {
       "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
-      "patched_sha256": "0ad82871c9e9a6e906fb299c455df2fffa684563751d5708c53a1cb2ef6ed0f7"
+      "patched_sha256": "6bb5e5879543efaedc90b576d268a6d1cbfd7e170e32ab153ea7c5ed995d5128"
     }
   },
-  "patch_sha256": "fa86f001a9418b1a8656dd39600f6b1ce60f147c57db4fca245057ff404cdbcf",
+  "patch_sha256": "985153d89620159a7fbfdc00bf96e9995ef382e4e66592869f7c3e832bbf8c43",
   "build_binding_token": "_OBSERVATION_BUILD_ID = None",
   "required_config": {
     "SUNDIALS_VERSION": "7.5.0",
@@ -50,7 +50,7 @@
     "sundials_cvode",
     "sundials_ida"
   ],
-  "copy_header_sha256": "1b01f4071c431c7747cc453bf88ee83b18897fa518961356cdb2c473824ae1c3",
+  "copy_header_sha256": "072b44cca65413a0274c812096f294885e621a876a49e334999b2e6b28579b7d",
   "private_header_sha256": "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce",
   "composed_controls_patch_sha256": "7841508829e5226cc4de3aa0808aaf9a16ef7217cbbfc99e57f8c8955dbfd44b",
   "native_cleanup": {
@@ -97,5 +97,15 @@
     "previous_patch_sha256": "b6ef74bce1d55906c6bada39a1a1235896c21ed5ee68551b01986aec353a1c78",
     "kind": "read-only pinned upstream header word copies with explicit lifecycle validity",
     "upstream_algorithm_or_header_changed": false
+  },
+  "nonlinear_guard": {
+    "policy": "first-correction-wrms-v1",
+    "default": "off",
+    "trace_record_cap": 4096,
+    "headers": {
+      "sunnonlinsol/sunnonlinsol_newton.h": "738770bf87bf52c1ad6358581bb0dbf091145af9b0e4d9c4725f4582490d7383",
+      "sundials/sundials_nonlinearsolver.h": "3289b49b370ae16e761dd2a3287729eedcee34d1ca9e3bb0af0e8f9e7e93c400"
+    },
+    "installation": "public setter, pinned IDAMem and Newton-content capture; original native delegate/data retained"
   }
 }

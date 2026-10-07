@@ -25,9 +25,9 @@ import time
 import zipfile
 
 HERE = Path(__file__).resolve().parent
-MAX_BYTES = 64 * 1024**2
-MAX_RSS = 2 * 1024**3
-MAX_SECONDS = 120
+MAX_BYTES = 1024**3
+MAX_RSS = 3 * 1024**3
+MAX_SECONDS = 300
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -197,6 +197,9 @@ def validate_recipe(recipe: dict) -> None:
     if not config.is_file():
         raise ValueError("matched SUNDIALS SDK unavailable; no build started")
     verify_files(sdk / "include", recipe["sdk_files"], complete=True)
+    for name, identity in pins()["nonlinear_guard"]["headers"].items():
+        if recipe["sdk_files"].get(name) != identity:
+            raise ValueError("nonlinear guard header identity changed: " + name)
     macros = dict(re.findall(r"^#define\s+(\w+)[ \t]*(.*)$", config.read_text(), re.M))
     if (macros.get("SUNDIALS_VERSION", "").strip('"') != "7.5.0"
             or macros.get("SUNDIALS_DOUBLE_PRECISION") != "1"
@@ -261,7 +264,7 @@ def validate_recipe(recipe: dict) -> None:
     if (recipe["environment"]["MACOSX_DEPLOYMENT_TARGET"] != "11.0"
             or digest(Path(recipe["environment"]["SDKROOT"]) / "SDKSettings.json") != recipe["environment"]["SDKSettings_sha256"]):
         raise ValueError("macOS SDK or deployment target changed")
-    if recipe["wheel_filename"] != "scikit_sundae-1.1.3-3ida75nlsstate-cp313-cp313-macosx_11_0_arm64.whl":
+    if recipe["wheel_filename"] != "scikit_sundae-1.1.3-4ida75nlsguard-cp313-cp313-macosx_11_0_arm64.whl":
         raise ValueError("unexpected pilot wheel tag")
 
 
@@ -357,8 +360,8 @@ def pack_overlay(plan: dict) -> dict:
     files["sksundae/_cy_ida.cpython-313-darwin.so"] = Path(plan["extension"])
     wheel_meta = "scikit_sundae-1.1.3.dist-info/WHEEL"
     record_name = "scikit_sundae-1.1.3.dist-info/RECORD"
-    overrides = {wheel_meta: ("Wheel-Version: 1.0\nGenerator: solarlab-ida75-nls-state-binding.v1\n"
-                             "Root-Is-Purelib: false\nBuild: 3ida75nlsstate\nTag: cp313-cp313-macosx_11_0_arm64\n").encode()}
+    overrides = {wheel_meta: ("Wheel-Version: 1.0\nGenerator: solarlab-ida75-nls-guard-binding.v1\n"
+                             "Root-Is-Purelib: false\nBuild: 4ida75nlsguard\nTag: cp313-cp313-macosx_11_0_arm64\n").encode()}
     overlay = work / "overlay"
     overlay.mkdir()
     (work / "wheel").mkdir()

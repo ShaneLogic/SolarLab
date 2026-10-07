@@ -21,7 +21,7 @@ reinitialization or failure does not expose older method values as current.
 `coefficient_getter_available` now reports the private copy and
 `coefficient_getter_kind` identifies that route. No internal pointer escapes.
 These scalars do not reveal a final correction vector or an iteration trace.
-Reads do not advance or mutate history, and the upstream nonlinear algorithm
+Reads do not advance or mutate history, and the default upstream nonlinear algorithm
 and all native library bytes remain unchanged.
 
 BR01 remains explicit: zero-step method fields can be sentinels or retain a
@@ -88,6 +88,38 @@ integrals. The prior exact 2^-55 clock gap and early second-derivative failure
 remain open evidence for their respective proofs.
 
 ## Offline build steps
+
+The optional `nonlin_guard="first-correction-wrms-v1"` wraps the existing
+default Newton convergence callback. It calls that callback exactly once with
+its original data, retains its side effects and every non-success status, and
+changes only first-iteration success with a current correction WRMS above the
+supplied tolerance to `SUN_NLS_CONTINUE`. Later-iteration convergence decisions
+are unchanged. This is a stopping-policy candidate, not a residual or trajectory
+error bound. The default `None` installs no callback and leaves Newton unchanged.
+
+The supported setter is `SUNNonlinSolSetConvTestFn`. Obtaining the existing
+delegate requires the hash-pinned IDAMem and Newton-content layouts; there is
+no public convergence-callback getter. Installation verifies version, native
+library, default solver operations and original callback data. IDA retains
+ownership of Newton, and the guard data outlive its consumer during partial
+setup, reinitialization, dimension changes and destruction.
+
+Guarded calls use `init_step` followed by `step(method="onestep")`. This narrow
+window publishes every call's actual records through `statistics()` and
+`nonlinear_trace()`, including failed calls. Batch/NORMAL use with the optional
+guard is rejected before advancement; default-off behavior remains available.
+Records contain actual iteration, correction norm, supplied tolerance, native
+scalar words, default result and guard result. Unavailable values stay absent;
+observed nonfinite words remain explicitly represented. The trace capacity is
+1–4096 records per native call, default 4096. Overflow keeps the complete stored
+prefix and first omitted callback and prevents a default-success acceptance;
+an existing default failure remains authoritative. A capture failure cannot
+erase an earlier native or Python callback failure.
+
+The composed guard build pins both nonlinear-solver headers and keeps all
+upstream runtime libraries unchanged. Its build envelope is 300 seconds,
+3 GiB RSS and 1 GiB output, subject to an exact external Root grant. Source/ABI
+review and separately admitted native fixtures precede any full S0/B admission.
 
 - `prepare --archive ... --work ...` checks the pinned published sdist and
   applies the exact three-file patch without fuzzy context matching.

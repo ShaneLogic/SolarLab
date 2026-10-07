@@ -2297,6 +2297,59 @@ def test_voltage_lift_explicit_nonlinear_control_refinement(request):
               "unrecorded_or_invalid_changes_rejected": True})
 
 
+def test_voltage_lift_nonlinear_guard_provenance_and_physical_projection(request):
+    from copy import deepcopy
+    from scripts.benchmarks.coupled_device_prototype import (
+        prepare_voltage_lift_native_request, validate_voltage_lift_native_request,
+    )
+
+    case_id = "DynamicAcceptorIonPublicDeviceV1"
+    _, mapping, _, _, context = lift_controller_fixture(case_id)
+    paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(paths[case_id]).read_text())
+    original = deepcopy(previous)
+    baseline = prepare_voltage_lift_native_request(
+        mapping, context.segments, previous, nonlin_conv_coef=1e-8)
+    guarded = prepare_voltage_lift_native_request(
+        mapping, context.segments, previous, nonlin_conv_coef=1e-8,
+        nonlin_guard="first-correction-wrms-v1")
+    validate_voltage_lift_native_request(mapping, context.segments, guarded)
+    assert previous == original and guarded["previous_controls"] == original["controls"]
+    assert guarded["controls"] == dict(baseline["controls"],
+        nonlin_guard="first-correction-wrms-v1", nonlin_trace_capacity=4096)
+    assert guarded["nonlinear_control_refinement"] == baseline["nonlinear_control_refinement"]
+    for key in ("segments", "observation_times", "quadrature", "budgets", "original_budgets",
+                "mandatory", "physical_domain_policy", "observation_policy", "weight_certificate",
+                "numeric_packet", "voltage_lift_map", "z0", "zdot0"):
+        assert guarded[key] == baseline[key], key
+    proof = guarded["nonlinear_guard_policy"]
+    assert proof["ancestor_request_sha256"] == digest(previous)
+    assert proof["previous_controls_sha256"] == digest(previous["controls"])
+    assert digest(guarded) != digest(baseline)
+    assert guarded["preparation_context_sha256"] != baseline["preparation_context_sha256"]
+    for field, value in (("ancestor_request_sha256", "0"*64),
+                         ("previous_controls_sha256", "0"*64), ("trace_capacity", 1024)):
+        changed = deepcopy(guarded)
+        changed["nonlinear_guard_policy"][field] = value
+        with pytest.raises(ContractError, match="nonlinear_guard_binding|native_controls_changed"):
+            validate_voltage_lift_native_request(mapping, context.segments, changed)
+    changed = deepcopy(guarded)
+    del changed["nonlinear_guard_policy"]
+    with pytest.raises(ContractError, match="native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, context.segments, changed)
+    for policy, capacity in (("two-iterations", 4096), (True, 4096),
+                             ("first-correction-wrms-v1", 0),
+                             ("first-correction-wrms-v1", 4097),
+                             ("first-correction-wrms-v1", True)):
+        with pytest.raises(ContractError, match="invalid_nonlinear_guard"):
+            prepare_voltage_lift_native_request(mapping, context.segments, previous,
+                nonlin_conv_coef=1e-8, nonlin_guard=policy, nonlin_trace_capacity=capacity)
+    log_case(request, {"family": "native_nonlinear_guard", "case": case_id,
+                       "request_sha256": digest(guarded), "policy": proof, "native_steps": 0},
+             {"original_controls_and_physical_projection_retained": True,
+              "explicit_policy_identity": True, "unbound_changes_rejected": True})
+
+
 def full_word_fractions(value):
     """Independent readback for tests; no consumer uses this arithmetic."""
     return [sum((lift_fraction(word.ravel()[i]) for word in value.words), Fraction())

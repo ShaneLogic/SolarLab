@@ -3384,10 +3384,43 @@ def _voltage_lift_nonlinear_refinement(previous_controls, ancestor_sha256, value
             "ancestor_request_sha256": ancestor_sha256}
 
 
+def _voltage_lift_nonlinear_guard(previous_controls, ancestor_sha256, policy, capacity):
+    """Bind the optional native policy and its resource-only trace capacity."""
+    if (not isinstance(policy, str) or policy != "first-correction-wrms-v1"
+            or isinstance(capacity, bool) or not isinstance(capacity, int)
+            or not 1 <= capacity <= 4096
+            or not isinstance(ancestor_sha256, str) or len(ancestor_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in ancestor_sha256)):
+        raise ContractError("voltage_lift_invalid_nonlinear_guard")
+    return {"schema": "solarlab.voltage-lift-nonlinear-guard.v1", "policy": policy,
+            "trace_capacity": capacity,
+            "previous_controls_sha256": digest(dict(previous_controls)),
+            "ancestor_request_sha256": ancestor_sha256}
+
+
+def _voltage_lift_guard_applied(raw_statistics, controls):
+    """Requested policy alone cannot establish actual installation or tracing."""
+    policy = controls.get("nonlin_guard")
+    if policy is None:
+        return
+    trace = raw_statistics.get("nonlinear_guard")
+    if (not isinstance(trace, Mapping) or trace.get("installed_at_capture") is not True
+            or trace.get("applied_policy") != policy or trace.get("requested_policy") != policy
+            or trace.get("delegate_data_verified") is not True
+            or trace.get("newton_ops_verified") is not True or trace.get("complete") is not True
+            or trace.get("capacity") != controls["nonlin_trace_capacity"]
+            or trace.get("owner") != raw_statistics.get("observation_owner")
+            or trace.get("generation") != raw_statistics.get("observation_generation")
+            or trace.get("build_identity") != raw_statistics.get("nonlinear_control_state", {}).get("build_identity")):
+        raise ContractError("voltage_lift_nonlinear_guard_not_applied")
+
+
 def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         segments: tuple[ProtocolSegment, ...],
                                         previous_request: Mapping, *,
-                                        nonlin_conv_coef: float | None = None) -> dict:
+                                        nonlin_conv_coef: float | None = None,
+                                        nonlin_guard: str | None = None,
+                                        nonlin_trace_capacity: int = 4096) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     if (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3
@@ -3412,6 +3445,13 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
         refinement = _voltage_lift_nonlinear_refinement(
             old["controls"], digest(old), nonlin_conv_coef)
         controls["nonlin_conv_coef"] = refinement["value"]
+    guard = None
+    if nonlin_guard is not None:
+        guard = _voltage_lift_nonlinear_guard(
+            old["controls"], digest(old), nonlin_guard, nonlin_trace_capacity)
+        controls.update(nonlin_guard=guard["policy"], nonlin_trace_capacity=guard["trace_capacity"])
+    elif type(nonlin_trace_capacity) is not int or nonlin_trace_capacity != 4096:
+        raise ContractError("voltage_lift_invalid_nonlinear_guard")
     request = {
         "schema": "solarlab.voltage-lift-native-request.v1", "case_id": model.definition.id,
         "prior_request_sha256": digest(old), "numeric_packet": packet,
@@ -3447,6 +3487,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
     }
     if refinement is not None:
         request["nonlinear_control_refinement"] = refinement
+    if guard is not None:
+        request["nonlinear_guard_policy"] = guard
     # This preparation context deliberately precedes the final request. Its
     # digest remains labelled as such; no self-referential hash is invented.
     context = AffineSamplingContext(model, request)
@@ -3481,6 +3523,16 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
         if digest(refinement) != digest(expected):
             raise ContractError("voltage_lift_nonlinear_refinement_binding")
         controls["nonlin_conv_coef"] = expected["value"]
+    guard = request.get("nonlinear_guard_policy")
+    if guard is not None:
+        if not isinstance(guard, Mapping):
+            raise ContractError("voltage_lift_invalid_nonlinear_guard")
+        expected = _voltage_lift_nonlinear_guard(
+            request["previous_controls"], request["prior_request_sha256"],
+            guard.get("policy"), guard.get("trace_capacity"))
+        if digest(guard) != digest(expected):
+            raise ContractError("voltage_lift_nonlinear_guard_binding")
+        controls.update(nonlin_guard=expected["policy"], nonlin_trace_capacity=expected["trace_capacity"])
     if (digest(proof) != digest(request["weight_certificate"])
             or digest(controls) != digest(request["controls"])
             or controls.get("calc_initcond") is not None
@@ -3696,12 +3748,14 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             counts["initializations"] += 1
             initialized = snapshot_solver_result(solver.init_step(segment.start, z, initial_zdot))
             last_attempt = snapshot_receipt("initialization_return", segment, initialized)
-            save(ida_statistics_snapshot(solver, segment.id, segment_index+1,
-                                         "initialization_return", segment.start, initialized["time"], logical_initialization=True))
+            initial_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                "initialization_return", segment.start, initialized["time"], logical_initialization=True)
+            save(initial_stats)
             if (not initialized["success"] or initialized["time"] != segment.start
                     or not np.array_equal(initialized["z"], z)
                     or not np.array_equal(initialized["zdot"], initial_zdot)):
                 raise ContractError("voltage_lift_initialization_changed_state_or_failed")
+            _voltage_lift_guard_applied(initial_stats["raw_statistics"], controls)
             left_pair = checked_sample(binding, initialized, predecessor, "segment_initial")
             left, last_numerical = left_pair[0], pointer(left_pair)
             left_native = initialized
@@ -3741,6 +3795,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 last_attempt = snapshot_receipt("native_return", segment, native)
                 if not native["success"]:
                     raise ContractError("voltage_lift_solver_failure:"+native["message"])
+                _voltage_lift_guard_applied(after_stats["raw_statistics"], controls)
                 t = native["time"]
                 if not left.time < t <= segment.end:
                     raise ContractError("voltage_lift_interval_not_monotone")

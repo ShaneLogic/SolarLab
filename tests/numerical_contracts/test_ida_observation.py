@@ -615,3 +615,248 @@ class TestNativeCompositionLifetime:
         assert state["phase"] == "no_current_successful_endpoint"
         assert state["epcon"] == 1e-8 and state["valid_fields"] == ("epcon",)
         assert all(state[name] is None for name in ("epsNewt", "ss", "oldnrm", "toldel"))
+
+
+# Compiled from this exact source by the reviewed build operation, and only
+# executed under the native-fixture grant. The assigned ss/iteration values
+# are explicit synthetic callback inputs, never reconstructed device history.
+GUARD_CALLBACK_FIXTURE_C = r"""
+#include <assert.h>
+#include <stdio.h>
+#include "ida_observation_copy.h"
+static SUNNonlinSolConvTestFn real_delegate;
+static void *real_data;
+static int delegate_calls, forced_status;
+static int residual(sunrealtype t, N_Vector y, N_Vector yp, N_Vector r, void *data)
+{
+    (void)t; (void)y; (void)data;
+    N_VScale(1., yp, r);
+    return 0;
+}
+static int counted_delegate(SUNNonlinearSolver n, N_Vector y, N_Vector d,
+                            sunrealtype tol, N_Vector w, void *data)
+{
+    int result;
+    assert(data == real_data);
+    delegate_calls++;
+    result = real_delegate(n, y, d, tol, w, data);
+    return forced_status ? forced_status : result;
+}
+int main(void)
+{
+    SUNContext ctx = NULL;
+    void *mem = NULL;
+    IDAMem m;
+    N_Vector y, yp, delta, weights;
+    sl_ida75_guard *g = NULL;
+    SUNNonlinearSolverContent_Newton nc;
+    int original_status, guarded_status, calls;
+    sunrealtype expected_oldnrm, expected_ss;
+    assert(SUNContext_Create(SUN_COMM_NULL, &ctx) == 0);
+    y = N_VNew_Serial(1, ctx); yp = N_VClone(y);
+    delta = N_VClone(y); weights = N_VClone(y);
+    assert(y && yp && delta && weights);
+    N_VConst(0., y); N_VConst(0., yp); N_VConst(1., weights);
+    mem = IDACreate(ctx); assert(mem);
+    assert(IDAInit(mem, residual, 0., y, yp) == 0);
+    m = (IDAMem)mem;
+    assert(sl_ida75_guard_install(mem, 1, 1, 0, &g) == SL_GUARD_OWNER && !g);
+    assert(sl_ida75_guard_install(mem, 1, 1, 8, &g) == 0);
+    assert(g->original_data == mem && m->ownNLS);
+    real_delegate = g->original; real_data = g->original_data;
+    nc = (SUNNonlinearSolverContent_Newton)m->NLS->content;
+    assert(sl_ida75_guard_check(g, mem, 1) == 0);
+    assert(sl_ida75_guard_check(g, mem, 2) == SL_GUARD_OWNER);
+    assert(sl_ida75_guard_check(g, NULL, 1) == SL_GUARD_OWNER);
+    /* Keep the real default under a counting C delegate, solely in this test. */
+    g->original = counted_delegate;
+    m->ida_toldel = 1e-12; m->ida_ss = 5e-11; m->ida_oldnrm = 17.;
+    nc->curiter = 0; N_VConst(.5, delta);
+    original_status = real_delegate(m->NLS, y, delta, 1e-8, weights, real_data);
+    expected_oldnrm = m->ida_oldnrm; expected_ss = m->ida_ss;
+    m->ida_oldnrm = 17.; m->ida_ss = 5e-11;
+    assert(sl_ida75_guard_begin(g, mem, 1) == 0);
+    calls = delegate_calls;
+    guarded_status = nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data);
+    assert(delegate_calls == calls+1 && original_status == SUN_SUCCESS);
+    assert(guarded_status == SUN_NLS_CONTINUE && g->records[0].override);
+    assert(m->ida_oldnrm == expected_oldnrm && m->ida_ss == expected_ss);
+    assert(g->records[0].norm == .5 && g->records[0].default_status == 0);
+    assert(!g->records[0].oldnrm_before_valid && g->records[0].oldnrm_after_valid);
+    sl_ida75_guard_end(g, guarded_status);
+
+    /* A small current correction and subsequent-iteration decisions pass. */
+    assert(sl_ida75_guard_begin(g, mem, 1) == 0);
+    nc->curiter = 0; N_VConst(1e-10, delta); m->ida_ss = 5e-11;
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == 0);
+    assert(!g->records[0].override);
+    nc->curiter = 1; m->ida_oldnrm = .5; m->ida_ss = .1; N_VConst(1e-6, delta);
+    original_status = real_delegate(m->NLS, y, delta, 1e-8, weights, real_data);
+    expected_ss = m->ida_ss;
+    m->ida_ss = .1;
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == original_status);
+    assert(original_status == 0 && m->ida_ss == expected_ss && !g->records[1].override);
+    /* Default continue and recoverable status remain exact. */
+    nc->curiter = 0; m->ida_ss = 20.; N_VConst(.5, delta);
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == SUN_NLS_CONTINUE);
+    nc->curiter = 1; m->ida_oldnrm = .5; N_VConst(.5, delta);
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == SUN_NLS_CONV_RECVR);
+    /* A negative delegate status wins, while the real callback still runs once. */
+    nc->curiter = 0; forced_status = -77; m->ida_oldnrm = 9.; calls = delegate_calls;
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == -77);
+    assert(delegate_calls == calls+1 && m->ida_oldnrm == .5);
+    forced_status = 0;
+    sl_ida75_guard_end(g, -77);
+
+    /* Overflow preserves the stored prefix and first omitted real callback. */
+    g->capacity = 1;
+    assert(sl_ida75_guard_begin(g, mem, 1) == 0);
+    nc->curiter = 0; m->ida_ss = 5e-11; N_VConst(1e-10, delta);
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == 0);
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == SL_GUARD_TRACE_FULL);
+    assert(g->count == 1 && g->calls == 2 && g->overflow);
+    assert(g->first_unrecorded.sequence == 2 && g->first_unrecorded.default_status == 0);
+    forced_status = -78; calls = delegate_calls;
+    assert(nc->CTest(m->NLS, y, delta, 1e-8, weights, nc->ctest_data) == -78);
+    assert(delegate_calls == calls+1 && g->first_unrecorded.sequence == 2);
+    sl_ida75_guard_end(g, -78);
+    assert(IDAReInit(mem, 0., y, yp) == 0);
+    assert(sl_ida75_guard_reinit(g, mem, 2) == 0 && g->generation == 2);
+    assert(g->count == 0 && !g->oldnrm_valid && m->ownNLS);
+    assert(sl_ida75_guard_check(g, mem, 2) == 0);
+    IDAFree(&mem); assert(!mem); sl_ida75_guard_free(&g); assert(!g);
+    sl_ida75_guard_free(&g);
+    N_VDestroy(weights); N_VDestroy(delta); N_VDestroy(yp); N_VDestroy(y);
+    assert(SUNContext_Free(&ctx) == 0);
+    printf("{\"passed\":true,\"real_default_callback\":true,\"default_once\":true,"
+           "\"negative_and_recoverable_retained\":true,\"overflow_visible\":true,"
+           "\"closed\":true,\"Newton_content_bytes\":%zu,\"guard_record_bytes\":%zu}\n",
+           sizeof(struct _SUNNonlinearSolverContent_Newton), sizeof(sl_ida75_guard_record));
+    return 0;
+}
+"""
+
+
+class TestNativeFirstCorrectionGuard:
+    def test_captured_default_contract_and_pinned_abi(self, native):
+        import subprocess
+        path = Path(os.environ["SOLARLAB_IDA_GUARD_FIXTURE"])
+        expected = os.environ["SOLARLAB_IDA_GUARD_FIXTURE_SHA256"]
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+        result = subprocess.run([str(path)], check=True, capture_output=True, text=True, timeout=5)
+        proof = json.loads(result.stdout)
+        assert all(proof[name] for name in ("passed", "real_default_callback", "default_once",
+                                          "negative_and_recoverable_retained", "overflow_visible", "closed"))
+        print("NATIVE_DEFAULT_GUARD_CONTRACT", result.stdout.strip())
+
+    def test_guarded_native_trace_and_immutable_owner_records(self, native):
+        _, make = native
+        solver = make(sparse=True, nonlin_conv_coef=1e-8, nonlin_guard="first-correction-wrms-v1")
+        solver.init_step(0., [1., 2.], [1., 2.])
+        before = solver.statistics()
+        installed = before["nonlinear_guard"]
+        assert installed["installed_at_capture"] and installed["delegate_data_verified"]
+        assert installed["applied_policy"] == "first-correction-wrms-v1"
+        assert installed["callback_count"] == installed["record_count"] == 0
+        copies, overrides = [], 0
+        for _ in range(12):
+            result = solver.step(.125, method="onestep", tstop=.125)
+            assert result.success
+            after = solver.statistics()
+            trace = after["nonlinear_guard"]
+            assert trace == solver.nonlinear_trace()
+            assert trace["owner"] == after["observation_owner"]
+            assert trace["generation"] == after["observation_generation"]
+            assert trace["complete"] and not trace["overflow"]
+            assert trace["callback_count"] == trace["record_count"] > 0
+            assert trace["callback_count"] == after["nonlinear_iters"] - before["nonlinear_iters"]
+            for i, row in enumerate(trace["records"], 1):
+                assert row["sequence"] == i and row["iteration_getter_status"] == 0
+                assert row["tolerance"] == after["nonlinear_control_state"]["epsNewt"] == 1e-8
+                assert not row["nonfinite_fields"]
+                if row["guard_override"]:
+                    assert row["iteration"] == 0 and row["default_status"] == 0
+                    assert row["correction_wrms"] > row["tolerance"]
+                    assert row["returned_status"] == 901
+                    overrides += 1
+                else:
+                    assert row["returned_status"] == row["default_status"]
+            copies.append(json.dumps(trace, sort_keys=True))
+            trace["records"][0]["ss_after"] = -1
+            assert solver.nonlinear_trace()["records"][0]["ss_after"] >= 0
+            before = after
+            if result.t >= .125:
+                break
+        assert copies
+        assert overrides > 0, "this discriminating polynomial fixture must exercise the guard"
+        print("GUARDED_NATIVE_CALLBACKS", json.dumps({"calls": len(copies), "overrides": overrides,
+                                                       "last": solver.nonlinear_trace()}))
+
+    def test_overflow_is_visible_and_prevents_acceptance(self, native):
+        _, make = native
+        solver = make(sparse=True, nonlin_conv_coef=1e-8,
+                      nonlin_guard="first-correction-wrms-v1", nonlin_trace_capacity=1)
+        solver.init_step(0., [1., 2.], [1., 2.])
+        result = solver.step(.125, method="onestep", tstop=.125)
+        assert not result.success
+        trace = solver.nonlinear_trace()
+        assert trace == solver.statistics()["nonlinear_guard"]
+        assert trace["overflow"] and not trace["complete"] and trace["record_count"] == 1
+        assert trace["first_unrecorded"]["sequence"] == 2
+        assert trace["first_unrecorded"]["returned_status"] == -7011
+        assert trace["native_status"] == result.status < 0
+        print("GUARD_OVERFLOW_RETAINED", json.dumps(trace))
+
+    def test_reinit_dimension_change_partial_setup_and_default_off(self, native):
+        import gc
+        import weakref
+        import numpy as np
+        from sksundae.ida import IDA
+        def residual(t, y, yp, out):
+            out[:] = yp + y
+        def jacobian(t, y, yp, out, cj, matrix):
+            matrix[:] = np.eye(y.size) * (cj + 1.)
+        solver = IDA(residual, jacfn=jacobian, nonlin_guard="first-correction-wrms-v1",
+                     nonlin_conv_coef=1e-8, first_step=1e-5, max_step=1e-3)
+        retained = []
+        for generation, y in enumerate(([1., 2.], [1., 2.], [1., 2., 3.]), 1):
+            yp = [-v for v in y]
+            assert solver.init_step(0., y, yp).success
+            initial = solver.nonlinear_trace()
+            assert initial["generation"] == generation and initial["operation"] == 0
+            assert initial["record_count"] == 0
+            assert solver.step(.01, method="onestep", tstop=.01).success
+            trace = solver.nonlinear_trace()
+            assert trace["generation"] == generation and trace["operation"] == 1
+            assert trace["complete"] and trace["installed_at_capture"]
+            retained.append(trace)
+        assert [x["generation"] for x in retained] == [1, 2, 3]
+        with pytest.raises(ValueError, match="requires init_step/step"):
+            solver.step(.01, method="normal")
+        with pytest.raises(ValueError, match="requires init_step/step"):
+            solver.solve([0., .01], [1., 2.], [-1., -2.])
+        ref = weakref.ref(solver)
+        del solver
+        gc.collect()
+        assert ref() is None and retained[0]["records"]
+        partial = IDA(residual, jacfn=jacobian, atol=[1e-9]*3,
+                      nonlin_guard="first-correction-wrms-v1", first_step=1e-5)
+        with pytest.raises(ValueError):
+            partial.init_step(0., [1., 2.], [-1., -2.])
+        assert partial.init_step(0., [1., 2., 3.], [-1., -2., -3.]).success
+        assert partial.nonlinear_trace()["generation"] == 2
+        ref = weakref.ref(partial)
+        del partial
+        gc.collect()
+        assert ref() is None
+        _, make = native
+        results = []
+        for options in ({}, {"nonlin_guard": None}):
+            off = make(**options)
+            off.init_step(0., [1., 2.], [1., 2.])
+            result = off.step(.125, method="onestep", tstop=.125)
+            assert off.nonlinear_trace()["status"] == "disabled"
+            assert not off.statistics()["nonlinear_guard"]["installed_at_capture"]
+            results.append((result.t, result.y.tobytes(), result.yp.tobytes(), result.status))
+        assert results[0] == results[1]
+        print("GUARD_REINIT_DIMENSION_PARTIAL_AND_DEFAULT_OFF_CLOSED")

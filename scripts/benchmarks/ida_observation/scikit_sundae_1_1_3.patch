@@ -31,7 +31,7 @@
      
      # free functions
      void IDAFree(void** mem)
-@@ -103,3 +120,25 @@
+@@ -103,3 +120,47 @@
  
      # optional outputs from LS interface
      int IDAGetNumJacEvals(void* mem, long int* njevals)
@@ -39,6 +39,7 @@
 +
 +# Source-owned 7.5.0 serial-word copier, compiled in this owning extension.
 +from libc.stddef cimport size_t
++from libc.stdint cimport uint64_t
 +cdef extern from "ida_observation_copy.h":
 +    const char* sl_ida75_library_path()
 +    int sl_ida75_copy(void* memory, sunindextype n, long ns,
@@ -52,6 +53,27 @@
 +                           sunrealtype hn, int qn, int read_step,
 +                           sunrealtype* values, size_t count)
 +
++    ctypedef struct sl_ida75_guard_record:
++        long generation, operation, sequence, step
++        int iteration, iteration_status, default_status, returned_status, override
++        int oldnrm_before_valid, oldnrm_after_valid, norm_observed, norm_valid
++        sunrealtype norm, tolerance, ss_before, ss_after, oldnrm_before, oldnrm_after
++        sunrealtype toldel, time, cj
++    ctypedef struct sl_ida75_guard:
++        long generation, operation, calls
++        size_t capacity, count
++        int active, overflow
++        sl_ida75_guard_record* records
++        sl_ida75_guard_record first_unrecorded
++    int sl_ida75_guard_install(void* memory, sunindextype size, long generation,
++                               size_t capacity, sl_ida75_guard** out)
++    int sl_ida75_guard_check(sl_ida75_guard* g, void* memory, long generation)
++    int sl_ida75_guard_reinit(sl_ida75_guard* g, void* memory, long generation)
++    int sl_ida75_guard_begin(sl_ida75_guard* g, void* memory, long generation)
++    void sl_ida75_guard_end(sl_ida75_guard* g, int native_status)
++    void sl_ida75_guard_free(sl_ida75_guard** g)
++    uint64_t sl_ida75_guard_word(sunrealtype value)
++
 +
 +# Only allocation/free are source-owned; numerical operations use pinned native exports.
 +cdef extern from "ida_superlumt_cleanup.h":
@@ -59,19 +81,22 @@
 +                                           int nthreads, SUNContext ctx)
 --- a/src/sksundae/_cy_ida.pyx
 +++ b/src/sksundae/_cy_ida.pyx
-@@ -6,6 +6,11 @@
+@@ -6,7 +6,13 @@
  # Standard library
  import os
  import inspect
+-
 +from hashlib import sha256
 +from pathlib import Path
 +from threading import RLock
 +from types import MappingProxyType
 +from uuid import uuid4
- 
++
++from copy import deepcopy
  from warnings import warn
  from numbers import Integral, Real
-@@ -21,6 +26,7 @@
+ from typing import Callable, Iterable
+@@ -21,6 +27,7 @@
  
  # Extern cdef headers
  from .c_ida cimport *
@@ -79,7 +104,7 @@
  from .c_nvector cimport *
  from .c_sundials cimport *
  from .c_sunmatrix cimport *
-@@ -34,6 +40,29 @@
+@@ -34,6 +41,30 @@
  from .utils import RichResult
  from .ida._precond import IDAPrecond
  from .ida._jactimes import IDAJacTimes
@@ -89,6 +114,7 @@
 +_OBSERVATION_LIBRARIES = ()
 +_OBSERVATION_CONFIG_SHA256 = None
 +_OBSERVATION_HEADER_SHA256 = "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce"
++_OBSERVATION_NEWTON_HEADER_SHA256 = '738770bf87bf52c1ad6358581bb0dbf091145af9b0e4d9c4725f4582490d7383'
 +_OBSERVATION_SCHEMA = "sksundae.ida.accepted-step-observation.v1"
 +_OBSERVATION_CONFIG = tuple(sorted(config.items()))
 +
@@ -109,7 +135,7 @@
  
  
  # Messages shorted from documentation online:
-@@ -464,8 +493,17 @@
+@@ -464,8 +495,21 @@
      cdef object _malloc         # bool - flag for memory allocation
      cdef object _options        # dict[str, Any]
      cdef object _initialized    # bool - flag for init_step completion
@@ -117,6 +143,8 @@
 +    cdef object _obs_reason, _obs_binding
 +    cdef long _obs_generation
 +    cdef bint _obs_busy
++    cdef sl_ida75_guard* _nls_guard
++    cdef object _nls_trace
  
      def __cinit__(self, object resfn, **options):
 +        self._obs_lock = RLock()
@@ -124,18 +152,22 @@
 +        self._obs_generation = 0
 +        self._obs_busy = False
 +        self._obs_binding = None
++        self._nls_guard = NULL
++        self._nls_trace = None
          self._free_memory()
          
          self._options = {
-@@ -488,6 +526,7 @@
+@@ -488,6 +532,9 @@
              "max_order": 5,
              "max_num_steps": 500,
              "max_nonlin_iters": 4,
 +            "nonlin_conv_coef": None,
++            "nonlin_guard": None,
++            "nonlin_trace_capacity": 4096,
              "max_conv_fails": 10,
              "constraints_idx": None,
              "constraints_type": None,
-@@ -544,7 +583,7 @@
+@@ -544,7 +591,7 @@
              nthreads = <int> self._options["nthreads"]
  
              self.A = SUNSparseMatrix(self.NEQ, self.NEQ, nnz, CSC_MAT, self.ctx)
@@ -144,7 +176,7 @@
  
          elif linsolver == "gmres":
              self.LS = SUNLinSol_SPGMR(self.yy, prectype, maxl, self.ctx)
-@@ -587,42 +626,48 @@
+@@ -587,42 +634,49 @@
              raise RuntimeError("IDAtolerances - " + IDAMESSAGES[flag])
  
      cdef _free_memory(self):
@@ -154,7 +186,9 @@
          if self.mem is not NULL:
              IDAFree(&self.mem)
              self.mem = NULL
- 
+-
++        sl_ida75_guard_free(&self._nls_guard)
++
 +        # Dependencies outlive their native consumers.
 +        if self.LS is not NULL:
 +            SUNLinSolFree(self.LS)
@@ -221,7 +255,21 @@
          self._size = None
          self._malloc = False
  
-@@ -732,6 +777,13 @@
+@@ -680,6 +734,13 @@
+         flag = IDAInit(self.mem, _resfn_wrapper, t0, self.yy, self.yp)
+         if flag < 0:
+             raise RuntimeError("IDAInit - " + IDAMESSAGES[flag])
++
++        if self._options["nonlin_guard"] is not None:
++            self._obs_bind_source()
++            flag = sl_ida75_guard_install(self.mem, self.NEQ, self._obs_generation,
++                <size_t>self._options["nonlin_trace_capacity"], &self._nls_guard)
++            if flag != 0:
++                raise IDAObservationError("nonlinear_guard_install_failed", "install", flag)
+ 
+         # 9) Specify integration tolerances
+         self._set_tolerances()
+@@ -732,6 +793,13 @@
          if flag < 0:
              raise RuntimeError("IDASetMaxNonlinIters - " + IDAMESSAGES[flag])
  
@@ -235,7 +283,7 @@
          cdef int max_conv_fails = <int> self._options["max_conv_fails"]
          flag = IDASetMaxConvFails(self.mem, max_conv_fails)
          if flag < 0:
-@@ -820,6 +872,10 @@
+@@ -820,6 +888,10 @@
          cdef int ic_opt
          cdef sunrealtype ic_t0
  
@@ -246,29 +294,52 @@
          yy_tmp = y0.copy()
          yp_tmp = yp0.copy()
  
-@@ -878,6 +934,7 @@
+@@ -840,6 +912,9 @@
+             flag = IDAReInit(self.mem, t0, self.yy, self.yp)
+             if flag < 0:
+                 raise RuntimeError("IDAReInit - " + IDAMESSAGES[flag])
++            flag = sl_ida75_guard_reinit(self._nls_guard, self.mem, self._obs_generation)
++            if flag != 0:
++                raise IDAObservationError("nonlinear_guard_reinit_failed", "reinit", flag)
+ 
+         # 16) Correct initial values
+         calc_initcond = self._options["calc_initcond"]
+@@ -878,6 +953,8 @@
              nfev=nfev, njev=njev,
          )
  
 +        self._obs_endpoint = self._obs_point(0, t0, t0, flag)
++        self._nls_trace = self._guard_snapshot(None)
          return result
  
      cdef _step(self, sunrealtype tt, object method, object tstop):
-@@ -899,11 +956,13 @@
+@@ -899,11 +976,21 @@
          yp_tmp = self.aux.np_yp
          
          # 17) Advance solution in time
 +        observation_before = self._obs_before_step()
++        guard_status = sl_ida75_guard_begin(self._nls_guard, self.mem, self._obs_generation)
++        if guard_status != 0:
++            raise IDAObservationError("nonlinear_guard_begin_failed", "begin", guard_status)
          flag = IDASolve(self.mem, tt, &tout, self.yy, self.yp, itask)
- 
-         if PyErr_Occurred():
-             _pyerr_handler()
- 
+-
+-        if PyErr_Occurred():
+-            _pyerr_handler()
+-
++        sl_ida75_guard_end(self._nls_guard, flag)
++        try:
++            if PyErr_Occurred():
++                _pyerr_handler()
++        except BaseException:
++            self._guard_store(flag, True)
++            raise
++        self._guard_store(flag)
++
 +        self._obs_after_step(observation_before, tout, flag)
          svec2np(self.yy, yy_tmp)
          svec2np(self.yp, yp_tmp)
  
-@@ -968,11 +1027,13 @@
+@@ -968,11 +1055,13 @@
          while True:
              tend = tspan[ind]
  
@@ -282,7 +353,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1059,11 +1120,13 @@
+@@ -1059,11 +1148,13 @@
  
          # 17) Advance solution in time
          while True:
@@ -296,7 +367,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1111,49 +1174,408 @@
+@@ -1111,49 +1202,489 @@
  
          return result
  
@@ -618,6 +689,8 @@
 +            try:
 +
 +                method = method.lower()
++                if self._options["nonlin_guard"] is not None and method != "onestep":
++                    raise ValueError("nonlin_guard requires init_step/step(method='onestep')")
 +                valid = {"normal", "onestep"}
 +                if method not in valid:
 +                    raise ValueError(f"'method' is invalid. Valid values are {valid}.")
@@ -666,6 +739,8 @@
 +            self._obs_busy = True
 +            try:
 +
++                if self._options["nonlin_guard"] is not None:
++                    raise ValueError("nonlin_guard requires init_step/step(method='onestep')")
 +                tspan = np.asarray(tspan, DTYPE)
 +                y0 = np.asarray(y0, DTYPE)
 +                yp0 = np.asarray(yp0, DTYPE)
@@ -692,6 +767,82 @@
 +                raise
 +            finally:
 +                self._obs_busy = False
++
++    cdef _guard_row(self, sl_ida75_guard_record row):
++        names = ("correction_wrms", "tolerance", "ss_before", "ss_after",
++                 "oldnrm_before", "oldnrm_after", "toldel", "time", "cj")
++        values = (row.norm, row.tolerance, row.ss_before, row.ss_after,
++                  row.oldnrm_before, row.oldnrm_after, row.toldel, row.time, row.cj)
++        words = (sl_ida75_guard_word(row.norm), sl_ida75_guard_word(row.tolerance),
++                 sl_ida75_guard_word(row.ss_before), sl_ida75_guard_word(row.ss_after),
++                 sl_ida75_guard_word(row.oldnrm_before), sl_ida75_guard_word(row.oldnrm_after),
++                 sl_ida75_guard_word(row.toldel), sl_ida75_guard_word(row.time),
++                 sl_ida75_guard_word(row.cj))
++        available = (bool(row.norm_observed), True, True, True,
++                     bool(row.oldnrm_before_valid), bool(row.oldnrm_after_valid), True, True, True)
++        result = {name: value if known and isfinite(value) else None
++                  for name, value, known in zip(names, values, available)}
++        result.update(generation=row.generation, operation=row.operation,
++            sequence=row.sequence, native_step=row.step, iteration=row.iteration,
++            iteration_getter_status=row.iteration_status, default_status=row.default_status,
++            returned_status=row.returned_status, guard_override=bool(row.override),
++            native_words={name: format(word, "016x") if known else None
++                          for name, word, known in zip(names, words, available)},
++            nonfinite_fields=tuple(name for name, value, known in zip(names, values, available)
++                                   if known and not isfinite(value)))
++        return result
++
++    cdef _guard_snapshot(self, native_status):
++        cdef size_t i
++        cdef int status
++        cdef sl_ida75_guard* g = self._nls_guard
++        if g is NULL:
++            return {"schema": "sksundae.ida.nonlinear-guard-trace.v1",
++                    "requested_policy": self._options["nonlin_guard"],
++                    "installed_at_capture": False, "status": "disabled",
++                    "records": (), "complete": True}
++        status = sl_ida75_guard_check(g, self.mem, self._obs_generation)
++        if status != 0 or g.active:
++            raise IDAObservationError("nonlinear_guard_owner_changed", "capture", status)
++        records = []
++        for i in range(g.count):
++            records.append(self._guard_row(g.records[i]))
++        records = tuple(records)
++        return {"schema": "sksundae.ida.nonlinear-guard-trace.v1",
++                "requested_policy": self._options["nonlin_guard"],
++                "applied_policy": "first-correction-wrms-v1", "installed_at_capture": True,
++                "delegate_data_verified": True, "newton_ops_verified": True,
++                "owner": self._obs_instance, "generation": g.generation,
++                "operation": g.operation, "native_status": native_status,
++                "status": "initialized" if g.operation == 0 else "returned",
++                "capacity": g.capacity, "callback_count": g.calls, "record_count": g.count,
++                "complete": not g.overflow, "overflow": bool(g.overflow),
++                "first_unrecorded": self._guard_row(g.first_unrecorded) if g.overflow else None,
++                "records": records, "scope": "this IDASolve call, including retries; not a last-correction estimate",
++                "build_identity": self._obs_bind_source()["identity"],
++                "source_header_sha256": _OBSERVATION_HEADER_SHA256,
++                "source_newton_header_sha256": _OBSERVATION_NEWTON_HEADER_SHA256,
++                "source_config_sha256": _OBSERVATION_CONFIG_SHA256}
++
++    cdef _guard_store(self, int native_status, bint preserve_failure=False):
++        if self._nls_guard is NULL:
++            return
++        try:
++            self._nls_trace = self._guard_snapshot(native_status)
++        except BaseException as error:
++            self._nls_trace = {"schema": "sksundae.ida.nonlinear-guard-trace.v1",
++                "status": "capture_failed", "complete": False, "native_status": native_status,
++                "owner": self._obs_instance, "generation": self._obs_generation,
++                "error_type": type(error).__name__, "error": str(error)}
++            if native_status >= 0 and not preserve_failure:
++                raise
++
++    def nonlinear_trace(self):
++        """Return the owned actual callback trace, including a failed native call."""
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            return deepcopy(self._nls_trace)
 +
 +    def statistics(self):
 +        """Read native counters under the same owner lock; do not advance.
@@ -734,13 +885,14 @@
 +                    "coefficient_getter_available": True,
 +                    "coefficient_getter_kind": "pinned-private-header-word-copy",
 +                    "nonlinear_control_state": nls_state,
++                    "nonlinear_guard": deepcopy(self._nls_trace),
 +                    "observation_owner": self._obs_instance,
 +                    "observation_generation": self._obs_generation,
 +                    "method_fields_valid": nsteps > 0}
  
      def __dealloc__(self):
          self._free_memory()
-@@ -1484,6 +1906,14 @@
+@@ -1484,6 +2015,26 @@
      elif not options["max_nonlin_iters"] > 0:
          raise ValueError("'max_nonlin_iters' must be > 0.")
  
@@ -752,12 +904,24 @@
 +        if not isfinite(coefficient) or coefficient <= 0.:
 +            raise ValueError("'nonlin_conv_coef' must be finite and positive.")
 +
++    # Optional native stopping policy and bounded records per ONESTEP call.
++    guard = options["nonlin_guard"]
++    if guard is not None and (not isinstance(guard, str) or guard != "first-correction-wrms-v1"):
++        raise ValueError("'nonlin_guard' must be None or 'first-correction-wrms-v1'.")
++    capacity = options["nonlin_trace_capacity"]
++    if isinstance(capacity, bool) or not isinstance(capacity, Integral):
++        raise TypeError("'nonlin_trace_capacity' must be an integer.")
++    if not 1 <= capacity <= 4096:
++        raise ValueError("'nonlin_trace_capacity' must be in [1, 4096].")
++    if guard is None and capacity != 4096:
++        raise ValueError("'nonlin_trace_capacity' requires nonlin_guard.")
++
      # max_conv_fails
      if not isinstance(options["max_conv_fails"], Integral):
          raise TypeError("'max_conv_fails' must be type int.")
 --- a/src/sksundae/ida/_solver.py
 +++ b/src/sksundae/ida/_solver.py
-@@ -93,6 +93,10 @@
+@@ -93,6 +93,17 @@
          max_nonlin_iters : int, optional
              Specifies the maximum number of nonlinear solver iterations in one
              step. The default is 4.
@@ -765,13 +929,24 @@
 +            Positive finite coefficient for IDASetNonlinConvCoef. None preserves
 +            the linked native library default. This changes nonlinear stopping,
 +            independently of the local integration error tolerances.
++        nonlin_guard : {None, 'first-correction-wrms-v1'}, optional
++            Optional native first-correction condition. Requires init_step then
++            step(method='onestep'); default None leaves Newton unchanged.
++        nonlin_trace_capacity : int, optional
++            Maximum actual callback records per ONESTEP call, from 1 to 4096
++            (default). Overflow preserves the stored prefix and first omitted
++            callback, and prevents a default-success return being accepted.
          max_conv_fails : int, optional
              Specifies the max number of nonlinear solver convergence failures
              in one step. The default is 10.
-@@ -282,6 +286,21 @@
+@@ -282,6 +293,25 @@
          """
          self._IDA = _IDA(resfn, **options)
  
++    def nonlinear_trace(self) -> dict | None:
++        """Owned callback records from the last guarded native call, even on failure."""
++        return self._IDA.nonlinear_trace()
++
 +    def statistics(self) -> dict:
 +        """Read actual native counters and cj after init_step/step.
 +
@@ -790,7 +965,7 @@
      def init_step(self, t0: float, y0: ndarray, yp0: ndarray) -> IDAResult:
          """
          Initialize the solver.
-@@ -406,6 +425,30 @@
+@@ -406,6 +436,30 @@
  
          """
          return self._IDA.solve(tspan, y0, yp0)
