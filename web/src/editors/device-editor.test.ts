@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DeviceInput, TandemInput } from '../generated/configuration-inputs'
+import type { BulkDefectInput, DeviceInput, TandemInput } from '../generated/configuration-inputs'
 import { mountDeviceEditor } from './device-editor'
 import type { DeviceEditor } from './device-editor'
 import type { EditorInput, Selection } from './device-edits'
@@ -26,16 +26,16 @@ function mount(value: EditorInput = input()) {
     const select = query<HTMLSelectElement>('[data-role=entity]')
     const option = [...select.options].find(option => {
       const item = JSON.parse(option.value)
-      return item.kind === kind && (kind === 'settings' || item.id === id && item.occurrence === occurrence)
+      return item.kind === kind && (kind === 'settings' || item.id === id && (item.occurrence ?? 0) === occurrence)
     })!
     choose('[data-role=entity]', option.value)
   }
   function type(field: string, value: string, area = 'basic') {
-    const node = query<HTMLInputElement>(`[data-field="${field}"][data-area=${area}] input`)
+    const node = query<HTMLInputElement>(`[data-field="${field}"][data-area="${area}"] input`)
     node.value = value; node.dispatchEvent(new Event('input'))
   }
   function source(field: string, value: string, area = 'parameters') {
-    choose(`[data-field="${field}"][data-area=${area}] select`, value)
+    choose(`[data-field="${field}"][data-area="${area}"] select`, value)
   }
   const parameter = (name: string) => choose('[data-role=parameter]', name)
   const click = (action: string) => query<HTMLButtonElement>(`[data-action=${action}]`).click()
@@ -215,5 +215,117 @@ describe('existing layer/material draft editor', () => {
     name.value = 'late'; name.dispatchEvent(new Event('input')); button.click()
     expect(view.onApply).not.toHaveBeenCalled(); expect(view.editor.apply()).toBe(false)
     expect(view.root.firstChild).toBe(replacement)
+  })
+
+  it('edits supplied contact scalars and references, preserving null/omission and incomplete text', () => {
+    const original = input(), view = mount(original); view.entity('contact', 'left')
+    view.source('S_n', 'value', 'basic'); view.type('S_n', '0'); view.editor.apply()
+    expect(view.onApply.mock.lastCall![0].contacts[0].S_n).toBe('0')
+    view.source('S_n', 'null', 'basic'); expect((view.editor.read().input as DeviceInput).contacts![0].S_n).toBeNull()
+    view.source('S_n', 'omit', 'basic'); expect(Object.hasOwn((view.editor.read().input as DeviceInput).contacts![0], 'S_n')).toBe(false)
+    view.type('layer', 'missing'); view.editor.apply()
+    expect(view.onApply.mock.lastCall![0].contacts[0].layer).toBe('missing')
+    expect(view.root.textContent).toContain('not a supplied layer')
+    view.source('S_n', 'value', 'basic'); view.type('S_n', ' ')
+    view.entity('contact', 'right'); expect(view.editor.apply()).toBe(false)
+    view.entity('contact', 'left'); expect(view.query<HTMLInputElement>('[data-field=S_n] input').value).toBe(' ')
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+
+  it('edits nested interface defect energy, density and kinetics without changing retained partner data', () => {
+    const original = input(); original.interfaces![0].defect = {
+      id: 'trap', trap_depth_eV: '0.6 eV', energy_reference: 'below_conduction_band', total_density_m2: '1e12 cm^-2',
+      calibration_factor: 0, iface_state_calibration_factor: '0.02',
+      kinetics: { sigma_n_m2: -0, sigma_p_m2: '1e-19 m^2', thermal_velocity_n_m_s: 1e5, thermal_velocity_p_m_s: '1e5 m/s' }, partner_metadata: null,
+    }
+    const view = mount(original); view.entity('interface', 'pair'); view.click('select-interface-defect')
+    expect(view.editor.read().selection).toMatchObject({ kind: 'interface_defect', id: 'trap' })
+    expect(view.root.textContent).toContain('m^-2')
+    view.type('total_density_m2', '2e12 cm^-2', 'defect')
+    view.type('trap_depth_eV', '9 eV', 'defect')
+    view.choose('[data-role=defect-section]', 'kinetics')
+    expect(Object.is((view.editor.read().input as DeviceInput).interfaces![0].defect!.kinetics.sigma_n_m2, -0)).toBe(true)
+    view.type('sigma_p_m2', '3e-19 m^2', 'kinetics')
+    view.choose('[data-role=defect-section]', 'defect'); view.editor.apply()
+    const result = view.onApply.mock.lastCall![0] as DeviceInput
+    expect(result.interfaces![0].defect!.total_density_m2).toBe('2e12 cm^-2')
+    expect(result.interfaces![0].defect!.trap_depth_eV).toBe('9 eV')
+    expect(result.interfaces![0].defect!.partner_metadata).toBeNull()
+    expect(result.contacts).toStrictEqual(original.contacts)
+    view.entity('interface', 'pair'); view.click('defect-null')
+    expect((view.editor.read().input as DeviceInput).interfaces![0].defect).toBeNull()
+    view.click('defect-omit'); expect(Object.hasOwn((view.editor.read().input as DeviceInput).interfaces![0], 'defect')).toBe(false)
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+
+  it('keeps bulk branch conflicts, optional energy and incomplete profile rows explicit in the same draft', () => {
+    const original = input(); original.layers[0].bulk_defects = [{ id: 'bulk', name: 'Bulk', charge_transition: 'acceptor', neutral_reference: 'empty', degeneracy: 1,
+      distribution: { kind: 'gaussian', normalization: 'integrated_total', total_density_m3: '8e20', center_eV_above_vb: '0.39',
+        width_eV: '0.05', width_convention: 'gaussian_standard_deviation', support_width_multiplier: '6', energy_reference: 'above_valence_band' },
+      kinetics: { sigma_n_m2: 0, sigma_p_m2: '1e-19', thermal_velocity_n_m_s: '1e5', thermal_velocity_p_m_s: '8e4' },
+      spatial_profile: { coordinate: 'normalized_layer_coordinate', interpolation: 'piecewise_linear', density_normalization: 'layer_average_unity',
+        knots: [{ position_fraction: -0, density_multiplier: '1' }, { position_fraction: 1, density_multiplier: '1' }] },
+    }]; original.layers[0].defect_schema_version = 'solarlab-explicit-bulk-defects-v3'; original.layers[0].defect_model = 'explicit_quasi_steady'
+    const view = mount(original); view.entity('bulk_defect', 'bulk'); view.choose('[data-role=defect-section]', 'distribution')
+    expect(view.root.textContent).toContain('m^-3'); expect(view.root.textContent).toContain('Gaussian width convention')
+    view.choose('[data-area=distribution][data-field=kind] [data-role=scalar-value]', 'single_level')
+    const changed = () => (view.editor.read().input as DeviceInput).layers[0].bulk_defects![0] as BulkDefectInput
+    expect(changed().distribution.width_eV).toBe('0.05'); expect(view.editor.apply()).toBe(true)
+    view.choose('[data-role=defect-section]', 'energy_level'); view.click('section-empty')
+    expect(changed().energy_level).toStrictEqual({}); expect(view.editor.apply()).toBe(false)
+    view.choose('[data-area=energy_level][data-field=reference] [data-role=scalar-value]', 'above_valence_band')
+    view.type('value_eV', '400 meV', 'energy_level'); expect(view.editor.apply()).toBe(true)
+    expect(changed().distribution.center_eV_above_vb).toBe('0.39')
+    view.click('section-null'); expect(changed().energy_level).toBeNull()
+    view.click('section-omit'); expect(Object.hasOwn(changed(), 'energy_level')).toBe(false)
+    view.choose('[data-role=defect-section]', 'spatial_profile'); view.click('add-knot')
+    expect(view.query<HTMLSelectElement>('[data-role=defect-section]').value).toBe('knot:2')
+    expect(changed().spatial_profile!.knots[2]).toStrictEqual({ position_fraction: '', density_multiplier: '' })
+    view.type('position_fraction', '0.5', 'knot:2'); view.entity('contact', 'left'); expect(view.editor.apply()).toBe(false)
+    view.entity('bulk_defect', 'bulk'); view.choose('[data-role=defect-section]', 'knot:2')
+    expect(view.query<HTMLInputElement>('[data-area="knot:2"][data-field=position_fraction] input').value).toBe('0.5')
+    view.type('density_multiplier', '1', 'knot:2'); expect(view.editor.apply()).toBe(true)
+    expect(changed().spatial_profile!.knots.map(knot => knot.position_fraction)).toStrictEqual([-0, 1, '0.5'])
+    view.click('remove-knot'); expect(changed().spatial_profile!.knots).toHaveLength(2)
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+
+  it('retains model/schema declarations and lets explicit duplicate bulk IDs remain previewable', () => {
+    const original = input(), item: BulkDefectInput = { id: 'one', distribution: { kind: 'single_level', normalization: 'integrated_total', total_density_m3: '1e18', center_eV_above_vb: '0.3' },
+      charge_transition: 'unresolved', neutral_reference: 'unresolved', degeneracy: 1,
+      kinetics: { sigma_n_m2: 0, sigma_p_m2: '1e-19', thermal_velocity_n_m_s: 1e5, thermal_velocity_p_m_s: 1e5 } }
+    original.layers[0].bulk_defects = [item, { ...item, id: 'two' }]
+    original.layers[0].defect_schema_version = 'solarlab-explicit-bulk-defects-v1'; original.layers[0].defect_model = 'effective_lifetime'
+    const view = mount(original); view.entity('bulk_defect', 'one')
+    view.query<HTMLInputElement>('[data-role=item-id]').value = 'two'; view.click('rename-item')
+    expect(view.root.textContent).toContain('duplicate two'); expect(view.editor.apply()).toBe(true)
+    expect((view.editor.read().input as DeviceInput).layers[0].defect_schema_version).toBe(original.layers[0].defect_schema_version)
+    view.entity('bulk_defect', 'two', 1); expect(view.editor.read().selection).toMatchObject({ id: 'two', occurrence: 1 })
+    view.click('remove-bulk-defect'); expect((view.editor.read().input as DeviceInput).layers[0].bulk_defects).toHaveLength(1)
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+
+  it('distinguishes bulk defects in duplicate parent layers and edits only the selected occurrence', () => {
+    const original = input(), item: BulkDefectInput = { id: 'trap', name: 'Trap',
+      distribution: { kind: 'single_level', normalization: 'integrated_total', total_density_m3: '1e18', center_eV_above_vb: '0.3' },
+      charge_transition: 'acceptor', neutral_reference: 'empty', degeneracy: 1,
+      kinetics: { sigma_n_m2: -0, sigma_p_m2: '1e-19', thermal_velocity_n_m_s: 1e5, thermal_velocity_p_m_s: 1e5 } }
+    original.layers[0].bulk_defects = [item]
+    original.layers[1].id = 'front'; original.layers[1].bulk_defects = [structuredClone(item), structuredClone(item)]
+    const view = mount(original), options = [...view.query<HTMLSelectElement>('[data-role=entity]').options]
+      .filter(option => JSON.parse(option.value).kind === 'bulk_defect')
+    expect(options.map(option => option.textContent)).toStrictEqual([
+      'Bulk defect trap: Trap — layer front',
+      'Bulk defect trap: Trap — layer front (duplicate 2)',
+      'Bulk defect trap (duplicate 2): Trap — layer front (duplicate 2)',
+    ])
+    view.choose('[data-role=entity]', options[2].value); view.type('name', 'Selected trap', 'defect')
+    const draft = view.editor.read().input as DeviceInput
+    expect(draft.layers[0]).toStrictEqual(original.layers[0])
+    expect(draft.layers[1].bulk_defects![0]).toStrictEqual(original.layers[1].bulk_defects![0])
+    expect(draft.layers[1].bulk_defects![1]).toStrictEqual({ ...item, name: 'Selected trap' })
+    view.choose('[data-role=defect-section]', 'kinetics')
+    expect(view.editor.read().selection).toMatchObject({ id: 'trap', occurrence: 1, parent: { id: 'front', occurrence: 1 } })
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
   })
 })

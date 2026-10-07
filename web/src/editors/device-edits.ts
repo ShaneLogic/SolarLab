@@ -3,9 +3,12 @@ import type { DeviceInput, TandemInput } from '../generated/configuration-inputs
 
 export type EditorInput = DeviceInput | TandemInput
 export type Cell = 'device' | 'top_cell' | 'bottom_cell'
+export type ItemIdentity = { id: string; occurrence: number }
+export type DefectSelection = { cell: Cell; kind: 'interface_defect'; parent: ItemIdentity; id: string }
+  | { cell: Cell; kind: 'bulk_defect'; parent: ItemIdentity; id: string; occurrence: number }
 export type Selection = { cell: Cell } & (
-  { kind: 'settings' } | { kind: 'layer' | 'material'; id: string; occurrence: number }
-)
+  { kind: 'settings' } | ({ kind: 'layer' | 'material' | 'interface' | 'contact' } & ItemIdentity)
+) | DefectSelection
 export type FieldValue = { kind: 'omit' } | { kind: 'value'; value: string | number | boolean | null }
 export type FieldEdit = FieldValue | { kind: 'incomplete'; text: string; message: string }
 export type Path = (string | number)[]
@@ -28,11 +31,15 @@ export interface FieldSchema {
   readonly $defs?: Readonly<Record<string, FieldSchema>>
 }
 
-export const fieldSchemas: Record<'layer' | 'material' | 'parameters' | 'settings', FieldSchema> = {
+export const fieldSchemas: Record<'layer' | 'material' | 'parameters' | 'settings' | 'interface' | 'contact' | 'interface_defect' | 'bulk_defect', FieldSchema> = {
   layer: configurationSchema.dto_schemas.FullLayerInput.schema,
   material: configurationSchema.dto_schemas.NamedMaterialInput.schema,
   parameters: configurationSchema.dto_schemas.FullParameterInput.schema,
   settings: configurationSchema.dto_schemas.DeviceSettingsInput.schema,
+  interface: configurationSchema.dto_schemas.InterfaceInput.schema,
+  contact: configurationSchema.dto_schemas.ContactInput.schema,
+  interface_defect: configurationSchema.dto_schemas.DeviceInput.schema.$defs.InterfaceDefectInput,
+  bulk_defect: configurationSchema.dto_schemas.BulkDefectInput.schema,
 }
 
 export class DeviceEditError extends Error {
@@ -52,17 +59,46 @@ export function cellInput(input: EditorInput, cell: Cell): DeviceInput {
 
 export function selections(input: EditorInput, cell: Cell): Selection[] {
   const device = cellInput(input, cell)
-  const entries = (kind: 'layer' | 'material', items: readonly { id: string }[]) => items.map((item, index) => ({
+  const entries = (kind: 'layer' | 'material' | 'interface' | 'contact', items: readonly { id: string }[]) => items.map((item, index) => ({
     cell, kind, id: item.id, occurrence: items.slice(0, index).filter(other => other.id === item.id).length,
   } as Selection))
-  return [...entries('layer', device.layers), ...entries('material', device.materials ?? []), { cell, kind: 'settings' }]
+  const interfaces = entries('interface', device.interfaces ?? []).flatMap((selection, index) => {
+    if (selection.kind !== 'interface') return []
+    const defect = device.interfaces![index].defect
+    return [selection, ...(defect && typeof defect === 'object' ? [{ cell, kind: 'interface_defect' as const,
+      parent: { id: selection.id, occurrence: selection.occurrence }, id: defect.id }] : [])]
+  })
+  const layers = entries('layer', device.layers).flatMap((selection, index) => {
+    if (selection.kind !== 'layer') return []
+    const defects = device.layers[index].bulk_defects ?? []
+    return [selection, ...defects.map((defect, offset) => ({ cell, kind: 'bulk_defect' as const,
+      parent: { id: selection.id, occurrence: selection.occurrence }, id: defect.id,
+      occurrence: defects.slice(0, offset).filter(item => item.id === defect.id).length }))]
+  })
+  return [...layers, ...entries('material', device.materials ?? []),
+    ...entries('contact', device.contacts ?? []), ...interfaces, { cell, kind: 'settings' }]
 }
 
-export function selectedEntity(input: EditorInput, selection: Selection) {
+export function selectedEntity(input: EditorInput, selection: Selection): { value: object | undefined; path: Path; index: number } {
   const device = cellInput(input, selection.cell)
   const prefix: Path = selection.cell === 'device' ? [] : [selection.cell]
   if (selection.kind === 'settings') return { value: device.settings, path: [...prefix, 'settings'], index: -1 }
-  const collection = selection.kind === 'layer' ? 'layers' : 'materials'
+  if (selection.kind === 'interface_defect') {
+    const parent = selectedEntity(input, { cell: selection.cell, kind: 'interface', ...selection.parent })
+    const defect = device.interfaces![parent.index].defect
+    if (!defect || defect.id !== selection.id) throw new DeviceEditError('The selected interface defect is no longer supplied.', [[...parent.path, 'defect']])
+    return { value: defect, path: [...parent.path, 'defect'], index: parent.index }
+  }
+  if (selection.kind === 'bulk_defect') {
+    const parent = selectedEntity(input, { cell: selection.cell, kind: 'layer', ...selection.parent })
+    const defects = device.layers[parent.index].bulk_defects ?? []
+    let occurrence = 0
+    const index = defects.findIndex(item => item.id === selection.id && occurrence++ === selection.occurrence)
+    if (index < 0) throw new DeviceEditError('The selected bulk defect is no longer supplied.', [[...parent.path, 'bulk_defects']])
+    return { value: defects[index], path: [...parent.path, 'bulk_defects', index], index }
+  }
+  const collection = selection.kind === 'layer' ? 'layers' : selection.kind === 'material' ? 'materials'
+    : selection.kind === 'interface' ? 'interfaces' : 'contacts'
   const items = device[collection] ?? []
   let occurrence = 0
   const index = items.findIndex(item => item.id === selection.id && occurrence++ === selection.occurrence)
@@ -93,7 +129,9 @@ export function writeField<T extends EditorInput>(input: T, selection: Selection
   const schema = fieldSchema(selection, parameter), metadata = schema.properties?.[field]
   const selected = selectedEntity(input, selection)
   const path = [...selected.path, ...(parameter ? ['parameters'] : []), field]
-  const basic = selection.kind === 'layer' ? ['name', 'role', 'thickness', 'material'] : ['name']
+  const basic = selection.kind === 'layer' ? ['name', 'role', 'thickness', 'material', 'defect_model', 'defect_schema_version']
+    : selection.kind === 'interface' || selection.kind === 'contact' ? Object.keys(schema.properties ?? {}).filter(key => key !== 'id') : ['name']
+  if (parameter && selection.kind !== 'layer' && selection.kind !== 'material') throw new DeviceEditError('Select a layer or material parameter.', [path])
   if (!metadata || !scalarField(metadata) || (selection.kind !== 'settings' && !parameter && !basic.includes(field))) {
     throw new DeviceEditError('This field has no scalar editor.', [path])
   }
@@ -144,6 +182,21 @@ function setPath(target: object, path: Path, value: string) {
   Reflect.set(owner, path.at(-1)!, value)
 }
 
+/** Connections have no typed external ID references in this input schema.
+ * Renaming the selected occurrence never changes its layer bindings or defect. */
+export function renameConnection<T extends EditorInput>(input: T, selection: Selection, id: string) {
+  const found = selectedEntity(input, selection)
+  if (selection.kind !== 'interface' && selection.kind !== 'contact') throw new DeviceEditError('Select a contact or interface.', [found.path])
+  const next = structuredClone(input), device = cellInput(next, selection.cell)
+  const prefix: Path = selection.cell === 'device' ? [] : [selection.cell]
+  const unknown = unknownPaths(device, [configurationSchema.dto_schemas.DeviceInput.schema], configurationSchema.dto_schemas.DeviceInput.schema, prefix)
+  if (id !== selection.id && unknown.length) throw new DeviceEditError('Cannot guarantee references in unrecognized fields; the ID was not changed.', unknown)
+  const collection = selection.kind === 'interface' ? 'interfaces' : 'contacts'
+  device[collection]![found.index].id = id
+  return { input: next, selection: { ...selection, id,
+    occurrence: device[collection]!.slice(0, found.index).filter(item => item.id === id).length } }
+}
+
 // Reject unknown/opaque input branches before an identity rewrite. The schema
 // has no general reference annotations for extensions; do not guess their IDs.
 function unknownPaths(value: unknown, schemas: readonly FieldSchema[], root: FieldSchema, path: Path): Path[] {
@@ -161,6 +214,12 @@ function unknownPaths(value: unknown, schemas: readonly FieldSchema[], root: Fie
     const children = objects.flatMap(schema => schema.properties?.[key] ? [schema.properties[key]] : [])
     return children.length ? unknownPaths(item, children, root, [...path, key]) : [[...path, key]]
   })
+}
+
+export function requireKnownIdentityScope(input: EditorInput, cell: Cell) {
+  const schema = configurationSchema.dto_schemas.DeviceInput.schema
+  const paths = unknownPaths(cellInput(input, cell), [schema], schema, cell === 'device' ? [] : [cell])
+  if (paths.length) throw new DeviceEditError('Cannot guarantee references in unrecognized fields; the ID was not changed.', paths)
 }
 
 export function renameLayer<T extends EditorInput>(input: T, selection: Selection, id: string) {

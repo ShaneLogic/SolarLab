@@ -1,10 +1,13 @@
 import { mountQuantityInput } from './quantity-input'
 import {
   allowsNull, cellInput, DeviceEditError, exactInputEqual, fieldSchema,
-  layerReferences, moveLayer, renameLayer, scalarField, schemaVariants, selectedEntity,
+  layerReferences, moveLayer, renameConnection, renameLayer, scalarField, schemaVariants, selectedEntity,
   selections, writeConnection, writeField,
 } from './device-edits'
 import type { Cell, EditorInput, FieldEdit, FieldSchema, FieldValue, Path, Selection } from './device-edits'
+import { changeProfileRows, clearInterfaceDefect, defectSections, isDefectSelection, nestedValue,
+  removeBulkDefect, renameDefect, setDefectSection, writeDefectField } from './defect-edits'
+import type { DefectSection } from './defect-edits'
 
 export interface DeviceDraft {
   input: EditorInput
@@ -61,6 +64,7 @@ function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, req
   const boolean = variants.every(item => item.type === 'boolean')
   const choices = variants.flatMap(item => item.enum ?? (Object.hasOwn(item, 'const') ? [item.const!] : []))
   const numeric = variants.every(item => item.type === 'integer' || item.type === 'number')
+  const minimumLength = metadata.minLength ?? Math.max(0, ...variants.map(item => item.minLength ?? 0))
   const input = boolean || choices.length ? element('select') : element('input')
   input.id = id; input.dataset.role = 'scalar-value'
   if (input instanceof HTMLInputElement) { input.type = 'text'; input.spellcheck = false }
@@ -83,7 +87,7 @@ function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, req
     if (mode.value === 'null' && allowsNull(metadata)) return { kind: 'value', value: null }
     const incomplete = (message: string): FieldEdit => ({ kind: 'incomplete', text: input.value, message })
     if (mode.value !== 'value') return incomplete('Select a permitted value source.')
-    if (input.value.length < (metadata.minLength ?? 0)) return incomplete('Enter a value.')
+    if (input.value.length < minimumLength || input instanceof HTMLSelectElement && !input.value) return incomplete('Enter or choose a value.')
     if (!edited && initial.kind === 'value' && original !== null) return initial
     if (!edited && original === null) return incomplete('Enter a value or choose a permitted source.')
     if (!input.value && (required || numeric || boolean || choices.length || !edited)) return incomplete('Enter or choose a value.')
@@ -116,7 +120,7 @@ function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, req
 export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOptions): DeviceEditor {
   let baseline = structuredClone(options.input), draft = structuredClone(options.input)
   let selection: Selection = selections(draft, draft.schema_version === 'solarlab.device-preparation.v1' ? 'device' : 'top_cell')[0]
-  let disposed = false, parameter = '', connectionsOpen = false
+  let disposed = false, parameter = '', defectSection = 'defect', connectionsOpen = false
   const pending = new Map<string, { edit: Extract<FieldEdit, { kind: 'incomplete' }>; path: Path }>()
   const controls: { dispose(): void }[] = []
   const listeners: (() => void)[] = []
@@ -126,12 +130,12 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   const status = element('p'); status.className = 'status'; status.setAttribute('role', 'status'); status.dataset.role = 'draft-status'
   const message = element('p'); message.className = 'status error'; message.setAttribute('role', 'alert'); message.dataset.role = 'edit-error'
   const cell = element('select'); cell.dataset.role = 'cell'; cell.setAttribute('aria-label', 'Device or tandem cell')
-  const entity = element('select'); entity.dataset.role = 'entity'; entity.setAttribute('aria-label', 'Layer, named material or settings')
+  const entity = element('select'); entity.dataset.role = 'entity'; entity.setAttribute('aria-label', 'Layer, material, connection, defect or settings')
   const fields = element('div'), topology = element('div'), retained = element('div')
   const applyButton = button('Apply draft to preview', 'apply', apply)
   const discardButton = button('Discard draft', 'discard', discard)
   const actions = element('div'); actions.className = 'actions'; actions.style.flexWrap = 'wrap'; actions.append(applyButton, discardButton)
-  card.append(element('h3', 'Device layers and materials'),
+  card.append(element('h3', 'Device configuration draft'),
     element('p', 'Edit a draft of the supplied input. The preview shows the last applied values and their origins. Applying checks preparation; it does not run a simulation.'),
     cell, entity, status, message, actions, fields, topology, retained)
   root.replaceChildren(card)
@@ -184,26 +188,35 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     entity.replaceChildren(...available.map(item => {
       if (item.kind === 'settings') return new Option('Device settings', JSON.stringify(item))
       const found = selectedEntity(draft, item), value = found.value!
-      const label = `${item.kind === 'layer' ? 'Layer' : 'Material'} ${item.id}: ${Reflect.get(value, 'name')}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`
+      if (item.kind === 'interface_defect') return new Option(`Interface defect ${item.id} — interface ${item.parent.id}${item.parent.occurrence ? ` (duplicate ${item.parent.occurrence + 1})` : ''}`, JSON.stringify(item))
+      if (item.kind === 'bulk_defect') return new Option(`Bulk defect ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}${Reflect.get(value, 'name') == null ? '' : `: ${text(Reflect.get(value, 'name'))}`} — layer ${item.parent.id}${item.parent.occurrence ? ` (duplicate ${item.parent.occurrence + 1})` : ''}`, JSON.stringify(item))
+      const title = item.kind === 'layer' ? 'Layer' : item.kind === 'material' ? 'Material' : item.kind === 'interface' ? 'Interface' : 'Contact'
+      const name = Reflect.get(value, 'name')
+      const label = `${title} ${item.id}${name === undefined ? '' : `: ${text(name)}`}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`
       return new Option(label, JSON.stringify(item))
     }))
     entity.value = JSON.stringify(selection)
   }
-  function fieldControl(name: string, parameterField = false) {
-    const schema = fieldSchema(selection, parameterField), metadata = schema.properties![name]
+  function fieldControl(name: string, parameterField = false, section?: DefectSection) {
+    const schema = section?.schema ?? fieldSchema(selection, parameterField), metadata = schema.properties![name]
     const selected = selectedEntity(draft, selection)
-    const owner = parameterField && selected.value ? Reflect.get(selected.value, 'parameters') : selected.value
-    const path = [...selected.path, ...(parameterField ? ['parameters'] : []), name]
-    const target = structuredClone(selection), key = JSON.stringify([target, parameterField, name])
+    const owner = section ? nestedValue(selected.value, section.path)
+      : parameterField && selected.value ? Reflect.get(selected.value, 'parameters') : selected.value
+    const path = [...selected.path, ...(section?.path ?? (parameterField ? ['parameters'] : [])), name]
+    const target = structuredClone(selection), key = JSON.stringify([target, section?.key ?? parameterField, name])
     const saved = pending.get(key)
     const initial = saved ? { kind: 'value' as const, value: saved.edit.text } : supplied(owner, name)
-    const container = element('div'); container.dataset.field = name; container.dataset.area = parameterField ? 'parameters' : 'basic'
+    const container = element('div'); container.dataset.field = name; container.dataset.area = section?.key ?? (parameterField ? 'parameters' : 'basic')
     const control = mountScalar(container, name, metadata, schema.required?.includes(name) ?? false, initial, edit => {
       if (disposed) return
       message.textContent = ''
       if (edit.kind === 'incomplete') pending.set(key, { edit, path })
       else {
-        try { draft = writeField(draft, target, name, edit, parameterField); pending.delete(key) }
+        try {
+          draft = section && isDefectSelection(target) ? writeDefectField(draft, target, section.key, name, edit)
+            : writeField(draft, target, name, edit, parameterField)
+          pending.delete(key)
+        }
         catch (error) { showError(error); return }
       }
       renderNavigation(); updateStatus(); refreshReferenceNotices()
@@ -211,6 +224,8 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     controls.push(control)
     // Preserve pre-existing invalid values without normalizing them on mount.
     if (saved) pending.set(key, { edit: saved.edit, path })
+    const initialEdit = control.read()
+    if (initialEdit.kind === 'incomplete') pending.set(key, { edit: initialEdit, path })
     if (name === 'material' && selection.kind === 'layer') {
       const input = container.querySelector('input')
       if (input) {
@@ -218,6 +233,11 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
         for (const material of cellInput(draft, selection.cell).materials ?? []) list.append(new Option(material.name, material.id))
         input.setAttribute('list', list.id); container.append(list)
       }
+    }
+    if ((selection.kind === 'contact' && name === 'layer') || (selection.kind === 'interface' && (name === 'left' || name === 'right'))) {
+      const input = container.querySelector('input'), list = element('datalist'); list.id = `layer-choices-${++nextId}`
+      for (const layer of cellInput(draft, selection.cell).layers) list.append(new Option(layer.name, layer.id))
+      if (input) { input.setAttribute('list', list.id); container.append(list) }
     }
     return container
   }
@@ -238,9 +258,16 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     const device = cellInput(draft, selection.cell)
     const items: HTMLElement[] = []
     const ids = device.layers.map(layer => layer.id)
+    for (const collection of ['interfaces', 'contacts'] as const) {
+      const records = device[collection] ?? []
+      for (const [index, record] of records.entries()) if (records.filter(item => item.id === record.id).length > 1) items.push(element('li', `${collection}[${index}].id: duplicate ${record.id}`))
+    }
     for (const [index, layer] of device.layers.entries()) {
       if (ids.filter(id => id === layer.id).length > 1) items.push(element('li', `layers[${index}].id: duplicate ${layer.id}`))
       if (layer.material != null && !(device.materials ?? []).some(material => material.id === layer.material)) items.push(element('li', `layers[${index}].material: ${layer.material} is not a supplied material`))
+      const defects = layer.bulk_defects ?? []
+      for (const [offset, defect] of defects.entries()) if (defects.filter(item => item.id === defect.id).length > 1) items.push(element('li', `layers[${index}].bulk_defects[${offset}].id: duplicate ${defect.id}`))
+      for (const [offset, metadata] of (layer.scaps_defect_metadata ?? []).entries()) if (!defects.some(defect => defect.id === metadata.defect_id)) items.push(element('li', `layers[${index}].scaps_defect_metadata[${offset}].defect_id: ${metadata.defect_id} is not a supplied defect`))
     }
     for (const ref of layerReferences(device)) if (!ids.includes(ref.value)) items.push(element('li', `${JSON.stringify(ref.path)}: ${ref.value} is not a supplied layer`))
     for (const [index, item] of (device.interfaces ?? []).entries()) {
@@ -262,6 +289,11 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
       items.forEach((item, index) => {
         const group = element('div'); group.className = 'form-group'; group.dataset.connection = `${collection}:${index}`
         group.append(element('strong', `${collection === 'interfaces' ? 'Interface' : 'Contact'} ${item.id}`))
+        if ((selection.kind === 'interface' && collection === 'interfaces' || selection.kind === 'contact' && collection === 'contacts')
+          && selectedEntity(draft, selection).index === index) {
+          group.append(element('p', 'This connection is selected for editing above.'))
+          detail.append(group); return
+        }
         if (collection === 'contacts') group.append(element('span', ` (${Reflect.get(item, 'side')})`))
         for (const field of collection === 'interfaces' ? ['left', 'right'] as const : ['layer'] as const) {
           const label = element('label', field === 'left' ? 'Left layer' : field === 'right' ? 'Right layer' : 'Contact layer')
@@ -286,7 +318,28 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     rendering = true
     renderNavigation(); fields.replaceChildren(); retained.replaceChildren()
     const selected = selectedEntity(draft, selection), device = cellInput(draft, selection.cell)
-    if (selection.kind !== 'settings') {
+    if (isDefectSelection(selection)) {
+      renderDefect()
+    } else if (selection.kind === 'contact' || selection.kind === 'interface') {
+      const schema = fieldSchema(selection, false)
+      for (const key of Object.keys(schema.properties ?? {})) if (key !== 'id' && scalarField(schema.properties![key])) fields.append(fieldControl(key))
+      identityControl('connection')
+      if (selection.kind === 'interface') {
+        const item = device.interfaces![selected.index]
+        const presence = item.defect === null ? 'explicit null' : Object.hasOwn(item, 'defect') ? 'supplied' : 'omitted'
+        fields.append(element('p', `Interface defect: ${presence}. Clearing or removing it is an explicit draft edit.`))
+        if (item.defect) fields.append(button('Edit supplied interface defect', 'select-interface-defect', () => {
+          if (selection.kind !== 'interface') return
+          selection = { cell: selection.cell, kind: 'interface_defect', parent: { id: selection.id, occurrence: selection.occurrence }, id: item.defect!.id }
+          defectSection = 'defect'; render()
+        }))
+        for (const mode of ['null', 'omit'] as const) fields.append(button(mode === 'null' ? 'Clear interface defect (null)' : 'Remove interface defect override', `defect-${mode}`, () => {
+          const path = [...selectedEntity(draft, selection).path, 'defect']
+          draft = clearInterfaceDefect(draft, selection, mode)
+          clearPending(path); render()
+        }))
+      }
+    } else if (selection.kind !== 'settings') {
       fields.append(fieldControl('name'))
       if (selection.kind === 'layer') {
         fields.append(fieldControl('role'), fieldControl('thickness'), fieldControl('material'))
@@ -310,8 +363,20 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
           identity.append(move)
         }
         fields.append(identity)
+        const inventory = element('details'); inventory.className = 'device-settings'; inventory.dataset.section = 'inventory'
+        inventory.append(element('summary', 'Defect inventory declarations'),
+          element('p', 'Model and schema version remain explicit. Editing a distribution or profile never chooses a new model or version for you.'),
+          fieldControl('defect_model'), fieldControl('defect_schema_version'))
+        const selectedLayer = structuredClone(selection)
+        for (const item of selections(draft, selection.cell)) if (item.kind === 'bulk_defect'
+          && item.parent.id === selection.id && item.parent.occurrence === selection.occurrence) {
+          inventory.append(button(`Edit bulk defect ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`, 'select-bulk-defect', () => { selection = item; defectSection = 'defect'; render() }))
+        }
+        if (!(device.layers[selected.index].bulk_defects?.length)) inventory.append(element('p', `No bulk defects are supplied for ${selectedLayer.id}.`))
+        fields.append(inventory)
       } else fields.append(element('p', `Material ID: ${selection.id}. Editing its name keeps this reference unchanged.`))
     }
+    if (selection.kind === 'layer' || selection.kind === 'material' || selection.kind === 'settings') {
     const parameterField = selection.kind !== 'settings', schema = fieldSchema(selection, parameterField)
     const keys = Object.keys(schema.properties ?? {}).filter(key => scalarField(schema.properties![key]))
     const suppliedOwner = parameterField && selected.value ? Reflect.get(selected.value, 'parameters') : selected.value
@@ -324,11 +389,81 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     const parameterRoot = element('div'); parameterRoot.append(fieldControl(parameter, parameterField))
     listen(picker, 'change', () => { parameter = picker.value; render() })
     fields.append(label, picker, parameterRoot)
+    }
     if (selected.value) retained.append(retain('Other supplied fields retained', selected.value,
       selection.kind === 'layer' ? ['id', 'name', 'role', 'thickness', 'material'] : selection.kind === 'material' ? ['id', 'name'] : []))
     retained.append(retain('Device data retained', device, ['layers', 'materials', 'settings']))
     if (draft.schema_version === 'solarlab.tandem-preparation.v1') retained.append(retain('Tandem data retained', draft, ['top_cell', 'bottom_cell']))
     renderConnections(); updateStatus(); rendering = false
+  }
+
+  function clearPending(path: Path) {
+    for (const [key, item] of pending) if (path.every((part, index) => item.path[index] === part)) pending.delete(key)
+  }
+  function identityControl(kind: 'connection' | 'defect') {
+    if (selection.kind === 'settings' || selection.kind === 'layer' || selection.kind === 'material') return
+    const detail = element('details'); detail.className = 'device-settings'; detail.append(element('summary', `Change ${kind} ID`))
+    const input = element('input'); input.type = 'text'; input.value = selection.id; input.dataset.role = 'item-id'; input.setAttribute('aria-label', `New ${kind} ID`)
+    const change = button('Change ID', 'rename-item', () => {
+      if (pending.size) return
+      const result = isDefectSelection(selection) ? renameDefect(draft, selection, input.value) : renameConnection(draft, selection, input.value)
+      draft = result.input; selection = result.selection; render()
+      message.className = 'status'; message.setAttribute('role', 'status'); message.textContent = 'ID changed in this draft. Apply to check references and duplicate IDs.'
+    })
+    change.dataset.structural = 'true'; detail.append(input, change); fields.append(detail)
+  }
+  function renderDefect() {
+    if (!isDefectSelection(selection)) return
+    const sections = defectSections(draft, selection), found = selectedEntity(draft, selection)
+    if (!sections.some(section => section.key === defectSection)) defectSection = sections[0].key
+    const picker = element('select'); picker.dataset.role = 'defect-section'; picker.setAttribute('aria-label', 'Defect section')
+    for (const section of sections) picker.add(new Option(section.label, section.key))
+    picker.value = defectSection
+    listen(picker, 'change', () => { defectSection = picker.value; render() })
+    fields.append(element('h4', `${selection.kind === 'bulk_defect' ? 'Bulk' : 'Interface'} defect ${selection.id}`), picker)
+    const section = sections.find(item => item.key === defectSection)!
+    fields.append(element('p', section.note))
+    if (nestedValue(found.value, section.path)) {
+      for (const name of Object.keys(section.schema.properties ?? {})) if (name !== 'id' && scalarField(section.schema.properties![name])) fields.append(fieldControl(name, false, section))
+    } else fields.append(element('p', 'This section is not supplied. Its current value is retained for authoritative validation.'))
+    if (section.optional) {
+      const value = found.value && Reflect.get(found.value, section.optional)
+      fields.append(element('p', `Section state: ${value === null ? 'explicit null' : found.value && Object.hasOwn(found.value, section.optional) ? 'supplied' : 'omitted'}.`))
+      if (!nestedValue(found.value, section.path)) fields.append(button('Start empty section', 'section-empty', () => {
+        if (!isDefectSelection(selection)) return
+        draft = setDefectSection(draft, selection, section.key, 'empty'); render()
+      }))
+      for (const mode of ['null', 'omit'] as const) fields.append(button(mode === 'null' ? 'Clear section (null)' : 'Remove section override', `section-${mode}`, () => {
+        if (!isDefectSelection(selection)) return
+        const path = [...selectedEntity(draft, selection).path, ...section.path]
+        draft = setDefectSection(draft, selection, section.key, mode); clearPending(path); render()
+      }))
+    }
+    const profile = nestedValue(found.value, ['spatial_profile']), knots = profile && Reflect.get(profile, 'knots')
+    if (selection.kind === 'bulk_defect' && Array.isArray(knots) && (section.key === 'spatial_profile' || section.key.startsWith('knot:'))) {
+      const add = button('Add empty knot', 'add-knot', () => {
+        if (!isDefectSelection(selection) || pending.size) return
+        draft = changeProfileRows(draft, selection, { kind: 'append', knot: { position_fraction: '', density_multiplier: '' } })
+        defectSection = `knot:${knots.length}`; render()
+      }); add.dataset.structural = 'true'; fields.append(add)
+      if (section.key.startsWith('knot:')) {
+        const remove = button('Remove selected knot', 'remove-knot', () => {
+          if (!isDefectSelection(selection) || pending.size) return
+          draft = changeProfileRows(draft, selection, { kind: 'remove', index: section.path.at(-1) as number })
+          clearPending([...found.path, 'spatial_profile', 'knots']); defectSection = 'spatial_profile'; render()
+        }); remove.dataset.structural = 'true'; fields.append(remove)
+      }
+      fields.append(element('p', `${knots.length} supplied knots. Adding a row leaves its two values blank; no interpolation or normalization is performed.`))
+    }
+    identityControl('defect')
+    if (selection.kind === 'bulk_defect') {
+      const remove = button('Remove selected bulk defect', 'remove-bulk-defect', () => {
+        if (selection.kind !== 'bulk_defect' || pending.size) return
+        const parent: Selection = { cell: selection.cell, kind: 'layer', ...selection.parent }
+        draft = removeBulkDefect(draft, selection); selection = parent; render()
+      }); remove.dataset.structural = 'true'; fields.append(remove)
+      fields.append(element('p', 'Removal keeps all partner metadata and references. Any resulting inconsistency is shown by the preview.'))
+    }
   }
   listen(cell, 'change', () => { selection = selections(draft, cell.value as Cell)[0]; message.textContent = ''; render() })
   listen(entity, 'change', () => { selection = JSON.parse(entity.value) as Selection; message.textContent = ''; render() })
