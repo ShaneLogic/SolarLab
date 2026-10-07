@@ -21,7 +21,7 @@
     "formal": {
       "root": "archive",
       "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
-      "sha256": "1285a8138d7f08c01e6145935659c822d14804e92926ce0db3dc04fb3aed6ea6"
+      "sha256": "6445d0e6d3c53ae31933001eb1df0c73cd05baad27a4bcdfe88829bc56166627"
     },
     "lane_evaluator": {
       "root": "repository",
@@ -197,6 +197,21 @@
       "root": "repository",
       "path": "perovskite-sim/perovskite_sim/validation/electrothermal_refinement.py",
       "sha256": "07010dc8c5ff08fa75a88fbff0d8210c8e878c25253bfb4ad942db5ad68477c3"
+    },
+    "thermal_channel_decision": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/ThermalChannelDecisionV1.json",
+      "sha256": "ccf3e3ecd780d188522833c4df367ecd7ce12f8cbfcdc750ea2ebe56d1d9b0d0"
+    },
+    "thermal_channel_review": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/ThermalChannelReviewV1.json",
+      "sha256": "dbcfb31687676f1f97a0c8927f7b62b0bd15d23e51b75b3cf935a06267aeda3f"
+    },
+    "thermal_channel_freeze": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/ThermalChannelFreezeV1.json",
+      "sha256": "427019bb6a568a5ccc47627b059dc48df6155ea76ec4aad6c5a19b92ba6382d8"
     }
   },
   "rules": {
@@ -38785,21 +38800,20 @@
         },
         {
           "source_id": "analytic_parameters"
+        },
+        {
+          "source_id": "thermal_channel_decision"
+        },
+        {
+          "source_id": "thermal_channel_review"
+        },
+        {
+          "source_id": "thermal_channel_freeze"
         }
       ],
       "remaining_inputs": [
         {
           "field": "Independent use review and matching source/input/model/protocol/initial-state/numerics/environment/observation identity; the existing analytic error expressions are evidence, not automatic admission.",
-          "needed_from": "experiment-06dfc808cd746b55 / thermal_linear_transient_200s_41: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "experiment:perovskite_sim.experiments.thermal_balance.run_lumped_thermal_transient: new N acceptance outside the explicitly limited fixture meaning",
-          "downstream_tasks": [
-            "P04-13",
-            "P05-01",
-            "P05-04"
-          ]
-        },
-        {
-          "field": "Separate N-accuracy limits for net heating and each cumulative absorbed/internal/exported/linear/radiative/stored-energy channel; the 1e-7 J m-2 residual gate does not supply them.",
           "needed_from": "experiment-06dfc808cd746b55 / thermal_linear_transient_200s_41: original bound source/input and independently reviewed ReferenceQualification packet",
           "blocked_use": "experiment:perovskite_sim.experiments.thermal_balance.run_lumped_thermal_transient: new N acceptance outside the explicitly limited fixture meaning",
           "downstream_tasks": [
@@ -38826,7 +38840,7 @@
           "family_rule_id": "thermal_packet",
           "case_id": "thermal_linear_transient_200s_41",
           "applicability": "Only this already accepted analytic definition and its exact stored input fixture; no continuum, other material, nonlinear radiation or full-device extension.",
-          "numeric_parameter_status": "specified_for_listed_subgates",
+          "numeric_parameter_status": "numeric_definition_complete_for_original_named_target",
           "known_parameters": {
             "input_sha256": "1b93b079073e421b9497205bbaa8b6a70db0e59d67f833ff7b7c4821bb021178",
             "definition_sha256": "1ddc844b8b7fa588651a7f65567bc649db710dc9867c6a179adae1faf40e3913",
@@ -38942,16 +38956,165 @@
               "kind": "curve",
               "coordinates": "time_s",
               "mask": "all41_samples"
+            },
+            "net_heating_W_m2": {
+              "unit": "W m-2",
+              "norm": "pointwise_absolute_linf",
+              "atol": 2e-08,
+              "rtol": 0,
+              "fixed_reference_scale": 600,
+              "rule": "sum",
+              "kind": "curve",
+              "mask": "all41_samples",
+              "zero_policy": "absolute_limit",
+              "zero_scope_note": "absolute_error_without_division",
+              "reference_error_abs_exact": [
+                "15786632589068347948028333483294120285616877195116733989603274511",
+                "500000000000000000000000000000000000000000000000000000000000000000000000000000"
+              ],
+              "reference_values_pointer": "/definitions/6/observables/net_heating_W_m2",
+              "reference_words_sha256": "748e0bc257502ad40637e05ee7139ea214c07d662e1320c3b0ad2e91432a490f",
+              "reference_error_allocation": "At most one third of the channel allowance; exact zero for the two declared inactive channels.",
+              "coordinates": "time_s"
+            },
+            "cumulative_absorbed_energy_J_m2": {
+              "unit": "J m-2",
+              "norm": "pointwise_absolute_linf",
+              "atol": 1e-07,
+              "rtol": 0,
+              "fixed_reference_scale": 160000,
+              "rule": "sum",
+              "kind": "curve",
+              "mask": "all41_samples",
+              "zero_policy": "absolute_limit",
+              "zero_scope_note": "absolute_error_without_division",
+              "reference_error_abs_exact": [
+                "0",
+                "1"
+              ],
+              "reference_values_pointer": "/definitions/6/observables/cumulative_absorbed_energy_J_m2",
+              "reference_words_sha256": "8469ad3c07c201ea6f05c858f715bdc59c3328e78767624ce7b471413149a680",
+              "reference_error_allocation": "At most one third of the channel allowance; exact zero for the two declared inactive channels.",
+              "coordinates": "time_s"
+            },
+            "cumulative_internal_energy_J_m2": {
+              "unit": "J m-2",
+              "norm": "pointwise_absolute_linf",
+              "atol": 0.0,
+              "rtol": 0,
+              "fixed_reference_scale": 0,
+              "rule": "sum",
+              "kind": "curve",
+              "mask": "all41_samples",
+              "zero_policy": "absolute_limit",
+              "zero_scope_note": "exact_declared_inactive_channel",
+              "reference_error_abs_exact": [
+                "0",
+                "1"
+              ],
+              "reference_values_pointer": "/definitions/6/observables/cumulative_internal_energy_J_m2",
+              "reference_words_sha256": "7b4499c3cc6e82a9da3100028f52af7f8c1e9ee60e33010a108e401989782962",
+              "reference_error_allocation": "At most one third of the channel allowance; exact zero for the two declared inactive channels.",
+              "coordinates": "time_s"
+            },
+            "cumulative_electrical_export_J_m2": {
+              "unit": "J m-2",
+              "norm": "pointwise_absolute_linf",
+              "atol": 1e-07,
+              "rtol": 0,
+              "fixed_reference_scale": 40000,
+              "rule": "sum",
+              "kind": "curve",
+              "mask": "all41_samples",
+              "zero_policy": "absolute_limit",
+              "zero_scope_note": "absolute_error_without_division",
+              "reference_error_abs_exact": [
+                "0",
+                "1"
+              ],
+              "reference_values_pointer": "/definitions/6/observables/cumulative_electrical_export_J_m2",
+              "reference_words_sha256": "f73b99b25982c217e3e92dd4fee201efc70c4f79e2ddca141b51add71412cabf",
+              "reference_error_allocation": "At most one third of the channel allowance; exact zero for the two declared inactive channels.",
+              "coordinates": "time_s"
+            },
+            "cumulative_linear_rejection_J_m2": {
+              "unit": "J m-2",
+              "norm": "pointwise_absolute_linf",
+              "atol": 1e-07,
+              "rtol": 0,
+              "fixed_reference_scale": 120000,
+              "rule": "sum",
+              "kind": "curve",
+              "mask": "all41_samples",
+              "zero_policy": "absolute_limit",
+              "zero_scope_note": "absolute_error_without_division",
+              "reference_error_abs_exact": [
+                "909851400946614732094518298007097726111236010568868062117798553",
+                "156250000000000000000000000000000000000000000000000000000000000000000000000"
+              ],
+              "reference_values_pointer": "/definitions/6/observables/cumulative_linear_rejection_J_m2",
+              "reference_words_sha256": "c0322faf7a888c6ef511e2e0e0622b0c7fc6c13246dbdecb7d9d8af4aba2c82f",
+              "reference_error_allocation": "At most one third of the channel allowance; exact zero for the two declared inactive channels.",
+              "coordinates": "time_s"
+            },
+            "cumulative_radiative_rejection_J_m2": {
+              "unit": "J m-2",
+              "norm": "pointwise_absolute_linf",
+              "atol": 0.0,
+              "rtol": 0,
+              "fixed_reference_scale": 0,
+              "rule": "sum",
+              "kind": "curve",
+              "mask": "all41_samples",
+              "zero_policy": "absolute_limit",
+              "zero_scope_note": "exact_declared_inactive_channel",
+              "reference_error_abs_exact": [
+                "0",
+                "1"
+              ],
+              "reference_values_pointer": "/definitions/6/observables/cumulative_radiative_rejection_J_m2",
+              "reference_words_sha256": "7b4499c3cc6e82a9da3100028f52af7f8c1e9ee60e33010a108e401989782962",
+              "reference_error_allocation": "At most one third of the channel allowance; exact zero for the two declared inactive channels.",
+              "coordinates": "time_s"
+            },
+            "stored_thermal_energy_change_J_m2": {
+              "unit": "J m-2",
+              "norm": "pointwise_absolute_linf",
+              "atol": 1e-07,
+              "rtol": 0,
+              "fixed_reference_scale": 60000,
+              "rule": "sum",
+              "kind": "curve",
+              "mask": "all41_samples",
+              "zero_policy": "absolute_limit",
+              "zero_scope_note": "absolute_error_without_division",
+              "reference_error_abs_exact": [
+                "18108792358830638511770156987102077209733153265336892215049894963",
+                "5000000000000000000000000000000000000000000000000000000000000000000000000000"
+              ],
+              "reference_values_pointer": "/definitions/6/observables/stored_thermal_energy_change_J_m2",
+              "reference_words_sha256": "8bd226b84630f6830ba030d90f53cbff9b540d647a033a7214a5032f400329f3",
+              "reference_error_allocation": "At most one third of the channel allowance; exact zero for the two declared inactive channels.",
+              "coordinates": "time_s"
             }
           },
           "citations": [
             {
               "source_id": "analytic_parameters"
+            },
+            {
+              "source_id": "thermal_channel_decision"
+            },
+            {
+              "source_id": "thermal_channel_review"
+            },
+            {
+              "source_id": "thermal_channel_freeze"
             }
           ],
           "remaining_parameters": [
             "Independent use review and matching source/input/model/protocol/initial-state/numerics/environment/observation identity; the existing analytic error expressions are evidence, not automatic admission.",
-            "Separate N-accuracy limits for net heating and each cumulative absorbed/internal/exported/linear/radiative/stored-energy channel; the 1e-7 J m-2 residual gate does not supply them."
+            "Instantiate full candidate/source/input/model/protocol/initial-state/numerics/environment/observation identity and complete independent reference-use review before running a future candidate. Other thermal inputs and coupled/radiative scopes retain their separate obligations."
           ],
           "reference_eligibility": {
             "status": "blocked_pending_independent_reference_and_review",
@@ -38967,6 +39130,13 @@
             "pointer": "/definitions/6",
             "value_sha256": "717fbb2ddb813260db1068939fc67d790d5479b82184ffbe8b1640ebae30fa4e",
             "definition_id": "thermal_linear_transient_200s_41"
+          },
+          "criteria_freeze": {
+            "source_id": "thermal_channel_freeze",
+            "frozen_at": "2026-10-07T22:35:59.469280+08:00",
+            "decision_source_id": "thermal_channel_decision",
+            "review_source_id": "thermal_channel_review",
+            "scope": "Only this exact linear200s/41sample fixture; all nine channel checks are joint."
           }
         }
       ],
@@ -39029,8 +39199,14 @@
         "reference_error_bound": null,
         "reference_eligibility_is_separate": true,
         "fixed_discrete_target_requires_continuum_qualification": false,
-        "scope_extension_or_tolerance_decisions": [],
-        "current_numeric_status": "prior_exact_scope_gaps_retained_and_classified"
+        "scope_extension_or_tolerance_decisions": [
+          {
+            "source_id": "thermal_channel_freeze",
+            "case_id": "thermal_linear_transient_200s_41",
+            "resolved": "Standalone net-heating and six energy observable limits for this exact fixture,including the two exact inactive energies; other scopes unchanged."
+          }
+        ],
+        "current_numeric_status": "original_named_linear_thermal_fixture_limits_complete_reference_use_pending"
       }
     },
     {
@@ -41521,5 +41697,26 @@
     "protected_thresholds_changed": false,
     "reference_or_analytic_observables_generated": false,
     "evidence": "test/ArchitectureRefactor/Stage00/ComparisonScaleClosureV1/Report.json"
+  },
+  "thermal_channel_criteria_freeze": {
+    "source_id": "thermal_channel_freeze",
+    "scope_id": "scope-experiment-06dfc808cd746b55",
+    "case_id": "thermal_linear_transient_200s_41",
+    "old_scope_sha256": "191b1f3abaa7e9d9dd2c94b44887c82ac822ad78ca2c2d5d1a54b1d8f0a15b99",
+    "formal_source_update": {
+      "previous": {
+        "root": "archive",
+        "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
+        "sha256": "1285a8138d7f08c01e6145935659c822d14804e92926ce0db3dc04fb3aed6ea6"
+      },
+      "current": {
+        "root": "archive",
+        "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
+        "sha256": "6445d0e6d3c53ae31933001eb1df0c73cd05baad27a4bcdfe88829bc56166627"
+      },
+      "reason": "Root-authorized engineering policy additions in sections19.22/19.23; original scientific criterion citations are checked unchanged by the scope validator."
+    },
+    "reference_qualified": false,
+    "scientific_gates_awarded": []
   }
 }
