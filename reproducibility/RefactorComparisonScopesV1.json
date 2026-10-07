@@ -21,7 +21,7 @@
     "formal": {
       "root": "archive",
       "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
-      "sha256": "03c87e93ce6d32f71f219bdfdf09295a39401992263ae9b84b9399233f85022f"
+      "sha256": "1285a8138d7f08c01e6145935659c822d14804e92926ce0db3dc04fb3aed6ea6"
     },
     "lane_evaluator": {
       "root": "repository",
