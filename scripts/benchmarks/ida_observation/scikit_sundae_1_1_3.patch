@@ -31,7 +31,7 @@
      
      # free functions
      void IDAFree(void** mem)
-@@ -103,3 +120,21 @@
+@@ -103,3 +120,25 @@
  
      # optional outputs from LS interface
      int IDAGetNumJacEvals(void* mem, long int* njevals)
@@ -47,6 +47,10 @@
 +                      sunrealtype* phi, size_t phi_count,
 +                      sunrealtype* psi, size_t psi_count,
 +                      sunrealtype* uround)
++    int sl_ida75_nls_state(void* memory, long ns, long nni,
++                           sunrealtype tn, sunrealtype hu, int qu,
++                           sunrealtype hn, int qn, int read_step,
++                           sunrealtype* values, size_t count)
 +
 +
 +# Only allocation/free are source-owned; numerical operations use pinned native exports.
@@ -292,7 +296,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1111,49 +1174,363 @@
+@@ -1111,49 +1174,408 @@
  
          return result
  
@@ -424,9 +428,70 @@
 +            "source_config_sha256": _OBSERVATION_CONFIG_SHA256,
 +            "build_identity": self._obs_binding["identity"]})
 +
++    cdef _obs_bind_source(self):
++        cdef const char* native_library
++        if (_OBSERVATION_BUILD_ID is None or not _OBSERVATION_LIBRARIES
++                or _OBSERVATION_CONFIG_SHA256 is None):
++            raise IDAObservationError("unbound_build_identity")
++        if self._obs_binding is None:
++            native_library = sl_ida75_library_path()
++            if native_library is NULL:
++                raise IDAObservationError("native_library_identity_unavailable")
++            library_path = Path(os.fsdecode(native_library)).resolve(strict=True)
++            library_root = Path(__file__).parent / ".dylibs"
++            if library_path != (library_root / "libsundials_ida.7.5.0.dylib").resolve(strict=True):
++                raise IDAObservationError("different_native_library_loaded")
++            libraries = tuple((name, sha256((library_root / name).read_bytes()).hexdigest())
++                              for name, _ in _OBSERVATION_LIBRARIES)
++            if libraries != _OBSERVATION_LIBRARIES:
++                raise IDAObservationError("native_library_payload_changed")
++            binary_id = sha256(Path(__file__).read_bytes()).hexdigest()
++            source = (_OBSERVATION_SCHEMA, "scikit-sundae=1.1.3",
++                      _OBSERVATION_BUILD_ID, binary_id, _OBSERVATION_CONFIG,
++                      _OBSERVATION_HEADER_SHA256, _OBSERVATION_CONFIG_SHA256, libraries)
++            self._obs_binding = MappingProxyType({"source": source,
++                "identity": sha256(repr(source).encode()).hexdigest(),
++                "build_recipe_sha256": _OBSERVATION_BUILD_ID,
++                "native_library_path": str(library_path), "libraries": libraries})
++        return self._obs_binding
++
++    cdef _obs_nls_state(self, long nsteps, long nniters,
++                        sunrealtype tcur, sunrealtype hlast, int qlast,
++                        sunrealtype hcur, int qcur):
++        cdef np.ndarray values = np.empty(5, DTYPE)
++        cdef bint read_step = False
++        cdef int status
++        binding = self._obs_bind_source()
++        if np.dtype(DTYPE).str != "<f8" or np.dtype(INT_TYPE).itemsize != 4:
++            raise IDAObservationError("unsupported_copy_precision")
++        endpoint = self._obs_endpoint
++        phase = "initialized_before_step" if nsteps == 0 else "no_current_successful_endpoint"
++        if (nsteps > 0 and nniters > 0 and endpoint is not None
++                and endpoint["generation"] == self._obs_generation
++                and endpoint["nsteps"] == nsteps and endpoint["native_status"] >= 0
++                and endpoint["internal_t"].hex() == float(tcur).hex()):
++            read_step = True
++            phase = "accepted_native_return"
++        status = sl_ida75_nls_state(self.mem, nsteps, nniters, tcur, hlast,
++            qlast, hcur, qcur, read_step, <sunrealtype*>values.data, values.size)
++        if status != 0:
++            raise IDAObservationError("native_nls_state_copy_failed", "sl_ida75_nls_state", int(status))
++        names = ("epcon", "epsNewt", "ss", "oldnrm", "toldel")
++        valid = names if read_step else names[:1]
++        return {"schema": "sksundae.ida.nonlinear-control-state.v1", "phase": phase,
++                "valid_fields": valid, "status": int(status),
++                "epcon": float(values[0]),
++                "epsNewt": float(values[1]) if read_step else None,
++                "ss": float(values[2]) if read_step else None,
++                "oldnrm": float(values[3]) if read_step else None,
++                "toldel": float(values[4]) if read_step else None,
++                "source_header_sha256": _OBSERVATION_HEADER_SHA256,
++                "source_config_sha256": _OBSERVATION_CONFIG_SHA256,
++                "build_identity": binding["identity"],
++                "scope": "actual native scalars under owner lock; not a last-correction or iteration trace"}
++
 +    def last_step_snapshot(self, *, expected_step=None):
 +        cdef int k
-+        cdef const char* native_library
 +        with self._obs_lock:
 +            if self._obs_busy:
 +                raise IDAObservationError("operation_in_progress")
@@ -435,26 +500,7 @@
 +                raise IDAObservationError("unbound_build_identity")
 +            if self.mem is NULL or not self._malloc:
 +                raise IDAObservationError("no_accepted_step")
-+            if self._obs_binding is None:
-+                native_library = sl_ida75_library_path()
-+                if native_library is NULL:
-+                    raise IDAObservationError("native_library_identity_unavailable")
-+                library_path = Path(os.fsdecode(native_library)).resolve(strict=True)
-+                library_root = Path(__file__).parent / ".dylibs"
-+                if library_path != (library_root / "libsundials_ida.7.5.0.dylib").resolve(strict=True):
-+                    raise IDAObservationError("different_native_library_loaded")
-+                libraries = tuple((name, sha256((library_root / name).read_bytes()).hexdigest())
-+                                  for name, _ in _OBSERVATION_LIBRARIES)
-+                if libraries != _OBSERVATION_LIBRARIES:
-+                    raise IDAObservationError("native_library_payload_changed")
-+                binary_id = sha256(Path(__file__).read_bytes()).hexdigest()
-+                source = (_OBSERVATION_SCHEMA, "scikit-sundae=1.1.3",
-+                          _OBSERVATION_BUILD_ID, binary_id, _OBSERVATION_CONFIG,
-+                          _OBSERVATION_HEADER_SHA256, _OBSERVATION_CONFIG_SHA256, libraries)
-+                self._obs_binding = MappingProxyType({"source": source,
-+                    "identity": sha256(repr(source).encode()).hexdigest(),
-+                    "build_recipe_sha256": _OBSERVATION_BUILD_ID,
-+                    "native_library_path": str(library_path), "libraries": libraries})
++            self._obs_bind_source()
 +            before = self._obs_stamp()
 +            key = (self._obs_binding["identity"], self._obs_instance,
 +                   self._obs_generation, before["nsteps"], before["tn"].hex(),
@@ -676,6 +722,7 @@
 +            flag = IDAGetNumJacEvals(self.mem, &njac)
 +            if flag < 0:
 +                raise RuntimeError("IDAGetNumJacEvals - " + LSMESSAGES[flag])
++            nls_state = self._obs_nls_state(nsteps, nniters, tcur, hlast, qlast, hcur, qcur)
 +            return {"num_steps": nsteps, "residual_evals": nres,
 +                    "linear_setups": nsetups, "error_test_fails": netfails,
 +                    "last_order": qlast, "current_order": qcur,
@@ -684,14 +731,16 @@
 +                    "current_cj": cj, "nonlinear_iters": nniters,
 +                    "nonlinear_conv_fails": nnfails, "jacobian_evals": njac,
 +                    "nonlin_conv_coef_requested": self._options["nonlin_conv_coef"],
-+                    "coefficient_getter_available": False,
++                    "coefficient_getter_available": True,
++                    "coefficient_getter_kind": "pinned-private-header-word-copy",
++                    "nonlinear_control_state": nls_state,
 +                    "observation_owner": self._obs_instance,
 +                    "observation_generation": self._obs_generation,
 +                    "method_fields_valid": nsteps > 0}
  
      def __dealloc__(self):
          self._free_memory()
-@@ -1484,6 +1861,14 @@
+@@ -1484,6 +1906,14 @@
      elif not options["max_nonlin_iters"] > 0:
          raise ValueError("'max_nonlin_iters' must be > 0.")
  
@@ -719,7 +768,7 @@
          max_conv_fails : int, optional
              Specifies the max number of nonlinear solver convergence failures
              in one step. The default is 10.
-@@ -282,6 +286,17 @@
+@@ -282,6 +286,21 @@
          """
          self._IDA = _IDA(resfn, **options)
  
@@ -729,7 +778,11 @@
 +        Zero-step method fields may be sentinels or retained from reinit;
 +        method_fields_valid only reports whether this generation stepped.
 +        Batch solve closes this access window. Requested coefficient metadata
-+        is not a native coefficient getter. Callback cj and returned/requested
++        stays distinct from nonlinear_control_state, a pinned-header word copy.
++        epcon is valid after initialization; epsNewt, ss, oldnrm and toldel are
++        None until a successful current-generation endpoint with an NLS iteration.
++        Reinitialization/failure invalidate those method fields; they are not
++        a final-correction or iteration trace. Callback cj and returned/requested
 +        times remain separately owned by the caller. No history is mutated.
 +        """
 +        return self._IDA.statistics()
@@ -737,7 +790,7 @@
      def init_step(self, t0: float, y0: ndarray, yp0: ndarray) -> IDAResult:
          """
          Initialize the solver.
-@@ -406,6 +421,30 @@
+@@ -406,6 +425,30 @@
  
          """
          return self._IDA.solve(tspan, y0, yp0)

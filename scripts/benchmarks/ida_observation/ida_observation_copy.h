@@ -136,4 +136,57 @@ static int sl_ida75_copy(void *memory, sunindextype n, long ns,
     memcpy(uround, &m->ida_uround, sizeof(*uround));
     return sl_ida75_stamp(memory, ns, tn, hu, qu, hn, qn);
 }
+
+/* epcon is initialized at creation. The remaining fields are read only after
+ * a successful endpoint in this generation and an actual NLS iteration.
+ * Reinitialization or a failed return must not expose earlier method state.
+ * The caller publishes unavailable fields as None, never as copied sentinels.
+ */
+static int sl_ida75_nls_state(void *memory, long ns, long nni,
+                            sunrealtype tn, sunrealtype hu, int qu,
+                            sunrealtype hn, int qn, int read_step,
+                            sunrealtype *values, size_t count)
+{
+    int major, minor, patch, status, i;
+    long actual_ns, actual_nni, actual_failures;
+    sunrealtype actual_t, fields[5];
+    size_t copied = read_step ? 5 : 1;
+    char label[128];
+    IDAMem m;
+    if (!memory || !values || count != 5 || ns < 0 || nni < 0
+        || !isfinite(tn) || (read_step != 0 && read_step != 1)
+        || (read_step && (ns < 1 || nni < 1))) return SL_OBS_ARGUMENT;
+    status = SUNDIALSGetVersionNumber(&major, &minor, &patch, label, sizeof(label));
+    if (status != 0 || major != 7 || minor != 5 || patch != 0) return SL_OBS_VERSION;
+    if (IDAGetNumSteps(memory, &actual_ns) != 0
+        || IDAGetCurrentTime(memory, &actual_t) != 0
+        || IDAGetNonlinSolvStats(memory, &actual_nni, &actual_failures) != 0)
+        return SL_OBS_GETTER;
+    if (actual_ns != ns || actual_nni != nni || !sl_ida75_same_word(actual_t, tn))
+        return SL_OBS_STAMP;
+    m = (IDAMem)memory;
+    if (!m->ida_MallocDone || m->ida_nst != ns || m->ida_nni != nni
+        || !sl_ida75_same_word(m->ida_tn, tn)) return SL_OBS_STAMP;
+    if (sl_ida75_overlap(values, count * sizeof(*values), m, sizeof(*m)))
+        return SL_OBS_ALIAS;
+    if (read_step) {
+        status = sl_ida75_stamp(memory, ns, tn, hu, qu, hn, qn);
+        if (status) return status;
+    }
+    memcpy(&fields[0], &m->ida_epcon, sizeof(*fields));
+    if (read_step) {
+        memcpy(&fields[1], &m->ida_epsNewt, sizeof(*fields));
+        memcpy(&fields[2], &m->ida_ss, sizeof(*fields));
+        memcpy(&fields[3], &m->ida_oldnrm, sizeof(*fields));
+        memcpy(&fields[4], &m->ida_toldel, sizeof(*fields));
+    }
+    for (i = 0; i < (int)copied; ++i)
+        if (!isfinite(fields[i]) || fields[i] < 0) return SL_OBS_NONFINITE;
+    /* A positive subnormal epcon can legitimately underflow toldel to zero. */
+    if (fields[0] <= 0 || (read_step && fields[1] <= 0))
+        return SL_OBS_NONFINITE;
+    memcpy(values, fields, copied * sizeof(*values));
+    if (m->ida_nni != nni) return SL_OBS_STAMP;
+    return read_step ? sl_ida75_stamp(memory, ns, tn, hu, qu, hn, qn) : 0;
+}
 #endif

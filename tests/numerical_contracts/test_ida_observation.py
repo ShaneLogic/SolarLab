@@ -421,6 +421,8 @@ class TestNativeCompositionLifetime:
         np, make = native
         called = []
         solver = make(lambda: called.append("residual"), sparse=True)
+        with pytest.raises(RuntimeError, match="must be initialized"):
+            solver.statistics()
         y, yp = np.array([1., 2.]), np.array([1., 2.])
         y.flags.writeable = yp.flags.writeable = False
         original = (y.tobytes(), yp.tobytes())
@@ -430,7 +432,12 @@ class TestNativeCompositionLifetime:
         assert stats["num_steps"] == stats["linear_setups"] == stats["jacobian_evals"] == 0
         assert stats["method_fields_valid"] is False
         assert stats["nonlin_conv_coef_requested"] is None
-        assert stats["coefficient_getter_available"] is False
+        assert stats["coefficient_getter_available"] is True
+        state = stats["nonlinear_control_state"]
+        assert state["phase"] == "initialized_before_step"
+        assert state["valid_fields"] == ("epcon",)
+        assert state["epcon"] > 0
+        assert all(state[name] is None for name in ("epsNewt", "ss", "oldnrm", "toldel"))
         assert stats["observation_generation"] == 1
         with pytest.raises(RuntimeError, match=r"^no_accepted_interval:"):
             solver.last_step_snapshot()
@@ -508,7 +515,8 @@ class TestNativeCompositionLifetime:
         with pytest.raises((TypeError, ValueError), match="nonlin_conv_coef"):
             make(sparse=True, nonlin_conv_coef=coefficient)
 
-    def test_explicit_coefficient_and_reentrant_statistics_guard(self, native):
+    @pytest.mark.parametrize("coefficient", [0.2, 1e-8])
+    def test_explicit_coefficient_and_reentrant_statistics_guard(self, native, coefficient):
         _, make = native
         owner, rejected = [], []
         def callback():
@@ -516,12 +524,30 @@ class TestNativeCompositionLifetime:
                 with pytest.raises(RuntimeError) as error:
                     owner[0].statistics()
                 rejected.append(error.value.code)
-        owner.append(make(callback, sparse=True, nonlin_conv_coef=0.2))
+        owner.append(make(callback, sparse=True, nonlin_conv_coef=coefficient))
         owner[0].init_step(0., [1., 2.], [1., 2.])
-        assert owner[0].statistics()["nonlin_conv_coef_requested"] == 0.2
+        before = owner[0].statistics()
+        assert before["nonlin_conv_coef_requested"] == coefficient
+        assert before["nonlinear_control_state"]["epcon"] == coefficient
+        assert before["nonlinear_control_state"]["valid_fields"] == ("epcon",)
         owner[0].step(.125, method="onestep", tstop=.125)
         assert rejected == ["operation_in_progress"]
-        assert owner[0].statistics()["coefficient_getter_available"] is False
+        stats = owner[0].statistics()
+        state = stats["nonlinear_control_state"]
+        assert stats["coefficient_getter_available"] is True
+        assert stats["coefficient_getter_kind"] == "pinned-private-header-word-copy"
+        assert state["phase"] == "accepted_native_return"
+        assert state["valid_fields"] == ("epcon", "epsNewt", "ss", "oldnrm", "toldel")
+        assert state["epcon"] == state["epsNewt"] == coefficient
+        assert state["toldel"] == 1e-4*coefficient
+        assert state["ss"] >= 0 and state["oldnrm"] >= 0
+        packet = owner[0].last_step_snapshot()
+        assert state["build_identity"] == packet["binding"]["identity"]
+        assert state["source_header_sha256"] == packet["basis"]["source_header_sha256"]
+        assert state["source_config_sha256"] == packet["basis"]["source_config_sha256"]
+        state["epcon"] = -1  # Returned metadata owns no mutable native storage.
+        assert owner[0].statistics()["nonlinear_control_state"]["epcon"] == coefficient
+        assert owner[0].last_step_snapshot()["basis"] == packet["basis"]
         owner.clear()
 
     def test_reinit_and_batch_statistics_windows_remain_explicit(self, native):
@@ -536,6 +562,10 @@ class TestNativeCompositionLifetime:
         solver.init_step(0., [1., 2.], [1., 2.])
         stats = solver.statistics()
         assert stats["num_steps"] == 0 and stats["method_fields_valid"] is False
+        assert stats["nonlinear_control_state"]["phase"] == "initialized_before_step"
+        assert stats["nonlinear_control_state"]["valid_fields"] == ("epcon",)
+        assert all(stats["nonlinear_control_state"][name] is None
+                   for name in ("epsNewt", "ss", "oldnrm", "toldel"))
         assert stats["observation_owner"] == packet["owner"]
         assert stats["observation_generation"] == packet["generation"] + 1
         with pytest.raises(RuntimeError):
@@ -547,6 +577,7 @@ class TestNativeCompositionLifetime:
         after = solver.statistics()
         second_packet = solver.last_step_snapshot()
         assert after["num_steps"] > 0 and after["linear_setups"] > 0 and after["jacobian_evals"] > 0
+        assert after["nonlinear_control_state"]["phase"] == "accepted_native_return"
         assert second_packet["owner"] == packet["owner"]
         assert second_packet["generation"] == packet["generation"] + 1
         assert second_packet["step_key"] != packet["step_key"]
@@ -561,3 +592,26 @@ class TestNativeCompositionLifetime:
         assert batch.solve([0., 2**-10], [1., 2.], [1., 2.]).success
         with pytest.raises(RuntimeError, match="must be initialized"):
             batch.statistics()
+
+    def test_failed_step_withholds_previous_nls_method_fields(self, native):
+        _, make = native
+        fail = [False]
+
+        def callback():
+            if fail[0]:
+                raise RuntimeError("deliberate_nls_observation_failure")
+
+        solver = make(callback, sparse=True, nonlin_conv_coef=1e-8)
+        solver.init_step(0., [1., 2.], [1., 2.])
+        assert solver.step(.125, method="onestep", tstop=.125).success
+        before = solver.statistics()
+        assert before["nonlinear_control_state"]["phase"] == "accepted_native_return"
+        fail[0] = True
+        with pytest.raises(RuntimeError, match="deliberate_nls_observation_failure"):
+            solver.step(.25, method="onestep", tstop=.25)
+        after = solver.statistics()
+        state = after["nonlinear_control_state"]
+        assert after["observation_generation"] == before["observation_generation"]
+        assert state["phase"] == "no_current_successful_endpoint"
+        assert state["epcon"] == 1e-8 and state["valid_fields"] == ("epcon",)
+        assert all(state[name] is None for name in ("epsNewt", "ss", "oldnrm", "toldel"))

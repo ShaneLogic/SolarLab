@@ -261,7 +261,7 @@ def validate_recipe(recipe: dict) -> None:
     if (recipe["environment"]["MACOSX_DEPLOYMENT_TARGET"] != "11.0"
             or digest(Path(recipe["environment"]["SDKROOT"]) / "SDKSettings.json") != recipe["environment"]["SDKSettings_sha256"]):
         raise ValueError("macOS SDK or deployment target changed")
-    if recipe["wheel_filename"] != "scikit_sundae-1.1.3-2ida75composed-cp313-cp313-macosx_11_0_arm64.whl":
+    if recipe["wheel_filename"] != "scikit_sundae-1.1.3-3ida75nlsstate-cp313-cp313-macosx_11_0_arm64.whl":
         raise ValueError("unexpected pilot wheel tag")
 
 
@@ -357,8 +357,8 @@ def pack_overlay(plan: dict) -> dict:
     files["sksundae/_cy_ida.cpython-313-darwin.so"] = Path(plan["extension"])
     wheel_meta = "scikit_sundae-1.1.3.dist-info/WHEEL"
     record_name = "scikit_sundae-1.1.3.dist-info/RECORD"
-    overrides = {wheel_meta: ("Wheel-Version: 1.0\nGenerator: solarlab-ida75-composed-binding.v1\n"
-                             "Root-Is-Purelib: false\nBuild: 2ida75composed\nTag: cp313-cp313-macosx_11_0_arm64\n").encode()}
+    overrides = {wheel_meta: ("Wheel-Version: 1.0\nGenerator: solarlab-ida75-nls-state-binding.v1\n"
+                             "Root-Is-Purelib: false\nBuild: 3ida75nlsstate\nTag: cp313-cp313-macosx_11_0_arm64\n").encode()}
     overlay = work / "overlay"
     overlay.mkdir()
     (work / "wheel").mkdir()

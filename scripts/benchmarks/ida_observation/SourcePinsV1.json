@@ -11,18 +11,18 @@
   "files": {
     "src/sksundae/c_ida.pxd": {
       "original_sha256": "7f1443a261d3e65aecc57dafd2e5632a474f750822ded8867bb68ada55078236",
-      "patched_sha256": "2732aa43069b2437638a7d86a79be307ccff6b671d3cf43911c400841d0b23ab"
+      "patched_sha256": "f05558e0e49354f2bc6583a643b3b4f85f7ffbab0cc24e7297341ccc49ac60ee"
     },
     "src/sksundae/_cy_ida.pyx": {
       "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
-      "patched_sha256": "384be71710649d75a250ac1fa802fc36758838a5acd087ed778544a7a06cd442"
+      "patched_sha256": "a86c7fcb214ff134374b2cb1b29c4b47e28ed58e8347b8f100f250e9dca01daf"
     },
     "src/sksundae/ida/_solver.py": {
       "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
-      "patched_sha256": "3b5b9a9b09c8e2638f8753d36cc00f478ca30958f4d683ebe94b34390ee937ae"
+      "patched_sha256": "0ad82871c9e9a6e906fb299c455df2fffa684563751d5708c53a1cb2ef6ed0f7"
     }
   },
-  "patch_sha256": "b6ef74bce1d55906c6bada39a1a1235896c21ed5ee68551b01986aec353a1c78",
+  "patch_sha256": "fa86f001a9418b1a8656dd39600f6b1ce60f147c57db4fca245057ff404cdbcf",
   "build_binding_token": "_OBSERVATION_BUILD_ID = None",
   "required_config": {
     "SUNDIALS_VERSION": "7.5.0",
@@ -50,7 +50,7 @@
     "sundials_cvode",
     "sundials_ida"
   ],
-  "copy_header_sha256": "4bd6548314a3ccd948b0d15a5b1d0821b3ecca1b8a1c45b651600becb8ff28af",
+  "copy_header_sha256": "1b01f4071c431c7747cc453bf88ee83b18897fa518961356cdb2c473824ae1c3",
   "private_header_sha256": "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce",
   "composed_controls_patch_sha256": "7841508829e5226cc4de3aa0808aaf9a16ef7217cbbfc99e57f8c8955dbfd44b",
   "native_cleanup": {
@@ -84,5 +84,18 @@
       "SUNLinSolLastFlag_SuperLUMT",
       "SUNLinSolSpace_SuperLUMT"
     ]
+  },
+  "nonlinear_state_observation": {
+    "schema": "sksundae.ida.nonlinear-control-state.v1",
+    "fields": [
+      "epcon",
+      "epsNewt",
+      "ss",
+      "oldnrm",
+      "toldel"
+    ],
+    "previous_patch_sha256": "b6ef74bce1d55906c6bada39a1a1235896c21ed5ee68551b01986aec353a1c78",
+    "kind": "read-only pinned upstream header word copies with explicit lifecycle validity",
+    "upstream_algorithm_or_header_changed": false
   }
 }

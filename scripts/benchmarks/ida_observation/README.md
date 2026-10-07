@@ -11,8 +11,18 @@ The same public `IDA` class exposes `statistics()` and `last_step_snapshot()`.
 The composed controls patch preserves `nonlin_conv_coef=None` as no setter
 call. Explicit values must be finite positive real non-Booleans. Statistics
 use checked native integrator, nonlinear-solver, Jacobian and current-cj
-getters under the observation owner lock. Requested coefficient metadata is
-not a getter for the native coefficient. Reads do not advance or mutate history.
+getters under the observation owner lock. Requested coefficient metadata stays
+separate from `nonlinear_control_state`: an actual word copy through the pinned
+upstream private header. `epcon` is valid after successful initialization;
+`epsNewt`, `ss`, `oldnrm` and `toldel` are available only for a successfully
+returned current-generation native endpoint with a nonlinear iteration.
+Unavailable fields are `None` with explicit `valid_fields` and `phase` tags;
+reinitialization or failure does not expose older method values as current.
+`coefficient_getter_available` now reports the private copy and
+`coefficient_getter_kind` identifies that route. No internal pointer escapes.
+These scalars do not reveal a final correction vector or an iteration trace.
+Reads do not advance or mutate history, and the upstream nonlinear algorithm
+and all native library bytes remain unchanged.
 
 BR01 remains explicit: zero-step method fields can be sentinels or retain a
 previous generation's values. They are returned unchanged, accompanied by
