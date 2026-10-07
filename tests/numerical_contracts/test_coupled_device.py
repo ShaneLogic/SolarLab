@@ -2443,6 +2443,161 @@ def test_voltage_lift_startup_step_rejects_unbound_or_invalid_policy(request):
               "unrelated_controls_rejected": True, "invalid_initial_steps_rejected": True})
 
 
+def time_weight_requests():
+    from scripts.benchmarks.coupled_device_prototype import prepare_voltage_lift_native_request
+
+    case_id = "DynamicAcceptorIonPublicDeviceV1"
+    _, mapping, _, _, context = lift_controller_fixture(case_id)
+    paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(paths[case_id]).read_text())
+    options = {"nonlin_conv_coef": 1e-8, "nonlin_guard": "first-correction-wrms-v1",
+               "first_step": 7.8125e-7}
+    parent = prepare_voltage_lift_native_request(mapping, context.segments, previous, **options)
+    refined = prepare_voltage_lift_native_request(
+        mapping, context.segments, previous, **options, time_weight_kappa=1024)
+    return mapping, context.segments, previous, options, parent, refined
+
+
+def test_voltage_lift_time_weights_default_and_physical_projection(request):
+    from scripts.benchmarks.coupled_device_prototype import (
+        prepare_voltage_lift_native_request, validate_voltage_lift_native_request,
+    )
+
+    mapping, segments, previous, options, parent, refined = time_weight_requests()
+    default = prepare_voltage_lift_native_request(
+        mapping, segments, previous, **options, time_weight_kappa=None)
+    assert default == parent and "time_weight_policy" not in parent
+    validate_voltage_lift_native_request(mapping, segments, refined)
+    changed = {key for key in refined if refined[key] != parent.get(key)}
+    assert changed == {"controls", "weight_certificate", "time_weight_policy",
+                       "preparation_context_sha256", "initial_preparation"}
+    assert {key for key in refined["controls"] if refined["controls"][key] != parent["controls"][key]} == {
+        "rtol", "atol", "nonlin_conv_coef"}
+    assert refined["controls"]["rtol"] == 2.4687289318589945e-15
+    assert refined["controls"]["nonlin_conv_coef"] == 1.024e-5
+    assert len(refined["controls"]["atol"]) == 45
+    assert min(refined["controls"]["atol"]) == 3.0517578125e-13
+    assert max(refined["controls"]["atol"]) == 6.103515625e-13
+    assert segments[-1].end == 9.2 and sum(map(len, refined["observation_times"].values())) == 131
+    for key in ("point_identity", "raw_z_hex", "raw_zdot_hex", "inputs_hex", "input_rates_hex",
+                "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
+                "desired_tangent_residual_SI", "represented_rate_residual_SI"):
+        assert refined["initial_preparation"][key] == parent["initial_preparation"][key], key
+    policy, proof = refined["time_weight_policy"], refined["weight_certificate"]
+    assert policy["ancestor_request_sha256"] == digest(previous)
+    assert policy["parent_controls_sha256"] == digest(parent["controls"])
+    assert policy["parent_weight_certificate_sha256"] == digest(parent["weight_certificate"])
+    assert proof["time_weight_policy_sha256"] == digest(policy)
+    assert proof["rtol"] == refined["controls"]["rtol"] == float.fromhex(proof["rtol_hex"])
+    assert proof["atol"] == refined["controls"]["atol"]
+    for row, atol in zip(proof["components"], proof["atol"], strict=True):
+        assert float.fromhex(row["atol_z_hex"]) == atol
+        assert Fraction(row["new_physical_atol_exact"]) == Fraction(row["scale_exact"])*lift_fraction(atol)
+        assert all(row["checks"].values())
+    assert digest(parent) != digest(refined)
+    assert refined["initial_preparation"]["request_sha256"] == refined["preparation_context_sha256"]
+    log_case(request, {"family": "time_weights_request", "policy": policy,
+                       "parent_sha256": digest(parent), "request_sha256": digest(refined),
+                       "changed_fields": sorted(changed), "native_steps": 0},
+             {"default_exact": True, "full_B_physics_and_history_unchanged": True,
+              "actual_applied_certificate": True, "no_native_import": "sksundae" not in sys.modules})
+
+
+def test_voltage_lift_time_weights_exact_norm_comparisons(request):
+    """Independent Fraction algebra, including m0 and later ss comparisons."""
+    _, _, _, _, parent, refined = time_weight_requests()
+    old, new = parent["controls"], refined["controls"]
+    assert lift_fraction(new["rtol"])*1024 == lift_fraction(old["rtol"])
+    assert lift_fraction(new["nonlin_conv_coef"]) == 1024*lift_fraction(old["nonlin_conv_coef"])
+    for a, b in zip(old["atol"], new["atol"], strict=True):
+        assert lift_fraction(b)*1024 == lift_fraction(a)
+        assert np.finfo(float).tiny <= b and np.isfinite(b)
+    # Cover zero and signed remainders over disparate scales. Compare squared
+    # exact norms to avoid introducing a rounded square root as a reference.
+    norms = []
+    for exponent in (-40, 0, 40):
+        z = [Fraction((-1)**i*i, 17)*Fraction(2)**exponent for i in range(45)]
+        correction = [Fraction(i-22, 1 << 60) for i in range(45)]
+        values = []
+        for controls in (old, new):
+            denominator = [lift_fraction(controls["rtol"])*abs(v)+lift_fraction(a)
+                           for v, a in zip(z, controls["atol"], strict=True)]
+            values.append(sum(((c/d)**2 for c, d in zip(correction, denominator, strict=True)), Fraction())/45)
+        assert values[1] == 1024**2*values[0]
+        for threshold_factor in (Fraction(1), Fraction(1, 10000**2)):
+            a = lift_fraction(old["nonlin_conv_coef"])*threshold_factor
+            b = lift_fraction(new["nonlin_conv_coef"])*threshold_factor
+            assert values[0]/a**2 == values[1]/b**2
+        for ss in (Fraction(1, 20), Fraction(1), Fraction(20)):
+            assert ss**2*values[0]/lift_fraction(old["nonlin_conv_coef"])**2 == (
+                ss**2*values[1]/lift_fraction(new["nonlin_conv_coef"])**2)
+        norms.append(values)
+    for before, after in zip(norms[:-1], norms[1:], strict=True):
+        assert before[0]/after[0] == before[1]/after[1]
+    policy = refined["time_weight_policy"]
+    assert not policy["rounded_native_decisions_or_adaptive_path_equal"]
+    assert not policy["global_accuracy_or_conservation_certified"]
+    log_case(request, {"family": "time_weights_exact_norms", "state_scales": [-40, 0, 40],
+                       "components": 45, "native_steps": 0},
+             {"exact_binary64_parameter_scaling": True, "same_state_WRMS_homogeneity": True,
+              "m0_and_matching_history_ss_comparisons": True, "no_trajectory_equivalence_claim": True})
+
+
+def test_voltage_lift_time_weights_rejects_tampering(request):
+    from copy import deepcopy
+    from scripts.benchmarks.coupled_device_prototype import (
+        prepare_voltage_lift_native_request, validate_voltage_lift_native_request,
+    )
+
+    mapping, segments, previous, options, parent, refined = time_weight_requests()
+    for value in (True, False, "1024", 1024.0, 0, -1, 2, 2048, float("nan"), float("inf")):
+        with pytest.raises(ContractError, match="invalid_time_weights"):
+            prepare_voltage_lift_native_request(mapping, segments, previous, **options, time_weight_kappa=value)
+    for key, value in (("nonlin_conv_coef", 1e-7), ("nonlin_guard", None), ("first_step", None)):
+        with pytest.raises(ContractError, match="invalid_time_weights"):
+            prepare_voltage_lift_native_request(
+                mapping, segments, previous, **dict(options, **{key: value}), time_weight_kappa=1024)
+    _, s0_mapping, _, _, s0_context = lift_controller_fixture("S0NeutralPublicDeviceV1")
+    paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    s0_previous = json.loads(Path(paths["S0NeutralPublicDeviceV1"]).read_text())
+    with pytest.raises(ContractError, match="invalid_time_weights"):
+        prepare_voltage_lift_native_request(s0_mapping, s0_context.segments, s0_previous, time_weight_kappa=1024)
+    for field, value in (("schema", "forged"), ("kappa", 2), ("ancestor_request_sha256", "0"*64),
+                         ("parent_controls_sha256", "0"*64), ("parent_weight_certificate_sha256", "0"*64),
+                         ("parent_values", {}), ("values", {}), ("application", "after_first_solve"),
+                         ("norm_comparison", "global equivalence"), ("extra", True)):
+        changed = deepcopy(refined)
+        changed["time_weight_policy"][field] = value
+        with pytest.raises(ContractError, match="time_weights"):
+            validate_voltage_lift_native_request(mapping, segments, changed)
+    for policy in (None, True, [], "1024", {}):
+        changed = deepcopy(refined)
+        changed["time_weight_policy"] = policy
+        with pytest.raises(ContractError, match="invalid_time_weights"):
+            validate_voltage_lift_native_request(mapping, segments, changed)
+    changed = deepcopy(refined)
+    del changed["time_weight_policy"]
+    with pytest.raises(ContractError, match="native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, segments, changed)
+    changed = deepcopy(refined)
+    changed["weight_certificate"] = deepcopy(parent["weight_certificate"])
+    with pytest.raises(ContractError, match="native_controls_changed"):
+        validate_voltage_lift_native_request(mapping, segments, changed)
+    for field in ("rtol", "max_step", "max_order", "first_step", "nonlin_conv_coef"):
+        changed = deepcopy(refined)
+        changed["controls"][field] *= 2
+        with pytest.raises(ContractError, match="native_controls_changed"):
+            validate_voltage_lift_native_request(mapping, segments, changed)
+    for index in range(45):
+        changed = deepcopy(refined)
+        changed["controls"]["atol"][index] *= 2
+        with pytest.raises(ContractError, match="native_controls_changed|time_weights_binding"):
+            validate_voltage_lift_native_request(mapping, segments, changed)
+    log_case(request, {"family": "time_weights_rejection", "native_steps": 0},
+             {"invalid_or_unbound_route_rejected": True, "all45_atol_mutations_rejected": True,
+              "stale_applied_certificate_rejected": True, "unrelated_control_mutation_rejected": True})
+
+
 def full_word_fractions(value):
     """Independent readback for tests; no consumer uses this arithmetic."""
     return [sum((lift_fraction(word.ravel()[i]) for word in value.words), Fraction())

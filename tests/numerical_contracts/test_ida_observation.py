@@ -860,3 +860,188 @@ class TestNativeFirstCorrectionGuard:
             results.append((result.t, result.y.tobytes(), result.yp.tobytes(), result.status))
         assert results[0] == results[1]
         print("GUARD_REINIT_DIMENSION_PARTIAL_AND_DEFAULT_OFF_CLOSED")
+
+
+def test_time_weight_refinement_application_45(native):
+    """One separately admitted synthetic45-vector case, with durable failure data."""
+    import gc
+    import traceback
+    import weakref
+    from sksundae.ida import IDA
+
+    np, _ = native
+    target = Path(os.environ["TIME_WEIGHT_APPLICATION_RESULT"])
+    progress_path = target.with_name("ApplicationProgress.jsonl")
+    path = Path(os.environ["TIME_WEIGHT_APPLICATION_REQUEST"])
+    records = []
+    counts = {"owners_created": 0, "initialization_calls": 0, "onestep_calls": 0}
+    solver = None
+
+    def encode(value):
+        if isinstance(value, bytes):
+            return {"bytes_hex": value.hex()}
+        if isinstance(value, np.ndarray):
+            return {"array": {"dtype": value.dtype.str, "shape": list(value.shape),
+                              "data": {"bytes_hex": value.tobytes().hex()}}}
+        if isinstance(value, np.generic):
+            return encode(value.item())
+        if type(value) is float:
+            return {"binary64": value.hex()}
+        if isinstance(value, dict) or hasattr(value, "items"):
+            return {key: encode(child) for key, child in value.items()}
+        if isinstance(value, tuple):
+            return {"tuple": [encode(child) for child in value]}
+        if isinstance(value, list):
+            return [encode(child) for child in value]
+        return value
+
+    def returned(result):
+        return {key: encode(getattr(result, key)) for key in
+                ("success", "status", "message", "t", "y", "yp", "nfev", "njev")}
+
+    with progress_path.open("x") as progress:
+        def note(event, **data):
+            progress.write(json.dumps({"event": event, "counts": dict(counts), **encode(data)},
+                                      allow_nan=False) + "\n")
+            progress.flush()
+            os.fsync(progress.fileno())
+
+        def finish(passed, **extra):
+            output = {"schema": "solarlab.time-weights-application.v1", "passed": passed,
+                "status": "passed" if passed else "failed", "synthetic_45_component_case": True,
+                "physical_protocols": 0, "counts": dict(counts), "records": records,
+                "progress_file": str(progress_path), **extra}
+            with target.open("x") as stream:
+                json.dump(output, stream, indent=2, allow_nan=False)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            return output
+
+        note("entered", request_path=str(path))
+        try:
+            data = path.read_bytes()
+            request = json.loads(data)
+            controls, policy = request["controls"], request["time_weight_policy"]
+            note("input", request_file_sha256=hashlib.sha256(data).hexdigest(), controls=controls,
+                 policy=policy, source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+            assert hashlib.sha256(data).hexdigest() == os.environ["TIME_WEIGHT_APPLICATION_REQUEST_SHA256"]
+            assert policy["kappa"] == 1024 and len(controls["atol"]) == 45
+            assert controls["nonlin_conv_coef"] == 1.024e-5
+            assert controls["first_step"] == 7.8125e-7
+            assert controls["nonlin_guard"] == "first-correction-wrms-v1"
+            assert controls["nthreads"] == 1
+            rates = (np.arange(45, dtype=float)+1)/64
+
+            def residual(t, y, yp, out):
+                out[:] = yp-rates
+
+            def jacobian(t, y, yp, out, cj, jac):
+                jac[:] = cj  # The explicitly diagonal CSC structure has 45 entries.
+
+            for initialization in range(3):
+                initial = (np.arange(45, dtype=float)-22)/16+initialization/8
+                item = {"logical_initialization": initialization+1,
+                        "initial_y_hex": [float(v).hex() for v in initial], "steps": []}
+                records.append(item)
+                note("before_constructor", initialization=initialization+1,
+                     initial_y_hex=item["initial_y_hex"], initial_yp_hex=[float(v).hex() for v in rates])
+                solver = IDA(residual, jacfn=jacobian, sparsity=np.eye(45), **controls)
+                counts["owners_created"] += 1
+                counts["initialization_calls"] += 1
+                note("before_initialization", initialization=initialization+1)
+                initialized = solver.init_step(0., initial, rates)
+                item["initialization_return"] = returned(initialized)
+                note("initialization_return", initialization=initialization+1, result=item["initialization_return"])
+                before = solver.statistics()
+                item["initialized"] = encode(before)
+                note("initialization_statistics", initialization=initialization+1, statistics=before)
+                assert initialized.success and np.array_equal(initialized.y, initial)
+                assert np.array_equal(initialized.yp, rates)
+                state = before["nonlinear_control_state"]
+                assert state["epcon"] == controls["nonlin_conv_coef"]
+                assert state["valid_fields"] == ("epcon",)
+                assert all(state[name] is None for name in ("epsNewt", "ss", "oldnrm", "toldel"))
+                assert before["nonlinear_guard"]["installed_at_capture"]
+                # IDAInit copies yy0 to phi[0]; subsequent weights use the
+                # previous packet's native phi[0], not the new endpoint.
+                weighting_state = initial.copy()
+                for step_index in range(2):
+                    entry = {"step_index": step_index+1,
+                             "weighting_phi0_hex": [float(v).hex() for v in weighting_state]}
+                    item["steps"].append(entry)
+                    counts["onestep_calls"] += 1
+                    note("before_onestep", initialization=initialization+1, **entry)
+                    result = solver.step(32*controls["first_step"], method="onestep",
+                                         tstop=32*controls["first_step"])
+                    entry["return"] = returned(result)
+                    note("onestep_return", initialization=initialization+1,
+                         step_index=step_index+1, result=entry["return"])
+                    after = solver.statistics()
+                    entry["statistics"] = encode(after)
+                    note("onestep_statistics", initialization=initialization+1,
+                         step_index=step_index+1, statistics=after)
+                    assert result.success, result.message
+                    packet = solver.last_step_snapshot()
+                    entry["packet"] = encode(packet)
+                    note("onestep_snapshot", initialization=initialization+1,
+                         step_index=step_index+1, packet=packet)
+                    state, trace = after["nonlinear_control_state"], after["nonlinear_guard"]
+                    assert state["epcon"] == state["epsNewt"] == controls["nonlin_conv_coef"]
+                    assert state["toldel"] == 1e-4*controls["nonlin_conv_coef"] == 1.024e-9
+                    assert after["initial_step"] == controls["first_step"]
+                    assert state["build_identity"] == packet["binding"]["identity"]
+                    assert state["source_header_sha256"] == packet["basis"]["source_header_sha256"]
+                    assert after["observation_owner"] == packet["owner"] == trace["owner"]
+                    assert after["observation_generation"] == packet["generation"] == trace["generation"]
+                    assert trace["complete"] and not trace["overflow"]
+                    assert trace["callback_count"] == trace["record_count"] > 0
+                    assert trace["callback_count"] == after["nonlinear_iters"]-before["nonlinear_iters"]
+                    for i, row in enumerate(trace["records"], 1):
+                        assert row["sequence"] == i
+                        assert row["tolerance"] == state["epsNewt"]
+                        assert row["toldel"] == state["toldel"]
+                        assert not row["nonfinite_fields"]
+                    actual = np.frombuffer(packet["error_weights"], dtype=packet["dtype"])
+                    assert actual.shape == (45,)
+                    weights = []
+                    for i, (z, atol, observed) in enumerate(zip(weighting_state, controls["atol"], actual, strict=True)):
+                        rtol = controls["rtol"]
+                        exact = Fraction(rtol)*abs(Fraction(float(z)))+Fraction(atol)
+                        # IDAEwtSetSV: abs, linear sum, inverse. Only explicit
+                        # fused/separate binary64 rounding alternatives pass.
+                        separate, fused = rtol*abs(float(z))+atol, float(exact)
+                        permitted = {float(1./separate).hex(), float(1./fused).hex()}
+                        weights.append({"index": i, "phi0_before_hex": float(z).hex(),
+                            "rtol_hex": rtol.hex(), "atol_hex": atol.hex(),
+                            "observed_weight_hex": float(observed).hex(),
+                            "permitted_weight_hex": sorted(permitted)})
+                    entry["weights"] = weights
+                    note("weight_comparisons", initialization=initialization+1,
+                         step_index=step_index+1, weights=weights)
+                    for row in weights:
+                        assert row["observed_weight_hex"] in row["permitted_weight_hex"], row
+                    basis = packet["basis"]
+                    weighting_state = np.frombuffer(basis["phi"], dtype=basis["dtype"]).reshape(basis["phi_shape"])[0].copy()
+                    before = after
+                owner = weakref.ref(solver)
+                del solver
+                solver = None
+                gc.collect()
+                item["python_owner_released"] = owner() is None
+                note("owner_released", initialization=initialization+1, released=item["python_owner_released"])
+                assert item["python_owner_released"]
+            output = finish(True, request_file_sha256=hashlib.sha256(data).hexdigest(),
+                fresh_initializations=3, native_onestep_calls=6, all45_weights_each_step_checked=True,
+                raw_tolerance_getter_used=False, fused_and_unfused_rounding_explicit=True)
+            note("passed", result_file=str(target))
+            print("TIME_WEIGHT_APPLICATION", json.dumps({k: v for k, v in output.items() if k != "records"}))
+        except BaseException as error:
+            failure = {"type": type(error).__name__, "reason": str(error), "traceback": traceback.format_exc()}
+            note("first_error", failure=failure)
+            if not target.exists():
+                finish(False, first_error=failure, missing_native_fields_remain_absent=True)
+            raise
+        finally:
+            solver = None
+            gc.collect()

@@ -16,6 +16,7 @@ import json
 import math
 from pathlib import Path
 import resource
+import sys
 import time
 import traceback
 from types import MappingProxyType
@@ -3419,6 +3420,71 @@ def _voltage_lift_startup_step(previous_controls, ancestor_sha256, value):
             "ancestor_request_sha256": ancestor_sha256}
 
 
+def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_sha256, kappa):
+    """One parent-bound time-error experiment; no adaptive-path equivalence.
+
+    At identical states/corrections the exact WRMS and Newton thresholds
+    scale together. Matching norm histories also preserve rate/ss. Native
+    rounded decisions and future weighting states need separate evidence.
+    """
+    if (type(kappa) is not int or kappa != 1024
+            or mapping.model.definition.id != "DynamicAcceptorIonPublicDeviceV1"
+            or mapping.model.layout.size != 45
+            or parent_controls.get("nonlin_conv_coef") != 1e-8
+            or parent_controls.get("nonlin_guard") != "first-correction-wrms-v1"
+            or parent_controls.get("nonlin_trace_capacity") != 4096
+            or parent_controls.get("first_step") != 7.8125e-7
+            or not isinstance(ancestor_sha256, str) or len(ancestor_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in ancestor_sha256)):
+        raise ContractError("voltage_lift_invalid_time_weights")
+    old = {key: parent_controls[key] for key in ("rtol", "atol", "nonlin_conv_coef")}
+    values = {"rtol": math.ldexp(old["rtol"], -10),
+              "atol": [math.ldexp(value, -10) for value in old["atol"]],
+              "nonlin_conv_coef": math.ldexp(old["nonlin_conv_coef"], 10)}
+    f = lambda value: Fraction.from_float(float(value))
+    pairs = [(old["rtol"], values["rtol"], Fraction(1, kappa)),
+             (old["nonlin_conv_coef"], values["nonlin_conv_coef"], Fraction(kappa))]
+    pairs += [(a, b, Fraction(1, kappa)) for a, b in zip(old["atol"], values["atol"], strict=True)]
+    if (len(values["atol"]) != 45
+            or any(not math.isfinite(b) or b < sys.float_info.min or f(b) != f(a)*scale
+                   for a, b, scale in pairs)):
+        raise ContractError("voltage_lift_time_weights_not_exact_normal")
+    policy = {
+        "schema": "solarlab.voltage-lift-time-weights.v1", "kappa": kappa,
+        "ancestor_request_sha256": ancestor_sha256,
+        "parent_controls_sha256": digest(dict(parent_controls)),
+        "parent_weight_certificate_sha256": digest(parent_proof),
+        "parent_values": old, "values": values,
+        "application": "every_fresh_initialization_before_first_solve",
+        "exact_parameter_scaling": "rtol/atol ldexp(-10); nonlin_conv_coef ldexp(+10); positive normal binary64",
+        "norm_comparison": "same-state denominators divide by1024; exact WRMS and epcon/epsNewt/toldel/m0-direct thresholds multiply by1024",
+        "history_condition": "matching correction/weight histories preserve norm ratios and dimensionless rate/ss; later ss*WRMS comparison scales homogeneously",
+        "local_time_error_threshold": 1,
+        "rounded_native_decisions_or_adaptive_path_equal": False,
+        "global_accuracy_or_conservation_certified": False,
+    }
+    applied = dict(parent_proof, rtol=values["rtol"], atol=values["atol"],
+                   rtol_hex=values["rtol"].hex(),
+                   parent_weight_certificate_sha256=digest(parent_proof),
+                   time_weight_policy_sha256=digest(policy))
+    applied["proof"] += "; exact power-of-two contraction of both applied denominator terms"
+    applied["components"] = []
+    for row, atol in zip(parent_proof["components"], values["atol"], strict=True):
+        scale = Fraction(row["scale_exact"])
+        offset = Fraction(row["offset_upper_exact"])
+        original = Fraction(row["old_physical_atol_exact"])
+        absolute, r = scale*f(atol), f(values["rtol"])
+        checks = {"positive_atol": atol > 0, "rtol_not_larger": r <= f(parent_proof["rtol"]),
+                  "half_absolute_budget": r*offset <= original/2,
+                  "encoded_atol_not_larger": absolute <= original-r*offset,
+                  "triangle_margin": absolute+r*offset <= original}
+        if not all(checks.values()):
+            raise ContractError("voltage_lift_time_weights_certificate_failed")
+        applied["components"].append(dict(row, new_physical_atol_exact=str(absolute),
+                                          atol_z_hex=atol.hex(), checks=checks))
+    return policy, dict(parent_controls, **values), applied
+
+
 def _voltage_lift_guard_applied(raw_statistics, controls):
     """Requested policy alone cannot establish actual installation or tracing."""
     policy = controls.get("nonlin_guard")
@@ -3442,7 +3508,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         nonlin_conv_coef: float | None = None,
                                         nonlin_guard: str | None = None,
                                         nonlin_trace_capacity: int = 4096,
-                                        first_step: float | None = None) -> dict:
+                                        first_step: float | None = None,
+                                        time_weight_kappa: int | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     if (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3
@@ -3478,6 +3545,10 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
     if first_step is not None:
         startup = _voltage_lift_startup_step(old["controls"], digest(old), first_step)
         controls["first_step"] = startup["value"]
+    time_weights = None
+    if time_weight_kappa is not None:
+        time_weights, controls, proof = _voltage_lift_time_weights(
+            mapping, controls, proof, digest(old), time_weight_kappa)
     request = {
         "schema": "solarlab.voltage-lift-native-request.v1", "case_id": model.definition.id,
         "prior_request_sha256": digest(old), "numeric_packet": packet,
@@ -3517,6 +3588,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
         request["nonlinear_guard_policy"] = guard
     if startup is not None:
         request["startup_step_policy"] = startup
+    if time_weights is not None:
+        request["time_weight_policy"] = time_weights
     # This preparation context deliberately precedes the final request. Its
     # digest remains labelled as such; no self-referential hash is invented.
     context = AffineSamplingContext(model, request)
@@ -3570,6 +3643,14 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
         if digest(startup) != digest(expected):
             raise ContractError("voltage_lift_startup_step_binding")
         controls["first_step"] = expected["value"]
+    if "time_weight_policy" in request:
+        time_weights = request["time_weight_policy"]
+        if not isinstance(time_weights, Mapping):
+            raise ContractError("voltage_lift_invalid_time_weights")
+        expected, controls, proof = _voltage_lift_time_weights(
+            mapping, controls, proof, request["prior_request_sha256"], time_weights.get("kappa"))
+        if digest(time_weights) != digest(expected):
+            raise ContractError("voltage_lift_time_weights_binding")
     if (digest(proof) != digest(request["weight_certificate"])
             or digest(controls) != digest(request["controls"])
             or controls.get("calc_initcond") is not None
