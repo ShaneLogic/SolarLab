@@ -1,11 +1,11 @@
 import {
-  ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, previewSpatialExperiment,
+  ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, previewExperimentConfiguration,
 } from '../configuration-client'
-import type { DeviceInput, TandemInput, SpatialExperimentInput } from '../generated/configuration-inputs'
+import type { DeviceInput, TandemInput, SpatialExperimentInput, JVExperimentInput } from '../generated/configuration-inputs'
 
 export type ConfigurationPreviewSelection = { endpoint: string | URL } & (
   { kind: 'device'; input: DeviceInput } | { kind: 'tandem'; input: TandemInput }
-  | { kind: 'experiment'; input: SpatialExperimentInput }
+  | { kind: 'experiment'; input: SpatialExperimentInput | JVExperimentInput }
 )
 
 export interface ConfigurationPreviewPanel {
@@ -198,7 +198,7 @@ export function mountConfigurationPreviewPanel(
       const doc = selection.kind === 'device'
         ? await previewDeviceConfiguration(endpoint, selection.input, view.abort.signal)
         : selection.kind === 'tandem' ? await previewTandemConfiguration(endpoint, selection.input, view.abort.signal)
-          : await previewSpatialExperiment(endpoint, selection.input, view.abort.signal)
+          : await previewExperimentConfiguration(endpoint, selection.input, view.abort.signal)
       if (!current(view)) return
       state(view, 'ready', doc.value.status)
       const identity = inspect('Current configuration content identity', doc.value.identity)

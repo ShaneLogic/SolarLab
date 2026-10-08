@@ -25,6 +25,7 @@ from solarlab.device.inputs import (
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.device.tunnelling import TunnellingInput
 from solarlab.experiments.two_dimensional.inputs import SpatialExperimentInput
+from solarlab.experiments.jv.inputs import JVExperimentInput
 from solarlab.materials.full_parameters import FullParameterInput
 from solarlab.materials.optics import CigsOpticsInput
 from solarlab.materials.parameter_schema import parameter_schema
@@ -43,7 +44,7 @@ _INPUT_DTOS = (
     DeviceInput, TandemInput, FullLayerInput, NamedMaterialInput,
     BulkDefectInput, MultivalentDefectInput, LegacyBulkTrapInput,
     MetastableDocumentInput, MetastablePreparationInput, InterfaceInput,
-    ContactInput, TunnellingInput, CigsOpticsInput, SpatialExperimentInput,
+    ContactInput, TunnellingInput, CigsOpticsInput, SpatialExperimentInput, JVExperimentInput,
 )
 
 

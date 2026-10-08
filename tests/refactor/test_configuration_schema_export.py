@@ -50,7 +50,7 @@ def check_local_references(document):
 
 def test_complete_schemas_equal_actual_dtos_with_independent_reference_scope():
     exported = export_configuration_schema()
-    assert len(exported["dto_schemas"]) == 18
+    assert len(exported["dto_schemas"]) == 19
     for entry in exported["dto_schemas"].values():
         module, name = entry["python_type"].split(":")
         dto = getattr(importlib.import_module(module), name)

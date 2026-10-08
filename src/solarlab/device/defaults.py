@@ -10,6 +10,10 @@ from typing import Any
 
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.device.tunnelling import CHANNEL_TYPES
+from solarlab.experiments.jv.inputs import (
+    JV_DEFAULT_FIELDS, JVInput, DarkJVInput, JVNumericalDefaults,
+    JVHistoryDefaults, JVWaveformControlsInput,
+)
 from solarlab.experiments.two_dimensional.inputs import (
     ComponentwiseAtolInput, EXPERIMENT_DEFAULT_FIELDS, GrainSweepInput, JV2DInput,
 )
@@ -50,14 +54,28 @@ class DefaultCatalog:
     def __post_init__(self) -> None:
         experiment_pairs = tuple(self.experiment_defaults)
         names = [name for name, _ in experiment_pairs]
-        if len(names) != len(set(names)) or names and set(names) != set(EXPERIMENT_DEFAULT_FIELDS):
-            raise ValueError("experiment defaults require the three source-bound 2D sections")
+        all_fields = {**EXPERIMENT_DEFAULT_FIELDS, **JV_DEFAULT_FIELDS}
+        if len(names) != len(set(names)) or set(names) - set(all_fields):
+            raise ValueError("unknown or duplicate experiment default section")
+        for group in (EXPERIMENT_DEFAULT_FIELDS, JV_DEFAULT_FIELDS):
+            if set(names) & set(group) and not set(group) <= set(names):
+                raise ValueError("experiment defaults require complete source-bound experiment groups")
         experimental = []
         for name, values in experiment_pairs:
             data = _pairs(tuple(values))
-            if set(data) != set(EXPERIMENT_DEFAULT_FIELDS[name]):
+            if set(data) != set(all_fields[name]):
                 raise ValueError(f"incomplete experiment defaults: {name}")
-            if name == "jv_2d_componentwise_atol":
+            if name in {"jv_jobs", "jv_endpoint", "dark_jv"}:
+                model_jv = DarkJVInput if name == "dark_jv" else JVInput
+                checked = model_jv.model_validate({"kind": "dark_jv" if name == "dark_jv" else "jv", **data}).normalized_data()
+                checked.pop("kind")
+            elif name in {"jv_numerical", "dark_jv_numerical"}:
+                checked = JVNumericalDefaults.model_validate(data).normalized_data()
+            elif name == "jv_waveform_controls":
+                checked = JVWaveformControlsInput.model_validate(data).normalized_data()
+            elif name == "jv_history":
+                checked = JVHistoryDefaults.model_validate(data).normalized_data()
+            elif name == "jv_2d_componentwise_atol":
                 checked = ComponentwiseAtolInput.model_validate(data).normalized_data()
             else:
                 model = JV2DInput if name == "jv_2d" else GrainSweepInput

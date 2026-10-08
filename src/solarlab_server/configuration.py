@@ -19,6 +19,9 @@ from solarlab.device.inputs import DeviceInput, TandemInput
 from solarlab.device.resolved import PreparedDevice, PreparedTandem
 from solarlab.experiments.two_dimensional.inputs import SpatialExperimentInput
 from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment, prepare_spatial_experiment
+from solarlab.experiments.jv.inputs import JVExperimentInput
+from solarlab.experiments.jv.preparation import PreparedJVExperiment, prepare_jv_experiment
+from solarlab.experiments.two_dimensional.inputs import invalid
 from solarlab.materials.resources import ResourceLibrary
 from solarlab.materials.source import SourceDocument
 
@@ -80,7 +83,7 @@ def _constant(text: str) -> Any:
 
 def _resolve(kind: Kind, data: Any, context: ConfigurationPreviewContext) -> dict[str, Any]:
     try:
-        prepared: PreparedDevice | PreparedTandem | PreparedSpatialExperiment
+        prepared: PreparedDevice | PreparedTandem | PreparedSpatialExperiment | PreparedJVExperiment
         if kind == "device":
             prepared = resolve_device(DeviceInput.model_validate(data), context.defaults,
                                       context.resources, sources=context.sources)
@@ -88,8 +91,20 @@ def _resolve(kind: Kind, data: Any, context: ConfigurationPreviewContext) -> dic
             prepared = resolve_tandem(TandemInput.model_validate(data), context.defaults,
                                       context.resources, sources=context.sources)
         else:
-            prepared = prepare_spatial_experiment(SpatialExperimentInput.model_validate(data), context.defaults,
-                                                  context.resources, sources=context.sources)
+            declaration = data.get("experiment") if isinstance(data, dict) else None
+            experiment_kind = declaration.get("kind") if isinstance(declaration, dict) else None
+            if experiment_kind in {"jv", "dark_jv"}:
+                if not any(name == "jv_jobs" for name, _ in context.defaults.experiment_defaults):
+                    raise _error(503, "configuration_experiment_context_missing", "J-V preview requires explicit source-bound J-V defaults")
+                prepared = prepare_jv_experiment(JVExperimentInput.model_validate(data), context.defaults,
+                                                 context.resources, sources=context.sources)
+            elif experiment_kind in {"jv_2d", "voc_grain_sweep"}:
+                if not any(name == "jv_2d" for name, _ in context.defaults.experiment_defaults):
+                    raise _error(503, "configuration_experiment_context_missing", "Spatial preview requires explicit source-bound spatial defaults")
+                prepared = prepare_spatial_experiment(SpatialExperimentInput.model_validate(data), context.defaults,
+                                                      context.resources, sources=context.sources)
+            else:
+                invalid("ExperimentPreview", ("experiment", "kind"), "choose jv, dark_jv, jv_2d or voc_grain_sweep", experiment_kind)
     except ValidationError as error:
         fields = [dict(field) for field in error.errors(include_url=False, include_context=False)]
         raise _error(422, "configuration_validation", "Invalid configuration input", fields) from error

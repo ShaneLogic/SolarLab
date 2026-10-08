@@ -1,9 +1,10 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DeviceInput, TandemInput } from './generated/configuration-inputs';
+import type { DeviceInput, TandemInput, JVExperimentInput } from './generated/configuration-inputs';
 import { configurationSchemaSha256 } from './generated/configuration-schema';
 import {
   ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, spatialExperimentInputFromPreview,
+  previewJVExperiment, jvExperimentInputFromPreview,
 } from './configuration-client';
 
 const endpoint = 'http://127.0.0.1:9000/configuration-preview/device';
@@ -75,6 +76,35 @@ function respond(json = JSON.stringify(envelope()), status = 200, type = 'applic
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
+
+describe('discriminated J-V preparation transport', () => {
+  function jv(input: JVExperimentInput) {
+    return { ...envelope(), kind: 'experiment', input,
+      resolved: { schema: 'solarlab.resolved-jv-experiment-preparation.v1', id: input.id, can_execute: false },
+      identity: { ...envelope().identity, configuration_schema_sha256: configurationSchemaSha256 } };
+  }
+  it('validates both J-V branches and rejects a same-ID response for a different branch', async () => {
+    const raw: JVExperimentInput = { schema_version: 'solarlab.experiment-preparation.v1', id: 'same', device: device(), experiment: { kind: 'jv', V_max: null, v_rate: '40 mV/s' } };
+    const fetch = respond(JSON.stringify(jv(raw)));
+    const result = await previewJVExperiment('/configuration-preview/experiment', raw);
+    expect(result.value.resolved.schema).toBe('solarlab.resolved-jv-experiment-preparation.v1');
+    expect(fetch.mock.calls[0][1].headers['X-Solarlab-Configuration-Schema']).toBe(configurationSchemaSha256);
+    expect(fetch.mock.calls[0][1].body).toContain('"v_rate":"40 mV/s"');
+    const dark: JVExperimentInput = { ...raw, experiment: { kind: 'dark_jv' } };
+    respond(JSON.stringify(jv(dark)));
+    await expect(previewJVExperiment('/configuration-preview/experiment', raw)).rejects.toThrow('branch does not match');
+    respond(JSON.stringify(jv(dark)));
+    await expect(previewJVExperiment('/configuration-preview/experiment', dark)).resolves.toMatchObject({ value: { input: { experiment: { kind: 'dark_jv' } } } });
+  });
+  it('reopens exact J-V input and gives a typed error for a missing or wrong branch', () => {
+    const raw: JVExperimentInput = { schema_version: 'solarlab.experiment-preparation.v1', id: 'saved', device: device(), experiment: { kind: 'dark_jv', V_max: -0 } };
+    const json = JSON.stringify(jv(raw)).replace('"V_max":0', '"V_max":-0.0');
+    expect(Object.is(jvExperimentInputFromPreview(json).experiment.V_max, -0)).toBe(true);
+    expect(() => spatialExperimentInputFromPreview(json)).toThrow('spatial experiment');
+    const missing = jv(raw); Reflect.deleteProperty(missing.input, 'experiment');
+    expect(() => jvExperimentInputFromPreview(JSON.stringify(missing))).toThrow(ConfigurationPreviewError);
+  });
+});
 
 describe('prepared configuration transport', () => {
   it('posts generated input to the explicit endpoint with numeric signed zero, null and omission', async () => {
