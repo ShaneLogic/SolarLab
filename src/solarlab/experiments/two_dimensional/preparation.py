@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import math
-from typing import Any
+from typing import Any, NoReturn
 
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.defaults import DefaultCatalog
@@ -36,7 +36,7 @@ def _document(raw: bytes) -> Any:
     return json.loads(raw, object_pairs_hook=pairs, parse_int=lambda word: -0.0 if word == "-0" else int(word))
 
 
-def _fail(path: tuple[str | int, ...], message: str, value: Any) -> None:
+def _fail(path: tuple[str | int, ...], message: str, value: Any) -> NoReturn:
     invalid("SpatialExperimentPreparation", path, message, value)
 
 
@@ -137,7 +137,7 @@ def _jv(experiment: JV2DInput, defaults: DefaultCatalog, device: dict[str, Any],
     # Preserve the actual backend truthiness contract. {} is declared, but
     # inherits; {grain_boundaries: []} is truthy and clears the inventory.
     active_override = override is not None and bool(override.editing_data())
-    grains = (override.normalized_data().get("grain_boundaries", []) if active_override else device["grain_boundaries"])
+    grains = (override.normalized_data().get("grain_boundaries", []) if active_override and override is not None else device["grain_boundaries"])
     grain_path = ("experiment", "microstructure", "grain_boundaries") if active_override else ("device", "grain_boundaries")
     _grains(grains, values["lateral_length"], electrical, grain_path)
     boundary = experiment.lateral_bc if experiment.lateral_bc is not None else ("neumann" if grains else "periodic")
@@ -161,7 +161,8 @@ def _jv(experiment: JV2DInput, defaults: DefaultCatalog, device: dict[str, Any],
     else:
         atol = {"mode": "scalar", "scalar_atol": values["atol"], **dict.fromkeys(names)}
         origins["solver_atol"] = origins["atol"]
-    values.pop("atol"); origins.pop("atol")
+    values.pop("atol")
+    origins.pop("atol")
     values["solver_atol"] = atol
     protocol = _protocol(experiment, values, device, grains, atol, carrier_bc)
     return {"kind": experiment.kind, "controls": values, "field_origins": origins,

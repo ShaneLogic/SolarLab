@@ -48,7 +48,11 @@ describe('prepared configuration schema data', () => {
 
   it('exposes a metadata type without claiming a production or wire contract', () => {
     const metadata: ConfigurationSchemaMetadata = configurationSchema;
-    expect(Object.keys(metadata.dto_schemas)).toHaveLength(17);
+    expect(Object.keys(metadata.dto_schemas)).toHaveLength(18);
+    expect(metadata.dto_schemas.SpatialExperimentInput.representation).toBe('editable_input');
+    expect(metadata.dto_schemas.SpatialExperimentInput.schema.properties.schema_version.const)
+      .toBe('solarlab.experiment-preparation.v1');
+    expect(metadata.dto_schemas.SpatialExperimentInput.schema.properties).not.toHaveProperty('can_execute');
     expect(metadata.status).toBe('prepared_pending_dependencies');
     expect(metadata.backend_semantic_validation_required).toBe(true);
     expect(metadata.structured_parameter_schemas).toEqual({});

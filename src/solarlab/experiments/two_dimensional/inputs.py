@@ -5,7 +5,7 @@ injected separately; optional None defaults represent absent fields only.
 """
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, NoReturn
 
 from pydantic import Field, ValidationError, ValidationInfo, field_validator, model_validator
 
@@ -22,7 +22,7 @@ def vector(unit: str, *, required: bool = True, minimum: int = 0,
                                     "item_positive": positive})
 
 
-def invalid(name: str, path: tuple[str | int, ...], message: str, value: object) -> None:
+def invalid(name: str, path: tuple[str | int, ...], message: str, value: object) -> NoReturn:
     raise ValidationError.from_exception_data(name, [{"type": "value_error", "loc": path,
         "input": value, "ctx": {"error": ValueError(message)}}])
 

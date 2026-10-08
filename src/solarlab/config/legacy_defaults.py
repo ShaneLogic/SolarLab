@@ -148,7 +148,9 @@ class _LiteralReader:
                            and isinstance(node.value, ast.IfExp)]
             if len(assignments) != 1:
                 raise ValueError("scalar/componentwise tolerance fallback changed")
-            conditional = assignments[0].value.orelse
+            default_policy = assignments[0].value
+            assert isinstance(default_policy, ast.IfExp)
+            conditional = default_policy.orelse
             if not (isinstance(conditional, ast.IfExp) and isinstance(conditional.test, ast.Name)
                     and conditional.test.id == "extended_topology" and isinstance(conditional.body, ast.Call)
                     and isinstance(conditional.body.func, ast.Name) and conditional.body.func.id == "ComponentwiseAtol"
