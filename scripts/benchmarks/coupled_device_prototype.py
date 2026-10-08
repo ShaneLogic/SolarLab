@@ -2410,7 +2410,11 @@ def ida_statistics_snapshot(solver, segment_id: str, generation: int, phase: str
     reader = getattr(solver, "statistics", None)
     if not callable(reader):
         raise ContractError("public_native_statistics_unavailable")
-    raw = json.loads(json.dumps(reader(), allow_nan=False))
+    collected = reader()
+    if "parent_weight_state" in collected:
+        from scripts.benchmarks.native_observation import observation_record
+        collected = dict(collected, parent_weight_state=observation_record(collected["parent_weight_state"]))
+    raw = json.loads(json.dumps(collected, allow_nan=False))
     if any(type(raw.get(k)) is not int or raw[k] < 0 for k in _IDA_COUNTER_FIELDS):
         raise ContractError("invalid_native_statistics_counter")
     if (type(generation) is not int or generation < 1
@@ -2729,6 +2733,102 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
     return result
 
 
+def _frame_words(value):
+    from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+    return PrimitiveExpansion.from_value(value)
+
+
+def _frame_scale(value, coefficient):
+    """Retain each product word, rejecting unrepresentable product tails."""
+    from scripts.benchmarks.precision_prototype import DD, DoubleArray
+
+    value = _frame_words(value)
+    coefficient = frozen_array(np.broadcast_to(coefficient, value.shape))
+    result = _frame_words(np.zeros(value.shape))
+    for word in value.words:
+        if not np.any(word):
+            continue
+        product = DoubleArray.from_dd(DD(coefficient)*DD(word))
+        # A finite DD product is not, by itself, proof against underflow.
+        for a, b, hi, lo in zip(coefficient.flat, word.flat, product.high.flat,
+                                product.low.flat, strict=True):
+            if (Fraction(float(a))*Fraction(float(b))
+                    != Fraction(float(hi))+Fraction(float(lo))):
+                raise ContractError("segment_frame_product_capacity")
+        result = result.add(product)
+    return result
+
+
+@dataclass(frozen=True)
+class SegmentAffineFrame:
+    """One immutable live parent origin; IDA owns only u and udot.
+
+    The frame is fixed for an existing segment, including rejected steps.
+    Four-word capacity is a representation limit, not an accuracy claim.
+    """
+
+    parent_map_identity: str
+    segment_sha256: str
+    logical_initialization_index: int
+    predecessor_identity: str
+    parent_input_sha256: str
+    t0: float
+    q0: object = field(repr=False, compare=False)
+    v0: object = field(repr=False, compare=False)
+    identity: str = field(init=False)
+
+    def __post_init__(self):
+        for name in ("parent_map_identity", "segment_sha256", "predecessor_identity", "parent_input_sha256"):
+            value = getattr(self, name)
+            if (not isinstance(value, str) or len(value) != 64
+                    or any(c not in "0123456789abcdef" for c in value)):
+                raise ContractError("segment_frame_identity")
+        if (type(self.logical_initialization_index) is not int or self.logical_initialization_index < 1
+                or type(self.t0) is not float or not math.isfinite(self.t0)):
+            raise ContractError("segment_frame_time_or_generation")
+        q0, v0 = _frame_words(self.q0), _frame_words(self.v0)
+        if len(q0.shape) != 1 or not q0.shape[0] or q0.shape != v0.shape:
+            raise ContractError("segment_frame_shape")
+        object.__setattr__(self, "q0", q0)
+        object.__setattr__(self, "v0", v0)
+        object.__setattr__(self, "identity", digest(self.payload()))
+
+    def payload(self):
+        words = lambda v: [[float(x).hex() for x in word] for word in v.words]
+        return {"schema": "solarlab.segment-affine-frame.v1",
+                "parent_map_identity": self.parent_map_identity,
+                "segment_sha256": self.segment_sha256,
+                "logical_initialization_index": self.logical_initialization_index,
+                "predecessor_identity": self.predecessor_identity,
+                "parent_input_sha256": self.parent_input_sha256,
+                "t0_hex": self.t0.hex(), "size": self.q0.shape[0],
+                "q0_words_hex": words(self.q0), "v0_words_hex": words(self.v0),
+                "law": "q=Q0+(t-t0)*V0+u;qdot=V0+udot",
+                "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1"}
+
+    def parent_state(self, time, u):
+        from scripts.benchmarks.precision_prototype import DD
+
+        if type(time) not in (float, int) or not math.isfinite(time):
+            raise ContractError("segment_frame_time")
+        u = _frame_words(u)
+        if u.shape != self.q0.shape:
+            raise ContractError("segment_frame_shape")
+        dt = DD(float(time))-DD(self.t0)
+        # Ordered, exact retained composition; no rounded t-t0 or anchor.
+        return self.q0.add(_frame_scale(self.v0, dt.hi)).add(
+            _frame_scale(self.v0, dt.lo)).add(u)
+
+    def parent_rate(self, udot):
+        return self.v0.add(_frame_words(udot))
+
+    def weight_option(self):
+        payload = self.payload()
+        return {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": self.identity,
+                **{k: payload[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
+
+
 @dataclass(frozen=True)
 class AffineVoltageMap(ImmutableArrays):
     """External voltage departures mapped into unchanged physical Points.
@@ -2739,6 +2839,7 @@ class AffineVoltageMap(ImmutableArrays):
     """
 
     model: AffineCoupledSlab = field(repr=False, compare=False)
+    frame: SegmentAffineFrame | None = field(default=None, repr=False, compare=False)
     columns: np.ndarray = field(init=False, repr=False)
     rows: np.ndarray = field(init=False, repr=False)
     lift: np.ndarray = field(init=False, repr=False)
@@ -2767,6 +2868,10 @@ class AffineVoltageMap(ImmutableArrays):
             object.__setattr__(self, name, frozen_array(value))
         object.__setattr__(self, "model_identity", m.source_identity)
         object.__setattr__(self, "reference_identity", m.reference.identity)
+        if self.frame is not None and (type(self.frame) is not SegmentAffineFrame
+                or self.frame.q0.shape != self.columns.shape
+                or self.frame.parent_map_identity != digest(self.payload(include_frame=False))):
+            raise ContractError("segment_frame_parent_map")
         object.__setattr__(self, "identity", digest(self.payload()))
         # Prove the raw-coordinate/Point relation with the same public action.
         # This does not reconstruct a predecessor or form a second trial.
@@ -2790,8 +2895,8 @@ class AffineVoltageMap(ImmutableArrays):
             m.layout, tuple(f"raw_point_relation_{i}" for i in range(m.layout.size)),
             tuple(units), tuple(terms), self.model_identity, "state", len(terms), tuple(sources)))
 
-    def payload(self):
-        return {
+    def payload(self, *, include_frame=True):
+        result = {
             "schema": "solarlab.affine-voltage-map.v1",
             "physical_model": self.model_identity,
             "physical_reference": self.reference_identity,
@@ -2803,6 +2908,11 @@ class AffineVoltageMap(ImmutableArrays):
             "raw_coordinate_meaning": "scaled voltage departures; other fields are scaled physical remainders",
             "physical_coordinate_meaning": "Point.y is the first word of S*z+L*(a-a_ref)",
         }
+        if include_frame and self.frame is not None:
+            result.update(segment_frame=self.frame.payload(),
+                          raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+                          physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        return result
 
     def _check(self):
         m = self.model
@@ -2816,10 +2926,20 @@ class AffineVoltageMap(ImmutableArrays):
         from scripts.benchmarks.precision_prototype import DD, DoubleArray, PrimitiveExpansion
 
         self._check()
-        raw, inputs = frozen_array(raw), frozen_array(inputs)
+        from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+        inputs = frozen_array(inputs)
+        if type(raw) is PrimitiveExpansion:
+            if raw.shape != self.columns.shape or inputs.shape != self.reference_inputs.shape:
+                raise ContractError("voltage_lift_coordinate_shape")
+            result = _frame_scale(raw, self.columns)
+        else:
+            raw = frozen_array(raw)
+            if raw.shape != self.columns.shape or inputs.shape != self.reference_inputs.shape:
+                raise ContractError("voltage_lift_coordinate_shape")
+            result = PrimitiveExpansion.from_value(DoubleArray.from_dd(DD(self.columns)*DD(raw)))
         if raw.shape != self.columns.shape or inputs.shape != self.reference_inputs.shape:
             raise ContractError("voltage_lift_coordinate_shape")
-        result = PrimitiveExpansion.from_value(DoubleArray.from_dd(DD(self.columns)*DD(raw)))
         for j in range(inputs.size):
             if not np.any(self.lift[:, j]):
                 continue
@@ -2828,10 +2948,14 @@ class AffineVoltageMap(ImmutableArrays):
                 result = result.add(DoubleArray.from_dd(-DD(self.lift[:, j])*DD(self.reference_inputs[j])))
         return result
 
-    def physical_primitive(self, z, inputs):
+    def physical_primitive(self, z, inputs, *, time=None):
+        if self.frame is not None:
+            z = self.frame.parent_state(time, z)
         return self._compose(z, inputs, subtract_reference=True)
 
     def physical_rate(self, zdot, input_rate):
+        if self.frame is not None:
+            zdot = self.frame.parent_rate(zdot)
         return self._compose(zdot, input_rate, subtract_reference=False)
 
     def bind_rate(self, point, z, zdot, input_rate):
@@ -2842,7 +2966,7 @@ class AffineVoltageMap(ImmutableArrays):
         """
         self._check()
         self.model.validate(point)
-        drive = self.physical_primitive(z, point.inputs)
+        drive = self.physical_primitive(z, point.inputs, time=point.time)
         sources = []
         for spec in self.relation_form.sources:
             selection = self.model.layout.offsets[spec.id.removeprefix("map_drive_")]
@@ -2857,7 +2981,7 @@ class AffineVoltageMap(ImmutableArrays):
                         origin="mapped-coordinate-rate", raw_coordinates=z, raw_rate=zdot)
 
     def trial(self, z, time, inputs, *, predecessor=None):
-        primitive = self.physical_primitive(z, inputs)
+        primitive = self.physical_primitive(z, inputs, time=time)
         return self.model.trial(primitive, time, inputs, predecessor=predecessor,
                                 transition_representation="paired-endpoints-v1")
 
@@ -2998,7 +3122,7 @@ class VoltageLiftAdapter:
 class VoltageLiftHistory:
     """Replay the new raw coordinate map without converting old histories."""
 
-    def __init__(self, mapping: AffineVoltageMap):
+    def __init__(self, mapping: AffineVoltageMap, *, parent_reference=None):
         from scripts.benchmarks.precision_prototype import encode_point
 
         if not isinstance(mapping, AffineVoltageMap):
@@ -3011,6 +3135,11 @@ class VoltageLiftHistory:
             "physical_reference": encode_point(mapping.model.reference),
             "physical_reference_identity": mapping.reference_identity,
         }
+        if parent_reference is not None:
+            if (mapping.frame is None or parent_reference["map_identity"] != mapping.frame.parent_map_identity
+                    or parent_reference["physical_reference_identity"] != mapping.reference_identity):
+                raise ContractError("segment_frame_history_parent")
+            self.reference_record = json.loads(json.dumps(parent_reference))
         self.reference_digest = digest(self.reference_record)
 
     def build_sample(self, z, time, inputs, predecessor, zdot, input_rate, *,
@@ -3025,7 +3154,7 @@ class VoltageLiftHistory:
             raise ContractError("unknown_affine_transition_representation")
         z, zdot = frozen_array(z), frozen_array(zdot)
         inputs, input_rate = frozen_array(inputs), frozen_array(input_rate)
-        physical = self.mapping.physical_primitive(z, inputs)
+        physical = self.mapping.physical_primitive(z, inputs, time=time)
         rate = self.mapping.physical_rate(zdot, input_rate)
         point, increment = self.mapping.model.trial(
             physical, time, inputs, predecessor=predecessor,
@@ -3054,6 +3183,9 @@ class VoltageLiftHistory:
         }
         if transition_representation == "paired-endpoints-v1":
             record["transition_representation"] = transition_representation
+        if self.mapping.frame is not None:
+            record.update(raw_coordinate_frame="fixed-affine-state-rate-v1",
+                          segment_frame_identity=self.mapping.frame.identity)
         return point, increment, rate, record
 
     def restore(self, reference_record, record, predecessor):
@@ -3183,8 +3315,17 @@ class VoltageLiftSegmentAdapter:
         mapping = self.adapter.mapping
         segment_digest = self.context.segment_digest(mapping.model, self.segment)
         declared_map = self.context.request_copy().get("voltage_lift_map")
-        if not isinstance(declared_map, dict) or digest(declared_map) != mapping.identity:
+        parent_map_id = mapping.identity if mapping.frame is None else mapping.frame.parent_map_identity
+        if not isinstance(declared_map, dict) or digest(declared_map) != parent_map_id:
             raise ContractError("voltage_lift_request_map_mismatch")
+        if mapping.frame is not None:
+            request = self.context.request_copy()
+            _validate_segment_frame_policy(request)
+            if ("segment_frame_policy" not in request or mapping.frame.segment_sha256 != segment_digest
+                    or mapping.frame.t0 != self.segment.start
+                    or mapping.frame.logical_initialization_index !=
+                    next(i for i, s in enumerate(self.context.segments, 1) if s.id == self.segment.id)):
+                raise ContractError("segment_frame_segment_binding")
         # Use the context-owned tuple inputs even when the caller supplied an
         # equal segment with mutable nested lists.
         owned = next(s for s in self.context.segments if s.id == self.segment.id)
@@ -3286,6 +3427,64 @@ def voltage_lift_initial_input(binding: VoltageLiftSegmentAdapter, z, predecesso
     }
     record["record_sha256"] = digest(record)
     return point, increment, zdot, record
+
+
+def voltage_lift_segment_initialization(mapping, context, segment, ordinal, parent_z, predecessor):
+    """Prepare exactly one native initialization; no solver is allocated here.
+
+    The state-only preparation map evaluates the existing initializer at the
+    exact live parent state. Its finite supplied rate is then the fixed V0;
+    the desired tangent is never silently substituted for that encoded rate.
+    """
+    request = context.request_copy()
+    _validate_segment_frame_policy(request)
+    if "segment_frame_policy" not in request:
+        binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), context, segment)
+        _, _, rate, proof = voltage_lift_initial_input(binding, parent_z, predecessor)
+        return binding, frozen_array(parent_z), rate, proof, None
+    if mapping.frame is not None or predecessor.time != segment.start:
+        raise ContractError("segment_frame_initialization_parent")
+    q0 = _frame_words(parent_z)
+    zero = np.zeros(mapping.model.layout.size)
+    ancestry = {"request_sha256": context.request_sha256, "parent_map_identity": mapping.identity,
+                "predecessor_identity": predecessor.identity,
+                "q0_words_hex": [[float(x).hex() for x in word] for word in q0.words]}
+    seed = SegmentAffineFrame(mapping.identity, digest(asdict(segment)), ordinal,
+                             predecessor.identity, digest(ancestry), float(segment.start), q0, zero)
+    preparation = VoltageLiftSegmentAdapter(VoltageLiftAdapter(AffineVoltageMap(mapping.model, seed)),
+                                           context, segment)
+    point, _, supplied_v0, parent_proof = voltage_lift_initial_input(preparation, zero, predecessor)
+    frame = SegmentAffineFrame(mapping.identity, seed.segment_sha256, ordinal, predecessor.identity,
+                               parent_proof["record_sha256"], seed.t0, q0, supplied_v0)
+    framed = AffineVoltageMap(mapping.model, frame)
+    binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(framed), context, segment)
+    inputs, input_rate = segment.inputs(segment.start)
+    same, _ = framed.trial(zero, segment.start, inputs, predecessor=predecessor)
+    rate = framed.physical_rate(zero, input_rate)
+    words = lambda v: [[float(x).hex() for x in word] for word in v.words]
+    if (same.identity != point.identity or words(rate) != parent_proof["mapped_physical_rate_words_hex"]
+            or words(framed.physical_primitive(zero, inputs, time=segment.start)) !=
+            words(mapping.physical_primitive(q0, inputs, time=segment.start))):
+        raise ContractError("segment_frame_physical_handoff")
+    proof = dict(parent_proof, schema="solarlab.voltage-lift-initial-input.v2",
+                 source_identity=binding.source_identity, map_identity=framed.identity,
+                 raw_z_hex=[float(v).hex() for v in zero], raw_zdot_hex=[float(v).hex() for v in zero],
+                 segment_frame_identity=frame.identity, parent_coordinate_rate_hex=parent_proof["raw_zdot_hex"],
+                 coordinate_encoding_frame="parent qdot; native udot is zero after full-word handoff")
+    proof.pop("record_sha256")
+    proof["record_sha256"] = digest(proof)
+    record = {"kind": "voltage_lift_segment_frame", "request_sha256": context.request_sha256,
+              "parent_map_identity": mapping.identity, "map_identity": framed.identity,
+              "frame": frame.payload(), "frame_identity": frame.identity, "map": framed.payload(),
+              "ancestry": ancestry, "preparation_frame": seed.payload(), "parent_input": parent_proof,
+              "physical_handoff_words_hex": words(framed.physical_primitive(zero, inputs, time=segment.start)),
+              "physical_rate_handoff_words_hex": words(rate), "native_initial_z_hex": proof["raw_z_hex"],
+              "native_initial_zdot_hex": proof["raw_zdot_hex"],
+              "requested_h0_unchanged": True,
+              "automatic_h0_parent_rate_limiter_parity": False,
+              "native_initialization_performed": False}
+    record["record_sha256"] = digest(record)
+    return binding, frozen_array(zero), frozen_array(zero), proof, record
 
 
 def voltage_lift_native_sample(binding: VoltageLiftSegmentAdapter, history: VoltageLiftHistory,
@@ -3616,22 +3815,85 @@ def _voltage_lift_initialization_controls(request, segment):
     return controls
 
 
+def _segment_frame_policy(request, name):
+    if type(name) is not str or name != "fixed-affine-state-rate-v1":
+        raise ContractError("invalid_segment_frame_policy")
+    return {"schema": "solarlab.segment-frame-policy.v1", "name": name,
+            "ancestor_request_sha256": request["prior_request_sha256"],
+            "parent_map_identity": request["map_identity"],
+            "controls_sha256": digest(request["controls"]), "segments_sha256": digest(request["segments"]),
+            "sampling_sha256": digest((request["observation_times"], request["quadrature"])),
+            "weight_certificate_sha256": digest(request["weight_certificate"]),
+            "segment_startup_policy_sha256": digest(request.get("segment_startup_policy")),
+            "qualification_policy_sha256": digest(request.get("qualification_policy")),
+            "application": "one_fixed_live_origin_at_each_existing_fresh_segment_initialization",
+            "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
+            "requested_first_steps_unchanged": True, "actual_automatic_first_step_parity_claimed": False}
+
+
+def _validate_segment_frame_policy(request):
+    if any(key in request for key in ("segment_frame", "frame_overrides", "parent_weight_frame")):
+        raise ContractError("segment_frame_unbound_option")
+    if "segment_frame_policy" in request:
+        policy = request["segment_frame_policy"]
+        if not isinstance(policy, Mapping):
+            raise ContractError("invalid_segment_frame_policy")
+        if digest(policy) != digest(_segment_frame_policy(request, policy.get("name"))):
+            raise ContractError("segment_frame_policy_binding")
+
+
+def _voltage_lift_frame_applied(statistics, frame, *, after_step=False):
+    from scripts.benchmarks.native_observation import restore_observation_record
+
+    value = statistics.get("parent_weight_state")
+    if value is None:
+        raise ContractError("segment_frame_weight_evidence_missing")
+    value = restore_observation_record(value)
+    if (value["schema"] != "sksundae.ida.parent-affine-weight-state.v1"
+            or value["frame_identity"] != frame.identity or value["size"] != frame.q0.shape[0]
+            or value["owner"] != statistics["observation_owner"]
+            or value["generation"] != statistics["observation_generation"]
+            or value["installed"] is not True or value["setter"] != "IDAWFtolerances"
+            or value["setter_status"] != 0 or value["t0_hex"] != frame.t0.hex()
+            or value["q0_words"] != tuple(w.tobytes() for w in frame.q0.words)
+            or value["v0_words"] != tuple(w.tobytes() for w in frame.v0.words)
+            or after_step and (value["callback_calls"] < 1 or value["callback_status"] != 0)):
+        raise ContractError("segment_frame_weight_application_mismatch")
+
+
 def _voltage_lift_segment_solver(ida, request, segment, ordinal, residual, jacobian,
-                                 sparsity, algebraic):
+                                 sparsity, algebraic, *, frame=None):
     """Record the exact constructor kwargs; native h0u is recorded separately."""
     controls = _voltage_lift_initialization_controls(request, segment)
+    _validate_segment_frame_policy(request)
+    weight_option = None
+    if "segment_frame_policy" in request:
+        if (type(frame) is not SegmentAffineFrame or frame.parent_map_identity != request["map_identity"]
+                or frame.segment_sha256 != digest(asdict(segment)) or frame.t0 != segment.start
+                or frame.logical_initialization_index != ordinal
+                or frame.q0.shape != (len(request["controls"]["atol"]),)):
+            raise ContractError("segment_frame_constructor_binding")
+        weight_option = frame.weight_option()
+    elif frame is not None:
+        raise ContractError("segment_frame_unbound_option")
     recorded = json.loads(json.dumps(controls, allow_nan=False))
-    solver = ida(residual, jacfn=jacobian, sparsity=sparsity, algebraic_idx=algebraic, **controls)
+    extra = {} if weight_option is None else {"parent_weight_frame": weight_option}
+    solver = ida(residual, jacfn=jacobian, sparsity=sparsity, algebraic_idx=algebraic, **controls, **extra)
     receipt = None
-    if "segment_startup_policy" in request:
+    if "segment_startup_policy" in request or weight_option is not None:
         receipt = {"kind": "voltage_lift_initialization_controls",
                    "request_sha256": digest(request), "map_identity": request["map_identity"],
                    "segment_id": segment.id, "segment_sha256": digest(asdict(segment)),
                    "logical_initialization_index": ordinal,
-                   "segment_startup_policy_sha256": digest(request["segment_startup_policy"]),
+                   "segment_startup_policy_sha256": digest(request.get("segment_startup_policy")),
                    "constructor_controls": recorded, "constructor_controls_sha256": digest(recorded),
                    "requested_first_step_hex": float(recorded["first_step"]).hex(),
                    "evidence": "exact kwargs passed to the returned IDA constructor; not a native option getter"}
+        if weight_option is not None:
+            receipt.update(parent_weight_frame=weight_option,
+                           segment_frame_policy_sha256=digest(request["segment_frame_policy"]),
+                           parent_weight_frame_sha256=digest(weight_option),
+                           evidence="exact numeric controls and parent_weight_frame passed to IDA; not a native option getter")
     return solver, receipt
 
 
@@ -3643,7 +3905,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         nonlin_trace_capacity: int = 4096,
                                         first_step: float | None = None,
                                         time_weight_kappa: int | None = None,
-                                        segment_startup_overrides: Mapping | None = None) -> dict:
+                                        segment_startup_overrides: Mapping | None = None,
+                                        segment_frame: str | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     qualification_policy = old.get("qualification_policy")
@@ -3739,17 +4002,21 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
     if segment_startup_overrides is not None:
         request["segment_startup_policy"] = _voltage_lift_segment_startup(
             request, segment_startup_overrides)
+    if segment_frame is not None:
+        request["segment_frame_policy"] = _segment_frame_policy(request, segment_frame)
     if qualification_policy is not None:
         from scripts.benchmarks.qualification_policy import check_applied_ceiling
         check_applied_ceiling(request)
     # This preparation context deliberately precedes the final request. Its
     # digest remains labelled as such; no self-referential hash is invented.
     context = AffineSamplingContext(model, request)
-    binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), context, context.segments[0])
     z0 = np.zeros(model.layout.size)
-    initial, _, zdot0, initial_record = voltage_lift_initial_input(binding, z0, model.reference)
-    request.update(z0=z0.tolist(), zdot0=zdot0.tolist(), actual_initial_identity=initial.identity,
+    _, z0, zdot0, initial_record, frame_record = voltage_lift_segment_initialization(
+        mapping, context, context.segments[0], 1, z0, model.reference)
+    request.update(z0=z0.tolist(), zdot0=zdot0.tolist(), actual_initial_identity=initial_record["point_identity"],
                    initial_preparation=initial_record, preparation_context_sha256=context.request_sha256)
+    if frame_record is not None:
+        request["initial_segment_frame"] = frame_record
     return request
 
 
@@ -3827,6 +4094,24 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
     if "segment_startup_policy" in request:
         for segment in segments:
             _voltage_lift_initialization_controls(request, segment)
+    _validate_segment_frame_policy(request)
+    if "segment_frame_policy" not in request and "initial_segment_frame" in request:
+        raise ContractError("segment_frame_unbound_initialization")
+    if "segment_frame_policy" in request:
+        record = request.get("initial_segment_frame", {})
+        if (record.get("request_sha256") != request["preparation_context_sha256"]
+                or record.get("record_sha256") != digest({k: v for k, v in record.items() if k != "record_sha256"})
+                or record.get("frame_identity") != digest(record.get("frame"))
+                or record.get("frame", {}).get("parent_map_identity") != mapping.identity
+                or record.get("frame", {}).get("segment_sha256") != digest(asdict(segments[0]))
+                or record.get("frame", {}).get("logical_initialization_index") != 1
+                or record.get("frame", {}).get("t0_hex") != float(segments[0].start).hex()
+                or record.get("frame", {}).get("parent_input_sha256") != record.get("parent_input", {}).get("record_sha256")
+                or request["initial_preparation"].get("segment_frame_identity") != record.get("frame_identity")
+                or request["initial_preparation"].get("raw_z_hex") != record.get("native_initial_z_hex")
+                or request["initial_preparation"].get("raw_zdot_hex") != record.get("native_initial_zdot_hex")
+                or any(float(v) != 0 for v in (*request["z0"], *request["zdot0"]))):
+            raise ContractError("segment_frame_initial_preparation_binding")
     if (digest(request["budgets"]) != digest(request["original_budgets"])
             or not all(request["mandatory"].values())
             or not request["mandatory"].get("mapped_rate_projection_budget")):
@@ -3911,6 +4196,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     previous_observer = None
     first_failure = last_attempt = last_numerical = last_accepted = None
     history = VoltageLiftHistory(mapping)
+    parent_reference = history.reference_record
     z, predecessor = frozen_array(request["z0"]), model.reference
     rows, columns = model.graph.edges().T
     sparsity = csc_matrix((np.ones(len(rows)), (rows, columns)), shape=model.graph.shape)
@@ -3990,7 +4276,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         save({"kind": "voltage_lift_reference", "request_sha256": request_id,
               "reference_digest": history.reference_digest, "reference": history.reference_record})
         for segment_index, segment in enumerate(segments):
-            binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), sampling, segment)
+            binding, z, initial_zdot, initial_proof, frame_record = voltage_lift_segment_initialization(
+                mapping, sampling, segment, segment_index+1, z, predecessor)
+            if frame_record is not None:
+                save(frame_record)
+                history = VoltageLiftHistory(binding.adapter.mapping, parent_reference=parent_reference)
 
             def residual(t, values, rates, output):
                 nonlocal first_failure
@@ -4013,7 +4303,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 try:
                     resource_check()
                     save({"kind": "jacobian_callback_context", "segment_id": segment.id,
-                          "logical_initialization_index": segment_index+1, "map_identity": mapping.identity,
+                          "logical_initialization_index": segment_index+1, "map_identity": binding.adapter.mapping.identity,
                           "callback_index": counts["jacobian"], "request_sha256": request_id,
                           "time_hex": float(t).hex(), "cj_hex": float(cj).hex(),
                           "z_hex": [float(v).hex() for v in values],
@@ -4028,7 +4318,6 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                         save({"kind": "first_callback_failure", "failure": first_failure})
                     raise
 
-            _, _, initial_zdot, initial_proof = voltage_lift_initial_input(binding, z, predecessor)
             if segment_index == 0:
                 # Preparation and runtime have different context hashes. All
                 # source physical data and supplied rate words must agree.
@@ -4045,7 +4334,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             resource_check()
             with timing.phase('ida_calls'):
                 solver, control_receipt = _voltage_lift_segment_solver(
-                    IDA, request, segment, segment_index+1, residual, jacobian, sparsity, algebraic)
+                    IDA, request, segment, segment_index+1, residual, jacobian, sparsity, algebraic,
+                    frame=binding.adapter.mapping.frame)
             if control_receipt is not None:
                 save(control_receipt)
             counts["initializations"] += 1
@@ -4061,6 +4351,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     or not np.array_equal(initialized["zdot"], initial_zdot)):
                 raise ContractError("voltage_lift_initialization_changed_state_or_failed")
             _voltage_lift_guard_applied(initial_stats["raw_statistics"], controls)
+            if frame_record is not None:
+                _voltage_lift_frame_applied(initial_stats["raw_statistics"], binding.adapter.mapping.frame)
             left_pair = checked_sample(binding, initialized, predecessor, "segment_initial")
             left, last_numerical = left_pair[0], pointer(left_pair)
             left_native = initialized
@@ -4105,6 +4397,9 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 if not native["success"]:
                     raise ContractError("voltage_lift_solver_failure:"+native["message"])
                 _voltage_lift_guard_applied(after_stats["raw_statistics"], controls)
+                if frame_record is not None:
+                    _voltage_lift_frame_applied(after_stats["raw_statistics"], binding.adapter.mapping.frame,
+                                                after_step=True)
                 t = native["time"]
                 if not left.time < t <= segment.end:
                     raise ContractError("voltage_lift_interval_not_monotone")
@@ -4188,6 +4483,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 left_pair, left, left_native = right_pair, right, native
             if cursor != len(sample_times):
                 raise ContractError("voltage_lift_missing_frozen_observation")
+            if frame_record is not None:
+                z = binding.adapter.mapping.frame.parent_state(segment.end, z)
             predecessor = left
         result = {"status": "completed_bounded_voltage_lift_native_pilot", "complete_protocol": True}
     except BaseException as error:

@@ -638,12 +638,287 @@ class _ChargeRefinement:
                 "slack_upper_bounds": tuple(n * self.quantum for n in self.rounded)}
 
 
+def _frame_word_values(words, size):
+    layers = tuple(_hex_vector(w, size) for w in _vector(words, 4))
+    values = tuple(sum((Fraction(w[i]) for w in layers), Fraction(0)) for i in range(size))
+    for i, value in enumerate(values):
+        for word in layers:
+            rounded = float(value)
+            _require(rounded == word[i], "segment_frame_noncanonical_words")
+            value -= Fraction(rounded)
+        _require(value == 0, "segment_frame_word_capacity")
+    return values
+
+
+class SegmentFrameCheck:
+    """Independent dyadic frame/weight checks; no model or native imports."""
+
+    def __init__(self, request):
+        self.request, self.request_id = request, _digest(request)
+        self.enabled = "segment_frame_policy" in request
+        self.size = len(request.get("z0", ()))
+        self.base = request["voltage_lift_map"]
+        self.active = self.current_map = self.latest_weights = None
+        self.prior_phi0 = None
+        self.frames, self.polynomials = [], 0
+        self.polynomial_hash = hashlib.sha256()
+        _require(not any(k in request for k in ("segment_frame", "frame_overrides", "parent_weight_frame")),
+                 "segment_frame_unbound_option")
+        if not self.enabled:
+            _require("initial_segment_frame" not in request, "segment_frame_unbound_initialization")
+            return
+        self.size = len(request["controls"]["atol"])
+        expected = {"schema": "solarlab.segment-frame-policy.v1", "name": "fixed-affine-state-rate-v1",
+                    "ancestor_request_sha256": request["prior_request_sha256"],
+                    "parent_map_identity": request["map_identity"],
+                    "controls_sha256": _digest(request["controls"]), "segments_sha256": _digest(request["segments"]),
+                    "sampling_sha256": _digest((request["observation_times"], request["quadrature"])),
+                    "weight_certificate_sha256": _digest(request["weight_certificate"]),
+                    "segment_startup_policy_sha256": _digest(request.get("segment_startup_policy")),
+                    "qualification_policy_sha256": _digest(request.get("qualification_policy")),
+                    "application": "one_fixed_live_origin_at_each_existing_fresh_segment_initialization",
+                    "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
+                    "requested_first_steps_unchanged": True, "actual_automatic_first_step_parity_claimed": False}
+        _require(type(request["segment_frame_policy"]) is dict
+                 and _digest(request["segment_frame_policy"]) == _digest(expected), "segment_frame_policy_binding")
+
+    def parent(self, frame, when, raw, *, rate=False):
+        q0 = _frame_word_values(frame["q0_words_hex"], self.size)
+        v0 = _frame_word_values(frame["v0_words_hex"], self.size)
+        if rate:
+            return tuple(v+Fraction(u) for v, u in zip(v0, raw))
+        dt = Fraction(when)-Fraction(_hex(frame["t0_hex"]))
+        return tuple(q+dt*v+Fraction(u) for q, v, u in zip(q0, v0, raw))
+
+    def physical(self, parent, inputs, *, rate=False):
+        columns = _hex_vector(self.base["columns_hex"], self.size)
+        lift = tuple(_hex_vector(row, 2) for row in _vector(self.base["lift_hex"], self.size))
+        ref = _hex_vector(self.base["reference_inputs_hex"], 2)
+        return tuple(Fraction(s)*q+sum((Fraction(row[j])*(Fraction(inputs[j])-
+                     (0 if rate else Fraction(ref[j]))) for j in range(2)), Fraction(0))
+                     for s, q, row in zip(columns, parent, lift))
+
+    def begin(self, record, segment, ordinal, predecessor, previous_history=None):
+        _require(self.enabled and record["kind"] == "voltage_lift_segment_frame"
+                 and record["record_sha256"] == _digest({k: v for k, v in record.items() if k != "record_sha256"})
+                 and record["request_sha256"] == self.request_id
+                 and record["parent_map_identity"] == self.request["map_identity"], "segment_frame_record_binding")
+        frame, parent, seed = record["frame"], record["parent_input"], record["preparation_frame"]
+        _require(frame["schema"] == "solarlab.segment-affine-frame.v1" and _digest(frame) == record["frame_identity"]
+                 and frame["parent_map_identity"] == self.request["map_identity"] and frame["size"] == self.size
+                 and frame["segment_sha256"] == _digest(segment)
+                 and frame["logical_initialization_index"] == ordinal and type(frame["logical_initialization_index"]) is int
+                 and frame["predecessor_identity"] == predecessor
+                 and _hex(frame["t0_hex"]) == segment["start"]
+                 and frame["law"] == "q=Q0+(t-t0)*V0+u;qdot=V0+udot"
+                 and frame["weight_rounding"] == "RN-exact-parent-q_then-unfused-SV-v1", "segment_frame_anchor_binding")
+        expected_map = dict(self.base, segment_frame=frame,
+            raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+            physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        _require(record["map"] == expected_map and record["map_identity"] == _digest(expected_map),
+                 "segment_frame_map_binding")
+        q0 = _frame_word_values(frame["q0_words_hex"], self.size)
+        v0 = _frame_word_values(frame["v0_words_hex"], self.size)
+        _require(parent["record_sha256"] == _digest({k: v for k, v in parent.items() if k != "record_sha256"})
+                 and frame["parent_input_sha256"] == parent["record_sha256"]
+                 and parent["predecessor_identity"] == predecessor and parent["request_sha256"] == self.request_id
+                 and parent["segment_sha256"] == _digest(segment) and parent["time_hex"] == frame["t0_hex"]
+                 and parent["state_changed"] is False and parent["native_initialization_performed"] is False,
+                 "segment_frame_parent_initializer")
+        zero = ["0x0.0p+0"]*self.size
+        _require(record["native_initial_z_hex"] == record["native_initial_zdot_hex"] == zero
+                 and parent["raw_z_hex"] == zero
+                 and frame["v0_words_hex"] == [parent["raw_zdot_hex"], zero, zero, zero]
+                 and record["ancestry"] == {"request_sha256": self.request_id,
+                    "parent_map_identity": self.request["map_identity"], "predecessor_identity": predecessor,
+                    "q0_words_hex": frame["q0_words_hex"]}
+                 and seed == dict(frame, v0_words_hex=[zero]*4, parent_input_sha256=_digest(record["ancestry"])),
+                 "segment_frame_supplied_words")
+        if previous_history is None:
+            _require(ordinal == 1 and all(v == 0 for v in q0), "segment_frame_original_initial_state")
+        else:
+            _require(self.active is not None and q0 == self.parent(self.active, segment["start"],
+                     _hex_vector(previous_history["raw_solver_z_hex"], self.size)), "segment_frame_live_handoff")
+            _require(record["physical_handoff_words_hex"] == previous_history["physical_cumulative_words_hex"],
+                     "segment_frame_physical_handoff_words")
+        inputs = (segment["voltage"][0], segment["photons"][0])
+        rates = tuple((values[1]-values[0])/(segment["end"]-segment["start"])
+                      for values in (segment["voltage"], segment["photons"]))
+        _require(_hex_vector(parent["inputs_hex"], 2) == inputs
+                 and _hex_vector(parent["input_rates_hex"], 2) == rates
+                 and _frame_word_values(record["physical_handoff_words_hex"], self.size) == self.physical(q0, inputs)
+                 and _frame_word_values(record["physical_rate_handoff_words_hex"], self.size) == self.physical(v0, rates, rate=True)
+                 and record["physical_rate_handoff_words_hex"] == parent["mapped_physical_rate_words_hex"],
+                 "segment_frame_right_sided_physical_map")
+        self.active, self.current_map, self.segment = frame, expected_map, segment
+        self.prior_phi0 = _word_bytes(zero, self.size)
+        self.frames.append({"frame_identity": record["frame_identity"], "map_identity": record["map_identity"],
+                            "ordinal": ordinal, "weight_packets": 0})
+        return expected_map
+
+    def constructor(self, row):
+        frame = self.active
+        expected = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": _digest(frame),
+                    **{k: frame[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
+        _require(row["parent_weight_frame"] == expected and row["parent_weight_frame_sha256"] == _digest(expected)
+                 and row["segment_frame_policy_sha256"] == _digest(self.request["segment_frame_policy"])
+                 and row["request_sha256"] == self.request_id and row["map_identity"] == self.request["map_identity"]
+                 and row["segment_sha256"] == self.active["segment_sha256"]
+                 and row["logical_initialization_index"] == self.active["logical_initialization_index"]
+                 and row["constructor_controls"] == segment_startup_controls(self.request, self.segment)
+                 and row["constructor_controls_sha256"] == _digest(row["constructor_controls"]),
+                 "segment_frame_constructor_weight_binding")
+
+    def weight_state(self, value, *, owner, generation, initial=False):
+        value = _decode(value)
+        frame, controls = self.active, self.request["controls"]
+        _require(type(value) is dict and value["schema"] == "sksundae.ida.parent-affine-weight-state.v1"
+                 and value["frame_identity"] == _digest(frame) and value["owner"] == owner
+                 and value["generation"] == generation and value["size"] == self.size
+                 and value["installed"] is True and value["setter"] == "IDAWFtolerances" and value["setter_status"] == 0
+                 and value["t0_hex"] == frame["t0_hex"] and _hex(value["rtol_hex"]) == controls["rtol"]
+                 and _buffer(value["atol"], self.size) == tuple(controls["atol"])
+                 and value["q0_words"] == tuple(_word_bytes(w, self.size) for w in frame["q0_words_hex"])
+                 and value["v0_words"] == tuple(_word_bytes(w, self.size) for w in frame["v0_words_hex"])
+                 and value["weight_rounding"] == frame["weight_rounding"] and value["raw_tolerance_getter"] is False,
+                 "segment_frame_actual_weight_context")
+        _require(type(value["callback_calls"]) is int and value["callback_calls"] >= 0, "segment_frame_weight_calls")
+        if initial:
+            _require(value["callback_calls"] == 0 and value["callback_status"] is None
+                     and all(value[k] is None for k in ("basis_time_hex", "basis_u", "rounded_parent", "computed_weights")),
+                     "segment_frame_unobserved_initial_weights")
+        elif value["callback_calls"]:
+            _require(value["callback_status"] == 0 and value["failure_component"] is None,
+                     "segment_frame_weight_callback_failure")
+            parent = self.parent(frame, _hex(value["basis_time_hex"]), _buffer(value["basis_u"], self.size))
+            rounded = tuple(float(v) for v in parent)
+            expected = tuple(1.0/(controls["rtol"]*abs(v)+a) for v, a in zip(rounded, controls["atol"]))
+            _require(_buffer(value["rounded_parent"], self.size) == rounded
+                     and _buffer(value["computed_weights"], self.size) == expected
+                     and all(math.isfinite(v) and v > 0 for v in expected), "segment_frame_parent_weight_metric")
+        self.latest_weights = value
+        return value
+
+    def sample(self, history):
+        _require(history["segment_frame_identity"] == _digest(self.active), "segment_frame_sample_identity")
+        t = _hex(history["time_hex"])
+        q = self.parent(self.active, t, _hex_vector(history["raw_solver_z_hex"], self.size))
+        v = self.parent(self.active, t, _hex_vector(history["raw_solver_zdot_hex"], self.size), rate=True)
+        _require(_frame_word_values(history["physical_cumulative_words_hex"], self.size) ==
+                 self.physical(q, _hex_vector(history["inputs_hex"], 2))
+                 and _frame_word_values(history["physical_rate_words_hex"], self.size) ==
+                 self.physical(v, _hex_vector(history["input_rates_hex"], 2), rate=True), "segment_frame_sample_physical_words")
+
+    def packet(self, packet):
+        previous_receipt = self.latest_weights
+        value = self.weight_state(packet.get("parent_weight_state"), owner=packet["owner"], generation=packet["generation"])
+        _require(value["callback_calls"] > 0 and value["build_identity"] == packet["binding"]["identity"]
+                 and value["basis_u"] == self.prior_phi0
+                 and _hex(value["basis_time_hex"]) == packet["predecessor"]["internal_t"]
+                 and value["computed_weights"] == packet["error_weights"]
+                 and (previous_receipt is None or value == previous_receipt), "segment_frame_operative_weight_basis")
+        self.frames[-1]["weight_packets"] += 1
+        n, order = self.size, packet["native_before"]["kused"]
+        phi = _buffer(packet["basis"]["phi"], n*(order+1))
+        psi = tuple(map(Fraction, _buffer(packet["basis"]["psi"], order)))
+        h, tn = Fraction(packet["native_before"]["hused"]), Fraction(packet["native_before"]["tn"])
+        result = [[Fraction(phi[i])]+[Fraction(0)]*order for i in range(n)]
+        basis = [Fraction(1)]
+        for j in range(1, order+1):
+            factor = Fraction(0) if j == 1 else psi[j-2]
+            product = [Fraction(0)]*(len(basis)+1)
+            for k, v in enumerate(basis):
+                product[k] += v*factor/psi[j-1]
+                product[k+1] += v*h/psi[j-1]
+            basis = product
+            for i in range(n):
+                for k, v in enumerate(basis):
+                    result[i][k] += Fraction(phi[j*n+i])*v
+        raw_polynomials = tuple(tuple(row) for row in result)
+        q0, v0 = (_frame_word_values(self.active[k], n) for k in ("q0_words_hex", "v0_words_hex"))
+        for i in range(n):
+            result[i][0] += q0[i]+(tn-Fraction(_hex(self.active["t0_hex"])))*v0[i]
+            result[i][1] += h*v0[i]
+        # Full parent polynomial, independently assembled from actual phi/psi.
+        # The physical map uses the same exact columns and finite input line.
+        self.parent_polynomials = tuple(tuple(row) for row in result)
+        reference = self.request["numeric_packet"]["initial_reference"]["payload"]
+        roots = [None]*n
+        for name, (start, stop) in self.request["numeric_packet"]["variable_offsets"].items():
+            field = reference["fields"][name]
+            roots[start:stop] = [Fraction(_hex(a))+Fraction(_hex(b)) for a, b in zip(field["high"], field["low"])]
+        columns = _hex_vector(self.base["columns_hex"], n)
+        lift = tuple(_hex_vector(row, 2) for row in self.base["lift_hex"])
+        inputs = []
+        for endpoints in (self.segment["voltage"], self.segment["photons"]):
+            slope = Fraction((endpoints[1]-endpoints[0])/(self.segment["end"]-self.segment["start"]))
+            inputs.append((Fraction(endpoints[0])+(tn-Fraction(self.segment["start"]))*slope, h*slope))
+        input_reference = tuple(map(Fraction, _hex_vector(self.base["reference_inputs_hex"], 2)))
+        physical = [[Fraction(columns[i])*v for v in row] for i, row in enumerate(result)]
+        for i, row in enumerate(physical):
+            row[0] += roots[i]+sum((Fraction(lift[i][j])*(inputs[j][0]-input_reference[j]) for j in range(2)), Fraction(0))
+            row[1] += sum((Fraction(lift[i][j])*inputs[j][1] for j in range(2)), Fraction(0))
+        self.physical_polynomials = tuple(tuple(row) for row in physical)
+        self.polynomial_tn, self.polynomial_h, self.reference_values = tn, h, tuple(roots)
+
+        def payload(row):
+            row = list(row)
+            while len(row) > 1 and row[-1] == 0:
+                row.pop()
+            return [[v.numerator, v.denominator] for v in row]
+
+        coefficient_id = _digest({"role": "explicit_polynomial_data_not_native_attestation",
+            "raw": [payload(row) for row in raw_polynomials], "map": _digest(self.current_map),
+            "request": self.request_id, "segment": _digest(self.segment),
+            "coefficient_frame": _snapshot_digest(packet)})
+        predecessor = Fraction(packet["predecessor"]["internal_t"])
+        strip = max(Fraction(0), tn-h-predecessor)
+        clock = {k: [v.numerator, v.denominator] for k, v in {
+            "predecessor": predecessor, "tn": tn, "hused": h, "segment_start": Fraction(self.segment["start"]),
+            "segment_end": Fraction(self.segment["end"]), "native_left": tn-h, "uncovered_strip": strip}.items()}
+        clock.update(generation=packet["generation"], nsteps=packet["native_before"]["nsteps"],
+                     kused=order, segment_id=self.segment["id"], owner=packet["owner"])
+        self.path_identity = _digest({"clock": clock, "origin": "declared_reconstruction",
+            "source": self.base["physical_model"], "layout": reference["layout"], "coefficients": coefficient_id,
+            "clock_policy": "declared_polynomial_extension" if strip else "reject_uncovered",
+            "fields": {name: [payload(row) for row in physical[start:stop]]
+                       for name, (start, stop) in self.request["numeric_packet"]["variable_offsets"].items()},
+            "inputs": [payload(row) for row in inputs]})
+        self.polynomials += 1
+        self.polynomial_hash.update(bytes.fromhex(self.path_identity))
+        self.prior_phi0 = packet["basis"]["phi"][:8*n]
+
+    def readback(self, evidence, history):
+        x = (Fraction(_hex(history["time_hex"]))-self.polynomial_tn)/self.polynomial_h
+        states, rates = [], []
+        for row in self.physical_polynomials:
+            states.append(sum((c*x**k for k, c in enumerate(row)), Fraction(0)))
+            rates.append(sum((k*c*x**(k-1) for k, c in enumerate(row) if k), Fraction(0))/self.polynomial_h)
+        actual = _enclosures(evidence["physical_state_enclosures"], self.size)
+        words = _frame_word_values(history["physical_cumulative_words_hex"], self.size)
+        _require(all(abs(item["center"]-root-q) <= item["absolute_error_bound"]
+                     for item, root, q in zip(actual, self.reference_values, words)), "segment_frame_actual_state_enclosure")
+        expected = tuple(abs(a["center"]-p)+a["absolute_error_bound"] for a, p in zip(actual, states))
+        actual_rates = _frame_word_values(history["physical_rate_words_hex"], self.size)
+        _require(tuple(evidence["physical_state_absolute_error"]) == expected
+                 and tuple(evidence["physical_rate_absolute_error"]) ==
+                 tuple(abs(a-p) for a, p in zip(actual_rates, rates)), "segment_frame_polynomial_readback_error")
+
+    def finish(self):
+        return {"initializations": self.frames, "independent_physical_polynomials": self.polynomials,
+                "physical_path_digests_sha256": self.polynomial_hash.hexdigest(),
+                "weight_basis": "actual callback u/time checked against preceding native phi[0]",
+                "requested_startup_unchanged": True, "actual_automatic_startup_parity_claimed": False,
+                "scientific_qualification": False}
+
+
 class _Protocol:
     def __init__(self, request, rows):
         self.request, self.rows = request, rows
         self.request_id = _digest(request)
         self.mapping, self.policy = request["voltage_lift_map"], request["interval_observation"]
         self.map_id, self.policy_id = request["map_identity"], _digest(self.policy)
+        self.root_map_id = self.map_id
         self.size, self.nodes = len(request["z0"]), request["numeric_packet"]["nodes"]
         qualified_size = (qualification_coordinate_count(request)
                           if "qualification_policy" in request else None)
@@ -678,6 +953,7 @@ class _Protocol:
         self.coverage = []
         self.native_owner = None
         self.startup = SegmentStartupCheck(request)
+        self.segment_frame = SegmentFrameCheck(request)
 
     def _context(self, row):
         _require(row["request_sha256"] == self.request_id and row["map_identity"] == self.map_id,
@@ -720,6 +996,9 @@ class _Protocol:
             self.native_owner = owner
         else:
             _require(owner == self.native_owner, "native_owner_changed_within_segment")
+        if self.segment_frame.enabled:
+            self.segment_frame.weight_state(raw.get("parent_weight_state"), owner=owner[0], generation=owner[1],
+                                            initial=phase == "initialization_return")
         if previous is not None:
             _require(all(raw[k] >= previous[k] for k in _COUNTERS)
                      and row["work_since_before"] == {k: raw[k] - previous[k] for k in _COUNTERS},
@@ -745,7 +1024,8 @@ class _Protocol:
                  and h["map_identity"] == self.map_id and h["physical_model_identity"] == self.mapping["physical_model"]
                  and h["reference_digest"] == self.reference_digest and h["predecessor_identity"] == predecessor
                  and h["time_hex"] == float(when).hex() and h["origin"] == origin and h["event_side"] == side
-                 and h["raw_coordinate_frame"] == "scaled-voltage-departure-v1"
+                 and h["raw_coordinate_frame"] == ("fixed-affine-state-rate-v1" if self.segment_frame.enabled
+                                                  else "scaled-voltage-departure-v1")
                  and h["physical_rate_frame"] == "direct-map-push-forward-v1" and h["reference_embedded"] is False,
                  "sample_history_binding")
         _require(type(h["point_identity"]) is str and len(h["point_identity"]) == 64, "point_identity_shape")
@@ -756,6 +1036,8 @@ class _Protocol:
             _hex_vector(h[name], self.size)
         _hex_vector(h["inputs_hex"], 2)
         _hex_vector(h["input_rates_hex"], 2)
+        if self.segment_frame.enabled:
+            self.segment_frame.sample(h)
         _require(row["input_slope_hex"] == h["input_rates_hex"] and row["state_checks"]["passed"] is True
                  and row["state_checks"]["state_identity"] == h["point_identity"]
                  and row["state_checks"]["state_changed"] is False, "sample_state_gate")
@@ -836,6 +1118,8 @@ class _Protocol:
         for name in ("physical_state_absolute_error", "physical_rate_absolute_error", "state_action_error_bounds"):
             _nonnegative(rb[name], self.size)
         _enclosures(rb["physical_state_enclosures"], self.size)
+        if self.segment_frame.enabled:
+            self.segment_frame.readback(rb, h)
         _require(rb["state_error_includes_actual_input_evaluation"] is True
                  and rb["do_not_add_same_input_error_twice"] is True
                  and evidence["input_error_included_once"] is True, "current_input_error_semantics")
@@ -969,6 +1253,10 @@ class _Protocol:
             times = self.request["observation_times"][self.segment["id"]]
             _require(type(times) is list and bool(times) and times == sorted(times)
                      and all(start <= v <= end for v in times), "requested_sample_schedule")
+            if self.segment_frame.enabled:
+                self.mapping = self.segment_frame.begin(self.rows.take("voltage_lift_segment_frame"),
+                    self.segment, self.ordinal, predecessor, last_right)
+                self.map_id = _digest(self.mapping)
             init = self.rows.take("voltage_lift_initialization_input")
             self.initial_proof = proof = init["proof"]
             _require(init["phase"] == "segment_initialization" and init["segment_id"] == self.segment["id"]
@@ -982,8 +1270,12 @@ class _Protocol:
                             "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
                             "desired_tangent_residual_SI", "represented_rate_residual_SI"):
                     _require(proof[key] == self.request["initial_preparation"][key], "initial_preparation_changed")
-            if self.startup.enabled:
-                self.startup.consume(self.rows.take("voltage_lift_initialization_controls"))
+            if self.startup.enabled or self.segment_frame.enabled:
+                control = self.rows.take("voltage_lift_initialization_controls")
+                if self.startup.enabled:
+                    self.startup.consume(control)
+                if self.segment_frame.enabled:
+                    self.segment_frame.constructor(control)
             stats = self._statistics("initialization_return", start)
             _require(stats["num_steps"] == 0, "initialization_step_counter")
             left = self._sample(start, "segment_initial", predecessor, initial=True)
@@ -1006,6 +1298,8 @@ class _Protocol:
                 packet_row = self.rows.take("voltage_lift_native_observation_packet")
                 _require(packet_row["segment_id"] == self.segment["id"], "packet_segment")
                 frame, self.frame_id = _native_packet(packet_row["packet"], self.policy, self.size)
+                if self.segment_frame.enabled:
+                    self.segment_frame.packet(frame)
                 previous, endpoint = frame["predecessor"], frame["endpoint"]
                 then = endpoint["internal_t"]
                 if previous_native is not None:
@@ -1019,7 +1313,7 @@ class _Protocol:
                         _require(old["segment"]["id"] != self.segment["id"]
                                  and old["endpoint"]["internal_t"] == old["segment"]["end"]
                                  and previous["internal_t"] == self.segment["start"]
-                                 and old["endpoint"]["raw_y"] == previous["raw_y"]
+                                 and (self.segment_frame.enabled or old["endpoint"]["raw_y"] == previous["raw_y"])
                                  and frame["native_before"]["nsteps"] == 1 and previous["nsteps"] == 0
                                  and old["segment"]["voltage"][1] == self.segment["voltage"][0]
                                  and old["segment"]["photons"][1] == self.segment["photons"][0]
@@ -1038,6 +1332,8 @@ class _Protocol:
                     _require(previous[name] == _word_bytes(left["history"][field], self.size), "predecessor_word_binding")
                 domain = _decode(self.rows.take("voltage_lift_polynomial_domain")["evidence"])
                 self.path_id = domain["path_identity"]
+                if self.segment_frame.enabled:
+                    _require(self.path_id == self.segment_frame.path_identity, "segment_frame_full_physical_polynomial")
                 _require(type(self.path_id) is str and len(self.path_id) == 64 and domain["passed"] is True
                          and all(value is True for value in domain["checks"].values()), "polynomial_domain_gate")
                 fields = set(self.request["numeric_packet"]["variable_offsets"])
@@ -1208,7 +1504,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         checkpoint()
         return {"schema": "solarlab.native-history-verification.v1", "verified": True, "complete_protocol": True,
                 "status": "verified_complete_native_history", "request_sha256": protocol.request_id,
-                "map_identity": protocol.map_id, "observation_policy_sha256": protocol.policy_id,
+                "map_identity": protocol.root_map_id, "observation_policy_sha256": protocol.policy_id,
                 "history": {"path": history["path"], "logical_bytes": history["logical_bytes"],
                             "encoded_bytes": size, "records": rows.count, "logical_sha256": rows.hash.hexdigest(),
                             "container_sha256": container_hash.hexdigest(), "eof_seen": True, "crc_verified": True,
@@ -1218,6 +1514,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                              "physical_word_layers": 4, "record_counts": dict(rows.counts)},
                 "pointers": {"last_record": last, "last_accepted": accepted}, "elapsed_s": time.perf_counter() - started,
                 **({"segment_startup": protocol.startup.finish(complete=True)} if protocol.startup.enabled else {}),
+                **({"segment_frame": protocol.segment_frame.finish()} if protocol.segment_frame.enabled else {}),
                 **({"charge_refinement": {"name": "fixed4-upper120-v1", "channels": 12,
                     "intervals": protocol.charge_refinement.index, "policy_sha256": protocol.charge_refinement.policy_id,
                     "quantum_ratio": [1, 1 << 120], "rounded_terms": list(protocol.charge_refinement.rounded),

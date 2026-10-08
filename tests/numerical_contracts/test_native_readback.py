@@ -70,6 +70,91 @@ def double(size):
     return {"high_hex": words(1, size), "low_hex": words(2**-60, size)}
 
 
+class SegmentFrameReadbackTests(unittest.TestCase):
+    """Six-component invented data test the independent reader, not IDA."""
+
+    def make(self):
+        from scripts.benchmarks.native_readback import SegmentFrameCheck
+
+        n = 6; zero = words(0, n); rate = [float(2*(i+1)).hex() for i in range(n)]
+        segment = dict(id="unit", start=0.0, end=1.0, voltage=[0.0, 0.0], photons=[0.0, 0.0])
+        mapping = dict(physical_model="a"*64, physical_reference="b"*64, layout="c"*64,
+                       columns_hex=words(1, n), rows_hex=words(1, n), lift_hex=[words(0, 2)]*n,
+                       reference_inputs_hex=words(0, 2))
+        controls = dict(rtol=0.125, atol=[0.5]*n, first_step=0.125)
+        request = dict(controls=controls, voltage_lift_map=mapping, map_identity=digest(mapping),
+                       prior_request_sha256="d"*64, segments=[segment], observation_times={"unit": [0.0, 1.0]},
+                       quadrature={}, weight_certificate={}, z0=[0.0]*n)
+        request["segment_frame_policy"] = dict(schema="solarlab.segment-frame-policy.v1", name="fixed-affine-state-rate-v1",
+            ancestor_request_sha256=request["prior_request_sha256"], parent_map_identity=request["map_identity"],
+            controls_sha256=digest(controls), segments_sha256=digest([segment]),
+            sampling_sha256=digest((request["observation_times"], request["quadrature"])), weight_certificate_sha256=digest({}),
+            segment_startup_policy_sha256=digest(None), qualification_policy_sha256=digest(None),
+            application="one_fixed_live_origin_at_each_existing_fresh_segment_initialization",
+            weight_rounding="RN-exact-parent-q_then-unfused-SV-v1", requested_first_steps_unchanged=True,
+            actual_automatic_first_step_parity_claimed=False)
+        fields = {"n_m3": [0, 2], "p_m3": [2, 4], "phi_V": [4, 6]}
+        request["numeric_packet"] = {"variable_offsets": fields, "initial_reference": {"payload": {
+            "layout": "c"*64, "fields": {k: {"high": words(1, 2), "low": words(0, 2)} for k in fields}}}}
+        rid = digest(request)
+        parent = dict(request_sha256=rid, predecessor_identity="b"*64, segment_sha256=digest(segment), time_hex=0.0.hex(),
+                      raw_z_hex=zero, raw_zdot_hex=rate, inputs_hex=words(0, 2), input_rates_hex=words(0, 2),
+                      state_changed=False, native_initialization_performed=False, mapped_physical_rate_words_hex=[rate, zero, zero, zero])
+        parent["record_sha256"] = digest(parent)
+        frame = dict(schema="solarlab.segment-affine-frame.v1", parent_map_identity=request["map_identity"],
+                     segment_sha256=digest(segment), logical_initialization_index=1, predecessor_identity="b"*64,
+                     parent_input_sha256=parent["record_sha256"], t0_hex=0.0.hex(), size=n,
+                     q0_words_hex=[zero]*4, v0_words_hex=[rate, zero, zero, zero],
+                     law="q=Q0+(t-t0)*V0+u;qdot=V0+udot", weight_rounding="RN-exact-parent-q_then-unfused-SV-v1")
+        framed = dict(mapping, segment_frame=frame, raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+            physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        ancestry = dict(request_sha256=rid, parent_map_identity=request["map_identity"], predecessor_identity="b"*64,
+                        q0_words_hex=[zero]*4)
+        record = dict(kind="voltage_lift_segment_frame", request_sha256=rid, parent_map_identity=request["map_identity"],
+                      frame=frame, frame_identity=digest(frame), map=framed, map_identity=digest(framed),
+                      ancestry=ancestry, preparation_frame=dict(frame, v0_words_hex=[zero]*4, parent_input_sha256=digest(ancestry)),
+                      parent_input=parent, native_initial_z_hex=zero, native_initial_zdot_hex=zero,
+                      physical_handoff_words_hex=[zero]*4, physical_rate_handoff_words_hex=[rate, zero, zero, zero])
+        record["record_sha256"] = digest(record)
+        check = SegmentFrameCheck(request); check.begin(record, segment, 1, "b"*64)
+        weights = dict(schema="sksundae.ida.parent-affine-weight-state.v1", owner="unit", generation=1, size=n,
+                       frame_identity=digest(frame), build_identity="e"*64, installed=True, setter="IDAWFtolerances", setter_status=0,
+                       t0_hex=0.0.hex(), rtol_hex=controls["rtol"].hex(), atol=binary(words(0.5, n)),
+                       q0_words=tuple(binary(w) for w in frame["q0_words_hex"]),
+                       v0_words=tuple(binary(w) for w in frame["v0_words_hex"]), callback_calls=1, callback_status=0,
+                       failure_component=None, basis_time_hex=0.0.hex(), basis_u=binary(zero), rounded_parent=binary(zero),
+                       computed_weights=binary(words(2, n)), weight_rounding=frame["weight_rounding"], raw_tolerance_getter=False)
+        phi = [0.25*(i+1) for i in range(n)]*2+[0.5*(i+1) for i in range(n)]
+        packet = dict(owner="unit", generation=1, parent_weight_state=weights, binding={"identity": "e"*64},
+                      predecessor={"internal_t": 0.0}, native_before=dict(kused=2, nsteps=1, hused=0.5, tn=0.5),
+                      basis={"phi": struct.pack('<18d', *phi), "psi": struct.pack('<2d', 0.5, 1.0)},
+                      error_weights=binary(words(2, n)))
+        return check, record, packet
+
+    def test_independent_full_polynomial_and_operative_parent_weights(self):
+        check, _, packet = self.make(); check.packet(packet)
+        for i, row in enumerate(check.physical_polynomials, 1):
+            self.assertEqual(row, (1+Fraction(5*i, 4), Fraction(3*i, 2), Fraction(i, 4)))
+        self.assertEqual(check.finish()["independent_physical_polynomials"], 1)
+        self.assertEqual(check.frames[0]["weight_packets"], 1)
+
+    def test_foreign_generation_bad_weights_and_endpoint_basis_rejected(self):
+        for key, value in (("generation", 2), ("frame_identity", "f"*64),
+                           ("computed_weights", binary(words(3))), ("q0_words", (binary(words(1)),)*4)):
+            check, _, packet = self.make(); packet["parent_weight_state"][key] = value
+            with self.assertRaises(HistoryVerificationError):
+                check.packet(packet)
+        check, _, packet = self.make()
+        changed = packet["parent_weight_state"]
+        changed.update(basis_time_hex=0.5.hex(), basis_u=binary(words(0.25)))
+        parent = [i+0.25 for i in range(1, 7)]
+        changed["rounded_parent"] = struct.pack('<6d', *parent)
+        changed["computed_weights"] = struct.pack('<6d', *(1/(0.125*q+0.5) for q in parent))
+        packet["error_weights"] = changed["computed_weights"]
+        with self.assertRaisesRegex(HistoryVerificationError, "operative_weight_basis"):
+            check.packet(packet)
+
+
 class QualificationProtocolSizeTests(unittest.TestCase):
     def test_extended_protocol_consumes_validated_request_size(self):
         # This isolates protocol wiring from the separately tested metadata

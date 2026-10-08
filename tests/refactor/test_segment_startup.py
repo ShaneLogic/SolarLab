@@ -218,3 +218,95 @@ def test_reader_rejects_missing_forged_or_misapplied_controls(requests):
     assert partial["initializations"][0]["actual_initial_step_hex"] is None
     with pytest.raises(HistoryVerificationError, match="incomplete_application"):
         check.finish(complete=True)
+
+
+def test_segment_frame_exact_45_state_rate_and_capacity():
+    from fractions import Fraction
+    import numpy as np
+    from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+    q0 = PrimitiveExpansion.from_value(np.full(45, 2.0**20)).add(np.full(45, 2.0**-60))
+    v0 = np.array([0.0 if i % 7 == 0 else (-1.0)**i*2.0**(-8+i % 3) for i in range(45)])
+    frame = device.SegmentAffineFrame("a"*64, "b"*64, 1, "c"*64, "d"*64, 2.0**-60, q0, v0)
+    u, udot = np.full(45, 2.0**-100), np.full(45, -2.0**-90)
+    state, rate = frame.parent_state(1.0, u), frame.parent_rate(udot)
+    for i in range(45):
+        source = sum((Fraction(float(w[i])) for w in q0.words), Fraction(0))
+        assert sum((Fraction(float(w[i])) for w in state.words), Fraction(0)) == (
+            source+(Fraction(1)-Fraction(frame.t0))*Fraction(float(v0[i]))+Fraction(float(u[i])))
+        assert sum((Fraction(float(w[i])) for w in rate.words), Fraction(0)) == Fraction(float(v0[i]))+Fraction(float(udot[i]))
+    assert frame.identity == device.digest(frame.payload())
+    assert frame.weight_option()["q0_words_hex"] == frame.payload()["q0_words_hex"]
+    assert np.array_equal(frame.q0.high, q0.high)
+    crowded = PrimitiveExpansion.from_value([1.0])
+    for exponent in (-60, -120, -180):
+        crowded = crowded.add([2.0**exponent])
+    full = device.SegmentAffineFrame("a"*64, "b"*64, 1, "c"*64, "d"*64, 0.0, crowded, [0.0])
+    with pytest.raises(device.ContractError, match="capacity"):
+        full.parent_state(0.0, [2.0**-240])
+    # The existing DD provider rejects this source before the new product.
+    with pytest.raises(ArithmeticError, match="below the supported precision range"):
+        device._frame_scale([float.fromhex("0x0.0000000000001p-1022")], 0.5)
+    with pytest.raises(device.ContractError, match="shape"):
+        frame.parent_state(0.0, [0.0])
+    with pytest.raises(device.ContractError, match="time_or_generation"):
+        device.SegmentAffineFrame("a"*64, "b"*64, True, "c"*64, "d"*64, 0.0, q0, v0)
+
+
+def test_segment_frame_request_default_and_exact_constructor(requests):
+    import numpy as np
+    from scripts.benchmarks.native_readback import SegmentFrameCheck
+
+    mapping, segments, previous, options, _, selected = requests
+    kwargs = dict(options, segment_startup_overrides={"slow_state_hold": {"first_step": 0.0}})
+    assert device.prepare_voltage_lift_native_request(mapping, segments, previous, **kwargs, segment_frame=None) == selected
+    framed = device.prepare_voltage_lift_native_request(mapping, segments, previous, **kwargs,
+                                                       segment_frame="fixed-affine-state-rate-v1")
+    device.validate_voltage_lift_native_request(mapping, segments, framed)
+    for key in ("controls", "previous_controls", "numeric_packet", "budgets", "original_budgets", "mandatory",
+                "segments", "observation_times", "quadrature", "weight_certificate", "segment_startup_policy"):
+        assert framed[key] == selected[key], key
+    assert framed["actual_initial_identity"] == selected["actual_initial_identity"]
+    assert framed["initial_preparation"]["mapped_physical_rate_words_hex"] == selected["initial_preparation"]["mapped_physical_rate_words_hex"]
+    assert framed["initial_segment_frame"]["frame"]["v0_words_hex"][0] == selected["initial_preparation"]["raw_zdot_hex"]
+    assert all(v == 0 for v in (*framed["z0"], *framed["zdot0"]))
+    context = device.AffineSamplingContext(mapping.model, framed)
+    binding, u, up, proof, record = device.voltage_lift_segment_initialization(
+        mapping, context, segments[0], 1, np.zeros(45), mapping.model.reference)
+    check = SegmentFrameCheck(framed)
+    assert check.begin(record, asdict(segments[0]), 1, mapping.reference_identity) == binding.adapter.mapping.payload()
+    captured = {}
+    def fake_ida(residual, **options):
+        captured.update(options)
+        return captured
+    _, receipt = device._voltage_lift_segment_solver(fake_ida, framed, segments[0], 1,
+        object(), object(), object(), [], frame=binding.adapter.mapping.frame)
+    assert captured["parent_weight_frame"] == binding.adapter.mapping.frame.weight_option()
+    assert captured["first_step"] == selected["controls"]["first_step"]
+    check.constructor(receipt)
+    with pytest.raises(device.ContractError, match="constructor_binding"):
+        device._voltage_lift_segment_solver(fake_ida, framed, segments[0], 1, None, None, None, [])
+    with pytest.raises(device.ContractError, match="unbound_option"):
+        device._voltage_lift_segment_solver(fake_ida, selected, segments[0], 1, None, None, None, [],
+                                            frame=binding.adapter.mapping.frame)
+    for key, value in (("t0_hex", "0x1.0000000000000p+0"), ("size", 44), ("frame_identity", "e"*64)):
+        forged = deepcopy(receipt)
+        forged["parent_weight_frame"][key] = value
+        forged["parent_weight_frame_sha256"] = device.digest(forged["parent_weight_frame"])
+        with pytest.raises(HistoryVerificationError, match="constructor_weight_binding"):
+            check.constructor(forged)
+
+
+@pytest.mark.parametrize("policy", [True, False, {}, [], "automatic", "fixed-affine-state-rate-v2"])
+def test_segment_frame_invalid_and_tampered_policy(requests, policy):
+    from scripts.benchmarks.native_readback import SegmentFrameCheck
+
+    mapping, segments, previous, options, _, selected = requests
+    with pytest.raises(device.ContractError, match="segment_frame"):
+        device.prepare_voltage_lift_native_request(mapping, segments, previous, **options, segment_frame=policy)
+    forged = deepcopy(selected)
+    forged["segment_frame_policy"] = {"name": "fixed-affine-state-rate-v1", "forged": policy}
+    with pytest.raises(device.ContractError, match="segment_frame"):
+        device.validate_voltage_lift_native_request(mapping, segments, forged)
+    with pytest.raises(HistoryVerificationError, match="segment_frame"):
+        SegmentFrameCheck(forged)

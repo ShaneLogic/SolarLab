@@ -3018,3 +3018,98 @@ def test_affine_value_only_skips_derivative_underflow(case_id, request):
                        "derivative_error": "FloatingPointError: underflow", "value_only_error": None},
              {"valid_physical_point": True, "unchanged_value_words": True,
               "derivative_exception_explicitly_preserved_when_requested": True})
+
+
+def test_segment_frame_physical_chain_and_live_event_handoff(request):
+    """Fixed-state algebra and manufactured boundary data; zero IDA calls."""
+    from scripts.benchmarks import coupled_device_prototype as d
+    from scripts.benchmarks.native_readback import SegmentFrameCheck
+    from scripts.benchmarks.native_observation import prepare_physical_polynomial
+    from scripts.benchmarks.interval_observation import AcceptedClock, Polynomial
+
+    case = "DynamicAcceptorIonPublicDeviceV1"
+    m, base, parent_adapter, q, inputs = lift_fixture(case)
+    v = np.arange(45, dtype=float)*2.0**-16
+    origin = d.SegmentAffineFrame(base.identity, "a"*64, 1, m.reference.identity, "b"*64, 0.0, q, v)
+    mapped = d.AffineVoltageMap(m, origin)
+    adapter = d.VoltageLiftAdapter(mapped)
+    zero, input_rate = np.zeros(45), np.array([0.25, 0.0])
+    a = parent_adapter.residual(0.0, q, v, inputs, input_rate)
+    b = adapter.residual(0.0, zero, zero, inputs, input_rate)
+    assert np.array_equal(a, b)
+    for cj in (0.0, 1024.0):
+        old = parent_adapter.jacobian(0.0, q, v, inputs, input_rate, cj)
+        new = adapter.jacobian(0.0, zero, zero, inputs, input_rate, cj)
+        assert np.array_equal(old.data, new.data)
+        assert np.array_equal(old.indices, new.indices) and np.array_equal(old.indptr, new.indptr)
+
+    previous = json.loads(Path(json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())[case]).read_text())
+    segments = tuple(d.ProtocolSegment(**row) for row in previous["segments"])
+    proposal = d.prepare_voltage_lift_native_request(base, segments, previous, nonlin_conv_coef=1e-8,
+        nonlin_guard="first-correction-wrms-v1", first_step=7.8125e-7, time_weight_kappa=1024,
+        segment_startup_overrides={"slow_state_hold": {"first_step": 0.0}},
+        segment_frame="fixed-affine-state-rate-v1")
+    context = d.AffineSamplingContext(m, proposal)
+    first, u, up, proof, receipt = d.voltage_lift_segment_initialization(base, context, segments[0], 1, zero, m.reference)
+    check = SegmentFrameCheck(proposal)
+    check.begin(receipt, asdict(segments[0]), 1, m.reference.identity)
+    history = d.VoltageLiftHistory(first.adapter.mapping, parent_reference=d.VoltageLiftHistory(base).reference_record)
+    t = segments[0].end
+    endpoint, _, _, saved = history.build_sample(zero, t, segments[0].inputs(t)[0], m.reference,
+        zero, segments[0].inputs(t)[1], origin="algebraic_probe", event_side="left")
+    check.sample(saved)
+    parent_q = first.adapter.mapping.frame.parent_state(t, zero)
+    second, u2, up2, proof2, receipt2 = d.voltage_lift_segment_initialization(
+        base, context, segments[1], 2, parent_q, endpoint)
+    check.begin(receipt2, asdict(segments[1]), 2, endpoint.identity, saved)
+    assert receipt2["physical_handoff_words_hex"] == saved["physical_cumulative_words_hex"]
+    assert np.all(u2 == 0) and np.all(up2 == 0)
+    assert proof2["input_rates_hex"] != saved["input_rates_hex"]
+    # Compare the full polynomial and its first two derivatives in the
+    # normalized native coordinate (t-tn)/h, with no native sample invented.
+    h = 2.0**-12
+    clock = AcceptedClock(t, t+h, h, 1, 1, 2, segments[1].start, segments[1].end,
+                          segments[1].id, owner="manufactured-unit")
+    raw = tuple(Polynomial((Fraction(i, 2**50), Fraction(1, 2**45), Fraction(-i, 2**55))) for i in range(45))
+    prepared = prepare_physical_polynomial(second, raw, clock)
+    frame = second.adapter.mapping.frame
+    q0 = [sum((Fraction(float(w[i])) for w in frame.q0.words), Fraction(0)) for i in range(45)]
+    v0 = [sum((Fraction(float(w[i])) for w in frame.v0.words), Fraction(0)) for i in range(45)]
+    for name, actual in prepared.path.fields.items():
+        offset = m.layout.offsets[name]
+        roots = word_decimals(m.field(m.reference, name))
+        for local, i in enumerate(range(offset.start, offset.stop)):
+            root = sum((Fraction(float(w.flat[local])) for w in m.field(m.reference, name).words), Fraction(0))
+            parent = raw[i]+Polynomial((q0[i]+(clock.tn-Fraction(frame.t0))*v0[i], clock.hused*v0[i]))
+            expected = Polynomial((root,))+Fraction(float(base.columns[i]))*parent
+            for j, input_poly in enumerate(prepared.path.inputs):
+                expected += Fraction(float(base.lift[i,j]))*(input_poly-Fraction(float(base.reference_inputs[j])))
+            assert actual[local].coefficients == expected.coefficients
+            assert actual[local].derivative().coefficients == expected.derivative().coefficients
+            assert actual[local].derivative().derivative().coefficients == expected.derivative().derivative().coefficients
+    # The independent reader must reproduce the producer's full path hash,
+    # using invented phi/psi words solely for this algebraic source test.
+    import struct
+    from scripts.benchmarks.native_readback import _snapshot_digest
+    pack = lambda values: struct.pack('<'+str(len(values))+'d', *values)
+    weights = np.array([1/(proposal["controls"]["rtol"]*abs(float(q))+a)
+                        for q, a in zip(q0, proposal["controls"]["atol"])])
+    state = dict(schema="sksundae.ida.parent-affine-weight-state.v1", owner="manufactured-unit", generation=1, size=45,
+        frame_identity=frame.identity, build_identity="f"*64, installed=True, setter="IDAWFtolerances", setter_status=0,
+        t0_hex=frame.t0.hex(), rtol_hex=float(proposal["controls"]["rtol"]).hex(),
+        atol=np.array(proposal["controls"]["atol"]).tobytes(), q0_words=tuple(w.tobytes() for w in frame.q0.words),
+        v0_words=tuple(w.tobytes() for w in frame.v0.words), callback_calls=1, callback_status=0, failure_component=None,
+        basis_time_hex=frame.t0.hex(), basis_u=zero.tobytes(), rounded_parent=np.array(list(map(float, q0))).tobytes(),
+        computed_weights=weights.tobytes(), weight_rounding=frame.payload()["weight_rounding"], raw_tolerance_getter=False)
+    phi = [float(p.coefficients[0]) for p in raw]+[float(p.coefficients[1]-(p.coefficients[2] if len(p.coefficients)>2 else 0)) for p in raw]+[
+           float(2*p.coefficients[2]) if len(p.coefficients)>2 else 0.0 for p in raw]
+    packet = dict(owner="manufactured-unit", generation=1, binding={"identity": "f"*64}, parent_weight_state=state,
+        predecessor={"internal_t": t}, native_before=dict(kused=2, nsteps=1, hused=h, tn=t+h),
+        basis={"phi": pack(phi), "psi": pack([h, 2*h])}, error_weights=weights.tobytes())
+    check.packet(packet)
+    rebound = prepare_physical_polynomial(second, raw, clock, coefficient_frame_identity=_snapshot_digest(packet))
+    assert check.path_identity == rebound.path.identity
+    log_case(request, {"family": "segment_frame_chain_handoff", "case": case, "native_steps": 0,
+                       "frames": [receipt["frame_identity"], receipt2["frame_identity"]]},
+             {"same_state_F_J_words": True, "all45_handoff_words": True,
+              "both_event_sides_retained": True, "full_polynomial_derivatives": True})

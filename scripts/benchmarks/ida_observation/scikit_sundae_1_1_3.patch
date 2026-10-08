@@ -1,6 +1,22 @@
 --- a/src/sksundae/c_ida.pxd
 +++ b/src/sksundae/c_ida.pxd
-@@ -50,6 +50,15 @@
+@@ -8,6 +8,7 @@
+     # user-supplied functions
+     ctypedef int (*IDAResFn)(sunrealtype t, N_Vector yy, N_Vector yp, N_Vector rr, void* data) except -1
+     ctypedef int (*IDARootFn)(sunrealtype t, N_Vector yy, N_Vector yp, sunrealtype* ee, void* data) except -1
++    ctypedef int (*IDAEwtFn)(N_Vector yy, N_Vector ewt, void* data) noexcept
+ 
+     # itask
+     int IDA_NORMAL
+@@ -30,6 +31,7 @@
+     # tolerance input functions
+     int IDASStolerances(void* mem, sunrealtype rtol, sunrealtype atol)
+     int IDASVtolerances(void* mem, sunrealtype rtol, N_Vector atol)
++    int IDAWFtolerances(void* mem, IDAEwtFn efun)
+ 
+     # initial condition calculation function
+     int IDACalcIC(void* mem, int ic_opt, sunrealtype ic_t0)
+@@ -50,6 +52,15 @@
      int IDASetMaxConvFails(void* mem, int max_conv_fails)
      int IDASetMaxNonlinIters(void* mem, int max_nonlin_iters)
  
@@ -16,7 +32,7 @@
      # rootfinding initialization function
      int IDARootInit(void* mem, int nrtfn, IDARootFn eventsfn)
  
-@@ -65,6 +74,14 @@
+@@ -65,6 +76,14 @@
      int IDAGetRootInfo(void* mem, int* rootsfound)
      int IDAGetNumResEvals(void* mem, long int* nrevals)
      int IDAGetCurrentStep(void* mem, sunrealtype* hcur)
@@ -31,7 +47,7 @@
      
      # free functions
      void IDAFree(void** mem)
-@@ -103,3 +120,47 @@
+@@ -103,3 +122,47 @@
  
      # optional outputs from LS interface
      int IDAGetNumJacEvals(void* mem, long int* njevals)
@@ -81,11 +97,12 @@
 +                                           int nthreads, SUNContext ctx)
 --- a/src/sksundae/_cy_ida.pyx
 +++ b/src/sksundae/_cy_ida.pyx
-@@ -6,7 +6,13 @@
+@@ -6,7 +6,14 @@
  # Standard library
  import os
  import inspect
 -
++import math
 +from hashlib import sha256
 +from pathlib import Path
 +from threading import RLock
@@ -96,7 +113,7 @@
  from warnings import warn
  from numbers import Integral, Real
  from typing import Callable, Iterable
-@@ -21,6 +27,7 @@
+@@ -21,6 +28,7 @@
  
  # Extern cdef headers
  from .c_ida cimport *
@@ -104,10 +121,179 @@
  from .c_nvector cimport *
  from .c_sundials cimport *
  from .c_sunmatrix cimport *
-@@ -34,6 +41,30 @@
+@@ -34,6 +42,199 @@
  from .utils import RichResult
  from .ida._precond import IDAPrecond
  from .ida._jactimes import IDAJacTimes
++
++# This bounded C callback uses only its AuxData-owned context and public IDA
++# APIs. It never calls a Python weight function or changes native u/history.
++cdef extern from *:
++    """
++    #include <ida/ida.h>
++    #include <nvector/nvector_serial.h>
++    #include <stdlib.h>
++    #include <string.h>
++    #include <math.h>
++    #include <stdint.h>
++    typedef struct {
++        void *memory, *owner;
++        long generation, calls;
++        sunindextype n;
++        int installed, status, component;
++        double t0, rtol, basis_time;
++        char frame_id[65];
++        double *data, *q0, *v0, *atol, *u, *parent, *weights;
++    } sl_parent_weights;
++
++    static void sl_parent_weights_free(sl_parent_weights **p) {
++        if (p && *p) { free((*p)->data); free(*p); *p = NULL; }
++    }
++    static sl_parent_weights *sl_parent_weights_new(void *mem, void *owner,
++        long generation, sunindextype n, double t0, double rtol,
++        const double *q0, const double *v0, const double *atol, const char *id) {
++        if (!mem || !owner || generation < 1 || n < 1 || n > 1000000) return NULL;
++        sl_parent_weights *p = calloc(1, sizeof(*p));
++        if (!p) return NULL;
++        p->data = calloc((size_t)n*12, sizeof(double));
++        if (!p->data) { free(p); return NULL; }
++        p->memory=mem; p->owner=owner; p->generation=generation; p->n=n;
++        p->t0=t0; p->rtol=rtol; p->status=1; p->component=-1;
++        p->q0=p->data; p->v0=p->q0+4*n; p->atol=p->v0+4*n;
++        p->u=p->atol+n; p->parent=p->u+n; p->weights=p->parent+n;
++        memcpy(p->q0,q0,(size_t)n*4*sizeof(double));
++        memcpy(p->v0,v0,(size_t)n*4*sizeof(double));
++        memcpy(p->atol,atol,(size_t)n*sizeof(double));
++        memcpy(p->frame_id,id,64); p->frame_id[64]=0;
++        return p;
++    }
++    /* Exact error-free partials, then one ties-to-even binary64 rounding.
++       At most 21 finite input terms; any intermediate overflow fails closed. */
++    static int sl_parent_sum(const double *values, int count, double *answer) {
++        double p[32], x, y, hi=0.0, lo=0.0, yr; int n=0, i, j;
++        if (count > 32) return -8;
++        for (j=0; j<count; ++j) {
++            x=values[j]; i=0;
++            for (int k=0; k<n; ++k) {
++                y=p[k]; if (fabs(x)<fabs(y)) { double swap=x; x=y; y=swap; }
++                hi=x+y; if (!isfinite(hi)) return -5;
++                lo=y-(hi-x); if (lo != 0.0) p[i++]=lo; x=hi;
++            }
++            n=i; if (x != 0.0) { if(n==32) return -8; p[n++]=x; }
++        }
++        if (n) {
++            hi=p[--n];
++            while (n) {
++                x=hi; y=p[--n]; hi=x+y; yr=hi-x; lo=y-yr;
++                if (lo != 0.0) break;
++            }
++            if (n && ((lo<0.0 && p[n-1]<0.0) || (lo>0.0 && p[n-1]>0.0))) {
++                y=lo*2.0; x=hi+y; yr=x-hi; if (y==yr) hi=x;
++            }
++        } else hi=0.0;
++        if (!isfinite(hi)) return -5;
++        *answer=hi; return 0;
++    }
++    static int sl_parent_product(double a, double b, double *terms, int *n) {
++        if (a==0.0 || b==0.0) return 0;
++        int ea, eb; (void)frexp(a,&ea); (void)frexp(b,&eb);
++        /* Guarantees that every exact product bit is above the subnormal
++           floor. Unsupported tiny products are errors, never dropped. */
++        if (ea+eb < -968) return -5;
++        double hi=a*b;
++        if (!isfinite(hi)) return -5;
++        double lo=fma(a,b,-hi);
++        if (!isfinite(lo)) return -5;
++        terms[(*n)++]=hi; terms[(*n)++]=lo; return 0;
++    }
++    static int sl_parent_weights_apply(sl_parent_weights *p, void *owner,
++                                       long generation, N_Vector y, N_Vector w) {
++        if (!p) return -1;
++        ++p->calls; p->status=-2; p->component=-1;
++        if (!p->installed || p->owner!=owner || p->generation!=generation) return -1;
++        p->status=-3;
++        if (!y || !w || N_VGetVectorID(y)!=SUNDIALS_NVEC_SERIAL ||
++            N_VGetVectorID(w)!=SUNDIALS_NVEC_SERIAL ||
++            N_VGetLength_Serial(y)!=p->n || N_VGetLength_Serial(w)!=p->n) return -1;
++        double *u=N_VGetArrayPointer(y), *ewt=N_VGetArrayPointer(w), t;
++        if (!u || !ewt) return -1;
++        memcpy(p->u,u,(size_t)p->n*sizeof(double));
++        p->status=-4;
++        if (IDAGetCurrentTime(p->memory,&t)!=0 || !isfinite(t)) return -1;
++        p->basis_time=t;
++        double dt=t-p->t0, bv=dt-t, dtlo=(t-(dt-bv))+(-p->t0-bv);
++        if (!isfinite(dt) || !isfinite(dtlo)) { p->status=-5; return -1; }
++        for (sunindextype i=0; i<p->n; ++i) {
++            p->component=(int)i;
++            double terms[24], q, den, product; int n=0, status;
++            if (!isfinite(u[i])) { p->status=-5; return -1; }
++            terms[n++]=u[i];
++            for (int k=0; k<4; ++k) {
++                terms[n++]=p->q0[k*p->n+i];
++                status=sl_parent_product(dt,p->v0[k*p->n+i],terms,&n);
++                if (!status) status=sl_parent_product(dtlo,p->v0[k*p->n+i],terms,&n);
++                if (status) { p->status=status; return -1; }
++            }
++            status=sl_parent_sum(terms,n,&q);
++            if (status) { p->status=status; return -1; }
++            /* Match original SV: abs, separately rounded scale and sum, inv.
++               The supported builder disables contraction and fast math. */
++            product=p->rtol*fabs(q); den=product+p->atol[i];
++            if (!isfinite(den) || den<=0.0) { p->status=-6; return -1; }
++            double weight=1.0/den;
++            if (!isfinite(weight) || weight<=0.0) { p->status=-7; return -1; }
++            p->parent[i]=q; p->weights[i]=weight; ewt[i]=weight;
++        }
++        p->status=0; p->component=-1; return 0;
++    }
++    """
++    ctypedef struct sl_parent_weights:
++        void* memory
++        void* owner
++        long generation, calls
++        sunindextype n
++        int installed, status, component
++        double t0, rtol, basis_time
++        char frame_id[65]
++        double *q0, *v0, *atol, *u, *parent, *weights
++    sl_parent_weights* sl_parent_weights_new(void*, void*, long, sunindextype, double, double,
++                                           const double*, const double*, const double*, const char*)
++    void sl_parent_weights_free(sl_parent_weights**)
++    int sl_parent_weights_apply(sl_parent_weights*, void*, long, N_Vector, N_Vector) noexcept
++
++
++def _validate_parent_weight_frame(value):
++    if value is None:
++        return None
++    keys = {"schema", "frame_identity", "t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding"}
++    if (type(value) is not dict or set(value) != keys
++            or value["schema"] != "sksundae.ida.parent-affine-weights.v1"
++            or value["weight_rounding"] != "RN-exact-parent-q_then-unfused-SV-v1"
++            or type(value["size"]) is not int or not 1 <= value["size"] <= 1000000
++            or type(value["frame_identity"]) is not str or len(value["frame_identity"]) != 64
++            or any(c not in "0123456789abcdef" for c in value["frame_identity"])):
++        raise ValueError("invalid parent_weight_frame binding")
++    def word(v):
++        if type(v) is not str:
++            raise ValueError("parent_weight_frame requires exact hex words")
++        number = float.fromhex(v)
++        if not math.isfinite(number) or number.hex() != v:
++            raise ValueError("noncanonical parent_weight_frame word")
++        return number
++    word(value["t0_hex"])
++    for key in ("q0_words_hex", "v0_words_hex"):
++        rows = value[key]
++        if type(rows) is not list or len(rows) != 4 or any(type(r) is not list or len(r) != value["size"] for r in rows):
++            raise ValueError("parent_weight_frame shape")
++        numbers = [[word(v) for v in row] for row in rows]
++        for terms in zip(*numbers):
++            prefix = []
++            for supplied in terms:
++                rounded = math.fsum((*terms, *(-v for v in prefix)))
++                if supplied != rounded:
++                    raise ValueError("unnormalized parent_weight_frame words")
++                prefix.append(supplied)
++    return deepcopy(value)
 +
 +# Replaced only by the source/hash-checked observation build helper.
 +_OBSERVATION_BUILD_ID = None
@@ -135,7 +321,40 @@
  
  
  # Messages shorted from documentation online:
-@@ -464,8 +495,21 @@
+@@ -255,6 +456,8 @@
+     cdef np.ndarray np_cc       # constraints (-2, -1, 0, 1, 2)
+     cdef bint with_userdata
+     cdef bint is_constrained
++    cdef sl_parent_weights* parent_weights
++    cdef long frame_generation
+ 
+     cdef object resfn           # Callable
+     cdef object userdata        # Any
+@@ -266,6 +469,8 @@
+     cdef object jactimes        # IDAJacTimes
+ 
+     def __cinit__(self, sunindextype NEQ, object options):
++        self.parent_weights = NULL
++        self.frame_generation = 0
+         self.np_yy = np.empty(NEQ, DTYPE)
+         self.np_yp = np.empty(NEQ, DTYPE)
+         self.np_rr = np.empty(NEQ, DTYPE)
+@@ -327,6 +532,14 @@
+             self.np_cc = np.zeros(0, INT_TYPE)
+ 
+ 
++cdef int _parent_weight_wrapper(N_Vector y, N_Vector w, void* data) noexcept:
++    # Typed access to the registered owner; no Python callable or array work.
++    if data is NULL:
++        return -1
++    return sl_parent_weights_apply((<AuxData>data).parent_weights, data,
++                                   (<AuxData>data).frame_generation, y, w)
++
++
+ cdef class _idaLSSparseDQJac:
+     """
+     Sparse Jacobian approximation.
+@@ -464,8 +677,21 @@
      cdef object _malloc         # bool - flag for memory allocation
      cdef object _options        # dict[str, Any]
      cdef object _initialized    # bool - flag for init_step completion
@@ -157,17 +376,26 @@
          self._free_memory()
          
          self._options = {
-@@ -488,6 +532,9 @@
+@@ -488,6 +714,10 @@
              "max_order": 5,
              "max_num_steps": 500,
              "max_nonlin_iters": 4,
 +            "nonlin_conv_coef": None,
 +            "nonlin_guard": None,
 +            "nonlin_trace_capacity": 4096,
++            "parent_weight_frame": None,
              "max_conv_fails": 10,
              "constraints_idx": None,
              "constraints_type": None,
-@@ -544,7 +591,7 @@
+@@ -503,6 +733,7 @@
+             raise ValueError(f"Invalid keyword arguments: {invalid_keys}.")
+         
+         self._options.update(options)
++        self._options["parent_weight_frame"] = _validate_parent_weight_frame(self._options["parent_weight_frame"])
+ 
+         _check_options(self._options)
+ 
+@@ -544,7 +775,7 @@
              nthreads = <int> self._options["nthreads"]
  
              self.A = SUNSparseMatrix(self.NEQ, self.NEQ, nnz, CSC_MAT, self.ctx)
@@ -176,7 +404,48 @@
  
          elif linsolver == "gmres":
              self.LS = SUNLinSol_SPGMR(self.yy, prectype, maxl, self.ctx)
-@@ -587,42 +634,49 @@
+@@ -561,6 +792,40 @@
+             raise MemoryError("SUNLinSol constructor returned NULL.")
+ 
+     cdef _set_tolerances(self):
++        cdef sl_parent_weights* context = NULL
++        cdef sl_parent_weights* retired = NULL
++        cdef np.ndarray q0, v0, absolute
++        cdef sunrealtype tcur
++        if self._options["parent_weight_frame"] is not None:
++            spec = self._options["parent_weight_frame"]
++            self._obs_bind_source()
++            if spec["size"] != self.NEQ:
++                raise ValueError("parent_weight_frame dimension changed")
++            status = IDAGetCurrentTime(self.mem, &tcur)
++            if status != 0 or float(tcur).hex() != spec["t0_hex"]:
++                raise IDAObservationError("parent_weight_frame_initial_time", "IDAGetCurrentTime", int(status))
++            q0 = np.ascontiguousarray([[float.fromhex(v) for v in row] for row in spec["q0_words_hex"]], dtype=DTYPE)
++            v0 = np.ascontiguousarray([[float.fromhex(v) for v in row] for row in spec["v0_words_hex"]], dtype=DTYPE)
++            absolute = np.array(np.broadcast_to(self._options["atol"], (int(self.NEQ),)), dtype=DTYPE, copy=True)
++            if (not np.isfinite(absolute).all() or np.any(absolute <= 0)
++                    or not math.isfinite(self._options["rtol"]) or self._options["rtol"] <= 0):
++                raise ValueError("parent_weight_frame nonpositive or nonfinite tolerance")
++            encoded_id = spec["frame_identity"].encode("ascii")
++            context = sl_parent_weights_new(self.mem, <void*>self.aux, self._obs_generation,
++                self.NEQ, tcur, <double>self._options["rtol"], <double*>q0.data,
++                <double*>v0.data, <double*>absolute.data, encoded_id)
++            if context is NULL:
++                raise MemoryError("parent weight context allocation failed")
++            status = IDAWFtolerances(self.mem, _parent_weight_wrapper)
++            if status != 0:
++                sl_parent_weights_free(&context)
++                raise IDAObservationError("parent_weight_install_failed", "IDAWFtolerances", int(status))
++            context.installed = 1
++            retired = self.aux.parent_weights
++            self.aux.parent_weights = context
++            self.aux.frame_generation = self._obs_generation
++            sl_parent_weights_free(&retired)
++            return
+         rtol = self._options["rtol"]
+         atol = self._options["atol"]
+ 
+@@ -587,42 +852,52 @@
              raise RuntimeError("IDAtolerances - " + IDAMESSAGES[flag])
  
      cdef _free_memory(self):
@@ -187,6 +456,9 @@
              IDAFree(&self.mem)
              self.mem = NULL
 -
++        if self.aux is not None:
++            sl_parent_weights_free(&self.aux.parent_weights)
++            self.aux.frame_generation = 0
 +        sl_ida75_guard_free(&self._nls_guard)
 +
 +        # Dependencies outlive their native consumers.
@@ -255,7 +527,7 @@
          self._size = None
          self._malloc = False
  
-@@ -680,6 +734,13 @@
+@@ -680,6 +955,13 @@
          flag = IDAInit(self.mem, _resfn_wrapper, t0, self.yy, self.yp)
          if flag < 0:
              raise RuntimeError("IDAInit - " + IDAMESSAGES[flag])
@@ -269,7 +541,7 @@
  
          # 9) Specify integration tolerances
          self._set_tolerances()
-@@ -732,6 +793,13 @@
+@@ -732,6 +1014,13 @@
          if flag < 0:
              raise RuntimeError("IDASetMaxNonlinIters - " + IDAMESSAGES[flag])
  
@@ -283,7 +555,7 @@
          cdef int max_conv_fails = <int> self._options["max_conv_fails"]
          flag = IDASetMaxConvFails(self.mem, max_conv_fails)
          if flag < 0:
-@@ -820,6 +888,10 @@
+@@ -820,6 +1109,10 @@
          cdef int ic_opt
          cdef sunrealtype ic_t0
  
@@ -294,17 +566,19 @@
          yy_tmp = y0.copy()
          yp_tmp = yp0.copy()
  
-@@ -840,6 +912,9 @@
+@@ -840,6 +1133,11 @@
              flag = IDAReInit(self.mem, t0, self.yy, self.yp)
              if flag < 0:
                  raise RuntimeError("IDAReInit - " + IDAMESSAGES[flag])
 +            flag = sl_ida75_guard_reinit(self._nls_guard, self.mem, self._obs_generation)
 +            if flag != 0:
 +                raise IDAObservationError("nonlinear_guard_reinit_failed", "reinit", flag)
++            if self._options["parent_weight_frame"] is not None:
++                self._set_tolerances()  # Refresh even on same-size IDAReInit.
  
          # 16) Correct initial values
          calc_initcond = self._options["calc_initcond"]
-@@ -878,6 +953,8 @@
+@@ -878,6 +1176,8 @@
              nfev=nfev, njev=njev,
          )
  
@@ -313,7 +587,7 @@
          return result
  
      cdef _step(self, sunrealtype tt, object method, object tstop):
-@@ -899,11 +976,21 @@
+@@ -899,11 +1199,21 @@
          yp_tmp = self.aux.np_yp
          
          # 17) Advance solution in time
@@ -339,7 +613,7 @@
          svec2np(self.yy, yy_tmp)
          svec2np(self.yp, yp_tmp)
  
-@@ -968,11 +1055,13 @@
+@@ -968,11 +1278,13 @@
          while True:
              tend = tspan[ind]
  
@@ -353,7 +627,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1059,11 +1148,13 @@
+@@ -1059,11 +1371,13 @@
  
          # 17) Advance solution in time
          while True:
@@ -367,10 +641,11 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1111,49 +1202,489 @@
+@@ -1111,49 +1425,544 @@
  
          return result
  
+-    def init_step(self, DTYPE_t t0, object y0, object yp0):
 +    cdef _obs_raw(self):
 +        yy = np.empty(self.NEQ, DTYPE)
 +        yp = np.empty(self.NEQ, DTYPE)
@@ -526,6 +801,49 @@
 +                "native_library_path": str(library_path), "libraries": libraries})
 +        return self._obs_binding
 +
++    @staticmethod
++    def parent_weight_capability():
++        return {"schema": "sksundae.ida.parent-affine-weights-capability.v1",
++                "public_setter": "IDAWFtolerances", "callback": "compiled_C_via_registered_AuxData",
++                "rounding": "RN-exact-parent-q_then-unfused-SV-v1", "word_capacity": 4,
++                "sum_term_capacity": 32, "minimum_nonzero_product_frexp_exponent_sum": -968,
++                "default": "off", "same_size_reinit_refresh": True, "raw_tolerance_getter": False,
++                "build_recipe_sha256": _OBSERVATION_BUILD_ID,
++                "extension_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
++                "config": _OBSERVATION_CONFIG, "native_initializations_performed": 0}
++
++    cdef _frame_snapshot(self):
++        cdef sl_parent_weights* g = NULL
++        cdef int k
++        if self.aux is not None:
++            g = self.aux.parent_weights
++        if g is NULL:
++            return None
++        if (g.memory != self.mem or g.owner != <void*>self.aux or g.n != self.NEQ
++                or g.generation != self._obs_generation or g.generation != self.aux.frame_generation):
++            raise IDAObservationError("parent_weight_context_lifetime")
++        binding = self._obs_bind_source()
++        q0, v0 = [], []
++        for k in range(4):
++            q0.append((<char*>(g.q0+k*g.n))[:g.n*sizeof(double)])
++            v0.append((<char*>(g.v0+k*g.n))[:g.n*sizeof(double)])
++        return {"schema": "sksundae.ida.parent-affine-weight-state.v1",
++                "owner": self._obs_instance, "generation": g.generation, "size": int(g.n),
++                "frame_identity": (<char*>g.frame_id)[:64].decode("ascii"),
++                "build_identity": binding["identity"], "installed": bool(g.installed),
++                "setter": "IDAWFtolerances", "setter_status": 0 if g.installed else None,
++                "t0_hex": float(g.t0).hex(), "rtol_hex": float(g.rtol).hex(),
++                "q0_words": tuple(q0), "v0_words": tuple(v0), "atol": (<char*>g.atol)[:g.n*sizeof(double)],
++                "callback_calls": g.calls, "callback_status": g.status if g.calls else None,
++                "failure_component": g.component if g.calls and g.status else None,
++                "basis_time_hex": float(g.basis_time).hex() if g.calls else None,
++                "basis_u": (<char*>g.u)[:g.n*sizeof(double)] if g.calls else None,
++                "rounded_parent": (<char*>g.parent)[:g.n*sizeof(double)] if g.calls and g.status == 0 else None,
++                "computed_weights": (<char*>g.weights)[:g.n*sizeof(double)] if g.calls and g.status == 0 else None,
++                "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
++                "basis_role": "actual IDAEwtFn argument at IDAGetCurrentTime; not returned endpoint",
++                "raw_tolerance_getter": False}
++
 +    cdef _obs_nls_state(self, long nsteps, long nniters,
 +                        sunrealtype tcur, sunrealtype hlast, int qlast,
 +                        sunrealtype hcur, int qcur):
@@ -642,14 +960,20 @@
 +                "native_left_terms": (before["tn"], -before["hused"]),
 +                "clock_gap_terms": (before["tn"], -before["hused"], -previous["internal_t"]),
 +                "coefficient_kind": "copied_phi_psi_words_with_rounded_Dky_receipts",
-+                "basis": basis, "predecessor_dky": predecessor_dky, "event_metadata": None})
++                "basis": basis, "predecessor_dky": predecessor_dky, "event_metadata": None,
++                **({"parent_weight_state": self._frame_snapshot()}
++                   if self._options["parent_weight_frame"] is not None else {})})
 +
-     def init_step(self, DTYPE_t t0, object y0, object yp0):
++    def init_step(self, DTYPE_t t0, object y0, object yp0, *, parent_weight_frame=None):
 +        with self._obs_lock:
 +            if self._obs_busy:
 +                raise IDAObservationError("operation_in_progress")
 +            self._obs_busy = True
 +            try:
++                if parent_weight_frame is not None:
++                    if self._options["parent_weight_frame"] is None:
++                        raise ValueError("parent weight reinit requires explicit constructor opt-in")
++                    self._options["parent_weight_frame"] = _validate_parent_weight_frame(parent_weight_frame)
          
 -        y0 = np.asarray(y0, DTYPE)
 -        yp0 = np.asarray(yp0, DTYPE)
@@ -689,6 +1013,8 @@
 +            try:
 +
 +                method = method.lower()
++                if self._options["parent_weight_frame"] is not None and method != "onestep":
++                    raise ValueError("parent_weight_frame requires init_step/step(method='onestep')")
 +                if self._options["nonlin_guard"] is not None and method != "onestep":
 +                    raise ValueError("nonlin_guard requires init_step/step(method='onestep')")
 +                valid = {"normal", "onestep"}
@@ -738,6 +1064,8 @@
 +                raise IDAObservationError("operation_in_progress")
 +            self._obs_busy = True
 +            try:
++                if self._options["parent_weight_frame"] is not None:
++                    raise ValueError("parent_weight_frame requires init_step/step(method='onestep')")
 +
 +                if self._options["nonlin_guard"] is not None:
 +                    raise ValueError("nonlin_guard requires init_step/step(method='onestep')")
@@ -885,6 +1213,8 @@
 +                    "coefficient_getter_available": True,
 +                    "coefficient_getter_kind": "pinned-private-header-word-copy",
 +                    "nonlinear_control_state": nls_state,
++                    **({"parent_weight_state": self._frame_snapshot()}
++                       if self._options["parent_weight_frame"] is not None else {}),
 +                    "nonlinear_guard": deepcopy(self._nls_trace),
 +                    "observation_owner": self._obs_instance,
 +                    "observation_generation": self._obs_generation,
@@ -892,7 +1222,21 @@
  
      def __dealloc__(self):
          self._free_memory()
-@@ -1484,6 +2015,26 @@
+@@ -1293,6 +2102,13 @@
+ 
+ 
+ def _check_options(options: dict) -> None:
++
++    if options["parent_weight_frame"] is not None:
++        _validate_parent_weight_frame(options["parent_weight_frame"])
++        if (options["calc_initcond"] is not None or options["constraints_idx"] is not None
++                or type(options["rtol"]) not in (int, float) or not math.isfinite(options["rtol"])
++                or options["rtol"] <= 0):
++            raise ValueError("parent weight frame requires unchanged finite tolerances and supplied initialization")
+ 
+     # resfn
+     if not isinstance(options["resfn"], Callable):
+@@ -1484,6 +2300,26 @@
      elif not options["max_nonlin_iters"] > 0:
          raise ValueError("'max_nonlin_iters' must be > 0.")
  
@@ -939,13 +1283,19 @@
          max_conv_fails : int, optional
              Specifies the max number of nonlinear solver convergence failures
              in one step. The default is 10.
-@@ -282,6 +293,25 @@
+@@ -282,7 +293,31 @@
          """
          self._IDA = _IDA(resfn, **options)
  
+-    def init_step(self, t0: float, y0: ndarray, yp0: ndarray) -> IDAResult:
 +    def nonlinear_trace(self) -> dict | None:
 +        """Owned callback records from the last guarded native call, even on failure."""
 +        return self._IDA.nonlinear_trace()
++
++    @staticmethod
++    def parent_weight_capability() -> dict:
++        """Compiled optional public-WF bridge metadata; does not initialize IDA."""
++        return _IDA.parent_weight_capability()
 +
 +    def statistics(self) -> dict:
 +        """Read actual native counters and cj after init_step/step.
@@ -962,10 +1312,20 @@
 +        """
 +        return self._IDA.statistics()
 +
-     def init_step(self, t0: float, y0: ndarray, yp0: ndarray) -> IDAResult:
++    def init_step(self, t0: float, y0: ndarray, yp0: ndarray, *, parent_weight_frame=None) -> IDAResult:
          """
          Initialize the solver.
-@@ -406,6 +436,30 @@
+ 
+@@ -318,7 +353,7 @@
+             'y0' and 'yp0' must be the same length.
+ 
+         """
+-        return self._IDA.init_step(t0, y0, yp0)
++        return self._IDA.init_step(t0, y0, yp0, parent_weight_frame=parent_weight_frame)
+ 
+     def step(self, t: float, method='normal', tstop=None) -> IDAResult:
+         """
+@@ -406,6 +441,30 @@
  
          """
          return self._IDA.solve(tspan, y0, yp0)

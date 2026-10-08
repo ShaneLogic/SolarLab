@@ -11,18 +11,18 @@
   "files": {
     "src/sksundae/c_ida.pxd": {
       "original_sha256": "7f1443a261d3e65aecc57dafd2e5632a474f750822ded8867bb68ada55078236",
-      "patched_sha256": "ac9bcd999b0499c62d28ca4ce8a90aeb8588cab8ebcce0c27597e9c9084617b6"
+      "patched_sha256": "a089671d93a5b46462a5d50c325f1660a234c1d1541cf4d2c953b11d0799dc2e"
     },
     "src/sksundae/_cy_ida.pyx": {
       "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
-      "patched_sha256": "f218ddf2fa09f29d37cea19076c09599124854d6609686ba24bf414c6328ddc5"
+      "patched_sha256": "8e713995fdf7a79a3f2affdc79894988208aab8df904e1a1e3e92a7367123677"
     },
     "src/sksundae/ida/_solver.py": {
       "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
-      "patched_sha256": "6bb5e5879543efaedc90b576d268a6d1cbfd7e170e32ab153ea7c5ed995d5128"
+      "patched_sha256": "83bcd4d96a7eeef9212b49250dbbde51f91bcfaec5cf46d9d09025c2fe87b72c"
     }
   },
-  "patch_sha256": "985153d89620159a7fbfdc00bf96e9995ef382e4e66592869f7c3e832bbf8c43",
+  "patch_sha256": "1df6b6c7b80a4579e06228f5c4c2326522e7fe53d9bd9af01148dede5e04d57f",
   "build_binding_token": "_OBSERVATION_BUILD_ID = None",
   "required_config": {
     "SUNDIALS_VERSION": "7.5.0",
@@ -107,5 +107,17 @@
       "sundials/sundials_nonlinearsolver.h": "3289b49b370ae16e761dd2a3287729eedcee34d1ca9e3bb0af0e8f9e7e93c400"
     },
     "installation": "public setter, pinned IDAMem and Newton-content capture; original native delegate/data retained"
+  },
+  "parent_affine_weights": {
+    "schema": "sksundae.ida.parent-affine-weights.v1",
+    "public_api": "IDAWFtolerances / IDAEwtFn",
+    "default": "off",
+    "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
+    "word_capacity": 4,
+    "sum_term_capacity": 32,
+    "minimum_nonzero_product_frexp_exponent_sum": -968,
+    "lifetime": "C-owned context through existing AuxData; refresh on same-size and size-changing reinit; release after IDAFree",
+    "upstream_algorithm_or_header_changed": false,
+    "actual_application_requires_separate_native_fixture": true
   }
 }

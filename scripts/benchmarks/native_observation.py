@@ -163,6 +163,17 @@ def prepare_physical_polynomial(binding, raw_polynomials, clock: AcceptedClock, 
     if (len(raw) != model.layout.size or any(not isinstance(p, Polynomial)
             or len(p.coefficients) > clock.kused+1 for p in raw)):
         raise ContractError("native_observation_coordinate_shape_or_order")
+    parent = raw
+    if mapping.frame is not None:
+        frame = mapping.frame
+        if (frame.segment_sha256 != binding.segment_sha256 or frame.t0 != binding.segment.start
+                or frame.parent_map_identity != digest(mapping.payload(include_frame=False))):
+            raise ContractError("native_observation_segment_frame_binding")
+        q0 = tuple(sum((rational(w[i]) for w in frame.q0.words), Fraction(0)) for i in range(len(raw)))
+        v0 = tuple(sum((rational(w[i]) for w in frame.v0.words), Fraction(0)) for i in range(len(raw)))
+        # Polynomial coordinate is (t-tn)/hused, not t-t0.
+        parent = tuple(p+Polynomial((q+(clock.tn-rational(frame.t0))*v, clock.hused*v))
+                       for p, q, v in zip(raw, q0, v0, strict=True))
     errors = input_evaluation_bounds(binding.segment, clock)
     inputs = tuple(Polynomial((row["input_at_tn_exact_line"], row["stored_slope"]*clock.hused)) for row in errors)
     fields = {}
@@ -172,7 +183,7 @@ def prepare_physical_polynomial(binding, raw_polynomials, clock: AcceptedClock, 
                   for i in range(prod(variable.shape))]
         offset = model.layout.offsets[variable.id]
         fields[variable.id] = tuple(
-            Polynomial((reference,))+rational(mapping.columns[row])*raw[row]
+            Polynomial((reference,))+rational(mapping.columns[row])*parent[row]
             +sum((rational(mapping.lift[row, j])*(inputs[j]-rational(mapping.reference_inputs[j]))
                   for j in range(len(inputs))), Polynomial())
             for reference, row in zip(origin, range(offset.start, offset.stop), strict=True))
@@ -539,7 +550,7 @@ def prepare_native_frame_map(binding, frame: NativeBasisFrame):
 
 
 def require_frame_successor(previous: NativeBasisFrame, current: NativeBasisFrame, *,
-                            previous_segment, current_segment):
+                            previous_segment, current_segment, previous_mapping=None, current_mapping=None):
     """Keep native owner/generation distinct from the controller segment index."""
     left, right = previous.snapshot["endpoint"], current.snapshot["predecessor"]
     if previous.binding_identity != current.binding_identity:
@@ -548,11 +559,27 @@ def require_frame_successor(previous: NativeBasisFrame, current: NativeBasisFram
         raise ContractError("native_observation_frame_time_gap")
     same_epoch = previous.owner == current.owner and previous.generation == current.generation
     if same_epoch:
-        if (previous_segment.id != current_segment.id or left["identity"] != right["identity"]):
+        if (previous_segment.id != current_segment.id or left["identity"] != right["identity"]
+                or previous_mapping is not None and current_mapping is not None
+                and previous_mapping.identity != current_mapping.identity):
             raise ContractError("native_observation_frame_predecessor_mismatch")
         return
+    state_equal = left["raw_y"] == right["raw_y"]
+    framed = (previous_mapping is not None and previous_mapping.frame is not None
+              or current_mapping is not None and current_mapping.frame is not None)
+    if framed:
+        if (previous_mapping is None or current_mapping is None
+                or previous_mapping.frame is None or current_mapping.frame is None
+                or previous_mapping.frame.parent_map_identity != current_mapping.frame.parent_map_identity
+                or current_mapping.frame.t0 != current_segment.start):
+            raise ContractError("native_observation_segment_frame_epoch")
+        old = previous_mapping.physical_primitive(np.frombuffer(left["raw_y"], dtype="<f8"),
+            previous_segment.inputs(left["internal_t"])[0], time=left["internal_t"])
+        new = current_mapping.physical_primitive(np.frombuffer(right["raw_y"], dtype="<f8"),
+            current_segment.inputs(right["internal_t"])[0], time=right["internal_t"])
+        state_equal = all(a.tobytes() == b.tobytes() for a, b in zip(old.words, new.words, strict=True))
     if (previous_segment.id == current_segment.id or left["internal_t"] != previous_segment.end
-            or right["internal_t"] != current_segment.start or left["raw_y"] != right["raw_y"]
+            or right["internal_t"] != current_segment.start or not state_equal
             or current.snapshot["native_before"]["nsteps"] != 1 or right["nsteps"] != 0
             or tuple(previous_segment.voltage)[1] != tuple(current_segment.voltage)[0]
             or tuple(previous_segment.photons)[1] != tuple(current_segment.photons)[0]
@@ -707,7 +734,9 @@ class AcceptedIntervalObserver:
         self.prepared = prepare_native_frame_map(binding, frame)
         if previous is not None:
             require_frame_successor(previous.frame, frame, previous_segment=previous.binding.segment,
-                                    current_segment=binding.segment)
+                                    current_segment=binding.segment,
+                                    previous_mapping=previous.binding.adapter.mapping,
+                                    current_mapping=binding.adapter.mapping)
             previous.prepared.path.clock.require_successor(self.prepared.path.clock)
         self.observer = SlabPathObserver(binding.adapter.mapping.model, self.prepared.path)
 
