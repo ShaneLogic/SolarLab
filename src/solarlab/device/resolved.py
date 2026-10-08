@@ -623,18 +623,18 @@ class PreparedDevice:
         for name, kind in ((model.spectrum, "spectrum"), (model.fixed_generation, "fixed_generation")):
             if name is not None:
                 selected_resources[name] = self.resources.get(name, kind)
-        diagnostics = []
+        diagnostics: list[dict[str, Any]] = []
         legacy = model.legacy_fields
         if legacy is not None:
-            matches = [source for source in sources if source.id == legacy.source_id]
-            if matches and matches[0].sha256 != legacy.source_sha256:
+            source_matches = [source for source in sources if source.id == legacy.source_id]
+            if source_matches and source_matches[0].sha256 != legacy.source_sha256:
                 raise ValueError("legacy_fields.source_sha256: retained original source binding differs")
-            if matches:
-                original = retained_legacy_fields(matches[0])
+            if source_matches:
+                original = retained_legacy_fields(source_matches[0])
                 if original is None or _encode(original.model_dump(mode="json", exclude_unset=True)) != _encode(legacy.model_dump(mode="json", exclude_unset=True)):
                     raise ValueError("legacy_fields: retained declaration differs from original source bytes")
             binding = {"id": legacy.source_id, "sha256": legacy.source_sha256,
-                       "bytes_supplied": bool(matches)}
+                       "bytes_supplied": bool(source_matches)}
             common = {"behavior_version": legacy.schema_version, "source_binding": binding,
                       "scope": "original_import_evidence; current canonical edits remain separate"}
             if "temperature" in legacy.model_fields_set:
@@ -651,10 +651,10 @@ class PreparedDevice:
                 rows = []
                 has_legacy_slots = bool(pairs or legacy.interface_defect_count)
                 adjacencies = zip(legacy.layer_ids, legacy.layer_ids[1:]) if has_legacy_slots else ()
-                for index, (left, right) in enumerate(adjacencies):
-                    pair = pairs[index] if index < len(pairs) else (0.0, 0.0)
-                    rows.append({"raw_index": index, "left": left, "right": right,
-                        "pair_before_defect_override": [normalize_quantity(value, "m/s") for value in pair],
+                for index, (legacy_left, legacy_right) in enumerate(adjacencies):
+                    velocities = pairs[index] if index < len(pairs) else (0.0, 0.0)
+                    rows.append({"raw_index": index, "left": legacy_left, "right": legacy_right,
+                        "pair_before_defect_override": [normalize_quantity(value, "m/s") for value in velocities],
                         "origin": "supplied_raw_slot" if index < len(pairs) else "legacy_trailing_zero_padding"})
                 diagnostics.append({**common, "code": "legacy_standard_interface_layout",
                     "path": "device.interfaces", "declared": legacy.model_dump(mode="json", exclude_unset=True),

@@ -102,7 +102,24 @@ describe('copied input transformations', () => {
     for (const [name, schema] of Object.entries(defs)) {
       for (const field of Object.keys(schema.properties)) if (['layer', 'layer_ids', 'left', 'right'].includes(field)) observed.push(`${name}.${field}`)
     }
-    expect(observed.sort()).toEqual(['ContactInput.layer', 'GrainBoundaryInput.layer_ids', 'GridLayerInput.layer', 'InterfaceInput.left', 'InterfaceInput.right'])
+    const currentReferences = ['ContactInput.layer', 'GrainBoundaryInput.layer_ids', 'GridLayerInput.layer', 'InterfaceInput.left', 'InterfaceInput.right']
+    // These IDs describe the original source bytes, so current layer edits must preserve them.
+    const retainedHistory = ['LegacyDeviceFieldsInput.layer_ids']
+    expect(observed.sort()).toEqual([...currentReferences, ...retainedHistory].sort())
+  })
+
+  it('preserves original legacy layer IDs and source evidence when renaming a current layer', () => {
+    const input = device()
+    input.legacy_fields = {
+      schema_version: 'solarlab.standard-loader-fields.v1', source_id: 'original', source_sha256: 'a'.repeat(64),
+      layer_ids: ['front', 'middle', 'back'], temperature: 0, interfaces: [[0, '1 m/s']],
+    }
+    const original = structuredClone(input), result = renameLayer(input, front, 'renamed')
+    expect(result.input.layers[0].id).toBe('renamed')
+    expect(result.input.contacts![0].layer).toBe('renamed')
+    expect(result.input.legacy_fields).toStrictEqual(original.legacy_fields)
+    expect(result.updatedPaths.some(path => path.includes('legacy_fields'))).toBe(false)
+    expect(input).toStrictEqual(original)
   })
 
   it('rejects unknown extension references with exact paths before any ID mutation', () => {
