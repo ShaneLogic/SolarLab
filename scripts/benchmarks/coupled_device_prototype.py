@@ -8,6 +8,7 @@ explicitly limited to the first N8 diagnostic; scaling belongs to the adapter.
 from __future__ import annotations
 
 from scripts.benchmarks.native_history import HistoryLimitError, emit_record
+from scripts.benchmarks.runtime_timing import RuntimeTiming
 
 from dataclasses import asdict, dataclass, field, replace
 from fractions import Fraction
@@ -3852,7 +3853,8 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
 
 
 def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[ProtocolSegment, ...],
-                                  request: Mapping, admission: Mapping, emit) -> dict:
+                                  request: Mapping, admission: Mapping, emit, *,
+                                  timing: RuntimeTiming | None = None) -> dict:
     """One separately admitted full protocol with unchanged physical gates.
 
     This controller retains actual IDA outputs before any interpolation and
@@ -3860,6 +3862,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     polynomial observations with explicit error bounds. They do not replace
     native rates, certify time/spatial accuracy, or restart a failed protocol.
     """
+    if timing is None:
+        timing = RuntimeTiming()
     model = mapping.model
     request_id = digest(dict(request))
     if (admission.get("request_sha256") != request_id
@@ -3871,6 +3875,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     bindings = admission.get("source_sha256", {})
     if str(Path(__file__).resolve()) not in bindings:
         raise ContractError("voltage_lift_native_executing_kernel_not_bound")
+    if str(Path(sys.modules[RuntimeTiming.__module__].__file__).resolve()) not in bindings:
+        raise ContractError("runtime_timing_executing_source_not_bound")
     for path, expected in bindings.items():
         if sha256(Path(path).read_bytes()).hexdigest() != expected:
             raise ContractError("voltage_lift_native_source_changed")
@@ -3898,9 +3904,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     budgets, controls = request["budgets"], request["controls"]
     counts = {"residual": 0, "jacobian": 0, "native_steps": 0, "onestep_returns": 0,
               "normal_queries": 0, "polynomial_queries": 0, "initializations": 0, "history_bytes": 0}
-    prefixes = {key: ChargePrefix.start((budgets["charge_C"],)*3)
-                for key in ("raw_polynomial", "same_state_affine_tangent")}
-    charge_accumulator = prepare_charge_accumulator(request, observer_policy)
+    with timing.phase('observation'):
+        prefixes = {key: ChargePrefix.start((budgets["charge_C"],)*3)
+                    for key in ("raw_polynomial", "same_state_affine_tangent")}
+        charge_accumulator = prepare_charge_accumulator(request, observer_policy)
     previous_observer = None
     first_failure = last_attempt = last_numerical = last_accepted = None
     history = VoltageLiftHistory(mapping)
@@ -3912,8 +3919,9 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
 
     def save(record):
         try:
-            position = emit_record(record, emit, logical_bytes=counts["history_bytes"],
-                                   total_output_bytes=budgets["total_output_bytes"])
+            with timing.phase('history_io'):
+                position = emit_record(record, emit, logical_bytes=counts["history_bytes"],
+                                       total_output_bytes=budgets["total_output_bytes"])
         except HistoryLimitError as error:
             raise ContractError("voltage_lift_history_budget") from error
         counts["history_bytes"] = position.logical_bytes
@@ -3940,7 +3948,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
 
     def certify_current(observer, pair, native):
         nonlocal first_failure
-        evidence = observer.point_evidence(pair, native, budgets["current_A"])
+        with timing.phase('observation'):
+            evidence = observer.point_evidence(pair, native, budgets["current_A"])
         record = {"kind": "voltage_lift_current_certificate", "sample_record_sha256": pair[-1]["record_sha256"],
                   "evidence": observation_record(evidence)}
         save(record)
@@ -3952,7 +3961,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     def checked_sample(binding, native, previous, origin, observer=None):
         nonlocal first_failure
         resource_check()
-        pair = voltage_lift_native_sample(binding, history, native, previous, origin=origin)
+        with timing.phase('observation'):
+            pair = voltage_lift_native_sample(binding, history, native, previous, origin=origin)
         record = dict(pair[-1])
         record["observation_policy_sha256"] = digest(observer_policy)
         record["current_certificate_follows"] = observer is not None
@@ -4033,15 +4043,18 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                             "time_hex": float(segment.start).hex(), "proof": initial_proof}
             save({"kind": "voltage_lift_initialization_input", **last_attempt})
             resource_check()
-            solver, control_receipt = _voltage_lift_segment_solver(
-                IDA, request, segment, segment_index+1, residual, jacobian, sparsity, algebraic)
+            with timing.phase('ida_calls'):
+                solver, control_receipt = _voltage_lift_segment_solver(
+                    IDA, request, segment, segment_index+1, residual, jacobian, sparsity, algebraic)
             if control_receipt is not None:
                 save(control_receipt)
             counts["initializations"] += 1
-            initialized = snapshot_solver_result(solver.init_step(segment.start, z, initial_zdot))
+            with timing.phase('ida_calls'):
+                initialized = snapshot_solver_result(solver.init_step(segment.start, z, initial_zdot))
             last_attempt = snapshot_receipt("initialization_return", segment, initialized)
-            initial_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
-                "initialization_return", segment.start, initialized["time"], logical_initialization=True)
+            with timing.phase('ida_calls'):
+                initial_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                    "initialization_return", segment.start, initialized["time"], logical_initialization=True)
             save(initial_stats)
             if (not initialized["success"] or initialized["time"] != segment.start
                     or not np.array_equal(initialized["z"], z)
@@ -4062,25 +4075,29 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     raise ContractError("voltage_lift_step_budget")
                 last_attempt = {"phase": "native_step", "segment_id": segment.id,
                                 "target_time_hex": float(segment.end).hex(), "previous": last_numerical}
-                before_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
-                                                        "before_onestep", segment.end, logical_initialization=True)
+                with timing.phase('ida_calls'):
+                    before_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                            "before_onestep", segment.end, logical_initialization=True)
                 save(before_stats)
                 try:
-                    native = snapshot_solver_result(solver.step(segment.end, method="onestep", tstop=segment.end))
+                    with timing.phase('ida_calls'):
+                        native = snapshot_solver_result(solver.step(segment.end, method="onestep", tstop=segment.end))
                 except BaseException:
                     try:
-                        failed_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
-                                                               "onestep_exception", segment.end, before=before_stats,
-                                                               logical_initialization=True)
+                        with timing.phase('ida_calls'):
+                            failed_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                                   "onestep_exception", segment.end, before=before_stats,
+                                                                   logical_initialization=True)
                         counts["native_steps"] += failed_stats["work_since_before"]["num_steps"]
                         save(failed_stats)
                     except Exception as stats_error:
                         save({"kind": "native_statistics_unavailable", "segment_id": segment.id,
                               "phase": "onestep_exception", "reason": str(stats_error)})
                     raise
-                after_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
-                                                       "after_onestep", segment.end, native["time"], before=before_stats,
-                                                       logical_initialization=True)
+                with timing.phase('ida_calls'):
+                    after_stats = ida_statistics_snapshot(solver, segment.id, segment_index+1,
+                                                           "after_onestep", segment.end, native["time"], before=before_stats,
+                                                           logical_initialization=True)
                 save(after_stats)
                 counts["native_steps"] += after_stats["work_since_before"]["num_steps"]
                 counts["onestep_returns"] += 1
@@ -4094,17 +4111,20 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 # Capture the immutable accepted interval before any output
                 # query. IDA_NORMAL would invalidate consecutive-endpoint
                 # authority even if it did not take an extra native step.
-                packet = solver.last_step_snapshot()
+                with timing.phase('ida_calls'):
+                    packet = solver.last_step_snapshot()
                 save({"kind": "voltage_lift_native_observation_packet", "segment_id": segment.id,
                       "packet": observation_record(packet)})
-                frame = read_native_basis_packet(packet,
-                    expected_binding_identity=observer_policy["binding_identity"],
-                    expected_header_sha256=observer_policy["header_sha256"], size=model.layout.size)
-                arithmetic = BallIntegrator(**{key: observer_policy["arithmetic"][key] for key in ("bits", "evaluations", "depth")})
-                observer = AcceptedIntervalObserver(binding, frame, arithmetic=arithmetic, previous=previous_observer)
-                observer.require_endpoint(left_native, predecessor=True)
-                observer.require_endpoint(native)
-                domain = observer.path_domain_evidence(budgets)
+                with timing.phase('observation'):
+                    frame = read_native_basis_packet(packet,
+                        expected_binding_identity=observer_policy["binding_identity"],
+                        expected_header_sha256=observer_policy["header_sha256"], size=model.layout.size,
+                        qualification_policy=request.get("qualification_policy"))
+                    arithmetic = BallIntegrator(**{key: observer_policy["arithmetic"][key] for key in ("bits", "evaluations", "depth")})
+                    observer = AcceptedIntervalObserver(binding, frame, arithmetic=arithmetic, previous=previous_observer)
+                    observer.require_endpoint(left_native, predecessor=True)
+                    observer.require_endpoint(native)
+                    domain = observer.path_domain_evidence(budgets)
                 save({"kind": "voltage_lift_polynomial_domain", "evidence": observation_record(domain)})
                 if not domain["passed"]:
                     first_failure = first_failure or {"phase": "polynomial_domain", "evidence": observation_record(domain)}
@@ -4124,7 +4144,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                         raise ContractError("expired_or_foreign_voltage_lift_interval")
                     if when in cache:
                         return cache[when]
-                    reconstructed = observer.reconstruction(when)
+                    with timing.phase('observation'):
+                        reconstructed = observer.reconstruction(when)
                     counts["polynomial_queries"] += 1
                     pair = checked_sample(binding, reconstructed, left, "declared_polynomial", observer)
                     cache[when] = pair
@@ -4140,9 +4161,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                             query(left.time+h*(float(node)+1)/2)
                     duration = observer.prepared.path.clock.tn-observer.prepared.path.clock.predecessor
                     error_allocation = rational(budgets["charge_C"])/12*duration/rational(segments[-1].end)/32
-                    prefixes, evidence = observer.charge_evidence(left_pair, right_pair, prefixes,
-                        absolute_error=error_allocation, charge_budget=budgets["charge_C"],
-                        charge_accumulator=charge_accumulator)
+                    with timing.phase('observation'):
+                        prefixes, evidence = observer.charge_evidence(left_pair, right_pair, prefixes,
+                            absolute_error=error_allocation, charge_budget=budgets["charge_C"],
+                            charge_accumulator=charge_accumulator)
                     while cursor < len(sample_times) and sample_times[cursor] <= t:
                         save({"kind": "requested_sample", **pointer(query(float(sample_times[cursor])))})
                         cursor += 1
@@ -4183,5 +4205,6 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         scientific_or_G2_qualification=False, DAE_time_accuracy_certified=False, continuum_space_accuracy_certified=False,
     )
     if charge_accumulator is not None:
-        result["cumulative_representation"] = observation_record(charge_upper_summary(charge_accumulator))
+        with timing.phase('observation'):
+            result["cumulative_representation"] = observation_record(charge_upper_summary(charge_accumulator))
     return result

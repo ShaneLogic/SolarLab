@@ -34,7 +34,8 @@ def save_body(owner, emit, cap):
     counts = {"history_bytes": 0, "native_steps": 0}
     env = {"emit": emit, "budgets": {"total_output_bytes": cap}, "counts": counts,
            "emit_record": emit_record, "HistoryLimitError": HistoryLimitError,
-           "ContractError": BoundaryContractError, "json": json}
+           "ContractError": BoundaryContractError, "json": json,
+           "timing": native_runner.RuntimeTiming()}
     exec(compile(ast.Module(body=[save], type_ignores=[]), str(path), "exec"), env)
     return env["save"], counts
 
@@ -288,7 +289,8 @@ def test_runner_main_record_limit_forwarding_and_exact_large_record(tmp_path, ex
     freeze = {"watchdog": {"input_file_names": []}}
     if explicit_limit:
         freeze["writer_limits"] = {"max_record_bytes": 16 * METADATA_RESERVE}
-    env = {"freeze": freeze, "request": {"budgets": {"total_output_bytes": cap}}}
+    env = {"freeze": freeze, "request": {"budgets": {"total_output_bytes": cap}},
+           "timing": native_runner.RuntimeTiming()}
     kwargs = {kw.arg: eval(compile(ast.Expression(kw.value), native_runner.__file__, "eval"), env)
               for kw in call.keywords}
     record = {"kind": "infrastructure_large_record", "high": [1.0, -0.0],

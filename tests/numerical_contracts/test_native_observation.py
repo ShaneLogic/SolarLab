@@ -368,6 +368,31 @@ def read(value):
                                     expected_header_sha256=HEADER, size=value['shape'][0])
 
 
+@pytest.mark.parametrize('label,intervals,axis,size', [
+    ('S0', 16, 'base', 51), ('B', 16, 'base', 85),
+    ('S0', 32, 'mesh32', 99), ('S0', 64, 'mesh64', 195),
+    ('B', 32, 'mesh32', 165), ('B', 64, 'mesh64', 325),
+])
+def test_packet_extended_size_requires_matching_qualification_policy(label, intervals, axis, size):
+    from scripts.benchmarks.qualification_policy import make_policy
+
+    origins = json.loads((Path(__file__).with_name('fixtures')/'qualification_origins.json').read_text())
+    policy = make_policy(origins[label], intervals, axis)
+    raw = packet(size=size)
+    args = dict(expected_binding_identity=raw['binding']['identity'],
+                expected_header_sha256=HEADER, size=size)
+    with pytest.raises(ContractError, match='packet_schema_or_shape'):
+        read_native_basis_packet(raw, **args)
+    frame = read_native_basis_packet(raw, qualification_policy=policy, **args)
+    assert len(frame.raw_polynomials) == size
+    assert frame.snapshot['shape'] == (size,)
+    with pytest.raises(ContractError, match='qualification_policy'):
+        read_native_basis_packet(raw, qualification_policy=dict(policy, coordinates=size+1), **args)
+    other = make_policy(origins['B' if label == 'S0' else 'S0'], intervals, axis)
+    with pytest.raises(ContractError, match='packet_schema_or_shape'):
+        read_native_basis_packet(raw, qualification_policy=other, **args)
+
+
 def test_packet_copies_all_words_and_retains_error_metadata(request):
     raw = packet(endpoint_y=np.array([-0.0, .125, .25]))
     frame = read(raw)
@@ -721,7 +746,7 @@ def test_controller_requires_new_source_bound_review_before_backend(case,request
     m,mapping,segments,proposal,original,previous=current_controller_input(case)
     ready=copy.deepcopy(proposal)
     pins={str(REPO/'scripts/benchmarks'/name):sha256((REPO/'scripts/benchmarks'/name).read_bytes()).hexdigest()
-          for name in ('coupled_device_prototype.py','native_observation.py','interval_observation.py')}
+          for name in ('coupled_device_prototype.py','native_observation.py','interval_observation.py','runtime_timing.py')}
     admission={'request_sha256':digest(proposal),'map_identity':mapping.identity,
                'voltage_lift_native_authorized':True,'coordinator_message':'msg_unit_fixture_no_native_authority',
                'source_sha256':pins}

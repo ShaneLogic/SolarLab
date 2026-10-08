@@ -645,8 +645,12 @@ class _Protocol:
         self.mapping, self.policy = request["voltage_lift_map"], request["interval_observation"]
         self.map_id, self.policy_id = request["map_identity"], _digest(self.policy)
         self.size, self.nodes = len(request["z0"]), request["numeric_packet"]["nodes"]
+        qualified_size = (qualification_coordinate_count(request)
+                          if "qualification_policy" in request else None)
         _require(request["schema"] == "solarlab.voltage-lift-native-request.v1"
-                 and 1 <= self.size <= 45 and type(self.nodes) is int and 2 <= self.nodes <= self.size
+                 and self.size >= 1
+                 and (self.size <= 45 if qualified_size is None else self.size == qualified_size)
+                 and type(self.nodes) is int and 2 <= self.nodes <= self.size
                  and self.map_id == _digest(self.mapping), "request_schema_or_map")
         _vector(request["zdot0"], self.size)
         for key, value in (("map_identity", self.map_id), ("protocol_sha256", _digest(request["segments"])),

@@ -406,20 +406,31 @@ class NativeBasisFrame:
     raw_polynomials: tuple[Polynomial, ...]
 
 
-def read_native_basis_packet(snapshot, *, expected_binding_identity, expected_header_sha256, size):
+def read_native_basis_packet(snapshot, *, expected_binding_identity, expected_header_sha256, size,
+                             qualification_policy=None):
     """Read Engineering's agreed IDA7.5 packet without private memory access.
 
     The expected fingerprints must come from the separately reviewed build
     receipt. Unit fixtures can test this reader's structure; they do not
     establish that such a native build or trajectory was actually executed.
+    Larger packets require the exact bounded mesh policy from the request;
+    packet size alone never expands the legacy reader's scope.
     """
     if (not isinstance(expected_binding_identity, str) or len(expected_binding_identity) != 64
             or not isinstance(expected_header_sha256, str) or len(expected_header_sha256) != 64):
         raise ContractError("native_observation_missing_expected_source_pins")
+    qualified_size = None
+    if qualification_policy is not None:
+        from scripts.benchmarks.qualification_policy import validate_policy
+        try:
+            qualified_size = validate_policy(qualification_policy)["coordinates"]
+        except (ValueError, KeyError, TypeError, OverflowError) as error:
+            raise ContractError("native_observation_qualification_policy") from error
     snapshot = _owned_snapshot(snapshot)
     if (snapshot.get("schema") != "sksundae.ida.accepted-step-observation.v1"
             or snapshot.get("dtype") != '<f8' or snapshot.get("shape") != (size,)
-            or type(size) is not int or not 1 <= size <= 45):
+            or type(size) is not int or size < 1
+            or (size > 45 if qualified_size is None else size != qualified_size)):
         raise ContractError("native_observation_packet_schema_or_shape")
     binding = snapshot.get("binding", {})
     if (binding.get("identity") != expected_binding_identity

@@ -21,6 +21,8 @@ import time
 import traceback
 from typing import Any, Callable, Collection
 
+from scripts.benchmarks.runtime_timing import RuntimeTiming
+
 from scripts.benchmarks.native_history import (
     HistoryLimitError, HistoryWriter, integer_io_observed, integer_json_dumps,
 )
@@ -133,7 +135,45 @@ def _record_exception(folder: Path, error: BaseException, *, total_output_bytes:
 
 def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, Any]], *,
                   total_output_bytes: int, input_names: Collection[str],
-                  max_record_bytes: int = 1048576, integer_io_policy=None) -> dict[str, Any]:
+                  max_record_bytes: int = 1048576, integer_io_policy=None,
+                  timing: RuntimeTiming | None = None) -> dict[str, Any]:
+    """Keep aggregate timing on ordinary return/exception; never overwrite a prior attempt."""
+    folder = Path(folder)
+    fresh = not any((folder / name).exists() for name in (
+        "NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json",
+        "RunnerFailure.json", "PrimaryFailure.json", "RuntimeTiming.json"))
+    timing = RuntimeTiming() if timing is None else timing
+    primary = result = None
+    try:
+        with timing.phase("recorded_run"):
+            result = _run_recorded(folder, controller, total_output_bytes=total_output_bytes,
+                                   input_names=input_names, max_record_bytes=max_record_bytes,
+                                   integer_io_policy=integer_io_policy, timing=timing)
+        return result
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if fresh:
+            outcome = ("raised" if primary is not None else "returned_completed"
+                       if result.get("status") == COMPLETED_STATUS else "returned_other_status")
+            try:
+                _write_document(folder, "RuntimeTiming.json", timing.snapshot(outcome),
+                                total_output_bytes=total_output_bytes, input_names=input_names,
+                                max_document_bytes=16384)
+            except BaseException as error:
+                if primary is not None:
+                    primary.add_note(f"aggregate timing publication failed: {type(error).__name__}: {error}")
+                else:
+                    _record_exception(folder, error, total_output_bytes=total_output_bytes,
+                                      input_names=input_names)
+                    raise
+
+
+def _run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, Any]], *,
+                  total_output_bytes: int, input_names: Collection[str],
+                  max_record_bytes: int = 1048576, integer_io_policy=None,
+                  timing: RuntimeTiming) -> dict[str, Any]:
     """Run the real controller with the writer itself, finalize, then publish.
 
     An already failed controller may retain an explicitly incomplete container;
@@ -143,23 +183,27 @@ def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, A
     folder = Path(folder)
     writer = None
     try:
-        if any((folder / name).exists() for name in ("NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json", "RunnerFailure.json", "PrimaryFailure.json")):
+        if any((folder / name).exists() for name in ("NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json", "RunnerFailure.json", "PrimaryFailure.json", "RuntimeTiming.json")):
             raise FileExistsError("native attempt output already exists")
-        writer = HistoryWriter(folder / "NativeHistory.jsonl.gz", encoding="gzip",
-                               total_output_bytes=total_output_bytes,
-                               max_record_bytes=max_record_bytes, integer_io_policy=integer_io_policy)
+        with timing.phase('history_io'):
+            writer = HistoryWriter(folder / "NativeHistory.jsonl.gz", encoding="gzip",
+                                   total_output_bytes=total_output_bytes,
+                                   max_record_bytes=max_record_bytes, integer_io_policy=integer_io_policy)
         if writer.integer_io_policy is not None:
-            _write_document(folder, "IntegerIOObserved.json",
-                            {"role": "producer", "pid": os.getpid(),
-                             **integer_io_observed(writer.integer_io_policy)},
-                            total_output_bytes=total_output_bytes, input_names=input_names)
-        result = controller(writer)  # Do not wrap this object in an untyped callback.
+            with timing.phase('artifact_io'):
+                _write_document(folder, "IntegerIOObserved.json",
+                                {"role": "producer", "pid": os.getpid(),
+                                 **integer_io_observed(writer.integer_io_policy)},
+                                total_output_bytes=total_output_bytes, input_names=input_names)
+        with timing.phase('controller'):
+            result = controller(writer)  # Do not wrap this object in an untyped callback.
         successful = result.get("status") == COMPLETED_STATUS
         if not successful:
             try:
-                _write_document(folder, "PrimaryFailure.json", _controller_failure_envelope(result, writer),
-                                total_output_bytes=total_output_bytes, input_names=input_names,
-                                max_document_bytes=65536)
+                with timing.phase('artifact_io'):
+                    _write_document(folder, "PrimaryFailure.json", _controller_failure_envelope(result, writer),
+                                    total_output_bytes=total_output_bytes, input_names=input_names,
+                                    max_document_bytes=65536)
             except BaseException as publication_error:
                 if writer.first_exception is None:
                     raise
@@ -169,8 +213,10 @@ def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, A
             # another attempt to serialize its enormous cumulative result.
             raise writer.first_exception
         if result.get("first_failure") is not None:
-            writer.publish_first_failure(result["first_failure"])
-        writer.finish()
+            with timing.phase('history_io'):
+                writer.publish_first_failure(result["first_failure"])
+        with timing.phase('history_io'):
+            writer.finish()
         # Keep all original controller fields and logical counters. Encoded bytes
         # include the footer, which the controller's last record cannot count.
         result = dict(result)
@@ -183,18 +229,21 @@ def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, A
         result["history"] = _history_state(writer)
         if successful and (not writer.closed or writer.container_complete is not True):
             raise RuntimeError("successful native result requires finalized history")
-        _write_document(folder, "NativeResult.json", result,
-                        total_output_bytes=total_output_bytes, input_names=input_names,
-                        integer_io_policy=writer.integer_io_policy)
+        with timing.phase('artifact_io'):
+            _write_document(folder, "NativeResult.json", result,
+                            total_output_bytes=total_output_bytes, input_names=input_names,
+                            integer_io_policy=writer.integer_io_policy)
         return result
     except BaseException as error:
         if writer is not None:
             try:
-                writer.abort(error)
+                with timing.phase('history_io'):
+                    writer.abort(error)
             except BaseException as secondary:
                 error.add_note(f"history abort failed: {type(secondary).__name__}: {secondary}")
-        _record_exception(folder, error, total_output_bytes=total_output_bytes,
-                          input_names=input_names, writer=writer)
+        with timing.phase('artifact_io'):
+            _record_exception(folder, error, total_output_bytes=total_output_bytes,
+                              input_names=input_names, writer=writer)
         raise
 
 
@@ -234,7 +283,8 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
      for path,expected in {**freeze["source_sha256"],**freeze["external_source_sha256"]}.items():
       if hashed(path)!=expected:raise RuntimeError("frozen_source_changed:"+path)
      if admission["source_sha256"]!=freeze["source_sha256"]:raise RuntimeError("admission_source_binding_mismatch")
-     for required in (Path(__file__).resolve(), Path(sys.modules[HistoryWriter.__module__].__file__).resolve()):
+     for required in (Path(__file__).resolve(), Path(sys.modules[HistoryWriter.__module__].__file__).resolve(),
+                      Path(sys.modules[RuntimeTiming.__module__].__file__).resolve()):
       if (not required.is_relative_to(Path(freeze["isolated_root"])) or
           freeze["source_sha256"].get(str(required)) != hashed(required)):
        raise RuntimeError("maintained_recording_source_not_bound:"+str(required))
@@ -297,12 +347,13 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
      if flint.__version__!="0.8.0":raise RuntimeError("unreviewed_Arb_binding")
      if request["budgets"]["total_output_bytes"] != freeze["resources"]["total_output_bytes"]:
       raise RuntimeError("controller_and_outer_output_cap_mismatch")
+     timing=RuntimeTiming()
      result=run_recorded(folder,
-                         lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model),segments,request,admission,emit),
+                         lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model),segments,request,admission,emit,timing=timing),
                          total_output_bytes=request["budgets"]["total_output_bytes"],
                          input_names=freeze["watchdog"]["input_file_names"],
                           max_record_bytes=freeze.get("writer_limits", {}).get("max_record_bytes", 1048576),
-                          integer_io_policy=freeze.get("integer_io_policy"))
+                          integer_io_policy=freeze.get("integer_io_policy"),timing=timing)
      code=0 if result["status"]=="completed_bounded_voltage_lift_native_pilot" else 1
     except BaseException as error:
      primary_error=error

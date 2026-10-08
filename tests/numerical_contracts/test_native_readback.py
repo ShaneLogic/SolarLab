@@ -70,6 +70,31 @@ def double(size):
     return {"high_hex": words(1, size), "low_hex": words(2**-60, size)}
 
 
+class QualificationProtocolSizeTests(unittest.TestCase):
+    def test_extended_protocol_consumes_validated_request_size(self):
+        # This isolates protocol wiring from the separately tested metadata
+        # validator; none of these synthetic requests is a qualified device.
+        for size in (51, 85, 99, 165, 195, 325):
+            with self.subTest(size=size):
+                request = fixture()[0]
+                request.update(z0=[0.0]*size, zdot0=[1.0]*size,
+                               qualification_policy={"synthetic_wiring_only": True})
+                target = "scripts.benchmarks.native_readback.qualification_coordinate_count"
+                with patch(target, return_value=size) as check:
+                    protocol = _Protocol(request, None)
+                self.assertEqual(protocol.size, size)
+                self.assertTrue(check.call_count >= 1)
+                self.assertTrue(all(call.args == (request,) for call in check.call_args_list))
+                with patch(target, return_value=size+1), self.assertRaisesRegex(
+                        HistoryVerificationError, "request_schema_or_map"):
+                    _Protocol(request, None)
+                with self.assertRaisesRegex(HistoryVerificationError, "qualification_request_binding"):
+                    _Protocol(request, None)
+                request.pop("qualification_policy")
+                with self.assertRaisesRegex(HistoryVerificationError, "request_schema_or_map"):
+                    _Protocol(request, None)
+
+
 def point_id(segment, when):
     return digest(["synthetic-point", segment["id"], float(when).hex()])
 
