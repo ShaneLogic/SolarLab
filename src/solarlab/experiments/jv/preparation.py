@@ -12,8 +12,7 @@ import numpy as np
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.experiments.jv.inputs import DarkJVInput, JVExperimentInput, JVInput, JVProtocolInput
-from solarlab.experiments.two_dimensional.inputs import invalid
-from solarlab.experiments.two_dimensional.preparation import _document
+from solarlab.experiments.inputs import invalid, input_document as _document
 from solarlab.materials.resources import ResourceLibrary
 from solarlab.materials.source import SourceDocument
 

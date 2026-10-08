@@ -1,15 +1,18 @@
 import {
-  ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, previewExperimentConfiguration,
+  ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, previewExperimentConfiguration, previewSweepConfiguration,
 } from '../configuration-client'
-import type { DeviceInput, TandemInput, SpatialExperimentInput, JVExperimentInput } from '../generated/configuration-inputs'
+import type { ConfigurationPreviewDocument } from '../configuration-client'
+import type { DeviceInput, TandemInput, SpatialExperimentInput, JVExperimentInput, SweepInput } from '../generated/configuration-inputs'
 
 export type ConfigurationPreviewSelection = { endpoint: string | URL } & (
   { kind: 'device'; input: DeviceInput } | { kind: 'tandem'; input: TandemInput }
   | { kind: 'experiment'; input: SpatialExperimentInput | JVExperimentInput }
+  | { kind: 'sweep'; input: SweepInput }
 )
 
 export interface ConfigurationPreviewPanel {
   readonly ready: Promise<void>
+  readonly document: ConfigurationPreviewDocument | undefined
   select(selection: ConfigurationPreviewSelection): Promise<void>
   cancel(): void
   dispose(): void
@@ -23,6 +26,7 @@ interface View {
   cancel: HTMLButtonElement
   filename: string
   urls: Map<string, ReturnType<typeof setTimeout>>
+  document?: ConfigurationPreviewDocument
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string) {
@@ -198,17 +202,24 @@ export function mountConfigurationPreviewPanel(
       const doc = selection.kind === 'device'
         ? await previewDeviceConfiguration(endpoint, selection.input, view.abort.signal)
         : selection.kind === 'tandem' ? await previewTandemConfiguration(endpoint, selection.input, view.abort.signal)
+          : selection.kind === 'sweep' ? await previewSweepConfiguration(endpoint, selection.input, view.abort.signal)
           : await previewExperimentConfiguration(endpoint, selection.input, view.abort.signal)
       if (!current(view)) return
+      view.document = doc
       state(view, 'ready', doc.value.status)
       const identity = inspect('Current configuration content identity', doc.value.identity)
-      const effective = inspect('Effective parameters and field origins', doc.value.resolved, true)
+      const displayed = selection.kind === 'sweep' && Array.isArray(doc.value.resolved.points)
+        ? { ...doc.value.resolved, points: doc.value.resolved.points.map(point => record(point)
+          ? Object.fromEntries(Object.entries(point).filter(([name]) => name !== 'applied_input')) : point) }
+        : doc.value.resolved
+      const effective = inspect('Effective parameters and field origins', displayed, true)
       effective.dataset.section = 'resolved'
       const input = inspect('Supplied input', doc.value.input)
       input.dataset.section = 'input'
       content.append(element('p', `can_execute: ${scalar(doc.value.can_execute)}`), identity, effective, input,
         element('p', 'Fields retain their supplied names. Explicit null and -0 remain distinct; omitted input fields are not added.'))
       original(view, doc.json)
+      if (selection.kind === 'sweep') content.append(element('p', 'Each point’s complete applied input is retained in the original response JSON and can be opened in the point preview. No point was simulated.'))
     } catch (error) {
       if (!current(view)) return
       const detail = error instanceof ConfigurationPreviewError && record(error.data) && record(error.data.detail)
@@ -235,6 +246,7 @@ export function mountConfigurationPreviewPanel(
   ready = select(initial)
   return {
     get ready() { return ready },
+    get document() { return active && current(active) ? active.document : undefined },
     select(selection) { ready = select(selection); return ready },
     cancel,
     dispose() {

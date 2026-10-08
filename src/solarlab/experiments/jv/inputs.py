@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from solarlab.device.inputs import DeviceInput
-from solarlab.experiments.two_dimensional.inputs import SpatialInput, invalid, vector
+from solarlab.experiments.inputs import ExperimentInput as SpatialInput, invalid, vector
 from solarlab.materials.full_parameters import StableId, quantity_field as q
 from solarlab.materials.parameters import QuantityInput
 from solarlab.units import normalize_quantity

@@ -48,7 +48,8 @@ describe('prepared configuration schema data', () => {
 
   it('exposes a metadata type without claiming a production or wire contract', () => {
     const metadata: ConfigurationSchemaMetadata = configurationSchema;
-    expect(Object.keys(metadata.dto_schemas)).toHaveLength(19);
+    expect(Object.keys(metadata.dto_schemas)).toHaveLength(20);
+    expect(metadata.dto_schemas.SweepInput.representation).toBe('editable_input');
     expect(metadata.dto_schemas.JVExperimentInput.representation).toBe('editable_input');
     expect(metadata.dto_schemas.JVExperimentInput.schema.properties).not.toHaveProperty('can_execute');
     expect(metadata.dto_schemas.SpatialExperimentInput.representation).toBe('editable_input');

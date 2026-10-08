@@ -20,6 +20,7 @@ from solarlab.experiments.two_dimensional.inputs import (
 from solarlab.materials.resources import ResourceLibrary
 from solarlab.materials.source import SourceDocument
 from solarlab.units import UNIT_SCHEMA_VERSION
+from solarlab.experiments.inputs import input_document as _document
 
 __all__ = ["PreparedSpatialExperiment", "prepare_spatial_experiment"]
 
@@ -28,12 +29,6 @@ def _bytes(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
-def _document(raw: bytes) -> Any:
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        if len({key for key, _ in items}) != len(items):
-            raise ValueError("duplicate experiment JSON declaration field")
-        return dict(items)
-    return json.loads(raw, object_pairs_hook=pairs, parse_int=lambda word: -0.0 if word == "-0" else int(word))
 
 
 def _fail(path: tuple[str | int, ...], message: str, value: Any) -> NoReturn:

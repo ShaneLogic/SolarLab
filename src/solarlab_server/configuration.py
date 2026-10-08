@@ -21,12 +21,15 @@ from solarlab.experiments.two_dimensional.inputs import SpatialExperimentInput
 from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment, prepare_spatial_experiment
 from solarlab.experiments.jv.inputs import JVExperimentInput
 from solarlab.experiments.jv.preparation import PreparedJVExperiment, prepare_jv_experiment
-from solarlab.experiments.two_dimensional.inputs import invalid
+from solarlab.experiments.inputs import invalid
+from solarlab.sweeps.inputs import SweepInput
+from solarlab.sweeps.preparation import PreparedSweep, prepare_sweep
+from solarlab.sweeps.reference import SweepReference
 from solarlab.materials.resources import ResourceLibrary
 from solarlab.materials.source import SourceDocument
 
 router = APIRouter()
-Kind = Literal["device", "tandem", "experiment"]
+Kind = Literal["device", "tandem", "experiment", "sweep"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,7 @@ class ConfigurationPreviewContext:
     resources: ResourceLibrary
     sources: tuple[SourceDocument, ...] = ()
     max_input_bytes: int = 1024**2
+    sweep_references: tuple[SweepReference, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.defaults, DefaultCatalog) or not isinstance(self.resources, ResourceLibrary):
@@ -54,6 +58,10 @@ class ConfigurationPreviewContext:
         if type(self.max_input_bytes) is not int or self.max_input_bytes <= 0:
             raise ValueError("max_input_bytes must be a positive transport byte limit")
         object.__setattr__(self, "sources", sources)
+        references = tuple(self.sweep_references)
+        if any(not isinstance(item, SweepReference) for item in references) or len({item.id for item in references}) != len(references):
+            raise ValueError("sweep references require unique trusted coverage records")
+        object.__setattr__(self, "sweep_references", references)
 
 
 def _error(status: int, code: str, message: str, fields: list[dict[str, Any]] | None = None) -> HTTPException:
@@ -83,13 +91,18 @@ def _constant(text: str) -> Any:
 
 def _resolve(kind: Kind, data: Any, context: ConfigurationPreviewContext) -> dict[str, Any]:
     try:
-        prepared: PreparedDevice | PreparedTandem | PreparedSpatialExperiment | PreparedJVExperiment
+        prepared: PreparedDevice | PreparedTandem | PreparedSpatialExperiment | PreparedJVExperiment | PreparedSweep
         if kind == "device":
             prepared = resolve_device(DeviceInput.model_validate(data), context.defaults,
                                       context.resources, sources=context.sources)
         elif kind == "tandem":
             prepared = resolve_tandem(TandemInput.model_validate(data), context.defaults,
                                       context.resources, sources=context.sources)
+        elif kind == "sweep":
+            sweep = SweepInput.model_validate(data)
+            if isinstance(sweep.base, JVExperimentInput) and not any(name == "jv_jobs" for name, _ in context.defaults.experiment_defaults):
+                raise _error(503, "configuration_experiment_context_missing", "J-V sweep preview requires explicit source-bound J-V defaults")
+            prepared = prepare_sweep(sweep, context.defaults, context.resources, sources=context.sources, references=context.sweep_references)
         else:
             declaration = data.get("experiment") if isinstance(data, dict) else None
             experiment_kind = declaration.get("kind") if isinstance(declaration, dict) else None
@@ -121,7 +134,7 @@ def _resolve(kind: Kind, data: Any, context: ConfigurationPreviewContext) -> dic
             "content_sha256": prepared.content_sha256,
             "default_catalog_sha256": context.defaults.content_sha256,
             "resource_library_sha256": context.resources.content_sha256,
-            **({"configuration_schema_sha256": configuration_schema_representation()[1]} if kind == "experiment" else {}),
+            **({"configuration_schema_sha256": configuration_schema_representation()[1]} if kind in {"experiment", "sweep"} else {}),
         },
     }
 
@@ -131,8 +144,8 @@ async def _preview(request: Request, kind: Kind) -> JSONResponse:
     if context is None:
         raise _error(503, "configuration_context_missing",
                      "Configuration preview requires an explicitly supplied trusted catalog and resource library")
-    if kind == "experiment":
-        if not context.defaults.experiment_defaults:
+    if kind in {"experiment", "sweep"}:
+        if kind == "experiment" and not context.defaults.experiment_defaults:
             raise _error(503, "configuration_experiment_context_missing", "Experiment preview requires explicit source-bound experiment defaults")
         declared_schema = request.headers.get("x-solarlab-configuration-schema")
         if declared_schema is None:
@@ -172,3 +185,9 @@ async def preview_tandem(request: Request) -> JSONResponse:
 async def preview_experiment(request: Request) -> JSONResponse:
     """Prepare declared geometry/protocol controls without generating a mesh or state."""
     return await _preview(request, "experiment")
+
+
+@router.post("/configuration-preview/sweep")
+async def preview_sweep(request: Request) -> JSONResponse:
+    """Expand bounded serial declarations; no numerical work, reuse or run submission."""
+    return await _preview(request, "sweep")

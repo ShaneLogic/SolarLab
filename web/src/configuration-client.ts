@@ -1,8 +1,8 @@
 /** Explicit prepared-configuration transport; no default selection or execution. */
-import type { DeviceInput, TandemInput, SpatialExperimentInput, JVExperimentInput } from './generated/configuration-inputs';
+import type { DeviceInput, TandemInput, SpatialExperimentInput, JVExperimentInput, SweepInput } from './generated/configuration-inputs';
 import { configurationSchemaSha256 } from './generated/configuration-schema';
 
-type Kind = 'device' | 'tandem' | 'experiment';
+type Kind = 'device' | 'tandem' | 'experiment' | 'sweep';
 type ErrorCode = 'input' | 'http' | 'malformed' | 'protocol' | 'precision_unavailable';
 
 export class ConfigurationPreviewError extends Error {
@@ -104,7 +104,7 @@ function freeze(value: unknown): void {
 }
 
 async function preview(
-  endpoint: string | URL, kind: Kind, input: DeviceInput | TandemInput | SpatialExperimentInput | JVExperimentInput, signal?: AbortSignal,
+  endpoint: string | URL, kind: Kind, input: DeviceInput | TandemInput | SpatialExperimentInput | JVExperimentInput | SweepInput, signal?: AbortSignal,
 ): Promise<ConfigurationPreviewDocument> {
   const body = encode(input);
   const requestedId = input.id;
@@ -112,7 +112,7 @@ async function preview(
   const resolvedKind = kind === 'experiment' ? ['jv', 'dark_jv'].includes(experimentKind!) ? 'jv-experiment' : 'spatial-experiment' : kind;
   const response = await fetch(endpoint, {
     method: 'POST', headers: { 'Content-Type': 'application/json',
-      ...(kind === 'experiment' ? { 'X-Solarlab-Configuration-Schema': configurationSchemaSha256 } : {}) }, body, signal,
+      ...(['experiment', 'sweep'].includes(kind) ? { 'X-Solarlab-Configuration-Schema': configurationSchemaSha256 } : {}) }, body, signal,
   });
   const bytes = await response.arrayBuffer();
   let json: string;
@@ -145,7 +145,7 @@ async function preview(
     requireValue(typeof value.identity[field] === 'string' && /^[a-f0-9]{64}$/.test(value.identity[field]),
       `Invalid preview ${field}`);
   }
-  if (kind === 'experiment') requireValue(value.identity.configuration_schema_sha256 === configurationSchemaSha256,
+  if (kind === 'experiment' || kind === 'sweep') requireValue(value.identity.configuration_schema_sha256 === configurationSchemaSha256,
     'Experiment preview schema identity does not match this client');
   if (kind === 'experiment') requireValue(object(value.input.experiment) && value.input.experiment.kind === experimentKind,
     'Experiment preview branch does not match the submitted input');
@@ -183,6 +183,22 @@ export function previewJVExperiment(
   return previewExperimentConfiguration(endpoint, input, signal);
 }
 
+export function previewSweepConfiguration(endpoint: string | URL, input: SweepInput, signal?: AbortSignal): Promise<ConfigurationPreviewDocument> {
+  return preview(endpoint, 'sweep', input, signal);
+}
+
+function editable(value: unknown, path: (string | number)[]): unknown {
+  if (typeof value === 'bigint') {
+    const number = Number(value);
+    requireValue(Number.isFinite(number) && BigInt(number) === value,
+      `Saved input integer is not exactly representable at ${JSON.stringify(path)}`, 'precision_unavailable');
+    return number;
+  }
+  if (Array.isArray(value)) return value.map((item, index) => editable(item, [...path, index]));
+  if (object(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, editable(item, [...path, key])]));
+  return value;
+}
+
 /** Reopen editable input from the original response text. JSON integers that
  * originated as exactly representable numbers can exceed MAX_SAFE_INTEGER.
  * Recover only those values; never round other integers into a generated DTO. */
@@ -195,17 +211,6 @@ function experimentInputFromPreview(json: string): SpatialExperimentInput | JVEx
     'Saved experiment schema identity does not match this client');
   requireValue(object(doc.input.experiment) && typeof doc.input.experiment.kind === 'string',
     'Saved preview is missing its experiment branch');
-  function editable(value: unknown, path: (string | number)[]): unknown {
-    if (typeof value === 'bigint') {
-      const number = Number(value);
-      requireValue(Number.isFinite(number) && BigInt(number) === value,
-        `Saved input integer is not exactly representable at ${JSON.stringify(path)}`, 'precision_unavailable');
-      return number;
-    }
-    if (Array.isArray(value)) return value.map((item, index) => editable(item, [...path, index]));
-    if (object(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, editable(item, [...path, key])]));
-    return value;
-  }
   const input = editable(doc.input, []);
   encode(input); // Check representability without using this text as an export.
   return input as SpatialExperimentInput | JVExperimentInput;
@@ -221,4 +226,31 @@ export function jvExperimentInputFromPreview(json: string): JVExperimentInput {
   const input = experimentInputFromPreview(json);
   requireValue(['jv', 'dark_jv'].includes(input.experiment.kind), 'Expected a one-dimensional J-V experiment input');
   return input as JVExperimentInput;
+}
+
+function savedSweep(json: string): Record<string, unknown> {
+  const doc = parse(json);
+  requireValue(object(doc) && doc.schema === 'solarlab.configuration-preview.v1' && doc.kind === 'sweep'
+    && doc.can_execute === false && object(doc.input) && doc.input.schema_version === 'solarlab.sweep-preparation.v1', 'Expected a sweep preparation preview');
+  requireValue(object(doc.identity) && doc.identity.configuration_schema_sha256 === configurationSchemaSha256, 'Saved sweep schema identity does not match this client');
+  return doc;
+}
+
+export function sweepInputFromPreview(json: string): SweepInput {
+  const input = editable(savedSweep(json).input, []);
+  encode(input);
+  return input as SweepInput;
+}
+
+/** Materialize only the selected returned input; this is not run admission. */
+export function sweepPointInputFromPreview(json: string, pointId: string): DeviceInput | JVExperimentInput {
+  const doc = savedSweep(json);
+  requireValue(object(doc.resolved) && Array.isArray(doc.resolved.points), 'Saved sweep has no point declarations');
+  const points = doc.resolved.points.filter(value => object(value) && value.id === pointId);
+  requireValue(points.length === 1 && object(points[0]) && points[0].can_execute === false
+    && object(points[0].applied_input), 'Select one declared non-executing point with an applied input');
+  const input = editable(points[0].applied_input, []);
+  requireValue(object(input) && ['solarlab.device-preparation.v1', 'solarlab.experiment-preparation.v1'].includes(String(input.schema_version)), 'Unknown sweep point input kind');
+  encode(input);
+  return input as unknown as DeviceInput | JVExperimentInput;
 }
