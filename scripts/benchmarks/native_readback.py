@@ -18,7 +18,9 @@ import struct
 import time
 import zlib
 
-from scripts.benchmarks.native_history import HistoryReader
+from scripts.benchmarks.native_history import (
+    HistoryReader, configure_integer_io, decode_integer_values, integer_io_observed,
+)
 
 
 class HistoryVerificationError(ValueError):
@@ -117,21 +119,23 @@ def _decode(value, depth=0):
     return {key: _decode(item, depth + 1) for key, item in value.items()}
 
 
-def _json(data):
+def _json(data, integer_io_policy=None):
+    integer_io_observed(integer_io_policy)
     result = json.loads(data.decode("utf-8"), object_pairs_hook=_pairs,
                         parse_constant=_constant, parse_float=_finite)
+    result = decode_integer_values(result, integer_io_policy)
     _require(type(result) is dict, "json_object_required")
     _decode(result)  # Validate every tag, including fields outside the projections below.
     return result
 
 
-def _read_json(path, limit, checkpoint):
+def _read_json(path, limit, checkpoint, integer_io_policy=None):
     checkpoint()
     with path.open("rb") as stream:
         data = stream.read(limit + 1)
     checkpoint()
     _require(len(data) <= limit, "metadata_byte_limit")
-    return _json(data)
+    return _json(data, integer_io_policy)
 
 
 def _nonnegative(values, size):
@@ -295,7 +299,7 @@ class _Rows:
         self.count += 1
         _require(self.count <= self.max_records, "record_count_limit")
         _require(line.endswith(b"\n") and line.count(b"\n") == 1, "partial_or_multiline_record")
-        row = _json(line)
+        row = _json(line, getattr(self.reader, "integer_io_policy", None))
         self.hash.update(line)
         self.crc = zlib.crc32(line, self.crc)
         self.checkpoint()
@@ -849,7 +853,7 @@ class _Protocol:
 
 
 def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: int,
-                   max_records: int, deadline_monotonic: float) -> dict:
+                   max_records: int, deadline_monotonic: float, integer_io_policy=None) -> dict:
     """Verify a finalized, complete protocol, raising on every partial result.
 
     All limits are caller-selected stop rules. A receipt verifies stored words,
@@ -866,14 +870,25 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         _require(all(type(v) is int and v > 0 for v in (max_record_bytes, max_logical_bytes, max_records)),
                  "positive_limits_required")
         _require(type(deadline_monotonic) in (int, float) and math.isfinite(deadline_monotonic), "finite_deadline_required")
+        integer_io_policy = configure_integer_io(integer_io_policy, max_record_bytes)
+        integer_observed = integer_io_observed(integer_io_policy)
         folder = Path(folder)
         checkpoint()
-        _require(not any((folder / name).exists() for name in ("FirstFailure.json", "RunnerFailure.json",
+        _require(not any((folder / name).exists() for name in ("FirstFailure.json", "RunnerFailure.json", "PrimaryFailure.json",
                                                               "LastRecord.tmp", "LastAccepted.tmp", "FirstFailure.tmp")),
                  "failure_or_incomplete_publication")
         request = _read_json(folder / "NativeRequest.json", max_record_bytes, checkpoint)
-        result = _read_json(folder / "NativeResult.json", max_record_bytes, checkpoint)
+        result = _read_json(folder / "NativeResult.json", max_record_bytes, checkpoint, integer_io_policy)
         history = result["history"]
+        _require(history.get("integer_io") == integer_observed, "integer_io_policy_or_applied_limit_mismatch")
+        if integer_observed is not None:
+            producer = _read_json(folder / "IntegerIOObserved.json", max_record_bytes, checkpoint)
+            _require(producer.get("role") == "producer" and type(producer.get("pid")) is int
+                     and producer["pid"] > 0
+                     and {key: producer.get(key) for key in integer_observed} == integer_observed,
+                     "producer_integer_io_observation_mismatch")
+        else:
+            _require(not (folder / "IntegerIOObserved.json").exists(), "unbound_integer_io_observation")
         _require(result["status"] == "completed_bounded_voltage_lift_native_pilot" and result["complete_protocol"] is True
                  and result.get("first_failure") is None and history["closed"] is True
                  and history["container_complete"] is True and history["error"] is None
@@ -883,7 +898,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         _require(before_stat.st_size == history["encoded_bytes"]
                  and before_stat.st_size <= request["budgets"]["total_output_bytes"], "encoded_byte_count_or_cap")
         with HistoryReader(path, encoding="gzip", max_record_bytes=max_record_bytes,
-                           max_logical_bytes=max_logical_bytes) as reader:
+                            max_logical_bytes=max_logical_bytes, integer_io_policy=integer_io_policy) as reader:
             rows = _Rows(reader, max_records, checkpoint)
             protocol = _Protocol(request, rows)
             _require(result["request_sha256"] == protocol.request_id and result["map_identity"] == protocol.map_id
@@ -953,6 +968,8 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                              "physical_word_layers": 4, "record_counts": dict(rows.counts)},
                 "pointers": {"last_record": last, "last_accepted": accepted}, "elapsed_s": time.perf_counter() - started,
                 **({"segment_startup": protocol.startup.finish(complete=True)} if protocol.startup.enabled else {}),
+                **({"integer_io": {"role": "independent_reader", **integer_io_observed(integer_io_policy)}}
+                   if integer_io_policy is not None else {}),
                 "scope": "stored artifact integrity, complete request coverage and recorded gate consistency; no numerical replay",
                 "scientific_qualification": False}
     except HistoryVerificationError as error:

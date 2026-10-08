@@ -14,6 +14,8 @@ import pytest
 from scripts.benchmarks.native_history import (
     GZIP_TRAILER_RESERVE, METADATA_RESERVE, HistoryLimitError,
     HistoryReader, HistoryWriter, emit_record,
+    INTEGER_IO_SCHEMA, INTEGER_IO_CODEC, INTEGER_HEX_TAG,
+    configure_integer_io, decode_integer_values, integer_io_observed, integer_json_dumps,
 )
 
 
@@ -43,7 +45,74 @@ def original():
 
 def reader(path, encoding, maximum=1048576):
     return HistoryReader(path, encoding=encoding, max_record_bytes=131072,
-                         max_logical_bytes=maximum)
+                          max_logical_bytes=maximum)
+
+
+def integer_policy():
+    return {"schema": INTEGER_IO_SCHEMA, "codec": INTEGER_IO_CODEC,
+            "decimal_digits": 4300, "max_integer_bits": 131072}
+
+
+def test_bounded_integer_codec_preserves_exact_values_and_legacy_bytes(tmp_path):
+    policy = configure_integer_io(integer_policy(), 1048576)
+    small = {"a": [0, -1, True, None, -0.0, 1.25], "z": "unchanged"}
+    options = {"allow_nan": False, "separators": (",", ":")}
+    assert integer_json_dumps(small, **options) == json.dumps(small, **options)
+    assert integer_json_dumps(small, policy, **options) == json.dumps(small, **options)
+    large = 10**4400 + 1
+    record = {"kind": "exact_integer_fixture", "signed": [large, -large, 0],
+              "rational": [large, large+2]}
+    path = tmp_path / "bounded.jsonl.gz"
+    with HistoryWriter(path, encoding="gzip", total_output_bytes=2*METADATA_RESERVE,
+                       integer_io_policy=policy) as writer:
+        writer.append(record)
+    with HistoryReader(path, encoding="gzip", max_record_bytes=1048576,
+                       max_logical_bytes=1048576, integer_io_policy=policy) as decoded:
+        assert list(decoded.records()) == [record]
+        assert decoded.container_complete and decoded.eof_seen
+    assert integer_io_observed(policy)["actual_decimal_digits"] == 4300
+    with pytest.raises(ValueError, match="4300 digits"):
+        json.dumps(large)
+
+
+@pytest.mark.parametrize("change", [
+    {"decimal_digits": 0}, {"max_integer_bits": True}, {"max_integer_bits": 131073},
+    {"codec": "unknown"}, {"schema": "unknown"}, {"extra": 1},
+])
+def test_integer_policy_rejects_invalid_or_unbound_fields(change):
+    with pytest.raises(ValueError, match="integer I/O policy"):
+        configure_integer_io({**integer_policy(), **change}, 1048576)
+
+
+@pytest.mark.parametrize("text", ["0x0", "-0x0", "+0x1", "0x01", "0X12", "0xff", "0x1"+"0"*32768])
+def test_hex_integer_decode_rejects_noncanonical_small_and_oversize(text):
+    policy = configure_integer_io(integer_policy(), 1048576)
+    with pytest.raises(ValueError):
+        decode_integer_values({INTEGER_HEX_TAG: text}, policy)
+
+
+def test_integer_bit_bound_and_reserved_tag_fail_before_writing(tmp_path):
+    policy = configure_integer_io(integer_policy(), 1048576)
+    writer = HistoryWriter(tmp_path / "bounded.jsonl.gz", encoding="gzip",
+                           total_output_bytes=2*METADATA_RESERVE, integer_io_policy=policy)
+    with pytest.raises(HistoryLimitError, match=r"\$/oversize: 131073>131072"):
+        writer.append({"kind": "fixture", "oversize": 1 << 131072})
+    assert writer.closed and writer.records == 0 and writer.container_complete is False
+    with pytest.raises(ValueError, match="reserved native integer tag"):
+        integer_json_dumps({INTEGER_HEX_TAG: "0x1"}, policy)
+    with pytest.raises(ValueError):
+        decode_integer_values({INTEGER_HEX_TAG: hex(10**4400), "extra": 1}, policy)
+
+
+def test_integer_policy_detects_process_setting_change(tmp_path):
+    policy = configure_integer_io(integer_policy(), 1048576)
+    try:
+        sys.set_int_max_str_digits(640)
+        with pytest.raises(HistoryLimitError, match="process decimal limit changed"):
+            integer_json_dumps({"value": 1}, policy)
+        assert integer_io_observed(policy, require_match=False)["actual_decimal_digits"] == 640
+    finally:
+        sys.set_int_max_str_digits(4300)
 
 
 def old_reader(path, encoding, spec, accepted):

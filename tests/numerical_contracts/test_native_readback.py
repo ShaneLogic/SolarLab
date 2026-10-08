@@ -9,6 +9,7 @@ from copy import deepcopy
 from fractions import Fraction
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -19,7 +20,7 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from scripts.benchmarks.native_history import HistoryWriter
+from scripts.benchmarks.native_history import HistoryWriter, integer_io_observed, integer_json_dumps
 from scripts.benchmarks.native_readback import HistoryVerificationError, verify_history, _Protocol, _native_packet
 
 
@@ -341,8 +342,9 @@ class NativeReadbackTests(unittest.TestCase):
         self.folder = Path(self.temp.name)
         self.request, self.rows, self.result = deepcopy(self.template)
 
-    def publish(self):
-        writer = HistoryWriter(self.folder / "NativeHistory.jsonl.gz", encoding="gzip", total_output_bytes=8 * 1048576)
+    def publish(self, integer_io_policy=None):
+        writer = HistoryWriter(self.folder / "NativeHistory.jsonl.gz", encoding="gzip", total_output_bytes=8 * 1048576,
+                               integer_io_policy=integer_io_policy)
         for row in self.rows:
             writer.append(row)
         writer.finish()
@@ -350,8 +352,12 @@ class NativeReadbackTests(unittest.TestCase):
                                   "encoded_bytes": writer.encoded_bytes, "records": writer.records,
                                   "logical_sha256": writer.logical_sha256, "closed": True, "container_complete": True, "error": None}
         self.result["counts"].update(history_bytes=writer.logical_bytes, history_encoded_bytes=writer.encoded_bytes)
+        if integer_io_policy is not None:
+            observed = integer_io_observed(writer.integer_io_policy)
+            self.result["history"]["integer_io"] = observed
+            (self.folder / "IntegerIOObserved.json").write_text(json.dumps({"role": "producer", "pid": os.getpid(), **observed}))
         for name, value in (("NativeRequest.json", self.request), ("NativeResult.json", self.result)):
-            (self.folder / name).write_text(json.dumps(value, allow_nan=False))
+            (self.folder / name).write_text(integer_json_dumps(value, integer_io_policy, allow_nan=False))
 
     def verify(self, **limits):
         return verify_history(self.folder, **{"max_record_bytes": 1048576, "max_logical_bytes": 4 * 1048576,
@@ -378,6 +384,44 @@ class NativeReadbackTests(unittest.TestCase):
         self.assertEqual(receipt["history"]["container_sha256"],
                          hashlib.sha256((self.folder / "NativeHistory.jsonl.gz").read_bytes()).hexdigest())
         self.assertTrue(receipt["history"]["crc_verified"])
+
+    def test_integer_policy_full_reader_and_independent_application(self):
+        policy = {"schema": "solarlab.native-integer-io.v1", "codec": "decimal-with-bounded-hex-v1",
+                  "decimal_digits": 4300, "max_integer_bits": 131072}
+        large = 10**4400 + 1
+        row = next(row for row in self.rows if row["kind"] == "voltage_lift_interval_charge")
+        row["io_fixture_extra"] = {"rational": [large, large+2]}
+        self.result["io_fixture_extra"] = {"rational": [-large, large+2]}
+        self.publish(integer_io_policy=policy)
+        receipt = self.verify(integer_io_policy=policy)
+        self.assertTrue(receipt["verified"])
+        self.assertEqual(receipt["integer_io"], {"role": "independent_reader", "policy": policy,
+                                                 "actual_decimal_digits": 4300})
+        # A fresh reader process must itself configure and report the policy.
+        code = """import json, sys, time
+from pathlib import Path
+from scripts.benchmarks.native_readback import verify_history
+policy=json.loads(sys.argv[2])
+r=verify_history(Path(sys.argv[1]), max_record_bytes=1048576, max_logical_bytes=4*1048576,
+                 max_records=5000, deadline_monotonic=time.perf_counter()+5, integer_io_policy=policy)
+print(json.dumps(r['integer_io']))
+"""
+        other = subprocess.run([sys.executable, "-B", "-c", code, str(self.folder), json.dumps(policy)],
+                               capture_output=True, text=True, timeout=10)
+        self.assertEqual(other.returncode, 0, other.stderr)
+        self.assertEqual(json.loads(other.stdout), receipt["integer_io"])
+
+    def test_integer_policy_mismatch_and_forged_producer_observation(self):
+        policy = {"schema": "solarlab.native-integer-io.v1", "codec": "decimal-with-bounded-hex-v1",
+                  "decimal_digits": 4300, "max_integer_bits": 131072}
+        self.publish(integer_io_policy=policy)
+        self.bad("integer_io_policy_or_applied_limit_mismatch")
+        self.bad("integer_io_policy_or_applied_limit_mismatch", integer_io_policy={**policy, "max_integer_bits": 65536})
+        path = self.folder / "IntegerIOObserved.json"
+        forged = json.loads(path.read_text())
+        forged["actual_decimal_digits"] = 0
+        path.write_text(json.dumps(forged))
+        self.bad("producer_integer_io_observation_mismatch", integer_io_policy=policy)
 
     def test_import_does_not_load_numerical_backends(self):
         # Other numerical tests may already have imported these modules in the

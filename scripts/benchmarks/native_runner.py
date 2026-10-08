@@ -13,6 +13,7 @@ import ctypes
 import hashlib
 import importlib.abc
 import json
+import math
 import os
 import resource
 import sys
@@ -20,7 +21,9 @@ import time
 import traceback
 from typing import Any, Callable, Collection
 
-from scripts.benchmarks.native_history import HistoryLimitError, HistoryWriter
+from scripts.benchmarks.native_history import (
+    HistoryLimitError, HistoryWriter, integer_io_observed, integer_json_dumps,
+)
 
 COMPLETED_STATUS = "completed_bounded_voltage_lift_native_pilot"
 
@@ -51,9 +54,12 @@ def output_bytes(folder, input_names):
     return total
 
 def _write_document(folder: Path, name: str, value: Any, *, total_output_bytes: int,
-                    input_names: Collection[str]) -> None:
+                    input_names: Collection[str], integer_io_policy=None,
+                    max_document_bytes: int | None = None) -> None:
     """Retained exclusive publication, with the unchanged whole-artifact cap."""
-    data = (json.dumps(value, indent=2, allow_nan=False) + "\n").encode()
+    data = (integer_json_dumps(value, integer_io_policy, indent=2, allow_nan=False) + "\n").encode()
+    if max_document_bytes is not None and len(data) > max_document_bytes:
+        raise HistoryLimitError("bounded native failure envelope exceeds cap")
     if output_bytes(folder, input_names) + len(data) > total_output_bytes:
         raise HistoryLimitError("native artifact publication exceeds total output cap")
     with (folder / name).open("xb") as stream:
@@ -63,12 +69,47 @@ def _write_document(folder: Path, name: str, value: Any, *, total_output_bytes: 
 
 
 def _history_state(writer: HistoryWriter) -> dict[str, Any]:
-    return {"encoding": writer.encoding, "path": writer.path.name,
+    state = {"encoding": writer.encoding, "path": writer.path.name,
             "max_record_bytes": writer.max_record_bytes,
             "logical_bytes": writer.logical_bytes, "encoded_bytes": writer.encoded_bytes,
             "logical_sha256": writer.logical_sha256, "records": writer.records,
             "closed": writer.closed, "container_complete": writer.container_complete,
-            "error": writer.error, "digest_scope": "complete record bytes written before any failed partial write"}
+             "error": writer.error, "digest_scope": "complete record bytes written before any failed partial write"}
+    if writer.integer_io_policy is not None:
+        state["integer_io"] = integer_io_observed(writer.integer_io_policy, require_match=False)
+    return state
+
+
+def _controller_failure_envelope(result, writer):
+    """Keep the primary cause and native context without copying huge ledgers."""
+    text = {key: result.get(key)[:12000 if key == "traceback" else 2048]
+            for key in ("status", "reason", "exception", "traceback")
+            if type(result.get(key)) is str}
+    raw_counts = result.get("counts", {})
+    count_names = {"residual", "jacobian", "native_steps", "onestep_returns", "normal_queries",
+                   "polynomial_queries", "initializations", "history_bytes", "history_encoded_bytes"}
+    counts = {key: value for key, value in (raw_counts.items() if isinstance(raw_counts, dict) else ())
+              if key in count_names and type(value) is int and value.bit_length() <= 64}
+    attempt = result.get("last_attempt") or result.get("first_failure") or {}
+    context = {}
+    if isinstance(attempt, dict):
+        for key in ("phase", "segment_id", "segment", "time_hex", "success", "status", "message"):
+            value = attempt.get(key)
+            if (value is None or type(value) is bool or type(value) is int and value.bit_length() <= 64
+                    or type(value) is float and math.isfinite(value)
+                    or type(value) is str and len(value) <= 2048):
+                context[key] = value
+        for key in ("z_hex", "zdot_hex"):
+            value = attempt.get(key)
+            if (type(value) is list and len(value) <= 256
+                    and all(type(item) is str and len(item) <= 32 for item in value)):
+                context[key] = value
+    history = _history_state(writer)
+    if type(history.get("error")) is str:
+        history["error"] = history["error"][:4096]
+    return {"schema": "solarlab.native-primary-failure.v1", "controller": text,
+            "counts": counts, "last_native_context": context, "history": history,
+            "scope": "primary controller error before full failure/result publication; no omitted ledger is reconstructed"}
 
 
 def _record_exception(folder: Path, error: BaseException, *, total_output_bytes: int,
@@ -91,8 +132,8 @@ def _record_exception(folder: Path, error: BaseException, *, total_output_bytes:
 
 
 def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, Any]], *,
-                 total_output_bytes: int, input_names: Collection[str],
-                 max_record_bytes: int = 1048576) -> dict[str, Any]:
+                  total_output_bytes: int, input_names: Collection[str],
+                  max_record_bytes: int = 1048576, integer_io_policy=None) -> dict[str, Any]:
     """Run the real controller with the writer itself, finalize, then publish.
 
     An already failed controller may retain an explicitly incomplete container;
@@ -102,20 +143,34 @@ def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, A
     folder = Path(folder)
     writer = None
     try:
-        if any((folder / name).exists() for name in ("NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json", "RunnerFailure.json")):
+        if any((folder / name).exists() for name in ("NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json", "RunnerFailure.json", "PrimaryFailure.json")):
             raise FileExistsError("native attempt output already exists")
         writer = HistoryWriter(folder / "NativeHistory.jsonl.gz", encoding="gzip",
                                total_output_bytes=total_output_bytes,
-                               max_record_bytes=max_record_bytes)
+                               max_record_bytes=max_record_bytes, integer_io_policy=integer_io_policy)
+        if writer.integer_io_policy is not None:
+            _write_document(folder, "IntegerIOObserved.json",
+                            {"role": "producer", "pid": os.getpid(),
+                             **integer_io_observed(writer.integer_io_policy)},
+                            total_output_bytes=total_output_bytes, input_names=input_names)
         result = controller(writer)  # Do not wrap this object in an untyped callback.
+        successful = result.get("status") == COMPLETED_STATUS
+        if not successful:
+            try:
+                _write_document(folder, "PrimaryFailure.json", _controller_failure_envelope(result, writer),
+                                total_output_bytes=total_output_bytes, input_names=input_names,
+                                max_document_bytes=65536)
+            except BaseException as publication_error:
+                if writer.first_exception is None:
+                    raise
+                writer.first_exception.add_note(f"primary envelope publication failed: {type(publication_error).__name__}")
+        if writer.first_exception is not None:
+            # A failed controller must not mask the first writer exception with
+            # another attempt to serialize its enormous cumulative result.
+            raise writer.first_exception
         if result.get("first_failure") is not None:
             writer.publish_first_failure(result["first_failure"])
-        successful = result.get("status") == COMPLETED_STATUS
-        if writer.first_exception is not None:
-            if successful:
-                raise writer.first_exception
-        else:
-            writer.finish()
+        writer.finish()
         # Keep all original controller fields and logical counters. Encoded bytes
         # include the footer, which the controller's last record cannot count.
         result = dict(result)
@@ -129,7 +184,8 @@ def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, A
         if successful and (not writer.closed or writer.container_complete is not True):
             raise RuntimeError("successful native result requires finalized history")
         _write_document(folder, "NativeResult.json", result,
-                        total_output_bytes=total_output_bytes, input_names=input_names)
+                        total_output_bytes=total_output_bytes, input_names=input_names,
+                        integer_io_policy=writer.integer_io_policy)
         return result
     except BaseException as error:
         if writer is not None:
@@ -230,7 +286,8 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
                          lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model),segments,request,admission,emit),
                          total_output_bytes=request["budgets"]["total_output_bytes"],
                          input_names=freeze["watchdog"]["input_file_names"],
-                         max_record_bytes=freeze.get("writer_limits", {}).get("max_record_bytes", 1048576))
+                          max_record_bytes=freeze.get("writer_limits", {}).get("max_record_bytes", 1048576),
+                          integer_io_policy=freeze.get("integer_io_policy"))
      code=0 if result["status"]=="completed_bounded_voltage_lift_native_pilot" else 1
     except BaseException as error:
      primary_error=error

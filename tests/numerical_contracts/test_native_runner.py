@@ -216,7 +216,7 @@ def test_runner_total_artifact_cap_before_result_publication(tmp_path):
     assert json.loads((tmp_path / "RunnerFailure.json").read_text())["history"]["container_complete"] is True
 
 
-def test_failed_controller_retains_explicit_incomplete_result(tmp_path):
+def test_failed_controller_retains_primary_writer_error_and_small_envelope(tmp_path):
     cap = METADATA_RESERVE + 20
     def controller(writer):
         save, counts = save_body(OWNERS[1], writer, cap)
@@ -226,10 +226,54 @@ def test_failed_controller_retains_explicit_incomplete_result(tmp_path):
             return {"status": "failed_bounded_voltage_lift_native_pilot", "complete_protocol": False,
                     "counts": counts, "reason": str(error), "first_failure": {"reason": "later fallback"}}
         raise AssertionError("the bounded record unexpectedly fit")
-    result = native_runner.run_recorded(tmp_path, controller, total_output_bytes=cap, input_names=())
-    assert result["complete_protocol"] is False and result["history"]["container_complete"] is False
+    with pytest.raises(HistoryLimitError, match="reservation exceeds cap"):
+        native_runner.run_recorded(tmp_path, controller, total_output_bytes=cap, input_names=())
+    assert not (tmp_path / "NativeResult.json").exists()
+    assert json.loads((tmp_path / "PrimaryFailure.json").read_text())["controller"]["status"].startswith("failed")
     assert json.loads((tmp_path / "FirstFailure.json").read_text())["reason"] == "original callback"
     assert native_runner.output_bytes(tmp_path, ()) <= cap
+
+
+def test_decimal_failure_is_not_masked_by_result_publication(tmp_path):
+    enormous = 10**4400
+    def controller(writer):
+        try:
+            writer.append({"kind": "interval_fixture", "large": enormous})
+        except ValueError as error:
+            return {"status": "failed_bounded_voltage_lift_native_pilot", "complete_protocol": False,
+                    "reason": str(error), "exception": type(error).__name__,
+                    "counts": {"history_bytes": writer.logical_bytes},
+                    "last_attempt": {"phase": "native_return", "success": True, "status": 0},
+                    "first_failure": {"phase": "native_return", "success": True},
+                    "unpublished_cumulative_integer": enormous}
+        raise AssertionError("legacy decimal limit did not fail")
+    with pytest.raises(ValueError, match="4300 digits"):
+        native_runner.run_recorded(tmp_path, controller, total_output_bytes=2*METADATA_RESERVE, input_names=())
+    primary = json.loads((tmp_path / "PrimaryFailure.json").read_text())
+    failure = json.loads((tmp_path / "RunnerFailure.json").read_text())
+    assert "4300 digits" in primary["controller"]["reason"]
+    assert primary["last_native_context"]["success"] is True
+    assert "native_history.py" in failure["traceback"]
+    assert "_write_document" not in failure["traceback"]
+    assert not (tmp_path / "NativeResult.json").exists()
+
+
+def test_runner_records_applied_policy_and_publishes_large_exact_result(tmp_path):
+    from scripts.benchmarks.native_history import decode_integer_values
+    policy = {"schema": "solarlab.native-integer-io.v1", "codec": "decimal-with-bounded-hex-v1",
+              "decimal_digits": 4300, "max_integer_bits": 131072}
+    large = 10**4400 + 1
+    def controller(writer):
+        observed = json.loads((tmp_path / "IntegerIOObserved.json").read_text())
+        assert observed["actual_decimal_digits"] == 4300 and observed["policy"] == policy
+        writer.append({"kind": "integer_fixture", "rational": [large, large+2]})
+        return {"status": native_runner.COMPLETED_STATUS, "complete_protocol": True,
+                "counts": {"history_bytes": writer.logical_bytes}, "exact_integer": -large}
+    result = native_runner.run_recorded(tmp_path, controller, total_output_bytes=2*METADATA_RESERVE,
+                                        input_names=(), integer_io_policy=policy)
+    stored = decode_integer_values(json.loads((tmp_path / "NativeResult.json").read_text()), policy)
+    assert stored == result and stored["exact_integer"] == -large
+    assert stored["history"]["integer_io"]["actual_decimal_digits"] == 4300
 
 
 @pytest.mark.parametrize("explicit_limit", [False, True])

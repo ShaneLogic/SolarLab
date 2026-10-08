@@ -15,6 +15,8 @@ import json
 from math import isfinite
 import os
 from pathlib import Path
+import re
+import sys
 from typing import Any, Callable, Literal, Mapping
 import zlib
 
@@ -23,6 +25,12 @@ METADATA_RESERVE = 1048576
 # Empty final deflate block plus CRC32/ISIZE after a per-record sync flush.
 # The actual final write is independently capacity checked as well.
 GZIP_TRAILER_RESERVE = 10
+INTEGER_IO_SCHEMA = "solarlab.native-integer-io.v1"
+INTEGER_IO_CODEC = "decimal-with-bounded-hex-v1"
+INTEGER_HEX_TAG = "__solarlab_integer_hex_v1__"
+INTEGER_DECIMAL_DIGITS = 4300
+MAX_INTEGER_IO_BITS = 131072
+_DECIMAL_BOUNDARY = 10 ** INTEGER_DECIMAL_DIGITS
 
 
 class HistoryLimitError(ValueError):
@@ -41,8 +49,88 @@ def _integer(value: int, name: str, minimum: int = 0) -> None:
         raise ValueError(f"{name} must be an integer >= {minimum}")
 
 
-def _line(record: Mapping[str, Any]) -> bytes:
-    return (json.dumps(record, allow_nan=False, separators=(",", ":")) + "\n").encode()
+def configure_integer_io(policy, max_record_bytes: int):
+    """Apply one explicit, finite process policy; absence retains legacy I/O."""
+    if policy is None:
+        return None
+    if (type(policy) is not dict or set(policy) != {"schema", "codec", "decimal_digits", "max_integer_bits"}
+            or policy["schema"] != INTEGER_IO_SCHEMA or policy["codec"] != INTEGER_IO_CODEC
+            or type(policy["decimal_digits"]) is not int or policy["decimal_digits"] != INTEGER_DECIMAL_DIGITS
+            or type(policy["max_integer_bits"]) is not int
+            or not _DECIMAL_BOUNDARY.bit_length() <= policy["max_integer_bits"] <= min(MAX_INTEGER_IO_BITS, 4 * max_record_bytes)):
+        raise ValueError("invalid native integer I/O policy")
+    sys.set_int_max_str_digits(INTEGER_DECIMAL_DIGITS)
+    result = dict(policy)
+    integer_io_observed(result)
+    return result
+
+
+def integer_io_observed(policy, *, require_match=True):
+    if policy is None:
+        return None
+    actual = sys.get_int_max_str_digits()
+    if require_match and actual != policy["decimal_digits"]:
+        raise HistoryLimitError("native integer process decimal limit changed")
+    return {"policy": dict(policy), "actual_decimal_digits": actual}
+
+
+def encode_integer_values(value, policy, *, _path="$", _depth=0):
+    """Change only oversized integer representation, never its exact value."""
+    if policy is None:
+        return value
+    if _depth > 64:
+        raise HistoryLimitError("native integer JSON nesting limit")
+    if type(value) is int:
+        bits = abs(value).bit_length()
+        if bits > policy["max_integer_bits"]:
+            raise HistoryLimitError(f"native integer bit limit at {_path}: {bits}>{policy['max_integer_bits']}")
+        return {INTEGER_HEX_TAG: hex(value)} if abs(value) >= _DECIMAL_BOUNDARY else value
+    if isinstance(value, dict):
+        if INTEGER_HEX_TAG in value:
+            raise ValueError("reserved native integer tag in unencoded input")
+        if any(type(key) is not str for key in value):
+            raise ValueError("native integer JSON object keys must be strings")
+        return {k: encode_integer_values(v, policy, _path=_path+"/"+str(k), _depth=_depth+1)
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [encode_integer_values(v, policy, _path=_path+"/"+str(i), _depth=_depth+1)
+                for i, v in enumerate(value)]
+    return value
+
+
+def decode_integer_values(value, policy, *, _depth=0):
+    if policy is None:
+        return value
+    if _depth > 64:
+        raise HistoryLimitError("native integer JSON nesting limit")
+    if isinstance(value, dict):
+        if INTEGER_HEX_TAG in value:
+            text = value[INTEGER_HEX_TAG]
+            if (len(value) != 1 or type(text) is not str
+                    or len(text) > (policy["max_integer_bits"] + 3)//4 + 3
+                    or re.fullmatch(r"-?0x[1-9a-f][0-9a-f]*", text) is None):
+                raise ValueError("invalid bounded native integer hex tag")
+            digits = text[3:] if text.startswith("-") else text[2:]
+            if ((len(digits)-1)*4 + int(digits[0], 16).bit_length() > policy["max_integer_bits"]):
+                raise ValueError("over-limit native integer hex tag")
+            number = int(text, 16)
+            if (abs(number).bit_length() > policy["max_integer_bits"]
+                    or abs(number) < _DECIMAL_BOUNDARY or hex(number) != text):
+                raise ValueError("noncanonical or over-limit native integer hex tag")
+            return number
+        return {k: decode_integer_values(v, policy, _depth=_depth+1) for k, v in value.items()}
+    if isinstance(value, list):
+        return [decode_integer_values(v, policy, _depth=_depth+1) for v in value]
+    return value
+
+
+def integer_json_dumps(value, policy=None, **kwargs):
+    integer_io_observed(policy)
+    return json.dumps(encode_integer_values(value, policy), **kwargs)
+
+
+def _line(record: Mapping[str, Any], integer_io_policy=None) -> bytes:
+    return (integer_json_dumps(record, integer_io_policy, allow_nan=False, separators=(",", ":")) + "\n").encode()
 
 
 def _reject_constant(text: str) -> Any:
@@ -67,7 +155,7 @@ class HistoryWriter:
 
     def __init__(self, path: Path, *, encoding: Encoding, total_output_bytes: int,
                  metadata_reserve_bytes: int = METADATA_RESERVE,
-                 max_record_bytes: int = 1048576) -> None:
+                 max_record_bytes: int = 1048576, integer_io_policy=None) -> None:
         if encoding not in ("raw", "gzip"):
             raise ValueError("encoding must be explicit raw or gzip")
         _integer(total_output_bytes, "total_output_bytes", 1)
@@ -78,6 +166,7 @@ class HistoryWriter:
         self.total_output_bytes = total_output_bytes
         self.metadata_reserve_bytes = metadata_reserve_bytes
         self.max_record_bytes = max_record_bytes
+        self.integer_io_policy = configure_integer_io(integer_io_policy, max_record_bytes)
         self.logical_bytes = self.encoded_bytes = self.records = 0
         self.closed = False
         self.container_complete: bool | None = False if encoding == "gzip" else None
@@ -146,7 +235,8 @@ class HistoryWriter:
         if row.get("kind") == "voltage_lift_interval_charge" and row.get("observation", {}).get("passed") is True:
             values.append(("LastAccepted.json", {"pointer": pointer, "right": row["right"],
                                                 "frame": row["coefficient_frame_identity"]}))
-        plan = [(name, (json.dumps(value, allow_nan=False) + "\n").encode()) for name, value in values]
+        plan = [(name, (integer_json_dumps(value, self.integer_io_policy, allow_nan=False) + "\n").encode())
+                for name, value in values]
         self._admit_publications(plan)
         return plan
 
@@ -178,7 +268,7 @@ class HistoryWriter:
         target = self.path.parent / "FirstFailure.json"
         if target.exists():
             return False
-        data = (json.dumps(value, indent=2, allow_nan=False) + "\n").encode()
+        data = (integer_json_dumps(value, self.integer_io_policy, indent=2, allow_nan=False) + "\n").encode()
         plan = [("FirstFailure.json", data)]
         self._admit(0, finishing=True)
         self._admit_publications(plan)
@@ -193,7 +283,7 @@ class HistoryWriter:
         if self.closed:
             raise ValueError("history writer is closed")
         try:
-            line = _line(record)
+            line = _line(record, self.integer_io_policy)
         except BaseException as error:
             self._fail(error)
             raise
@@ -211,7 +301,9 @@ class HistoryWriter:
                 raise HistoryLimitError("record exceeds byte bound")
             if not line.endswith(b"\n") or line.count(b"\n") != 1:
                 raise ValueError("one complete JSONL record is required")
-            row = json.loads(line, parse_constant=_reject_constant, parse_float=_finite_float)
+            integer_io_observed(self.integer_io_policy)
+            row = decode_integer_values(json.loads(line, parse_constant=_reject_constant,
+                                                   parse_float=_finite_float), self.integer_io_policy)
             if not isinstance(row, dict):
                 raise ValueError("history records must be JSON objects")
             if row.get("kind") == "first_callback_failure":
@@ -318,7 +410,7 @@ class HistoryReader:
     """
 
     def __init__(self, path: Path, *, encoding: Encoding, max_record_bytes: int,
-                 max_logical_bytes: int) -> None:
+                 max_logical_bytes: int, integer_io_policy=None) -> None:
         if encoding not in ("raw", "gzip"):
             raise ValueError("encoding must be explicit raw or gzip")
         _integer(max_record_bytes, "max_record_bytes", 1)
@@ -326,6 +418,7 @@ class HistoryReader:
         self.max_record_bytes = max_record_bytes
         self.max_logical_bytes = max_logical_bytes
         self.encoding = encoding
+        self.integer_io_policy = configure_integer_io(integer_io_policy, max_record_bytes)
         self.logical_bytes = self.complete_lines = 0
         self.eof_seen = False
         self.container_complete: bool | None = False if encoding == "gzip" else None
@@ -369,7 +462,8 @@ class HistoryReader:
         for line in self:
             if line.endswith(b"\n"):
                 try:
-                    yield json.loads(line)
+                    integer_io_observed(self.integer_io_policy)
+                    yield decode_integer_values(json.loads(line), self.integer_io_policy)
                 except ValueError as error:
                     self.error = f"{type(error).__name__}: {error}"
                     raise
