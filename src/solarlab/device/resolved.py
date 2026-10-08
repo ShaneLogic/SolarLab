@@ -16,6 +16,10 @@ import re
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from solarlab.config.legacy_fields import (
+    INLINE_LOADER_BINDING, JV_HINT_CONSUMER_BINDINGS, STANDARD_LOADER_BINDING,
+    retained_legacy_fields,
+)
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.defects import (
     MULTIVALENT_VERSION, METASTABLE_VERSION, LegacyBulkTrapInput,
@@ -620,6 +624,58 @@ class PreparedDevice:
             if name is not None:
                 selected_resources[name] = self.resources.get(name, kind)
         diagnostics = []
+        legacy = model.legacy_fields
+        if legacy is not None:
+            matches = [source for source in sources if source.id == legacy.source_id]
+            if matches and matches[0].sha256 != legacy.source_sha256:
+                raise ValueError("legacy_fields.source_sha256: retained original source binding differs")
+            if matches:
+                original = retained_legacy_fields(matches[0])
+                if original is None or _encode(original.model_dump(mode="json", exclude_unset=True)) != _encode(legacy.model_dump(mode="json", exclude_unset=True)):
+                    raise ValueError("legacy_fields: retained declaration differs from original source bytes")
+            binding = {"id": legacy.source_id, "sha256": legacy.source_sha256,
+                       "bytes_supplied": bool(matches)}
+            common = {"behavior_version": legacy.schema_version, "source_binding": binding,
+                      "scope": "original_import_evidence; current canonical edits remain separate"}
+            if "temperature" in legacy.model_fields_set:
+                diagnostics.append({**common, "code": "legacy_standard_ignored_temperature",
+                    "path": "device.temperature", "declared": legacy.temperature,
+                    "historical_effective": "ignored; only device.T is read",
+                    "effective_setting_T": setting_values["T"],
+                    "T_origin": "input.settings.T" if "T" in model.settings.model_fields_set else "default_catalog.device.T",
+                    "loader_bindings": [{**STANDARD_LOADER_BINDING, "symbol": "load_device_from_yaml"},
+                                        {**INLINE_LOADER_BINDING, "symbol": "stack_from_dict"}],
+                    "required_action": "A temperature alias would require a separate versioned physical correction"})
+            if {"interfaces", "interface_defect_count"} & legacy.model_fields_set:
+                pairs = legacy.interfaces or ()
+                rows = []
+                has_legacy_slots = bool(pairs or legacy.interface_defect_count)
+                adjacencies = zip(legacy.layer_ids, legacy.layer_ids[1:]) if has_legacy_slots else ()
+                for index, (left, right) in enumerate(adjacencies):
+                    pair = pairs[index] if index < len(pairs) else (0.0, 0.0)
+                    rows.append({"raw_index": index, "left": left, "right": right,
+                        "pair_before_defect_override": [normalize_quantity(value, "m/s") for value in pair],
+                        "origin": "supplied_raw_slot" if index < len(pairs) else "legacy_trailing_zero_padding"})
+                diagnostics.append({**common, "code": "legacy_standard_interface_layout",
+                    "path": "device.interfaces", "declared": legacy.model_dump(mode="json", exclude_unset=True),
+                    "historical_effective": rows, "indexing": "full_raw_layer_adjacency_including_substrates",
+                    "historical_return_shape": "full_layer_slots" if has_legacy_slots else "empty_tuples",
+                    "defect_precedence": "a supplied non-null defect overrides its raw pair at the same full-layer index",
+                    "current_interfaces": [interface.to_mapping() for interface in interfaces],
+                    "loader_bindings": [{**STANDARD_LOADER_BINDING, "symbol": "interfaces_from_device_dict"}],
+                    "required_action": "Electrical-only reindexing would require a separate versioned physical correction"})
+        if model.simulation_hints is not None and "jv_sweep" in model.simulation_hints.model_fields_set:
+            hints = model.simulation_hints.jv_sweep
+            diagnostics.append({"code": "legacy_jv_sweep_advisory", "path": "simulation_hints.jv_sweep",
+                "declared": None if hints is None else hints.editing_data(),
+                "normalized_declaration": None if hints is None else hints.normalized_data(),
+                "historical_effective": "pure library run calls do not consume simulation_hints",
+                "workstation_behavior": "J-V pane explicitly copies supplied grid, scan, waveform and tolerance fields into its request controls",
+                "implicit_experiment_created": False, "physical_state_created": False,
+                "source_bindings": [{"id": source.id, "sha256": source.sha256} for source in sources],
+                "loader_bindings": [{**STANDARD_LOADER_BINDING, "symbol": "load_simulation_hints"}],
+                "consumer_bindings": list(JV_HINT_CONSUMER_BINDINGS),
+                "required_action": "Explicitly compose hints with JVExperimentInput to prepare the existing continuous forward/turnaround/reverse history"})
         if model.source_format == "scaps":
             old_default = dict(self.defaults.material)["incoherent"]
             loader = [pair for pair in self.defaults.evidence if pair[0].endswith("scaps_compat/loader.py")]

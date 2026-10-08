@@ -3974,6 +3974,1024 @@ export const configurationSchema = {
             "title": "IntrabandInput",
             "type": "object"
           },
+          "JVDCSettleInput": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Duration S",
+                "unit": "s"
+              },
+              "kind": {
+                "enum": [
+                  "finite_time",
+                  "residual_certified",
+                  "finite_time_with_certificate",
+                  "not_applicable"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_carrier_area_rate_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Carrier Area Rate A M2",
+                "unit": "A/m^2"
+              },
+              "max_face_current_spread_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Face Current Spread A M2",
+                "unit": "A/m^2"
+              },
+              "max_ion_area_rate_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Ion Area Rate A M2",
+                "unit": "A/m^2"
+              },
+              "max_ionic_face_current_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Ionic Face Current A M2",
+                "unit": "A/m^2"
+              }
+            },
+            "required": [
+              "kind",
+              "duration_s",
+              "max_carrier_area_rate_A_m2",
+              "max_ion_area_rate_A_m2",
+              "max_ionic_face_current_A_m2",
+              "max_face_current_spread_A_m2"
+            ],
+            "title": "JVDCSettleInput",
+            "type": "object"
+          },
+          "JVIlluminationStepInput": {
+            "additionalProperties": false,
+            "properties": {
+              "condition": {
+                "enum": [
+                  "dark",
+                  "baseline",
+                  "scaled",
+                  "monochromatic",
+                  "pulse"
+                ],
+                "title": "Condition",
+                "type": "string"
+              },
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Duration S",
+                "unit": "s"
+              },
+              "intensity_suns": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Intensity Suns",
+                "unit": "1"
+              },
+              "phase": {
+                "minLength": 1,
+                "title": "Phase",
+                "type": "string"
+              },
+              "photon_flux_m2_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Photon Flux M2 S",
+                "unit": "m^-2/s"
+              },
+              "relative_generation_change": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "Relative Generation Change",
+                "unit": "1"
+              },
+              "source_reference": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Reference"
+              }
+            },
+            "required": [
+              "phase",
+              "condition",
+              "duration_s",
+              "intensity_suns",
+              "photon_flux_m2_s",
+              "relative_generation_change",
+              "source_reference"
+            ],
+            "title": "JVIlluminationStepInput",
+            "type": "object"
+          },
+          "JVProtocolInput": {
+            "additionalProperties": false,
+            "description": "The existing ExperimentProtocol fields for its J-V branch only.",
+            "properties": {
+              "ac_excitation": {
+                "title": "Ac Excitation",
+                "type": "null"
+              },
+              "dc_settle": {
+                "$ref": "#/$defs/JVDCSettleInput"
+              },
+              "dwell_duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Dwell Duration S",
+                "unit": "s"
+              },
+              "experiment": {
+                "const": "jv_hysteresis",
+                "title": "Experiment",
+                "type": "string"
+              },
+              "illumination_history": {
+                "items": {
+                  "$ref": "#/$defs/JVIlluminationStepInput"
+                },
+                "minItems": 1,
+                "title": "Illumination History",
+                "type": "array"
+              },
+              "implicit_legacy_protocol": {
+                "title": "Implicit Legacy Protocol",
+                "type": "boolean"
+              },
+              "initial_state_source": {
+                "enum": [
+                  "dark_equilibrium",
+                  "dark_equilibrium_each_sample",
+                  "finite_time_illuminated_preconditioned",
+                  "finite_time_dc_preconditioned",
+                  "qf_dc_candidate",
+                  "user_supplied_state"
+                ],
+                "title": "Initial State Source",
+                "type": "string"
+              },
+              "pre_bias_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "Pre Bias V",
+                "unit": "V"
+              },
+              "sampling": {
+                "$ref": "#/$defs/JVSamplingInput"
+              },
+              "scan": {
+                "$ref": "#/$defs/JVScanInput"
+              },
+              "schema_version": {
+                "const": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "soak_duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Soak Duration S",
+                "unit": "s"
+              },
+              "temperature_K": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Temperature K",
+                "unit": "K"
+              },
+              "voc_search": {
+                "title": "Voc Search",
+                "type": "null"
+              }
+            },
+            "required": [
+              "experiment",
+              "initial_state_source",
+              "pre_bias_V",
+              "soak_duration_s",
+              "dwell_duration_s",
+              "illumination_history",
+              "temperature_K",
+              "scan",
+              "ac_excitation",
+              "dc_settle",
+              "sampling",
+              "voc_search",
+              "implicit_legacy_protocol",
+              "schema_version"
+            ],
+            "title": "JVProtocolInput",
+            "type": "object"
+          },
+          "JVSamplingInput": {
+            "additionalProperties": false,
+            "properties": {
+              "axis": {
+                "const": "voltage_V",
+                "title": "Axis",
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "linear",
+                  "log",
+                  "declared",
+                  "piecewise_linear"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "values": {
+                "item_input_unit": null,
+                "item_positive": false,
+                "item_unit": "V",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "minItems": 1,
+                "title": "Values",
+                "type": "array"
+              }
+            },
+            "required": [
+              "axis",
+              "mode",
+              "values"
+            ],
+            "title": "JVSamplingInput",
+            "type": "object"
+          },
+          "JVScanInput": {
+            "additionalProperties": false,
+            "properties": {
+              "axis": {
+                "const": "voltage_V",
+                "title": "Axis",
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "ascending",
+                  "descending",
+                  "ascending_then_descending",
+                  "declared_order",
+                  "forward_time"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
+              "rate_V_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Rate V S",
+                "unit": "V/s"
+              },
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Start",
+                "unit": "V"
+              },
+              "stop": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Stop",
+                "unit": "V"
+              }
+            },
+            "required": [
+              "axis",
+              "direction",
+              "start",
+              "stop",
+              "rate_V_s"
+            ],
+            "title": "JVScanInput",
+            "type": "object"
+          },
+          "JVSweepHintsInput": {
+            "additionalProperties": false,
+            "description": "Supplied advisory fields, without an endpoint or implied execution.\n\nUnknown fields reject rather than disappear. A caller must explicitly\ncompose these fields with JVInput to request protocol preparation.",
+            "properties": {
+              "N_grid": {
+                "anyOf": [
+                  {
+                    "minimum": 3,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Requested electrical grid allocation"
+              },
+              "V_max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "V Max",
+                "unit": "V"
+              },
+              "experiment_protocol": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVProtocolInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "iface_states": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Iface States"
+              },
+              "illuminated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Illuminated"
+              },
+              "interface_boundary": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Boundary"
+              },
+              "interface_transport_model": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ],
+                "title": "Interface Transport Model"
+              },
+              "n_points": {
+                "anyOf": [
+                  {
+                    "minimum": 2,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Samples per branch"
+              },
+              "protocol_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compatibility",
+                      "research_strict"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Protocol Mode"
+              },
+              "solver": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "transient",
+                      "steady_state",
+                      "quasi_fermi"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Solver"
+              },
+              "v_rate": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Rate",
+                "unit": "V/s"
+              },
+              "waveform": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "waveform_controls": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformControlsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "title": "JVSweepHintsInput",
+            "type": "object"
+          },
+          "JVWaveformControlsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "atol_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Atol M3",
+                "unit": "m^-3"
+              },
+              "rtol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Rtol",
+                "unit": "1"
+              }
+            },
+            "required": [
+              "rtol",
+              "atol_m3"
+            ],
+            "title": "JVWaveformControlsInput",
+            "type": "object"
+          },
+          "JVWaveformInput": {
+            "additionalProperties": false,
+            "description": "All eight fields of JVWaveform.from_dict are explicit, including null.",
+            "properties": {
+              "branch_dwell_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Branch Dwell S",
+                "unit": "s"
+              },
+              "dark_prep_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Dark Prep S",
+                "unit": "s"
+              },
+              "dark_seed_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Dark Seed S",
+                "unit": "s"
+              },
+              "schema_version": {
+                "const": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "start_voltage_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Start Voltage V",
+                "unit": "V"
+              },
+              "turnaround_dark": {
+                "title": "Turnaround Dark",
+                "type": "boolean"
+              },
+              "turnaround_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Turnaround S",
+                "unit": "s"
+              },
+              "uniform_generation_rate_m3_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Uniform Generation Rate M3 S",
+                "unit": "m^-3/s"
+              }
+            },
+            "required": [
+              "schema_version",
+              "start_voltage_V",
+              "dark_seed_s",
+              "dark_prep_s",
+              "branch_dwell_s",
+              "turnaround_s",
+              "turnaround_dark",
+              "uniform_generation_rate_m3_s"
+            ],
+            "title": "JVWaveformInput",
+            "type": "object"
+          },
           "KineticsInput": {
             "additionalProperties": false,
             "properties": {
@@ -4247,6 +5265,111 @@ export const configurationSchema = {
               "charge_transition"
             ],
             "title": "LegacyBulkTrapInput",
+            "type": "object"
+          },
+          "LegacyDeviceFieldsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "interface_defect_count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interface Defect Count"
+              },
+              "interfaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interfaces"
+              },
+              "layer_ids": {
+                "items": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                  "type": "string"
+                },
+                "title": "Layer Ids",
+                "type": "array"
+              },
+              "schema_version": {
+                "const": "solarlab.standard-loader-fields.v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "source_id": {
+                "minLength": 1,
+                "title": "Source Id",
+                "type": "string"
+              },
+              "source_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Source Sha256",
+                "type": "string"
+              },
+              "temperature": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Temperature"
+              }
+            },
+            "required": [
+              "schema_version",
+              "source_id",
+              "source_sha256",
+              "layer_ids"
+            ],
+            "title": "LegacyDeviceFieldsInput",
             "type": "object"
           },
           "MetastableConversionInput": {
@@ -5145,6 +6268,16 @@ export const configurationSchema = {
           "SimulationHintsInput": {
             "additionalProperties": false,
             "properties": {
+              "jv_sweep": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVSweepHintsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "min_N_grid": {
                 "anyOf": [
                   {
@@ -5385,6 +6518,16 @@ export const configurationSchema = {
             },
             "title": "Layers",
             "type": "array"
+          },
+          "legacy_fields": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LegacyDeviceFieldsInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "materials": {
             "default": [],
@@ -11744,6 +12887,16 @@ export const configurationSchema = {
                 "title": "Layers",
                 "type": "array"
               },
+              "legacy_fields": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LegacyDeviceFieldsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "materials": {
                 "default": [],
                 "items": {
@@ -15362,6 +16515,169 @@ export const configurationSchema = {
             "title": "JVScanInput",
             "type": "object"
           },
+          "JVSweepHintsInput": {
+            "additionalProperties": false,
+            "description": "Supplied advisory fields, without an endpoint or implied execution.\n\nUnknown fields reject rather than disappear. A caller must explicitly\ncompose these fields with JVInput to request protocol preparation.",
+            "properties": {
+              "N_grid": {
+                "anyOf": [
+                  {
+                    "minimum": 3,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Requested electrical grid allocation"
+              },
+              "V_max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "V Max",
+                "unit": "V"
+              },
+              "experiment_protocol": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVProtocolInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "iface_states": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Iface States"
+              },
+              "illuminated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Illuminated"
+              },
+              "interface_boundary": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Boundary"
+              },
+              "interface_transport_model": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ],
+                "title": "Interface Transport Model"
+              },
+              "n_points": {
+                "anyOf": [
+                  {
+                    "minimum": 2,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Samples per branch"
+              },
+              "protocol_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compatibility",
+                      "research_strict"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Protocol Mode"
+              },
+              "solver": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "transient",
+                      "steady_state",
+                      "quasi_fermi"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Solver"
+              },
+              "v_rate": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Rate",
+                "unit": "V/s"
+              },
+              "waveform": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "waveform_controls": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformControlsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "title": "JVSweepHintsInput",
+            "type": "object"
+          },
           "JVWaveformControlsInput": {
             "additionalProperties": false,
             "properties": {
@@ -15860,6 +17176,111 @@ export const configurationSchema = {
               "charge_transition"
             ],
             "title": "LegacyBulkTrapInput",
+            "type": "object"
+          },
+          "LegacyDeviceFieldsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "interface_defect_count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interface Defect Count"
+              },
+              "interfaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interfaces"
+              },
+              "layer_ids": {
+                "items": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                  "type": "string"
+                },
+                "title": "Layer Ids",
+                "type": "array"
+              },
+              "schema_version": {
+                "const": "solarlab.standard-loader-fields.v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "source_id": {
+                "minLength": 1,
+                "title": "Source Id",
+                "type": "string"
+              },
+              "source_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Source Sha256",
+                "type": "string"
+              },
+              "temperature": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Temperature"
+              }
+            },
+            "required": [
+              "schema_version",
+              "source_id",
+              "source_sha256",
+              "layer_ids"
+            ],
+            "title": "LegacyDeviceFieldsInput",
             "type": "object"
           },
           "MetastableConversionInput": {
@@ -16758,6 +18179,16 @@ export const configurationSchema = {
           "SimulationHintsInput": {
             "additionalProperties": false,
             "properties": {
+              "jv_sweep": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVSweepHintsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "min_N_grid": {
                 "anyOf": [
                   {
@@ -21555,6 +22986,16 @@ export const configurationSchema = {
                 "title": "Layers",
                 "type": "array"
               },
+              "legacy_fields": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LegacyDeviceFieldsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "materials": {
                 "default": [],
                 "items": {
@@ -25627,6 +27068,1024 @@ export const configurationSchema = {
             "title": "JV2DProtocolInput",
             "type": "object"
           },
+          "JVDCSettleInput": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Duration S",
+                "unit": "s"
+              },
+              "kind": {
+                "enum": [
+                  "finite_time",
+                  "residual_certified",
+                  "finite_time_with_certificate",
+                  "not_applicable"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_carrier_area_rate_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Carrier Area Rate A M2",
+                "unit": "A/m^2"
+              },
+              "max_face_current_spread_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Face Current Spread A M2",
+                "unit": "A/m^2"
+              },
+              "max_ion_area_rate_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Ion Area Rate A M2",
+                "unit": "A/m^2"
+              },
+              "max_ionic_face_current_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Ionic Face Current A M2",
+                "unit": "A/m^2"
+              }
+            },
+            "required": [
+              "kind",
+              "duration_s",
+              "max_carrier_area_rate_A_m2",
+              "max_ion_area_rate_A_m2",
+              "max_ionic_face_current_A_m2",
+              "max_face_current_spread_A_m2"
+            ],
+            "title": "JVDCSettleInput",
+            "type": "object"
+          },
+          "JVIlluminationStepInput": {
+            "additionalProperties": false,
+            "properties": {
+              "condition": {
+                "enum": [
+                  "dark",
+                  "baseline",
+                  "scaled",
+                  "monochromatic",
+                  "pulse"
+                ],
+                "title": "Condition",
+                "type": "string"
+              },
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Duration S",
+                "unit": "s"
+              },
+              "intensity_suns": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Intensity Suns",
+                "unit": "1"
+              },
+              "phase": {
+                "minLength": 1,
+                "title": "Phase",
+                "type": "string"
+              },
+              "photon_flux_m2_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Photon Flux M2 S",
+                "unit": "m^-2/s"
+              },
+              "relative_generation_change": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "Relative Generation Change",
+                "unit": "1"
+              },
+              "source_reference": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Reference"
+              }
+            },
+            "required": [
+              "phase",
+              "condition",
+              "duration_s",
+              "intensity_suns",
+              "photon_flux_m2_s",
+              "relative_generation_change",
+              "source_reference"
+            ],
+            "title": "JVIlluminationStepInput",
+            "type": "object"
+          },
+          "JVProtocolInput": {
+            "additionalProperties": false,
+            "description": "The existing ExperimentProtocol fields for its J-V branch only.",
+            "properties": {
+              "ac_excitation": {
+                "title": "Ac Excitation",
+                "type": "null"
+              },
+              "dc_settle": {
+                "$ref": "#/$defs/JVDCSettleInput"
+              },
+              "dwell_duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Dwell Duration S",
+                "unit": "s"
+              },
+              "experiment": {
+                "const": "jv_hysteresis",
+                "title": "Experiment",
+                "type": "string"
+              },
+              "illumination_history": {
+                "items": {
+                  "$ref": "#/$defs/JVIlluminationStepInput"
+                },
+                "minItems": 1,
+                "title": "Illumination History",
+                "type": "array"
+              },
+              "implicit_legacy_protocol": {
+                "title": "Implicit Legacy Protocol",
+                "type": "boolean"
+              },
+              "initial_state_source": {
+                "enum": [
+                  "dark_equilibrium",
+                  "dark_equilibrium_each_sample",
+                  "finite_time_illuminated_preconditioned",
+                  "finite_time_dc_preconditioned",
+                  "qf_dc_candidate",
+                  "user_supplied_state"
+                ],
+                "title": "Initial State Source",
+                "type": "string"
+              },
+              "pre_bias_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "Pre Bias V",
+                "unit": "V"
+              },
+              "sampling": {
+                "$ref": "#/$defs/JVSamplingInput"
+              },
+              "scan": {
+                "$ref": "#/$defs/JVScanInput"
+              },
+              "schema_version": {
+                "const": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "soak_duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Soak Duration S",
+                "unit": "s"
+              },
+              "temperature_K": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Temperature K",
+                "unit": "K"
+              },
+              "voc_search": {
+                "title": "Voc Search",
+                "type": "null"
+              }
+            },
+            "required": [
+              "experiment",
+              "initial_state_source",
+              "pre_bias_V",
+              "soak_duration_s",
+              "dwell_duration_s",
+              "illumination_history",
+              "temperature_K",
+              "scan",
+              "ac_excitation",
+              "dc_settle",
+              "sampling",
+              "voc_search",
+              "implicit_legacy_protocol",
+              "schema_version"
+            ],
+            "title": "JVProtocolInput",
+            "type": "object"
+          },
+          "JVSamplingInput": {
+            "additionalProperties": false,
+            "properties": {
+              "axis": {
+                "const": "voltage_V",
+                "title": "Axis",
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "linear",
+                  "log",
+                  "declared",
+                  "piecewise_linear"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "values": {
+                "item_input_unit": null,
+                "item_positive": false,
+                "item_unit": "V",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "minItems": 1,
+                "title": "Values",
+                "type": "array"
+              }
+            },
+            "required": [
+              "axis",
+              "mode",
+              "values"
+            ],
+            "title": "JVSamplingInput",
+            "type": "object"
+          },
+          "JVScanInput": {
+            "additionalProperties": false,
+            "properties": {
+              "axis": {
+                "const": "voltage_V",
+                "title": "Axis",
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "ascending",
+                  "descending",
+                  "ascending_then_descending",
+                  "declared_order",
+                  "forward_time"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
+              "rate_V_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Rate V S",
+                "unit": "V/s"
+              },
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Start",
+                "unit": "V"
+              },
+              "stop": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Stop",
+                "unit": "V"
+              }
+            },
+            "required": [
+              "axis",
+              "direction",
+              "start",
+              "stop",
+              "rate_V_s"
+            ],
+            "title": "JVScanInput",
+            "type": "object"
+          },
+          "JVSweepHintsInput": {
+            "additionalProperties": false,
+            "description": "Supplied advisory fields, without an endpoint or implied execution.\n\nUnknown fields reject rather than disappear. A caller must explicitly\ncompose these fields with JVInput to request protocol preparation.",
+            "properties": {
+              "N_grid": {
+                "anyOf": [
+                  {
+                    "minimum": 3,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Requested electrical grid allocation"
+              },
+              "V_max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "V Max",
+                "unit": "V"
+              },
+              "experiment_protocol": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVProtocolInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "iface_states": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Iface States"
+              },
+              "illuminated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Illuminated"
+              },
+              "interface_boundary": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Boundary"
+              },
+              "interface_transport_model": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ],
+                "title": "Interface Transport Model"
+              },
+              "n_points": {
+                "anyOf": [
+                  {
+                    "minimum": 2,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Samples per branch"
+              },
+              "protocol_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compatibility",
+                      "research_strict"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Protocol Mode"
+              },
+              "solver": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "transient",
+                      "steady_state",
+                      "quasi_fermi"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Solver"
+              },
+              "v_rate": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Rate",
+                "unit": "V/s"
+              },
+              "waveform": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "waveform_controls": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformControlsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "title": "JVSweepHintsInput",
+            "type": "object"
+          },
+          "JVWaveformControlsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "atol_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Atol M3",
+                "unit": "m^-3"
+              },
+              "rtol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Rtol",
+                "unit": "1"
+              }
+            },
+            "required": [
+              "rtol",
+              "atol_m3"
+            ],
+            "title": "JVWaveformControlsInput",
+            "type": "object"
+          },
+          "JVWaveformInput": {
+            "additionalProperties": false,
+            "description": "All eight fields of JVWaveform.from_dict are explicit, including null.",
+            "properties": {
+              "branch_dwell_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Branch Dwell S",
+                "unit": "s"
+              },
+              "dark_prep_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Dark Prep S",
+                "unit": "s"
+              },
+              "dark_seed_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Dark Seed S",
+                "unit": "s"
+              },
+              "schema_version": {
+                "const": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "start_voltage_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Start Voltage V",
+                "unit": "V"
+              },
+              "turnaround_dark": {
+                "title": "Turnaround Dark",
+                "type": "boolean"
+              },
+              "turnaround_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Turnaround S",
+                "unit": "s"
+              },
+              "uniform_generation_rate_m3_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Uniform Generation Rate M3 S",
+                "unit": "m^-3/s"
+              }
+            },
+            "required": [
+              "schema_version",
+              "start_voltage_V",
+              "dark_seed_s",
+              "dark_prep_s",
+              "branch_dwell_s",
+              "turnaround_s",
+              "turnaround_dark",
+              "uniform_generation_rate_m3_s"
+            ],
+            "title": "JVWaveformInput",
+            "type": "object"
+          },
           "KineticsInput": {
             "additionalProperties": false,
             "properties": {
@@ -25900,6 +28359,111 @@ export const configurationSchema = {
               "charge_transition"
             ],
             "title": "LegacyBulkTrapInput",
+            "type": "object"
+          },
+          "LegacyDeviceFieldsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "interface_defect_count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interface Defect Count"
+              },
+              "interfaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interfaces"
+              },
+              "layer_ids": {
+                "items": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                  "type": "string"
+                },
+                "title": "Layer Ids",
+                "type": "array"
+              },
+              "schema_version": {
+                "const": "solarlab.standard-loader-fields.v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "source_id": {
+                "minLength": 1,
+                "title": "Source Id",
+                "type": "string"
+              },
+              "source_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Source Sha256",
+                "type": "string"
+              },
+              "temperature": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Temperature"
+              }
+            },
+            "required": [
+              "schema_version",
+              "source_id",
+              "source_sha256",
+              "layer_ids"
+            ],
+            "title": "LegacyDeviceFieldsInput",
             "type": "object"
           },
           "MetastableConversionInput": {
@@ -26813,6 +29377,16 @@ export const configurationSchema = {
           "SimulationHintsInput": {
             "additionalProperties": false,
             "properties": {
+              "jv_sweep": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVSweepHintsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "min_N_grid": {
                 "anyOf": [
                   {
@@ -27715,6 +30289,16 @@ export const configurationSchema = {
                 },
                 "title": "Layers",
                 "type": "array"
+              },
+              "legacy_fields": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LegacyDeviceFieldsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "materials": {
                 "default": [],
@@ -31371,6 +33955,169 @@ export const configurationSchema = {
             "title": "JVScanInput",
             "type": "object"
           },
+          "JVSweepHintsInput": {
+            "additionalProperties": false,
+            "description": "Supplied advisory fields, without an endpoint or implied execution.\n\nUnknown fields reject rather than disappear. A caller must explicitly\ncompose these fields with JVInput to request protocol preparation.",
+            "properties": {
+              "N_grid": {
+                "anyOf": [
+                  {
+                    "minimum": 3,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Requested electrical grid allocation"
+              },
+              "V_max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "V Max",
+                "unit": "V"
+              },
+              "experiment_protocol": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVProtocolInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "iface_states": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Iface States"
+              },
+              "illuminated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Illuminated"
+              },
+              "interface_boundary": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Boundary"
+              },
+              "interface_transport_model": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ],
+                "title": "Interface Transport Model"
+              },
+              "n_points": {
+                "anyOf": [
+                  {
+                    "minimum": 2,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Samples per branch"
+              },
+              "protocol_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compatibility",
+                      "research_strict"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Protocol Mode"
+              },
+              "solver": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "transient",
+                      "steady_state",
+                      "quasi_fermi"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Solver"
+              },
+              "v_rate": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Rate",
+                "unit": "V/s"
+              },
+              "waveform": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "waveform_controls": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformControlsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "title": "JVSweepHintsInput",
+            "type": "object"
+          },
           "JVWaveformControlsInput": {
             "additionalProperties": false,
             "properties": {
@@ -31869,6 +34616,111 @@ export const configurationSchema = {
               "charge_transition"
             ],
             "title": "LegacyBulkTrapInput",
+            "type": "object"
+          },
+          "LegacyDeviceFieldsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "interface_defect_count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interface Defect Count"
+              },
+              "interfaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interfaces"
+              },
+              "layer_ids": {
+                "items": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                  "type": "string"
+                },
+                "title": "Layer Ids",
+                "type": "array"
+              },
+              "schema_version": {
+                "const": "solarlab.standard-loader-fields.v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "source_id": {
+                "minLength": 1,
+                "title": "Source Id",
+                "type": "string"
+              },
+              "source_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Source Sha256",
+                "type": "string"
+              },
+              "temperature": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Temperature"
+              }
+            },
+            "required": [
+              "schema_version",
+              "source_id",
+              "source_sha256",
+              "layer_ids"
+            ],
+            "title": "LegacyDeviceFieldsInput",
             "type": "object"
           },
           "MetastableConversionInput": {
@@ -32767,6 +35619,16 @@ export const configurationSchema = {
           "SimulationHintsInput": {
             "additionalProperties": false,
             "properties": {
+              "jv_sweep": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVSweepHintsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "min_N_grid": {
                 "anyOf": [
                   {
@@ -33874,6 +36736,16 @@ export const configurationSchema = {
                 },
                 "title": "Layers",
                 "type": "array"
+              },
+              "legacy_fields": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LegacyDeviceFieldsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "materials": {
                 "default": [],
@@ -36684,6 +39556,1024 @@ export const configurationSchema = {
             "title": "IntrabandInput",
             "type": "object"
           },
+          "JVDCSettleInput": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Duration S",
+                "unit": "s"
+              },
+              "kind": {
+                "enum": [
+                  "finite_time",
+                  "residual_certified",
+                  "finite_time_with_certificate",
+                  "not_applicable"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_carrier_area_rate_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Carrier Area Rate A M2",
+                "unit": "A/m^2"
+              },
+              "max_face_current_spread_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Face Current Spread A M2",
+                "unit": "A/m^2"
+              },
+              "max_ion_area_rate_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Ion Area Rate A M2",
+                "unit": "A/m^2"
+              },
+              "max_ionic_face_current_A_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Max Ionic Face Current A M2",
+                "unit": "A/m^2"
+              }
+            },
+            "required": [
+              "kind",
+              "duration_s",
+              "max_carrier_area_rate_A_m2",
+              "max_ion_area_rate_A_m2",
+              "max_ionic_face_current_A_m2",
+              "max_face_current_spread_A_m2"
+            ],
+            "title": "JVDCSettleInput",
+            "type": "object"
+          },
+          "JVIlluminationStepInput": {
+            "additionalProperties": false,
+            "properties": {
+              "condition": {
+                "enum": [
+                  "dark",
+                  "baseline",
+                  "scaled",
+                  "monochromatic",
+                  "pulse"
+                ],
+                "title": "Condition",
+                "type": "string"
+              },
+              "duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Duration S",
+                "unit": "s"
+              },
+              "intensity_suns": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Intensity Suns",
+                "unit": "1"
+              },
+              "phase": {
+                "minLength": 1,
+                "title": "Phase",
+                "type": "string"
+              },
+              "photon_flux_m2_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Photon Flux M2 S",
+                "unit": "m^-2/s"
+              },
+              "relative_generation_change": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "Relative Generation Change",
+                "unit": "1"
+              },
+              "source_reference": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Reference"
+              }
+            },
+            "required": [
+              "phase",
+              "condition",
+              "duration_s",
+              "intensity_suns",
+              "photon_flux_m2_s",
+              "relative_generation_change",
+              "source_reference"
+            ],
+            "title": "JVIlluminationStepInput",
+            "type": "object"
+          },
+          "JVProtocolInput": {
+            "additionalProperties": false,
+            "description": "The existing ExperimentProtocol fields for its J-V branch only.",
+            "properties": {
+              "ac_excitation": {
+                "title": "Ac Excitation",
+                "type": "null"
+              },
+              "dc_settle": {
+                "$ref": "#/$defs/JVDCSettleInput"
+              },
+              "dwell_duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Dwell Duration S",
+                "unit": "s"
+              },
+              "experiment": {
+                "const": "jv_hysteresis",
+                "title": "Experiment",
+                "type": "string"
+              },
+              "illumination_history": {
+                "items": {
+                  "$ref": "#/$defs/JVIlluminationStepInput"
+                },
+                "minItems": 1,
+                "title": "Illumination History",
+                "type": "array"
+              },
+              "implicit_legacy_protocol": {
+                "title": "Implicit Legacy Protocol",
+                "type": "boolean"
+              },
+              "initial_state_source": {
+                "enum": [
+                  "dark_equilibrium",
+                  "dark_equilibrium_each_sample",
+                  "finite_time_illuminated_preconditioned",
+                  "finite_time_dc_preconditioned",
+                  "qf_dc_candidate",
+                  "user_supplied_state"
+                ],
+                "title": "Initial State Source",
+                "type": "string"
+              },
+              "pre_bias_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "Pre Bias V",
+                "unit": "V"
+              },
+              "sampling": {
+                "$ref": "#/$defs/JVSamplingInput"
+              },
+              "scan": {
+                "$ref": "#/$defs/JVScanInput"
+              },
+              "schema_version": {
+                "const": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "soak_duration_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Soak Duration S",
+                "unit": "s"
+              },
+              "temperature_K": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Temperature K",
+                "unit": "K"
+              },
+              "voc_search": {
+                "title": "Voc Search",
+                "type": "null"
+              }
+            },
+            "required": [
+              "experiment",
+              "initial_state_source",
+              "pre_bias_V",
+              "soak_duration_s",
+              "dwell_duration_s",
+              "illumination_history",
+              "temperature_K",
+              "scan",
+              "ac_excitation",
+              "dc_settle",
+              "sampling",
+              "voc_search",
+              "implicit_legacy_protocol",
+              "schema_version"
+            ],
+            "title": "JVProtocolInput",
+            "type": "object"
+          },
+          "JVSamplingInput": {
+            "additionalProperties": false,
+            "properties": {
+              "axis": {
+                "const": "voltage_V",
+                "title": "Axis",
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "linear",
+                  "log",
+                  "declared",
+                  "piecewise_linear"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "values": {
+                "item_input_unit": null,
+                "item_positive": false,
+                "item_unit": "V",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "minItems": 1,
+                "title": "Values",
+                "type": "array"
+              }
+            },
+            "required": [
+              "axis",
+              "mode",
+              "values"
+            ],
+            "title": "JVSamplingInput",
+            "type": "object"
+          },
+          "JVScanInput": {
+            "additionalProperties": false,
+            "properties": {
+              "axis": {
+                "const": "voltage_V",
+                "title": "Axis",
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "ascending",
+                  "descending",
+                  "ascending_then_descending",
+                  "declared_order",
+                  "forward_time"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
+              "rate_V_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Rate V S",
+                "unit": "V/s"
+              },
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Start",
+                "unit": "V"
+              },
+              "stop": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Stop",
+                "unit": "V"
+              }
+            },
+            "required": [
+              "axis",
+              "direction",
+              "start",
+              "stop",
+              "rate_V_s"
+            ],
+            "title": "JVScanInput",
+            "type": "object"
+          },
+          "JVSweepHintsInput": {
+            "additionalProperties": false,
+            "description": "Supplied advisory fields, without an endpoint or implied execution.\n\nUnknown fields reject rather than disappear. A caller must explicitly\ncompose these fields with JVInput to request protocol preparation.",
+            "properties": {
+              "N_grid": {
+                "anyOf": [
+                  {
+                    "minimum": 3,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Requested electrical grid allocation"
+              },
+              "V_max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "V Max",
+                "unit": "V"
+              },
+              "experiment_protocol": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVProtocolInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "iface_states": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Iface States"
+              },
+              "illuminated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Illuminated"
+              },
+              "interface_boundary": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Boundary"
+              },
+              "interface_transport_model": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                ],
+                "title": "Interface Transport Model"
+              },
+              "n_points": {
+                "anyOf": [
+                  {
+                    "minimum": 2,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Samples per branch"
+              },
+              "protocol_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compatibility",
+                      "research_strict"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Protocol Mode"
+              },
+              "solver": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "transient",
+                      "steady_state",
+                      "quasi_fermi"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Solver"
+              },
+              "v_rate": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Rate",
+                "unit": "V/s"
+              },
+              "waveform": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "waveform_controls": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVWaveformControlsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "title": "JVSweepHintsInput",
+            "type": "object"
+          },
+          "JVWaveformControlsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "atol_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Atol M3",
+                "unit": "m^-3"
+              },
+              "rtol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Rtol",
+                "unit": "1"
+              }
+            },
+            "required": [
+              "rtol",
+              "atol_m3"
+            ],
+            "title": "JVWaveformControlsInput",
+            "type": "object"
+          },
+          "JVWaveformInput": {
+            "additionalProperties": false,
+            "description": "All eight fields of JVWaveform.from_dict are explicit, including null.",
+            "properties": {
+              "branch_dwell_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Branch Dwell S",
+                "unit": "s"
+              },
+              "dark_prep_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Dark Prep S",
+                "unit": "s"
+              },
+              "dark_seed_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Dark Seed S",
+                "unit": "s"
+              },
+              "schema_version": {
+                "const": 1,
+                "title": "Schema Version",
+                "type": "integer"
+              },
+              "start_voltage_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Start Voltage V",
+                "unit": "V"
+              },
+              "turnaround_dark": {
+                "title": "Turnaround Dark",
+                "type": "boolean"
+              },
+              "turnaround_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Turnaround S",
+                "unit": "s"
+              },
+              "uniform_generation_rate_m3_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Uniform Generation Rate M3 S",
+                "unit": "m^-3/s"
+              }
+            },
+            "required": [
+              "schema_version",
+              "start_voltage_V",
+              "dark_seed_s",
+              "dark_prep_s",
+              "branch_dwell_s",
+              "turnaround_s",
+              "turnaround_dark",
+              "uniform_generation_rate_m3_s"
+            ],
+            "title": "JVWaveformInput",
+            "type": "object"
+          },
           "KineticsInput": {
             "additionalProperties": false,
             "properties": {
@@ -36957,6 +40847,111 @@ export const configurationSchema = {
               "charge_transition"
             ],
             "title": "LegacyBulkTrapInput",
+            "type": "object"
+          },
+          "LegacyDeviceFieldsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "interface_defect_count": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interface Defect Count"
+              },
+              "interfaces": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                            "type": "string"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Interfaces"
+              },
+              "layer_ids": {
+                "items": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                  "type": "string"
+                },
+                "title": "Layer Ids",
+                "type": "array"
+              },
+              "schema_version": {
+                "const": "solarlab.standard-loader-fields.v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "source_id": {
+                "minLength": 1,
+                "title": "Source Id",
+                "type": "string"
+              },
+              "source_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Source Sha256",
+                "type": "string"
+              },
+              "temperature": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Temperature"
+              }
+            },
+            "required": [
+              "schema_version",
+              "source_id",
+              "source_sha256",
+              "layer_ids"
+            ],
+            "title": "LegacyDeviceFieldsInput",
             "type": "object"
           },
           "MetastableConversionInput": {
@@ -37911,6 +41906,16 @@ export const configurationSchema = {
           "SimulationHintsInput": {
             "additionalProperties": false,
             "properties": {
+              "jv_sweep": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JVSweepHintsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "min_N_grid": {
                 "anyOf": [
                   {
@@ -40598,6 +44603,6 @@ export const configurationSchema = {
   }
 } as const;
 
-export const configurationSchemaSha256 = "7a2bd95729db593b711d0f159d975761aa1011f7459f9de77dee3d12a69e715f";
+export const configurationSchemaSha256 = "a0b73b195ca16396bc1492c6eb178506770421e6e4892731f9f2053ec974b6c4";
 
 export type ConfigurationSchemaMetadata = typeof configurationSchema;

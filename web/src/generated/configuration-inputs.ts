@@ -155,7 +155,7 @@ export declare namespace ContactInputDefinitions {
 export type ContactInput = ContactInputDefinitions.ContactInput;
 
 // Source DTO: solarlab.device.inputs:DeviceInput
-// Schema SHA-256 (JSON.stringify): 0fdb91de3751c9c7bac87febe6ab1afe41154963e110cd03c0542bd2fc657dec
+// Schema SHA-256 (JSON.stringify): ad4c6a7fca7153fb6e3445effe564a61809c81c33674f9035bbd2fd2bde32ee5
 export declare namespace DeviceInputDefinitions {
   export type SN = (number | string | null) | null;
   export type SP = (number | string | null) | null;
@@ -375,11 +375,19 @@ export declare namespace DeviceInputDefinitions {
   export type ScapsDefectMetadata = ScapsDefectMetadataInput[];
   export type Thickness = number | string;
   export type Layers = FullLayerInput[];
+  export type InterfaceDefectCount = number | null;
+  export type Interfaces1 =
+    [number | number | string | string, number | number | string | string][] | null;
+  export type LayerIds1 = string[];
+  export type SchemaVersion2 = 'solarlab.standard-loader-fields.v1';
+  export type SourceId = string;
+  export type SourceSha256 = string;
+  export type Temperature = number | string | boolean | null;
   export type Id9 = string;
   export type Name4 = string;
   export type Materials = NamedMaterialInput[];
   export type Name5 = string | null;
-  export type SchemaVersion2 = 'solarlab.device-preparation.v1';
+  export type SchemaVersion3 = 'solarlab.device-preparation.v1';
   export type Phi = number | string;
   export type T = number | string;
   export type VBi = number | string;
@@ -409,6 +417,72 @@ export declare namespace DeviceInputDefinitions {
   export type TunnelMassEff = number | string;
   export type WorkFunctionLeftEv = (number | string | null) | null;
   export type WorkFunctionRightEv = (number | string | null) | null;
+  export type RequestedElectricalGridAllocation = number;
+  export type VMax = (number | string | null) | null;
+  export type AcExcitation = null;
+  export type DurationS = (number | string | null) | null;
+  export type Kind1 =
+    'finite_time' | 'residual_certified' | 'finite_time_with_certificate' | 'not_applicable';
+  export type MaxCarrierAreaRateAM2 = (number | string | null) | null;
+  export type MaxFaceCurrentSpreadAM2 = (number | string | null) | null;
+  export type MaxIonAreaRateAM2 = (number | string | null) | null;
+  export type MaxIonicFaceCurrentAM2 = (number | string | null) | null;
+  export type DwellDurationS = (number | string | null) | null;
+  export type Experiment = 'jv_hysteresis';
+  /**
+   * @minItems 1
+   */
+  export type IlluminationHistory = [JVIlluminationStepInput, ...JVIlluminationStepInput[]];
+  export type Condition = 'dark' | 'baseline' | 'scaled' | 'monochromatic' | 'pulse';
+  export type DurationS1 = (number | string | null) | null;
+  export type IntensitySuns = (number | string | null) | null;
+  export type Phase = string;
+  export type PhotonFluxM2S = (number | string | null) | null;
+  export type RelativeGenerationChange = (number | string | null) | null;
+  export type SourceReference = string | null;
+  export type ImplicitLegacyProtocol = boolean;
+  export type InitialStateSource =
+    | 'dark_equilibrium'
+    | 'dark_equilibrium_each_sample'
+    | 'finite_time_illuminated_preconditioned'
+    | 'finite_time_dc_preconditioned'
+    | 'qf_dc_candidate'
+    | 'user_supplied_state';
+  export type PreBiasV = (number | string | null) | null;
+  export type Axis = 'voltage_V';
+  export type Mode1 = 'linear' | 'log' | 'declared' | 'piecewise_linear';
+  /**
+   * @minItems 1
+   */
+  export type Values = [number | number | string | string, ...(number | number | string | string)[]];
+  export type Axis1 = 'voltage_V';
+  export type Direction =
+    'ascending' | 'descending' | 'ascending_then_descending' | 'declared_order' | 'forward_time';
+  export type RateVS = number | string;
+  export type Start = number | string;
+  export type Stop = number | string;
+  export type SchemaVersion4 = 1;
+  export type SoakDurationS = (number | string | null) | null;
+  export type TemperatureK = number | string;
+  export type VocSearch = null;
+  export type IfaceStates = boolean;
+  export type Illuminated = boolean;
+  export type InterfaceBoundary = boolean;
+  export type InterfaceTransportModel = string;
+  export type SamplesPerBranch = number;
+  export type ProtocolMode = 'compatibility' | 'research_strict';
+  export type Solver = 'transient' | 'steady_state' | 'quasi_fermi';
+  export type VRate = number | string;
+  export type BranchDwellS = number | string;
+  export type DarkPrepS = number | string;
+  export type DarkSeedS = number | string;
+  export type SchemaVersion5 = 1;
+  export type StartVoltageV = number | string;
+  export type TurnaroundDark = boolean;
+  export type TurnaroundS = number | string;
+  export type UniformGenerationRateM3S = (number | string | null) | null;
+  export type AtolM3 = number | string;
+  export type Rtol = number | string;
   export type MinNGrid = number | null;
   export type Notes = string | null;
   export type SourceFormat = 'standard' | 'scaps' | 'canonical';
@@ -433,7 +507,7 @@ export declare namespace DeviceInputDefinitions {
   export type Enabled3 = boolean;
   export type EnergyQuadratureOrder2 = number;
   export type HoleEffectiveMassRel2 = number | string;
-  export type SchemaVersion3 = 'solarlab-wkb-tunnelling-channels-v1';
+  export type SchemaVersion6 = 'solarlab-wkb-tunnelling-channels-v1';
 
   export interface DeviceInput {
     contacts?: Contacts;
@@ -444,9 +518,10 @@ export declare namespace DeviceInputDefinitions {
     id: Id2;
     interfaces?: Interfaces;
     layers: Layers;
+    legacy_fields?: LegacyDeviceFieldsInput | null;
     materials?: Materials;
     name?: Name5;
-    schema_version: SchemaVersion2;
+    schema_version: SchemaVersion3;
     settings?: DeviceSettingsInput;
     simulation_hints?: SimulationHintsInput | null;
     source_format: SourceFormat;
@@ -820,6 +895,19 @@ export declare namespace DeviceInputDefinitions {
   }
   /**
    * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "LegacyDeviceFieldsInput".
+   */
+  export interface LegacyDeviceFieldsInput {
+    interface_defect_count?: InterfaceDefectCount;
+    interfaces?: Interfaces1;
+    layer_ids: LayerIds1;
+    schema_version: SchemaVersion2;
+    source_id: SourceId;
+    source_sha256: SourceSha256;
+    temperature?: Temperature;
+  }
+  /**
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
    * via the `definition` "NamedMaterialInput".
    */
   export interface NamedMaterialInput {
@@ -867,8 +955,124 @@ export declare namespace DeviceInputDefinitions {
    * via the `definition` "SimulationHintsInput".
    */
   export interface SimulationHintsInput {
+    jv_sweep?: JVSweepHintsInput | null;
     min_N_grid?: MinNGrid;
     notes?: Notes;
+  }
+  /**
+   * Supplied advisory fields, without an endpoint or implied execution.
+   *
+   * Unknown fields reject rather than disappear. A caller must explicitly
+   * compose these fields with JVInput to request protocol preparation.
+   *
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVSweepHintsInput".
+   */
+  export interface JVSweepHintsInput {
+    N_grid?: RequestedElectricalGridAllocation;
+    V_max?: VMax;
+    experiment_protocol?: JVProtocolInput | null;
+    iface_states?: IfaceStates;
+    illuminated?: Illuminated;
+    interface_boundary?: InterfaceBoundary;
+    interface_transport_model?: InterfaceTransportModel;
+    n_points?: SamplesPerBranch;
+    protocol_mode?: ProtocolMode;
+    solver?: Solver;
+    v_rate?: VRate;
+    waveform?: JVWaveformInput | null;
+    waveform_controls?: JVWaveformControlsInput | null;
+  }
+  /**
+   * The existing ExperimentProtocol fields for its J-V branch only.
+   *
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVProtocolInput".
+   */
+  export interface JVProtocolInput {
+    ac_excitation: AcExcitation;
+    dc_settle: JVDCSettleInput;
+    dwell_duration_s: DwellDurationS;
+    experiment: Experiment;
+    illumination_history: IlluminationHistory;
+    implicit_legacy_protocol: ImplicitLegacyProtocol;
+    initial_state_source: InitialStateSource;
+    pre_bias_V: PreBiasV;
+    sampling: JVSamplingInput;
+    scan: JVScanInput;
+    schema_version: SchemaVersion4;
+    soak_duration_s: SoakDurationS;
+    temperature_K: TemperatureK;
+    voc_search: VocSearch;
+  }
+  /**
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVDCSettleInput".
+   */
+  export interface JVDCSettleInput {
+    duration_s: DurationS;
+    kind: Kind1;
+    max_carrier_area_rate_A_m2: MaxCarrierAreaRateAM2;
+    max_face_current_spread_A_m2: MaxFaceCurrentSpreadAM2;
+    max_ion_area_rate_A_m2: MaxIonAreaRateAM2;
+    max_ionic_face_current_A_m2: MaxIonicFaceCurrentAM2;
+  }
+  /**
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVIlluminationStepInput".
+   */
+  export interface JVIlluminationStepInput {
+    condition: Condition;
+    duration_s: DurationS1;
+    intensity_suns: IntensitySuns;
+    phase: Phase;
+    photon_flux_m2_s: PhotonFluxM2S;
+    relative_generation_change: RelativeGenerationChange;
+    source_reference: SourceReference;
+  }
+  /**
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVSamplingInput".
+   */
+  export interface JVSamplingInput {
+    axis: Axis;
+    mode: Mode1;
+    values: Values;
+  }
+  /**
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVScanInput".
+   */
+  export interface JVScanInput {
+    axis: Axis1;
+    direction: Direction;
+    rate_V_s: RateVS;
+    start: Start;
+    stop: Stop;
+  }
+  /**
+   * All eight fields of JVWaveform.from_dict are explicit, including null.
+   *
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVWaveformInput".
+   */
+  export interface JVWaveformInput {
+    branch_dwell_s: BranchDwellS;
+    dark_prep_s: DarkPrepS;
+    dark_seed_s: DarkSeedS;
+    schema_version: SchemaVersion5;
+    start_voltage_V: StartVoltageV;
+    turnaround_dark: TurnaroundDark;
+    turnaround_s: TurnaroundS;
+    uniform_generation_rate_m3_s: UniformGenerationRateM3S;
+  }
+  /**
+   * This interface was referenced by `DeviceInput`'s JSON-Schema
+   * via the `definition` "JVWaveformControlsInput".
+   */
+  export interface JVWaveformControlsInput {
+    atol_m3: AtolM3;
+    rtol: Rtol;
   }
   /**
    * This interface was referenced by `DeviceInput`'s JSON-Schema
@@ -879,7 +1083,7 @@ export declare namespace DeviceInputDefinitions {
     contact?: ContactTunnellingInput | null;
     interface_defect_assisted?: DefectAssistedInput | null;
     intraband?: IntrabandInput | null;
-    schema_version?: SchemaVersion3;
+    schema_version?: SchemaVersion6;
   }
   /**
    * This interface was referenced by `DeviceInput`'s JSON-Schema
@@ -1707,7 +1911,7 @@ export declare namespace InterfaceInputDefinitions {
 export type InterfaceInput = InterfaceInputDefinitions.InterfaceInput;
 
 // Source DTO: solarlab.experiments.jv.inputs:JVExperimentInput
-// Schema SHA-256 (JSON.stringify): 41ac7ce902eb19e6e2141b06846d237fe24c8815b6321fe800a87cb957f72097
+// Schema SHA-256 (JSON.stringify): f79edd41f9e2bd63e2b04f7d1746a9b7f5e0bc454cbcff40cc190227ab3a47d7
 export declare namespace JVExperimentInputDefinitions {
   export type SN = (number | string | null) | null;
   export type SP = (number | string | null) | null;
@@ -1927,11 +2131,19 @@ export declare namespace JVExperimentInputDefinitions {
   export type ScapsDefectMetadata = ScapsDefectMetadataInput[];
   export type Thickness = number | string;
   export type Layers = FullLayerInput[];
+  export type InterfaceDefectCount = number | null;
+  export type Interfaces1 =
+    [number | number | string | string, number | number | string | string][] | null;
+  export type LayerIds1 = string[];
+  export type SchemaVersion2 = 'solarlab.standard-loader-fields.v1';
+  export type SourceId = string;
+  export type SourceSha256 = string;
+  export type Temperature = number | string | boolean | null;
   export type Id9 = string;
   export type Name4 = string;
   export type Materials = NamedMaterialInput[];
   export type Name5 = string | null;
-  export type SchemaVersion2 = 'solarlab.device-preparation.v1';
+  export type SchemaVersion3 = 'solarlab.device-preparation.v1';
   export type Phi = number | string;
   export type T = number | string;
   export type VBi = number | string;
@@ -1961,32 +2173,6 @@ export declare namespace JVExperimentInputDefinitions {
   export type TunnelMassEff = number | string;
   export type WorkFunctionLeftEv = (number | string | null) | null;
   export type WorkFunctionRightEv = (number | string | null) | null;
-  export type MinNGrid = number | null;
-  export type Notes = string | null;
-  export type SourceFormat = 'standard' | 'scaps' | 'canonical';
-  export type SourceSchemaVersion = string | number | null;
-  export type Spectrum = string | null;
-  export type Enabled = boolean;
-  export type EnergyQuadratureOrder = number;
-  export type MinimumFieldVM = number | string;
-  export type ReducedEffectiveMassRel = number | string;
-  export type BarrierHeightEv = number | string;
-  export type ElectronEffectiveMassRel = number | string;
-  export type Enabled1 = boolean;
-  export type EnergyQuadratureOrder1 = number;
-  export type HoleEffectiveMassRel = number | string;
-  export type Side1 = 'both' | 'left' | 'right';
-  export type ElectronEffectiveMassRel1 = number | string;
-  export type Enabled2 = boolean;
-  export type HoleEffectiveMassRel1 = number | string;
-  export type RequiresExplicitOccupancy = true;
-  export type Carrier = 'electron' | 'hole' | 'both';
-  export type ElectronEffectiveMassRel2 = number | string;
-  export type Enabled3 = boolean;
-  export type EnergyQuadratureOrder2 = number;
-  export type HoleEffectiveMassRel2 = number | string;
-  export type SchemaVersion3 = 'solarlab-wkb-tunnelling-channels-v1';
-  export type Experiment = JVInput | DarkJVInput;
   export type RequestedElectricalGridAllocation = number;
   export type VMax = (number | string | null) | null;
   export type AcExcitation = null;
@@ -1998,7 +2184,7 @@ export declare namespace JVExperimentInputDefinitions {
   export type MaxIonAreaRateAM2 = (number | string | null) | null;
   export type MaxIonicFaceCurrentAM2 = (number | string | null) | null;
   export type DwellDurationS = (number | string | null) | null;
-  export type Experiment1 = 'jv_hysteresis';
+  export type Experiment = 'jv_hysteresis';
   /**
    * @minItems 1
    */
@@ -2039,10 +2225,8 @@ export declare namespace JVExperimentInputDefinitions {
   export type Illuminated = boolean;
   export type InterfaceBoundary = boolean;
   export type InterfaceTransportModel = string;
-  export type Kind2 = 'jv';
   export type SamplesPerBranch = number;
   export type ProtocolMode = 'compatibility' | 'research_strict';
-  export type RequestApi = 'jobs' | 'jv_endpoint';
   export type Solver = 'transient' | 'steady_state' | 'quasi_fermi';
   export type VRate = number | string;
   export type BranchDwellS = number | string;
@@ -2055,19 +2239,57 @@ export declare namespace JVExperimentInputDefinitions {
   export type UniformGenerationRateM3S = (number | string | null) | null;
   export type AtolM3 = number | string;
   export type Rtol = number | string;
+  export type MinNGrid = number | null;
+  export type Notes = string | null;
+  export type SourceFormat = 'standard' | 'scaps' | 'canonical';
+  export type SourceSchemaVersion = string | number | null;
+  export type Spectrum = string | null;
+  export type Enabled = boolean;
+  export type EnergyQuadratureOrder = number;
+  export type MinimumFieldVM = number | string;
+  export type ReducedEffectiveMassRel = number | string;
+  export type BarrierHeightEv = number | string;
+  export type ElectronEffectiveMassRel = number | string;
+  export type Enabled1 = boolean;
+  export type EnergyQuadratureOrder1 = number;
+  export type HoleEffectiveMassRel = number | string;
+  export type Side1 = 'both' | 'left' | 'right';
+  export type ElectronEffectiveMassRel1 = number | string;
+  export type Enabled2 = boolean;
+  export type HoleEffectiveMassRel1 = number | string;
+  export type RequiresExplicitOccupancy = true;
+  export type Carrier = 'electron' | 'hole' | 'both';
+  export type ElectronEffectiveMassRel2 = number | string;
+  export type Enabled3 = boolean;
+  export type EnergyQuadratureOrder2 = number;
+  export type HoleEffectiveMassRel2 = number | string;
+  export type SchemaVersion6 = 'solarlab-wkb-tunnelling-channels-v1';
+  export type Experiment1 = JVInput | DarkJVInput;
   export type RequestedElectricalGridAllocation1 = number;
-  export type VMax1 = number | string;
-  export type Kind3 = 'dark_jv';
+  export type VMax1 = (number | string | null) | null;
+  export type IfaceStates1 = boolean;
+  export type Illuminated1 = boolean;
+  export type InterfaceBoundary1 = boolean;
+  export type InterfaceTransportModel1 = string;
+  export type Kind2 = 'jv';
   export type SamplesPerBranch1 = number;
+  export type ProtocolMode1 = 'compatibility' | 'research_strict';
+  export type RequestApi = 'jobs' | 'jv_endpoint';
+  export type Solver1 = 'transient' | 'steady_state' | 'quasi_fermi';
   export type VRate1 = number | string;
+  export type RequestedElectricalGridAllocation2 = number;
+  export type VMax2 = number | string;
+  export type Kind3 = 'dark_jv';
+  export type SamplesPerBranch2 = number;
+  export type VRate2 = number | string;
   export type Id10 = string;
-  export type SchemaVersion6 = 'solarlab.experiment-preparation.v1';
+  export type SchemaVersion7 = 'solarlab.experiment-preparation.v1';
 
   export interface JVExperimentInput {
     device: DeviceInput;
-    experiment: Experiment;
+    experiment: Experiment1;
     id: Id10;
-    schema_version: SchemaVersion6;
+    schema_version: SchemaVersion7;
   }
   /**
    * This interface was referenced by `JVExperimentInput`'s JSON-Schema
@@ -2082,9 +2304,10 @@ export declare namespace JVExperimentInputDefinitions {
     id: Id2;
     interfaces?: Interfaces;
     layers: Layers;
+    legacy_fields?: LegacyDeviceFieldsInput | null;
     materials?: Materials;
     name?: Name5;
-    schema_version: SchemaVersion2;
+    schema_version: SchemaVersion3;
     settings?: DeviceSettingsInput;
     simulation_hints?: SimulationHintsInput | null;
     source_format: SourceFormat;
@@ -2458,6 +2681,19 @@ export declare namespace JVExperimentInputDefinitions {
   }
   /**
    * This interface was referenced by `JVExperimentInput`'s JSON-Schema
+   * via the `definition` "LegacyDeviceFieldsInput".
+   */
+  export interface LegacyDeviceFieldsInput {
+    interface_defect_count?: InterfaceDefectCount;
+    interfaces?: Interfaces1;
+    layer_ids: LayerIds1;
+    schema_version: SchemaVersion2;
+    source_id: SourceId;
+    source_sha256: SourceSha256;
+    temperature?: Temperature;
+  }
+  /**
+   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
    * via the `definition` "NamedMaterialInput".
    */
   export interface NamedMaterialInput {
@@ -2505,68 +2741,20 @@ export declare namespace JVExperimentInputDefinitions {
    * via the `definition` "SimulationHintsInput".
    */
   export interface SimulationHintsInput {
+    jv_sweep?: JVSweepHintsInput | null;
     min_N_grid?: MinNGrid;
     notes?: Notes;
   }
   /**
+   * Supplied advisory fields, without an endpoint or implied execution.
+   *
+   * Unknown fields reject rather than disappear. A caller must explicitly
+   * compose these fields with JVInput to request protocol preparation.
+   *
    * This interface was referenced by `JVExperimentInput`'s JSON-Schema
-   * via the `definition` "TunnellingInput".
+   * via the `definition` "JVSweepHintsInput".
    */
-  export interface TunnellingInput {
-    band_to_band?: BandToBandInput | null;
-    contact?: ContactTunnellingInput | null;
-    interface_defect_assisted?: DefectAssistedInput | null;
-    intraband?: IntrabandInput | null;
-    schema_version?: SchemaVersion3;
-  }
-  /**
-   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
-   * via the `definition` "BandToBandInput".
-   */
-  export interface BandToBandInput {
-    enabled?: Enabled;
-    energy_quadrature_order?: EnergyQuadratureOrder;
-    minimum_field_V_m?: MinimumFieldVM;
-    reduced_effective_mass_rel?: ReducedEffectiveMassRel;
-  }
-  /**
-   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
-   * via the `definition` "ContactTunnellingInput".
-   */
-  export interface ContactTunnellingInput {
-    barrier_height_eV?: BarrierHeightEv;
-    electron_effective_mass_rel?: ElectronEffectiveMassRel;
-    enabled?: Enabled1;
-    energy_quadrature_order?: EnergyQuadratureOrder1;
-    hole_effective_mass_rel?: HoleEffectiveMassRel;
-    side?: Side1;
-  }
-  /**
-   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
-   * via the `definition` "DefectAssistedInput".
-   */
-  export interface DefectAssistedInput {
-    electron_effective_mass_rel?: ElectronEffectiveMassRel1;
-    enabled?: Enabled2;
-    hole_effective_mass_rel?: HoleEffectiveMassRel1;
-    requires_explicit_occupancy?: RequiresExplicitOccupancy;
-  }
-  /**
-   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
-   * via the `definition` "IntrabandInput".
-   */
-  export interface IntrabandInput {
-    carrier?: Carrier;
-    electron_effective_mass_rel?: ElectronEffectiveMassRel2;
-    enabled?: Enabled3;
-    energy_quadrature_order?: EnergyQuadratureOrder2;
-    hole_effective_mass_rel?: HoleEffectiveMassRel2;
-  }
-  /**
-   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
-   * via the `definition` "JVInput".
-   */
-  export interface JVInput {
+  export interface JVSweepHintsInput {
     N_grid?: RequestedElectricalGridAllocation;
     V_max?: VMax;
     experiment_protocol?: JVProtocolInput | null;
@@ -2574,10 +2762,8 @@ export declare namespace JVExperimentInputDefinitions {
     illuminated?: Illuminated;
     interface_boundary?: InterfaceBoundary;
     interface_transport_model?: InterfaceTransportModel;
-    kind: Kind2;
     n_points?: SamplesPerBranch;
     protocol_mode?: ProtocolMode;
-    request_api?: RequestApi;
     solver?: Solver;
     v_rate?: VRate;
     waveform?: JVWaveformInput | null;
@@ -2593,7 +2779,7 @@ export declare namespace JVExperimentInputDefinitions {
     ac_excitation: AcExcitation;
     dc_settle: JVDCSettleInput;
     dwell_duration_s: DwellDurationS;
-    experiment: Experiment1;
+    experiment: Experiment;
     illumination_history: IlluminationHistory;
     implicit_legacy_protocol: ImplicitLegacyProtocol;
     initial_state_source: InitialStateSource;
@@ -2676,14 +2862,89 @@ export declare namespace JVExperimentInputDefinitions {
   }
   /**
    * This interface was referenced by `JVExperimentInput`'s JSON-Schema
+   * via the `definition` "TunnellingInput".
+   */
+  export interface TunnellingInput {
+    band_to_band?: BandToBandInput | null;
+    contact?: ContactTunnellingInput | null;
+    interface_defect_assisted?: DefectAssistedInput | null;
+    intraband?: IntrabandInput | null;
+    schema_version?: SchemaVersion6;
+  }
+  /**
+   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
+   * via the `definition` "BandToBandInput".
+   */
+  export interface BandToBandInput {
+    enabled?: Enabled;
+    energy_quadrature_order?: EnergyQuadratureOrder;
+    minimum_field_V_m?: MinimumFieldVM;
+    reduced_effective_mass_rel?: ReducedEffectiveMassRel;
+  }
+  /**
+   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
+   * via the `definition` "ContactTunnellingInput".
+   */
+  export interface ContactTunnellingInput {
+    barrier_height_eV?: BarrierHeightEv;
+    electron_effective_mass_rel?: ElectronEffectiveMassRel;
+    enabled?: Enabled1;
+    energy_quadrature_order?: EnergyQuadratureOrder1;
+    hole_effective_mass_rel?: HoleEffectiveMassRel;
+    side?: Side1;
+  }
+  /**
+   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
+   * via the `definition` "DefectAssistedInput".
+   */
+  export interface DefectAssistedInput {
+    electron_effective_mass_rel?: ElectronEffectiveMassRel1;
+    enabled?: Enabled2;
+    hole_effective_mass_rel?: HoleEffectiveMassRel1;
+    requires_explicit_occupancy?: RequiresExplicitOccupancy;
+  }
+  /**
+   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
+   * via the `definition` "IntrabandInput".
+   */
+  export interface IntrabandInput {
+    carrier?: Carrier;
+    electron_effective_mass_rel?: ElectronEffectiveMassRel2;
+    enabled?: Enabled3;
+    energy_quadrature_order?: EnergyQuadratureOrder2;
+    hole_effective_mass_rel?: HoleEffectiveMassRel2;
+  }
+  /**
+   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
+   * via the `definition` "JVInput".
+   */
+  export interface JVInput {
+    N_grid?: RequestedElectricalGridAllocation1;
+    V_max?: VMax1;
+    experiment_protocol?: JVProtocolInput | null;
+    iface_states?: IfaceStates1;
+    illuminated?: Illuminated1;
+    interface_boundary?: InterfaceBoundary1;
+    interface_transport_model?: InterfaceTransportModel1;
+    kind: Kind2;
+    n_points?: SamplesPerBranch1;
+    protocol_mode?: ProtocolMode1;
+    request_api?: RequestApi;
+    solver?: Solver1;
+    v_rate?: VRate1;
+    waveform?: JVWaveformInput | null;
+    waveform_controls?: JVWaveformControlsInput | null;
+  }
+  /**
+   * This interface was referenced by `JVExperimentInput`'s JSON-Schema
    * via the `definition` "DarkJVInput".
    */
   export interface DarkJVInput {
-    N_grid?: RequestedElectricalGridAllocation1;
-    V_max?: VMax1;
+    N_grid?: RequestedElectricalGridAllocation2;
+    V_max?: VMax2;
     kind: Kind3;
-    n_points?: SamplesPerBranch1;
-    v_rate?: VRate1;
+    n_points?: SamplesPerBranch2;
+    v_rate?: VRate2;
   }
 }
 export type JVExperimentInput = JVExperimentInputDefinitions.JVExperimentInput;
@@ -3249,7 +3510,7 @@ export declare namespace NamedMaterialInputDefinitions {
 export type NamedMaterialInput = NamedMaterialInputDefinitions.NamedMaterialInput;
 
 // Source DTO: solarlab.experiments.two_dimensional.inputs:SpatialExperimentInput
-// Schema SHA-256 (JSON.stringify): c77dc508f85cd22431b70d89357883c110a29cd69554966496fec0f0750d9883
+// Schema SHA-256 (JSON.stringify): ea782519292f6fcbdffc3ddcd0dd0610c48a0cfbcb1087c3dbbe7ab5852a9241
 export declare namespace SpatialExperimentInputDefinitions {
   export type SN = (number | string | null) | null;
   export type SP = (number | string | null) | null;
@@ -3469,11 +3730,19 @@ export declare namespace SpatialExperimentInputDefinitions {
   export type ScapsDefectMetadata = ScapsDefectMetadataInput[];
   export type Thickness = number | string;
   export type Layers = FullLayerInput[];
+  export type InterfaceDefectCount = number | null;
+  export type Interfaces1 =
+    [number | number | string | string, number | number | string | string][] | null;
+  export type LayerIds1 = string[];
+  export type SchemaVersion2 = 'solarlab.standard-loader-fields.v1';
+  export type SourceId = string;
+  export type SourceSha256 = string;
+  export type Temperature = number | string | boolean | null;
   export type Id9 = string;
   export type Name4 = string;
   export type Materials = NamedMaterialInput[];
   export type Name5 = string | null;
-  export type SchemaVersion2 = 'solarlab.device-preparation.v1';
+  export type SchemaVersion3 = 'solarlab.device-preparation.v1';
   export type Phi = number | string;
   export type T = number | string;
   export type VBi = number | string;
@@ -3503,6 +3772,72 @@ export declare namespace SpatialExperimentInputDefinitions {
   export type TunnelMassEff = number | string;
   export type WorkFunctionLeftEv = (number | string | null) | null;
   export type WorkFunctionRightEv = (number | string | null) | null;
+  export type RequestedElectricalGridAllocation = number;
+  export type VMax = (number | string | null) | null;
+  export type AcExcitation = null;
+  export type DurationS = (number | string | null) | null;
+  export type Kind1 =
+    'finite_time' | 'residual_certified' | 'finite_time_with_certificate' | 'not_applicable';
+  export type MaxCarrierAreaRateAM2 = (number | string | null) | null;
+  export type MaxFaceCurrentSpreadAM2 = (number | string | null) | null;
+  export type MaxIonAreaRateAM2 = (number | string | null) | null;
+  export type MaxIonicFaceCurrentAM2 = (number | string | null) | null;
+  export type DwellDurationS = (number | string | null) | null;
+  export type Experiment = 'jv_hysteresis';
+  /**
+   * @minItems 1
+   */
+  export type IlluminationHistory = [JVIlluminationStepInput, ...JVIlluminationStepInput[]];
+  export type Condition = 'dark' | 'baseline' | 'scaled' | 'monochromatic' | 'pulse';
+  export type DurationS1 = (number | string | null) | null;
+  export type IntensitySuns = (number | string | null) | null;
+  export type Phase = string;
+  export type PhotonFluxM2S = (number | string | null) | null;
+  export type RelativeGenerationChange = (number | string | null) | null;
+  export type SourceReference = string | null;
+  export type ImplicitLegacyProtocol = boolean;
+  export type InitialStateSource =
+    | 'dark_equilibrium'
+    | 'dark_equilibrium_each_sample'
+    | 'finite_time_illuminated_preconditioned'
+    | 'finite_time_dc_preconditioned'
+    | 'qf_dc_candidate'
+    | 'user_supplied_state';
+  export type PreBiasV = (number | string | null) | null;
+  export type Axis = 'voltage_V';
+  export type Mode1 = 'linear' | 'log' | 'declared' | 'piecewise_linear';
+  /**
+   * @minItems 1
+   */
+  export type Values = [number | number | string | string, ...(number | number | string | string)[]];
+  export type Axis1 = 'voltage_V';
+  export type Direction =
+    'ascending' | 'descending' | 'ascending_then_descending' | 'declared_order' | 'forward_time';
+  export type RateVS = number | string;
+  export type Start = number | string;
+  export type Stop = number | string;
+  export type SchemaVersion4 = 1;
+  export type SoakDurationS = (number | string | null) | null;
+  export type TemperatureK = number | string;
+  export type VocSearch = null;
+  export type IfaceStates = boolean;
+  export type Illuminated = boolean;
+  export type InterfaceBoundary = boolean;
+  export type InterfaceTransportModel = string;
+  export type SamplesPerBranch = number;
+  export type ProtocolMode = 'compatibility' | 'research_strict';
+  export type Solver = 'transient' | 'steady_state' | 'quasi_fermi';
+  export type VRate = number | string;
+  export type BranchDwellS = number | string;
+  export type DarkPrepS = number | string;
+  export type DarkSeedS = number | string;
+  export type SchemaVersion5 = 1;
+  export type StartVoltageV = number | string;
+  export type TurnaroundDark = boolean;
+  export type TurnaroundS = number | string;
+  export type UniformGenerationRateM3S = (number | string | null) | null;
+  export type AtolM3 = number | string;
+  export type Rtol = number | string;
   export type MinNGrid = number | null;
   export type Notes = string | null;
   export type SourceFormat = 'standard' | 'scaps' | 'canonical';
@@ -3527,11 +3862,11 @@ export declare namespace SpatialExperimentInputDefinitions {
   export type Enabled3 = boolean;
   export type EnergyQuadratureOrder2 = number;
   export type HoleEffectiveMassRel2 = number | string;
-  export type SchemaVersion3 = 'solarlab-wkb-tunnelling-channels-v1';
-  export type Experiment = JV2DInput | GrainSweepInput;
+  export type SchemaVersion6 = 'solarlab-wkb-tunnelling-channels-v1';
+  export type Experiment1 = JV2DInput | GrainSweepInput;
   export type LateralIntervalsNx = number;
   export type VerticalIntervalsPerElectricalLayer = number;
-  export type VMax = number | string;
+  export type VMax1 = number | string;
   export type VStep = number | string;
   export type Atol = number | string;
   export type CarrierFraction = number | string;
@@ -3539,7 +3874,7 @@ export declare namespace SpatialExperimentInputDefinitions {
   export type IonFraction = number | string;
   export type MinimumAtol = number | string;
   export type RefinementFactor = number | string;
-  export type Illuminated = boolean;
+  export type Illuminated1 = boolean;
   export type InitialStateSettleS = number | string;
   export type InterfaceSrh = 'off' | 'two_sided_cross_node';
   export type IonDynamics = 'frozen' | 'single_mobile';
@@ -3556,11 +3891,11 @@ export declare namespace SpatialExperimentInputDefinitions {
   export type WidthM = number | string;
   export type XPositionM = number | string;
   export type GrainBoundaries1 = JV2DGrainProtocolInput[];
-  export type Illuminated1 = boolean;
+  export type Illuminated2 = boolean;
   export type IlluminationSource = string | null;
-  export type ImplicitLegacyProtocol = boolean;
+  export type ImplicitLegacyProtocol1 = boolean;
   export type InitialStateSettleS1 = (number | string | null) | null;
-  export type InitialStateSource =
+  export type InitialStateSource1 =
     'one_dimensional_illuminated_finite_time' | 'one_dimensional_dark_equilibrium';
   export type InitialStateVoltageV = number | string;
   export type InterfaceSrh1 = 'off' | 'two_sided_cross_node';
@@ -3570,19 +3905,19 @@ export declare namespace SpatialExperimentInputDefinitions {
   export type MaxBisect = number;
   export type MaxNfevPerSolve = number;
   export type SaveSnapshots = boolean;
-  export type SchemaVersion4 = 'jv-2d-execution-protocol-v1';
+  export type SchemaVersion7 = 'jv-2d-execution-protocol-v1';
   export type CarrierFraction1 = (number | string | null) | null;
   export type InterfaceFraction1 = (number | string | null) | null;
   export type IonFraction1 = (number | string | null) | null;
   export type MinimumAtol1 = (number | string | null) | null;
-  export type Mode1 = 'scalar' | 'componentwise';
+  export type Mode2 = 'scalar' | 'componentwise';
   export type RefinementFactor1 = (number | string | null) | null;
   export type ScalarAtol = (number | string | null) | null;
   export type SolverMaxStepDivisor = number;
   export type SolverMethod = 'Radau';
   export type SolverRtol = number | string;
   export type StateTopology = 'frozen_ion_background' | 'single_positive_mobile_ion';
-  export type TemperatureK = number | string;
+  export type TemperatureK1 = number | string;
   /**
    * @minItems 1
    */
@@ -3607,36 +3942,36 @@ export declare namespace SpatialExperimentInputDefinitions {
     number | number | string | string,
     ...(number | number | string | string)[]
   ];
-  export type Kind1 = 'jv_2d';
+  export type Kind2 = 'jv_2d';
   export type LateralBc1 = ('periodic' | 'neumann') | null;
   export type LateralLength = number | string;
   export type MaxBisect1 = number;
   export type MaxNfevPerSolve1 = number;
   export type GrainBoundaries2 = GrainBoundaryInput[];
-  export type ProtocolMode = 'compatibility' | 'research_strict';
-  export type Rtol = number | string;
+  export type ProtocolMode1 = 'compatibility' | 'research_strict';
+  export type Rtol1 = number | string;
   export type SaveSnapshots1 = boolean;
   export type SettleT = number | string;
   export type LateralIntervalsNx1 = number;
   export type VerticalIntervalsPerElectricalLayer1 = number;
-  export type VMax1 = number | string;
+  export type VMax2 = number | string;
   export type VStep1 = number | string;
   export type GbWidth = number | string;
   export type GrainSizes = (number | string)[] | null;
   export type GrainSizesNm = (number | string)[] | null;
-  export type Illuminated2 = boolean;
-  export type Kind2 = 'voc_grain_sweep';
+  export type Illuminated3 = boolean;
+  export type Kind3 = 'voc_grain_sweep';
   export type SettleT1 = number | string;
   export type TauGbN = number | string;
   export type TauGbP = number | string;
   export type Id10 = string;
-  export type SchemaVersion5 = 'solarlab.experiment-preparation.v1';
+  export type SchemaVersion8 = 'solarlab.experiment-preparation.v1';
 
   export interface SpatialExperimentInput {
     device: DeviceInput;
-    experiment: Experiment;
+    experiment: Experiment1;
     id: Id10;
-    schema_version: SchemaVersion5;
+    schema_version: SchemaVersion8;
   }
   /**
    * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
@@ -3651,9 +3986,10 @@ export declare namespace SpatialExperimentInputDefinitions {
     id: Id2;
     interfaces?: Interfaces;
     layers: Layers;
+    legacy_fields?: LegacyDeviceFieldsInput | null;
     materials?: Materials;
     name?: Name5;
-    schema_version: SchemaVersion2;
+    schema_version: SchemaVersion3;
     settings?: DeviceSettingsInput;
     simulation_hints?: SimulationHintsInput | null;
     source_format: SourceFormat;
@@ -4027,6 +4363,19 @@ export declare namespace SpatialExperimentInputDefinitions {
   }
   /**
    * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "LegacyDeviceFieldsInput".
+   */
+  export interface LegacyDeviceFieldsInput {
+    interface_defect_count?: InterfaceDefectCount;
+    interfaces?: Interfaces1;
+    layer_ids: LayerIds1;
+    schema_version: SchemaVersion2;
+    source_id: SourceId;
+    source_sha256: SourceSha256;
+    temperature?: Temperature;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
    * via the `definition` "NamedMaterialInput".
    */
   export interface NamedMaterialInput {
@@ -4074,8 +4423,124 @@ export declare namespace SpatialExperimentInputDefinitions {
    * via the `definition` "SimulationHintsInput".
    */
   export interface SimulationHintsInput {
+    jv_sweep?: JVSweepHintsInput | null;
     min_N_grid?: MinNGrid;
     notes?: Notes;
+  }
+  /**
+   * Supplied advisory fields, without an endpoint or implied execution.
+   *
+   * Unknown fields reject rather than disappear. A caller must explicitly
+   * compose these fields with JVInput to request protocol preparation.
+   *
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVSweepHintsInput".
+   */
+  export interface JVSweepHintsInput {
+    N_grid?: RequestedElectricalGridAllocation;
+    V_max?: VMax;
+    experiment_protocol?: JVProtocolInput | null;
+    iface_states?: IfaceStates;
+    illuminated?: Illuminated;
+    interface_boundary?: InterfaceBoundary;
+    interface_transport_model?: InterfaceTransportModel;
+    n_points?: SamplesPerBranch;
+    protocol_mode?: ProtocolMode;
+    solver?: Solver;
+    v_rate?: VRate;
+    waveform?: JVWaveformInput | null;
+    waveform_controls?: JVWaveformControlsInput | null;
+  }
+  /**
+   * The existing ExperimentProtocol fields for its J-V branch only.
+   *
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVProtocolInput".
+   */
+  export interface JVProtocolInput {
+    ac_excitation: AcExcitation;
+    dc_settle: JVDCSettleInput;
+    dwell_duration_s: DwellDurationS;
+    experiment: Experiment;
+    illumination_history: IlluminationHistory;
+    implicit_legacy_protocol: ImplicitLegacyProtocol;
+    initial_state_source: InitialStateSource;
+    pre_bias_V: PreBiasV;
+    sampling: JVSamplingInput;
+    scan: JVScanInput;
+    schema_version: SchemaVersion4;
+    soak_duration_s: SoakDurationS;
+    temperature_K: TemperatureK;
+    voc_search: VocSearch;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVDCSettleInput".
+   */
+  export interface JVDCSettleInput {
+    duration_s: DurationS;
+    kind: Kind1;
+    max_carrier_area_rate_A_m2: MaxCarrierAreaRateAM2;
+    max_face_current_spread_A_m2: MaxFaceCurrentSpreadAM2;
+    max_ion_area_rate_A_m2: MaxIonAreaRateAM2;
+    max_ionic_face_current_A_m2: MaxIonicFaceCurrentAM2;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVIlluminationStepInput".
+   */
+  export interface JVIlluminationStepInput {
+    condition: Condition;
+    duration_s: DurationS1;
+    intensity_suns: IntensitySuns;
+    phase: Phase;
+    photon_flux_m2_s: PhotonFluxM2S;
+    relative_generation_change: RelativeGenerationChange;
+    source_reference: SourceReference;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVSamplingInput".
+   */
+  export interface JVSamplingInput {
+    axis: Axis;
+    mode: Mode1;
+    values: Values;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVScanInput".
+   */
+  export interface JVScanInput {
+    axis: Axis1;
+    direction: Direction;
+    rate_V_s: RateVS;
+    start: Start;
+    stop: Stop;
+  }
+  /**
+   * All eight fields of JVWaveform.from_dict are explicit, including null.
+   *
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVWaveformInput".
+   */
+  export interface JVWaveformInput {
+    branch_dwell_s: BranchDwellS;
+    dark_prep_s: DarkPrepS;
+    dark_seed_s: DarkSeedS;
+    schema_version: SchemaVersion5;
+    start_voltage_V: StartVoltageV;
+    turnaround_dark: TurnaroundDark;
+    turnaround_s: TurnaroundS;
+    uniform_generation_rate_m3_s: UniformGenerationRateM3S;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JVWaveformControlsInput".
+   */
+  export interface JVWaveformControlsInput {
+    atol_m3: AtolM3;
+    rtol: Rtol;
   }
   /**
    * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
@@ -4086,7 +4551,7 @@ export declare namespace SpatialExperimentInputDefinitions {
     contact?: ContactTunnellingInput | null;
     interface_defect_assisted?: DefectAssistedInput | null;
     intraband?: IntrabandInput | null;
-    schema_version?: SchemaVersion3;
+    schema_version?: SchemaVersion6;
   }
   /**
    * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
@@ -4138,24 +4603,24 @@ export declare namespace SpatialExperimentInputDefinitions {
   export interface JV2DInput {
     Nx?: LateralIntervalsNx;
     Ny_per_layer?: VerticalIntervalsPerElectricalLayer;
-    V_max?: VMax;
+    V_max?: VMax1;
     V_step?: VStep;
     atol?: Atol;
     componentwise_atol?: ComponentwiseAtolInput | null;
-    illuminated?: Illuminated;
+    illuminated?: Illuminated1;
     initial_state_settle_s?: InitialStateSettleS;
     interface_srh?: InterfaceSrh;
     ion_dynamics?: IonDynamics;
     ion_inventory_rtol?: IonInventoryRtol;
     jv_2d_protocol?: JV2DProtocolInput | null;
-    kind: Kind1;
+    kind: Kind2;
     lateral_bc?: LateralBc1;
     lateral_length?: LateralLength;
     max_bisect?: MaxBisect1;
     max_nfev_per_solve?: MaxNfevPerSolve1;
     microstructure?: MicrostructureInput | null;
-    protocol_mode?: ProtocolMode;
-    rtol?: Rtol;
+    protocol_mode?: ProtocolMode1;
+    rtol?: Rtol1;
     save_snapshots?: SaveSnapshots1;
     settle_t?: SettleT;
   }
@@ -4183,11 +4648,11 @@ export declare namespace SpatialExperimentInputDefinitions {
     current_sampling: CurrentSampling;
     dwell_time_per_voltage_s: DwellTimePerVoltageS;
     grain_boundaries: GrainBoundaries1;
-    illuminated: Illuminated1;
+    illuminated: Illuminated2;
     illumination_source: IlluminationSource;
-    implicit_legacy_protocol: ImplicitLegacyProtocol;
+    implicit_legacy_protocol: ImplicitLegacyProtocol1;
     initial_state_settle_s: InitialStateSettleS1;
-    initial_state_source: InitialStateSource;
+    initial_state_source: InitialStateSource1;
     initial_state_voltage_V: InitialStateVoltageV;
     interface_srh: InterfaceSrh1;
     ion_boundary_condition: IonBoundaryCondition;
@@ -4196,13 +4661,13 @@ export declare namespace SpatialExperimentInputDefinitions {
     max_bisect: MaxBisect;
     max_nfev_per_solve: MaxNfevPerSolve;
     save_snapshots: SaveSnapshots;
-    schema_version: SchemaVersion4;
+    schema_version: SchemaVersion7;
     solver_atol: JV2DAtolInput;
     solver_max_step_divisor: SolverMaxStepDivisor;
     solver_method: SolverMethod;
     solver_rtol: SolverRtol;
     state_topology: StateTopology;
-    temperature_K: TemperatureK;
+    temperature_K: TemperatureK1;
     voltage_values_V: VoltageValuesV;
     x_coordinates_m: XCoordinatesM;
     y_coordinates_m: YCoordinatesM;
@@ -4227,7 +4692,7 @@ export declare namespace SpatialExperimentInputDefinitions {
     interface_fraction: InterfaceFraction1;
     ion_fraction: IonFraction1;
     minimum_atol: MinimumAtol1;
-    mode: Mode1;
+    mode: Mode2;
     refinement_factor: RefinementFactor1;
     scalar_atol: ScalarAtol;
   }
@@ -4245,13 +4710,13 @@ export declare namespace SpatialExperimentInputDefinitions {
   export interface GrainSweepInput {
     Nx?: LateralIntervalsNx1;
     Ny_per_layer?: VerticalIntervalsPerElectricalLayer1;
-    V_max?: VMax1;
+    V_max?: VMax2;
     V_step?: VStep1;
     gb_width?: GbWidth;
     grain_sizes?: GrainSizes;
     grain_sizes_nm?: GrainSizesNm;
-    illuminated?: Illuminated2;
-    kind: Kind2;
+    illuminated?: Illuminated3;
+    kind: Kind3;
     settle_t?: SettleT1;
     tau_gb_n?: TauGbN;
     tau_gb_p?: TauGbP;
@@ -4260,7 +4725,7 @@ export declare namespace SpatialExperimentInputDefinitions {
 export type SpatialExperimentInput = SpatialExperimentInputDefinitions.SpatialExperimentInput;
 
 // Source DTO: solarlab.sweeps.inputs:SweepInput
-// Schema SHA-256 (JSON.stringify): 18987e4298f746a0578cbb339f19c508676f5eac04845411db8feeb359aad5ad
+// Schema SHA-256 (JSON.stringify): d34025a5e724369c0820f9975cf73e549082a0c1b483d9ae33e875b480185622
 export declare namespace SweepInputDefinitions {
   /**
    * @minItems 1
@@ -4509,11 +4974,19 @@ export declare namespace SweepInputDefinitions {
   export type ScapsDefectMetadata = ScapsDefectMetadataInput[];
   export type Thickness = number | string;
   export type Layers = FullLayerInput[];
+  export type InterfaceDefectCount = number | null;
+  export type Interfaces1 =
+    [number | number | string | string, number | number | string | string][] | null;
+  export type LayerIds1 = string[];
+  export type SchemaVersion2 = 'solarlab.standard-loader-fields.v1';
+  export type SourceId = string;
+  export type SourceSha256 = string;
+  export type Temperature = number | string | boolean | null;
   export type Id10 = string;
   export type Name4 = string;
   export type Materials = NamedMaterialInput[];
   export type Name5 = string | null;
-  export type SchemaVersion2 = 'solarlab.device-preparation.v1';
+  export type SchemaVersion3 = 'solarlab.device-preparation.v1';
   export type Phi = number | string;
   export type T = number | string;
   export type VBi = number | string;
@@ -4543,32 +5016,6 @@ export declare namespace SweepInputDefinitions {
   export type TunnelMassEff = number | string;
   export type WorkFunctionLeftEv = (number | string | null) | null;
   export type WorkFunctionRightEv = (number | string | null) | null;
-  export type MinNGrid = number | null;
-  export type Notes = string | null;
-  export type SourceFormat = 'standard' | 'scaps' | 'canonical';
-  export type SourceSchemaVersion = string | number | null;
-  export type Spectrum = string | null;
-  export type Enabled = boolean;
-  export type EnergyQuadratureOrder = number;
-  export type MinimumFieldVM = number | string;
-  export type ReducedEffectiveMassRel = number | string;
-  export type BarrierHeightEv = number | string;
-  export type ElectronEffectiveMassRel = number | string;
-  export type Enabled1 = boolean;
-  export type EnergyQuadratureOrder1 = number;
-  export type HoleEffectiveMassRel = number | string;
-  export type Side1 = 'both' | 'left' | 'right';
-  export type ElectronEffectiveMassRel1 = number | string;
-  export type Enabled2 = boolean;
-  export type HoleEffectiveMassRel1 = number | string;
-  export type RequiresExplicitOccupancy = true;
-  export type Carrier = 'electron' | 'hole' | 'both';
-  export type ElectronEffectiveMassRel2 = number | string;
-  export type Enabled3 = boolean;
-  export type EnergyQuadratureOrder2 = number;
-  export type HoleEffectiveMassRel2 = number | string;
-  export type SchemaVersion3 = 'solarlab-wkb-tunnelling-channels-v1';
-  export type Experiment = JVInput | DarkJVInput;
   export type RequestedElectricalGridAllocation = number;
   export type VMax = (number | string | null) | null;
   export type AcExcitation = null;
@@ -4580,7 +5027,7 @@ export declare namespace SweepInputDefinitions {
   export type MaxIonAreaRateAM2 = (number | string | null) | null;
   export type MaxIonicFaceCurrentAM2 = (number | string | null) | null;
   export type DwellDurationS = (number | string | null) | null;
-  export type Experiment1 = 'jv_hysteresis';
+  export type Experiment = 'jv_hysteresis';
   /**
    * @minItems 1
    */
@@ -4621,10 +5068,8 @@ export declare namespace SweepInputDefinitions {
   export type Illuminated = boolean;
   export type InterfaceBoundary = boolean;
   export type InterfaceTransportModel = string;
-  export type Kind3 = 'jv';
   export type SamplesPerBranch = number;
   export type ProtocolMode = 'compatibility' | 'research_strict';
-  export type RequestApi = 'jobs' | 'jv_endpoint';
   export type Solver = 'transient' | 'steady_state' | 'quasi_fermi';
   export type VRate = number | string;
   export type BranchDwellS = number | string;
@@ -4637,23 +5082,61 @@ export declare namespace SweepInputDefinitions {
   export type UniformGenerationRateM3S = (number | string | null) | null;
   export type AtolM3 = number | string;
   export type Rtol = number | string;
+  export type MinNGrid = number | null;
+  export type Notes = string | null;
+  export type SourceFormat = 'standard' | 'scaps' | 'canonical';
+  export type SourceSchemaVersion = string | number | null;
+  export type Spectrum = string | null;
+  export type Enabled = boolean;
+  export type EnergyQuadratureOrder = number;
+  export type MinimumFieldVM = number | string;
+  export type ReducedEffectiveMassRel = number | string;
+  export type BarrierHeightEv = number | string;
+  export type ElectronEffectiveMassRel = number | string;
+  export type Enabled1 = boolean;
+  export type EnergyQuadratureOrder1 = number;
+  export type HoleEffectiveMassRel = number | string;
+  export type Side1 = 'both' | 'left' | 'right';
+  export type ElectronEffectiveMassRel1 = number | string;
+  export type Enabled2 = boolean;
+  export type HoleEffectiveMassRel1 = number | string;
+  export type RequiresExplicitOccupancy = true;
+  export type Carrier = 'electron' | 'hole' | 'both';
+  export type ElectronEffectiveMassRel2 = number | string;
+  export type Enabled3 = boolean;
+  export type EnergyQuadratureOrder2 = number;
+  export type HoleEffectiveMassRel2 = number | string;
+  export type SchemaVersion6 = 'solarlab-wkb-tunnelling-channels-v1';
+  export type Experiment1 = JVInput | DarkJVInput;
   export type RequestedElectricalGridAllocation1 = number;
-  export type VMax1 = number | string;
-  export type Kind4 = 'dark_jv';
+  export type VMax1 = (number | string | null) | null;
+  export type IfaceStates1 = boolean;
+  export type Illuminated1 = boolean;
+  export type InterfaceBoundary1 = boolean;
+  export type InterfaceTransportModel1 = string;
+  export type Kind3 = 'jv';
   export type SamplesPerBranch1 = number;
+  export type ProtocolMode1 = 'compatibility' | 'research_strict';
+  export type RequestApi = 'jobs' | 'jv_endpoint';
+  export type Solver1 = 'transient' | 'steady_state' | 'quasi_fermi';
   export type VRate1 = number | string;
+  export type RequestedElectricalGridAllocation2 = number;
+  export type VMax2 = number | string;
+  export type Kind4 = 'dark_jv';
+  export type SamplesPerBranch2 = number;
+  export type VRate2 = number | string;
   export type Id11 = string;
-  export type SchemaVersion6 = 'solarlab.experiment-preparation.v1';
+  export type SchemaVersion7 = 'solarlab.experiment-preparation.v1';
   export type Id12 = string;
   export type ReferenceId1 = string | null;
-  export type SchemaVersion7 = 'solarlab.sweep-preparation.v1';
+  export type SchemaVersion8 = 'solarlab.sweep-preparation.v1';
 
   export interface SweepInput {
     axes: Axes;
     base: Base;
     id: Id12;
     reference_id?: ReferenceId1;
-    schema_version: SchemaVersion7;
+    schema_version: SchemaVersion8;
   }
   /**
    * This interface was referenced by `SweepInput`'s JSON-Schema
@@ -4696,9 +5179,10 @@ export declare namespace SweepInputDefinitions {
     id: Id3;
     interfaces?: Interfaces;
     layers: Layers;
+    legacy_fields?: LegacyDeviceFieldsInput | null;
     materials?: Materials;
     name?: Name5;
-    schema_version: SchemaVersion2;
+    schema_version: SchemaVersion3;
     settings?: DeviceSettingsInput;
     simulation_hints?: SimulationHintsInput | null;
     source_format: SourceFormat;
@@ -5072,6 +5556,19 @@ export declare namespace SweepInputDefinitions {
   }
   /**
    * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "LegacyDeviceFieldsInput".
+   */
+  export interface LegacyDeviceFieldsInput {
+    interface_defect_count?: InterfaceDefectCount;
+    interfaces?: Interfaces1;
+    layer_ids: LayerIds1;
+    schema_version: SchemaVersion2;
+    source_id: SourceId;
+    source_sha256: SourceSha256;
+    temperature?: Temperature;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
    * via the `definition` "NamedMaterialInput".
    */
   export interface NamedMaterialInput {
@@ -5119,78 +5616,20 @@ export declare namespace SweepInputDefinitions {
    * via the `definition` "SimulationHintsInput".
    */
   export interface SimulationHintsInput {
+    jv_sweep?: JVSweepHintsInput | null;
     min_N_grid?: MinNGrid;
     notes?: Notes;
   }
   /**
+   * Supplied advisory fields, without an endpoint or implied execution.
+   *
+   * Unknown fields reject rather than disappear. A caller must explicitly
+   * compose these fields with JVInput to request protocol preparation.
+   *
    * This interface was referenced by `SweepInput`'s JSON-Schema
-   * via the `definition` "TunnellingInput".
+   * via the `definition` "JVSweepHintsInput".
    */
-  export interface TunnellingInput {
-    band_to_band?: BandToBandInput | null;
-    contact?: ContactTunnellingInput | null;
-    interface_defect_assisted?: DefectAssistedInput | null;
-    intraband?: IntrabandInput | null;
-    schema_version?: SchemaVersion3;
-  }
-  /**
-   * This interface was referenced by `SweepInput`'s JSON-Schema
-   * via the `definition` "BandToBandInput".
-   */
-  export interface BandToBandInput {
-    enabled?: Enabled;
-    energy_quadrature_order?: EnergyQuadratureOrder;
-    minimum_field_V_m?: MinimumFieldVM;
-    reduced_effective_mass_rel?: ReducedEffectiveMassRel;
-  }
-  /**
-   * This interface was referenced by `SweepInput`'s JSON-Schema
-   * via the `definition` "ContactTunnellingInput".
-   */
-  export interface ContactTunnellingInput {
-    barrier_height_eV?: BarrierHeightEv;
-    electron_effective_mass_rel?: ElectronEffectiveMassRel;
-    enabled?: Enabled1;
-    energy_quadrature_order?: EnergyQuadratureOrder1;
-    hole_effective_mass_rel?: HoleEffectiveMassRel;
-    side?: Side1;
-  }
-  /**
-   * This interface was referenced by `SweepInput`'s JSON-Schema
-   * via the `definition` "DefectAssistedInput".
-   */
-  export interface DefectAssistedInput {
-    electron_effective_mass_rel?: ElectronEffectiveMassRel1;
-    enabled?: Enabled2;
-    hole_effective_mass_rel?: HoleEffectiveMassRel1;
-    requires_explicit_occupancy?: RequiresExplicitOccupancy;
-  }
-  /**
-   * This interface was referenced by `SweepInput`'s JSON-Schema
-   * via the `definition` "IntrabandInput".
-   */
-  export interface IntrabandInput {
-    carrier?: Carrier;
-    electron_effective_mass_rel?: ElectronEffectiveMassRel2;
-    enabled?: Enabled3;
-    energy_quadrature_order?: EnergyQuadratureOrder2;
-    hole_effective_mass_rel?: HoleEffectiveMassRel2;
-  }
-  /**
-   * This interface was referenced by `SweepInput`'s JSON-Schema
-   * via the `definition` "JVExperimentInput".
-   */
-  export interface JVExperimentInput {
-    device: DeviceInput;
-    experiment: Experiment;
-    id: Id11;
-    schema_version: SchemaVersion6;
-  }
-  /**
-   * This interface was referenced by `SweepInput`'s JSON-Schema
-   * via the `definition` "JVInput".
-   */
-  export interface JVInput {
+  export interface JVSweepHintsInput {
     N_grid?: RequestedElectricalGridAllocation;
     V_max?: VMax;
     experiment_protocol?: JVProtocolInput | null;
@@ -5198,10 +5637,8 @@ export declare namespace SweepInputDefinitions {
     illuminated?: Illuminated;
     interface_boundary?: InterfaceBoundary;
     interface_transport_model?: InterfaceTransportModel;
-    kind: Kind3;
     n_points?: SamplesPerBranch;
     protocol_mode?: ProtocolMode;
-    request_api?: RequestApi;
     solver?: Solver;
     v_rate?: VRate;
     waveform?: JVWaveformInput | null;
@@ -5217,7 +5654,7 @@ export declare namespace SweepInputDefinitions {
     ac_excitation: AcExcitation;
     dc_settle: JVDCSettleInput;
     dwell_duration_s: DwellDurationS;
-    experiment: Experiment1;
+    experiment: Experiment;
     illumination_history: IlluminationHistory;
     implicit_legacy_protocol: ImplicitLegacyProtocol;
     initial_state_source: InitialStateSource;
@@ -5300,20 +5737,105 @@ export declare namespace SweepInputDefinitions {
   }
   /**
    * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "TunnellingInput".
+   */
+  export interface TunnellingInput {
+    band_to_band?: BandToBandInput | null;
+    contact?: ContactTunnellingInput | null;
+    interface_defect_assisted?: DefectAssistedInput | null;
+    intraband?: IntrabandInput | null;
+    schema_version?: SchemaVersion6;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "BandToBandInput".
+   */
+  export interface BandToBandInput {
+    enabled?: Enabled;
+    energy_quadrature_order?: EnergyQuadratureOrder;
+    minimum_field_V_m?: MinimumFieldVM;
+    reduced_effective_mass_rel?: ReducedEffectiveMassRel;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "ContactTunnellingInput".
+   */
+  export interface ContactTunnellingInput {
+    barrier_height_eV?: BarrierHeightEv;
+    electron_effective_mass_rel?: ElectronEffectiveMassRel;
+    enabled?: Enabled1;
+    energy_quadrature_order?: EnergyQuadratureOrder1;
+    hole_effective_mass_rel?: HoleEffectiveMassRel;
+    side?: Side1;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "DefectAssistedInput".
+   */
+  export interface DefectAssistedInput {
+    electron_effective_mass_rel?: ElectronEffectiveMassRel1;
+    enabled?: Enabled2;
+    hole_effective_mass_rel?: HoleEffectiveMassRel1;
+    requires_explicit_occupancy?: RequiresExplicitOccupancy;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "IntrabandInput".
+   */
+  export interface IntrabandInput {
+    carrier?: Carrier;
+    electron_effective_mass_rel?: ElectronEffectiveMassRel2;
+    enabled?: Enabled3;
+    energy_quadrature_order?: EnergyQuadratureOrder2;
+    hole_effective_mass_rel?: HoleEffectiveMassRel2;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "JVExperimentInput".
+   */
+  export interface JVExperimentInput {
+    device: DeviceInput;
+    experiment: Experiment1;
+    id: Id11;
+    schema_version: SchemaVersion7;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
+   * via the `definition` "JVInput".
+   */
+  export interface JVInput {
+    N_grid?: RequestedElectricalGridAllocation1;
+    V_max?: VMax1;
+    experiment_protocol?: JVProtocolInput | null;
+    iface_states?: IfaceStates1;
+    illuminated?: Illuminated1;
+    interface_boundary?: InterfaceBoundary1;
+    interface_transport_model?: InterfaceTransportModel1;
+    kind: Kind3;
+    n_points?: SamplesPerBranch1;
+    protocol_mode?: ProtocolMode1;
+    request_api?: RequestApi;
+    solver?: Solver1;
+    v_rate?: VRate1;
+    waveform?: JVWaveformInput | null;
+    waveform_controls?: JVWaveformControlsInput | null;
+  }
+  /**
+   * This interface was referenced by `SweepInput`'s JSON-Schema
    * via the `definition` "DarkJVInput".
    */
   export interface DarkJVInput {
-    N_grid?: RequestedElectricalGridAllocation1;
-    V_max?: VMax1;
+    N_grid?: RequestedElectricalGridAllocation2;
+    V_max?: VMax2;
     kind: Kind4;
-    n_points?: SamplesPerBranch1;
-    v_rate?: VRate1;
+    n_points?: SamplesPerBranch2;
+    v_rate?: VRate2;
   }
 }
 export type SweepInput = SweepInputDefinitions.SweepInput;
 
 // Source DTO: solarlab.device.inputs:TandemInput
-// Schema SHA-256 (JSON.stringify): 47cfc6435d1ee92e5a64924e7faed6a303ff4ae9df7b6c620e48404cc1efaac1
+// Schema SHA-256 (JSON.stringify): 4618895c2c7fa8bdd01561cb6353830eb6eea1674a3202541cd4b3cdab1dc6da
 export declare namespace TandemInputDefinitions {
   export type Id = string;
   export type Incoherent = boolean;
@@ -5544,11 +6066,19 @@ export declare namespace TandemInputDefinitions {
   export type ScapsDefectMetadata = ScapsDefectMetadataInput[];
   export type Thickness1 = number | string;
   export type Layers = FullLayerInput[];
+  export type InterfaceDefectCount = number | null;
+  export type Interfaces1 =
+    [number | number | string | string, number | number | string | string][] | null;
+  export type LayerIds1 = string[];
+  export type SchemaVersion2 = 'solarlab.standard-loader-fields.v1';
+  export type SourceId = string;
+  export type SourceSha256 = string;
+  export type Temperature = number | string | boolean | null;
   export type Id10 = string;
   export type Name5 = string;
   export type Materials = NamedMaterialInput[];
   export type Name6 = string | null;
-  export type SchemaVersion2 = 'solarlab.device-preparation.v1';
+  export type SchemaVersion3 = 'solarlab.device-preparation.v1';
   export type Phi = number | string;
   export type T = number | string;
   export type VBi = number | string;
@@ -5578,6 +6108,72 @@ export declare namespace TandemInputDefinitions {
   export type TunnelMassEff = number | string;
   export type WorkFunctionLeftEv = (number | string | null) | null;
   export type WorkFunctionRightEv = (number | string | null) | null;
+  export type RequestedElectricalGridAllocation = number;
+  export type VMax = (number | string | null) | null;
+  export type AcExcitation = null;
+  export type DurationS = (number | string | null) | null;
+  export type Kind1 =
+    'finite_time' | 'residual_certified' | 'finite_time_with_certificate' | 'not_applicable';
+  export type MaxCarrierAreaRateAM2 = (number | string | null) | null;
+  export type MaxFaceCurrentSpreadAM2 = (number | string | null) | null;
+  export type MaxIonAreaRateAM2 = (number | string | null) | null;
+  export type MaxIonicFaceCurrentAM2 = (number | string | null) | null;
+  export type DwellDurationS = (number | string | null) | null;
+  export type Experiment = 'jv_hysteresis';
+  /**
+   * @minItems 1
+   */
+  export type IlluminationHistory = [JVIlluminationStepInput, ...JVIlluminationStepInput[]];
+  export type Condition = 'dark' | 'baseline' | 'scaled' | 'monochromatic' | 'pulse';
+  export type DurationS1 = (number | string | null) | null;
+  export type IntensitySuns = (number | string | null) | null;
+  export type Phase = string;
+  export type PhotonFluxM2S = (number | string | null) | null;
+  export type RelativeGenerationChange = (number | string | null) | null;
+  export type SourceReference = string | null;
+  export type ImplicitLegacyProtocol = boolean;
+  export type InitialStateSource =
+    | 'dark_equilibrium'
+    | 'dark_equilibrium_each_sample'
+    | 'finite_time_illuminated_preconditioned'
+    | 'finite_time_dc_preconditioned'
+    | 'qf_dc_candidate'
+    | 'user_supplied_state';
+  export type PreBiasV = (number | string | null) | null;
+  export type Axis = 'voltage_V';
+  export type Mode1 = 'linear' | 'log' | 'declared' | 'piecewise_linear';
+  /**
+   * @minItems 1
+   */
+  export type Values = [number | number | string | string, ...(number | number | string | string)[]];
+  export type Axis1 = 'voltage_V';
+  export type Direction =
+    'ascending' | 'descending' | 'ascending_then_descending' | 'declared_order' | 'forward_time';
+  export type RateVS = number | string;
+  export type Start = number | string;
+  export type Stop = number | string;
+  export type SchemaVersion4 = 1;
+  export type SoakDurationS = (number | string | null) | null;
+  export type TemperatureK = number | string;
+  export type VocSearch = null;
+  export type IfaceStates = boolean;
+  export type Illuminated = boolean;
+  export type InterfaceBoundary = boolean;
+  export type InterfaceTransportModel = string;
+  export type SamplesPerBranch = number;
+  export type ProtocolMode = 'compatibility' | 'research_strict';
+  export type Solver = 'transient' | 'steady_state' | 'quasi_fermi';
+  export type VRate = number | string;
+  export type BranchDwellS = number | string;
+  export type DarkPrepS = number | string;
+  export type DarkSeedS = number | string;
+  export type SchemaVersion5 = 1;
+  export type StartVoltageV = number | string;
+  export type TurnaroundDark = boolean;
+  export type TurnaroundS = number | string;
+  export type UniformGenerationRateM3S = (number | string | null) | null;
+  export type AtolM3 = number | string;
+  export type Rtol = number | string;
   export type MinNGrid = number | null;
   export type Notes = string | null;
   export type SourceFormat = 'standard' | 'scaps' | 'canonical';
@@ -5602,14 +6198,14 @@ export declare namespace TandemInputDefinitions {
   export type Enabled3 = boolean;
   export type EnergyQuadratureOrder2 = number;
   export type HoleEffectiveMassRel2 = number | string;
-  export type SchemaVersion3 = 'solarlab-wkb-tunnelling-channels-v1';
+  export type SchemaVersion6 = 'solarlab-wkb-tunnelling-channels-v1';
   export type BottomCellReference = string;
   export type DeviceType = 'tandem_2T_monolithic';
   export type Id11 = string;
   export type JunctionModel = 'ideal_ohmic';
   export type JunctionStack = OpticalLayerInput[];
   export type LightDirection = 'top_first';
-  export type SchemaVersion4 = 'solarlab.tandem-preparation.v1';
+  export type SchemaVersion7 = 'solarlab.tandem-preparation.v1';
   export type SourceSchemaVersion1 = 1;
   export type TopCellReference = string;
 
@@ -5623,7 +6219,7 @@ export declare namespace TandemInputDefinitions {
     junction_model: JunctionModel;
     junction_stack: JunctionStack;
     light_direction: LightDirection;
-    schema_version: SchemaVersion4;
+    schema_version: SchemaVersion7;
     source_schema_version: SourceSchemaVersion1;
     top_cell: DeviceInput;
     top_cell_reference: TopCellReference;
@@ -5664,9 +6260,10 @@ export declare namespace TandemInputDefinitions {
     id: Id3;
     interfaces?: Interfaces;
     layers: Layers;
+    legacy_fields?: LegacyDeviceFieldsInput | null;
     materials?: Materials;
     name?: Name6;
-    schema_version: SchemaVersion2;
+    schema_version: SchemaVersion3;
     settings?: DeviceSettingsInput;
     simulation_hints?: SimulationHintsInput | null;
     source_format: SourceFormat;
@@ -6040,6 +6637,19 @@ export declare namespace TandemInputDefinitions {
   }
   /**
    * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "LegacyDeviceFieldsInput".
+   */
+  export interface LegacyDeviceFieldsInput {
+    interface_defect_count?: InterfaceDefectCount;
+    interfaces?: Interfaces1;
+    layer_ids: LayerIds1;
+    schema_version: SchemaVersion2;
+    source_id: SourceId;
+    source_sha256: SourceSha256;
+    temperature?: Temperature;
+  }
+  /**
+   * This interface was referenced by `TandemInput`'s JSON-Schema
    * via the `definition` "NamedMaterialInput".
    */
   export interface NamedMaterialInput {
@@ -6087,8 +6697,124 @@ export declare namespace TandemInputDefinitions {
    * via the `definition` "SimulationHintsInput".
    */
   export interface SimulationHintsInput {
+    jv_sweep?: JVSweepHintsInput | null;
     min_N_grid?: MinNGrid;
     notes?: Notes;
+  }
+  /**
+   * Supplied advisory fields, without an endpoint or implied execution.
+   *
+   * Unknown fields reject rather than disappear. A caller must explicitly
+   * compose these fields with JVInput to request protocol preparation.
+   *
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVSweepHintsInput".
+   */
+  export interface JVSweepHintsInput {
+    N_grid?: RequestedElectricalGridAllocation;
+    V_max?: VMax;
+    experiment_protocol?: JVProtocolInput | null;
+    iface_states?: IfaceStates;
+    illuminated?: Illuminated;
+    interface_boundary?: InterfaceBoundary;
+    interface_transport_model?: InterfaceTransportModel;
+    n_points?: SamplesPerBranch;
+    protocol_mode?: ProtocolMode;
+    solver?: Solver;
+    v_rate?: VRate;
+    waveform?: JVWaveformInput | null;
+    waveform_controls?: JVWaveformControlsInput | null;
+  }
+  /**
+   * The existing ExperimentProtocol fields for its J-V branch only.
+   *
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVProtocolInput".
+   */
+  export interface JVProtocolInput {
+    ac_excitation: AcExcitation;
+    dc_settle: JVDCSettleInput;
+    dwell_duration_s: DwellDurationS;
+    experiment: Experiment;
+    illumination_history: IlluminationHistory;
+    implicit_legacy_protocol: ImplicitLegacyProtocol;
+    initial_state_source: InitialStateSource;
+    pre_bias_V: PreBiasV;
+    sampling: JVSamplingInput;
+    scan: JVScanInput;
+    schema_version: SchemaVersion4;
+    soak_duration_s: SoakDurationS;
+    temperature_K: TemperatureK;
+    voc_search: VocSearch;
+  }
+  /**
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVDCSettleInput".
+   */
+  export interface JVDCSettleInput {
+    duration_s: DurationS;
+    kind: Kind1;
+    max_carrier_area_rate_A_m2: MaxCarrierAreaRateAM2;
+    max_face_current_spread_A_m2: MaxFaceCurrentSpreadAM2;
+    max_ion_area_rate_A_m2: MaxIonAreaRateAM2;
+    max_ionic_face_current_A_m2: MaxIonicFaceCurrentAM2;
+  }
+  /**
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVIlluminationStepInput".
+   */
+  export interface JVIlluminationStepInput {
+    condition: Condition;
+    duration_s: DurationS1;
+    intensity_suns: IntensitySuns;
+    phase: Phase;
+    photon_flux_m2_s: PhotonFluxM2S;
+    relative_generation_change: RelativeGenerationChange;
+    source_reference: SourceReference;
+  }
+  /**
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVSamplingInput".
+   */
+  export interface JVSamplingInput {
+    axis: Axis;
+    mode: Mode1;
+    values: Values;
+  }
+  /**
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVScanInput".
+   */
+  export interface JVScanInput {
+    axis: Axis1;
+    direction: Direction;
+    rate_V_s: RateVS;
+    start: Start;
+    stop: Stop;
+  }
+  /**
+   * All eight fields of JVWaveform.from_dict are explicit, including null.
+   *
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVWaveformInput".
+   */
+  export interface JVWaveformInput {
+    branch_dwell_s: BranchDwellS;
+    dark_prep_s: DarkPrepS;
+    dark_seed_s: DarkSeedS;
+    schema_version: SchemaVersion5;
+    start_voltage_V: StartVoltageV;
+    turnaround_dark: TurnaroundDark;
+    turnaround_s: TurnaroundS;
+    uniform_generation_rate_m3_s: UniformGenerationRateM3S;
+  }
+  /**
+   * This interface was referenced by `TandemInput`'s JSON-Schema
+   * via the `definition` "JVWaveformControlsInput".
+   */
+  export interface JVWaveformControlsInput {
+    atol_m3: AtolM3;
+    rtol: Rtol;
   }
   /**
    * This interface was referenced by `TandemInput`'s JSON-Schema
@@ -6099,7 +6825,7 @@ export declare namespace TandemInputDefinitions {
     contact?: ContactTunnellingInput | null;
     interface_defect_assisted?: DefectAssistedInput | null;
     intraband?: IntrabandInput | null;
-    schema_version?: SchemaVersion3;
+    schema_version?: SchemaVersion6;
   }
   /**
    * This interface was referenced by `TandemInput`'s JSON-Schema

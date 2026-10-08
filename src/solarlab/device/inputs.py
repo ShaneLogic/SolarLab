@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from solarlab.config.legacy_fields import LegacyDeviceFieldsInput
+from solarlab.experiments.jv.declarations import JVSweepHintsInput
 from solarlab.materials.full_parameters import FullParameterInput, Nonempty, StableId, StructuredInput, quantity_field as q
 from solarlab.materials.parameters import QuantityInput
 from solarlab.device.settings import DeviceSettingsInput
@@ -166,6 +168,7 @@ class NamedMaterialInput(StructuredInput):
 class SimulationHintsInput(StructuredInput):
     min_N_grid: int | None = Field(default=None, gt=0)
     notes: str | None = None
+    jv_sweep: JVSweepHintsInput | None = None
 
 
 class DeviceInput(StructuredInput):
@@ -175,6 +178,7 @@ class DeviceInput(StructuredInput):
     description: str | None = None
     source_schema_version: str | int | None = None
     source_format: Literal["standard", "scaps", "canonical"]
+    legacy_fields: LegacyDeviceFieldsInput | None = None
     settings: DeviceSettingsInput = Field(default_factory=DeviceSettingsInput)
     materials: tuple[NamedMaterialInput, ...] = ()
     layers: tuple[FullLayerInput, ...]

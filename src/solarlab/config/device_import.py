@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from solarlab.config.legacy_fields import retained_legacy_fields
 from solarlab.config.yaml import load_yaml_mapping
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.defects import MULTIVALENT_VERSION
@@ -74,7 +75,8 @@ def _common_device(
 ) -> DeviceInput:
     raw = _mapping(document["device"], "device")
     contacts_extra = {"contacts", "S_n_left", "S_p_left", "S_n_right", "S_p_right"}
-    _keys(raw, set(DeviceSettingsInput.model_fields) | contacts_extra | {"interfaces", "interface_defects", "V_bi_override", "tunnelling_channels"}, set(), "device")
+    retained = {"temperature"} if source_format == "standard" else set()
+    _keys(raw, set(DeviceSettingsInput.model_fields) | contacts_extra | retained | {"interfaces", "interface_defects", "V_bi_override", "tunnelling_channels"}, set(), "device")
     settings = {name: raw[name] for name in DeviceSettingsInput.model_fields if name in raw}
     if "V_bi_override" in raw:
         override = _quantity(raw["V_bi_override"], "V", "device.V_bi_override")
@@ -116,20 +118,24 @@ def _common_device(
     if interfaces is not None and ("interfaces" in raw or "interface_defects" in raw):
         raise ValueError("cannot mix top-level SCAPS interfaces with device interface declarations")
     if interfaces is None:
-        pairs = _sequence(raw["interfaces"], "device.interfaces") if "interfaces" in raw else ()
-        defects = _sequence(raw["interface_defects"], "device.interface_defects") if "interface_defects" in raw else ()
+        pairs = _sequence(raw["interfaces"], "device.interfaces") if raw.get("interfaces") is not None else ()
+        defects = _sequence(raw["interface_defects"], "device.interface_defects") if raw.get("interface_defects") is not None else ()
         for name, aligned in (("interfaces", pairs), ("interface_defects", defects)):
-            if aligned and len(aligned) != len(layers) - 1:
-                raise ValueError(f"device.{name}: expected one full-layer-aligned entry per adjacent interface")
+            if len(aligned) > len(layers) - 1:
+                raise ValueError(f"device.{name}: expected at most one full-layer-aligned entry per adjacent interface; unused trailing data is unsupported")
         interfaces = []
         for i, (left, right) in enumerate(zip(layers, layers[1:])):
             interface = {"id": f"interface_{i}", "left": left["id"], "right": right["id"]}
-            if pairs:
+            if i < len(pairs):
                 pair = _sequence(pairs[i], f"device.interfaces[{i}]")
                 if len(pair) != 2:
                     raise ValueError(f"device.interfaces[{i}]: expected [v_n,v_p]")
                 interface.update(v_n=pair[0], v_p=pair[1])
-            if defects:
+            elif pairs or defects:
+                # interfaces_from_device_dict pads by the FULL raw layer
+                # index, including substrate boundaries. Never shift slots.
+                interface.update(v_n=0.0, v_p=0.0)
+            if i < len(defects):
                 interface["defect"] = None if defects[i] is None else _flat_defect(defects[i], f"interface_defect_{i}", defaults, f"device.interface_defects[{i}]")
             interfaces.append(interface)
     grains = []
@@ -202,4 +208,8 @@ def import_standard_device(source: SourceDocument, *, id: str, defaults: Default
                     raise ValueError(f"layers[{i}].bulk_defects: duplicate legacy species name")
             layer["bulk_defects"] = defects
         layers.append(layer)
-    return _common_device(document, layers, id, defaults, "standard")
+    result = _common_device(document, layers, id, defaults, "standard")
+    retained = retained_legacy_fields(source)
+    if retained is not None:
+        result = result.validated_update({"legacy_fields": retained})
+    return result
