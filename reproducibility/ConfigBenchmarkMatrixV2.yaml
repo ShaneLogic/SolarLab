@@ -861,8 +861,8 @@ sources:
   source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
 - id: src/solarlab/device/resolved.py
   path: src/solarlab/device/resolved.py
-  sha256: 168c6a5d28d3a649d290f7b06a7f69da35fe02201988099bc8b3a0b0deab93d9
-  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+  sha256: d7f1cdf6d655ff375399bcd70547c299896152d0dd71a06f1eace1fa7227c406
+  source_commit: ddb7fc97892445facbc3cdb16df5d400df98eec3
 - id: src/solarlab/experiments/jv/inputs.py
   path: src/solarlab/experiments/jv/inputs.py
   sha256: 1acc7e2616e47513c420df44d34cdd90969ac6a457d13674fd38276e5140594d
