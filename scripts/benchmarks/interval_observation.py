@@ -354,6 +354,40 @@ def rational_sqrt_upper(value, rounding_error):
     return Fraction(root, denominator)
 
 
+def certify_fixed4_partition(left, right, absolute_error, original, cells):
+    """Check four same-function moment certificates using exact arithmetic.
+
+    Function provenance belongs to the caller's path/port binding. This small
+    reduction checks coverage and outward bounds, never fits the integrand or
+    evaluates a physical model. Numerical excess is already inside each upper.
+    """
+    left, right, absolute_error = map(rational, (left, right, absolute_error))
+    if left >= right or absolute_error <= 0 or type(cells) is not tuple or len(cells) != 4:
+        raise ContractError("observation_partition_interval_or_count")
+
+    def check(bound, length, allocation):
+        if not isinstance(bound, AbsoluteIntegralBound):
+            raise ContractError("observation_partition_missing_bound")
+        moment = bound.squared_integral
+        square = length*(moment.center+moment.radius)
+        if (moment.radius > allocation**2/(8*length)
+                or bound.upper**2 < square
+                or max(Fraction(0), bound.upper-allocation/2)**2 > square
+                or bound.numerical_excess_bound > allocation):
+            raise ContractError("observation_partition_moment_or_outward_bound")
+
+    check(original, right-left, absolute_error)
+    for i, cell in enumerate(cells):
+        a, b = left+(right-left)*Fraction(i, 4), left+(right-left)*Fraction(i+1, 4)
+        if (not isinstance(cell, Mapping) or cell.get("left") != a or cell.get("right") != b
+                or cell.get("allocation_C") != absolute_error/4):
+            raise ContractError("observation_partition_coverage_or_allocation")
+        check(cell["bound"], b-a, absolute_error/4)
+    total = sum((cell["bound"].upper for cell in cells), Fraction(0))
+    return {"cells": cells, "partition_upper_C": total,
+            "retained_upper_C": min(original.upper, total)}
+
+
 def public_action_enclosures(result):
     """Retain every returned word and the public action's own error bound."""
     words = result.value.words
@@ -704,17 +738,20 @@ class SlabPathObserver:
             tangent.append(reservoir+a.polynomial(self.tangent_metal_polynomial[side], coordinate)+tangent_flux[side])
         return {"raw_polynomial_current": tuple(raw), "same_state_affine_tangent_current": tuple(tangent)}
 
-    def integrate(self, arithmetic: BallIntegrator, absolute_error):
+    def integrate(self, arithmetic: BallIntegrator, absolute_error, *, partition_cells=None):
         """Signed charge integrals and conservative absolute raw/tangent gaps.
 
         ``absolute_error`` is an observation allocation supplied by the caller,
         not a new physical gate. All returned radii still enter the original
         interval and non-resetting prefix reference budget.
         """
+        if partition_cells is not None and (type(partition_cells) is not int or partition_cells != 4):
+            raise ContractError("observation_unsupported_partition")
         a, path = arithmetic, self.path
         path.require_covered()
         lower, h = path.clock.coordinate(path.clock.predecessor), path.clock.hused
         raw_conduction, tangent_conduction, tangent_metal, gaps = [], [], [], []
+        partitions = []
         for side, node, face, sign in ((0, 0, 0, 1), (1, self.model.count-1, self.model.count-2, -1)):
             nonlinear = a.integrate(
                 lambda u, analytic: a.number(sign*self.area*h)*self.fluxes(a, u, analytic)[0][face],
@@ -726,10 +763,30 @@ class SlabPathObserver:
                 lower, 0, absolute_error)
             tangent_metal.append(flux_integral+path.integrate(self.tangent_metal_polynomial[side]))
             difference = self.endpoint_carrier_rate[side]+self.raw_metal[side]-self.tangent_metal_polynomial[side]
-            gaps.append(a.absolute_bound(
-                lambda u, analytic: a.number(h)*(a.polynomial(difference, u)
-                                                  -self.tangent_metal_flux(a, u, analytic)[side]),
-                lower, 0, absolute_error))
+            def departure(u, analytic):
+                return a.number(h)*(a.polynomial(difference, u)
+                                     -self.tangent_metal_flux(a, u, analytic)[side])
+
+            first_call = len(a.calls)
+            gaps.append(a.absolute_bound(departure, lower, 0, absolute_error))
+            if partition_cells is not None:
+                original_calls = (first_call, len(a.calls))
+                cells = []
+                for i in range(4):
+                    left, right = lower*(1-Fraction(i, 4)), lower*(1-Fraction(i+1, 4))
+                    allocation = rational(absolute_error)/4
+                    first_call = len(a.calls)
+                    bound = a.absolute_bound(departure, left, right, allocation)
+                    cells.append({"left": left, "right": right, "allocation_C": allocation,
+                                  "bound": bound, "call_range": (first_call, len(a.calls))})
+                port = ("left_metal", "right_metal")[side]
+                partitions.append({"port": port,
+                    "integrand_identity": identity({"schema": "solarlab.terminal-departure.v1",
+                        "path_identity": path.identity, "port": port,
+                        "formula": "hused*(endpoint_carrier_rate+raw_metal-tangent_metal_polynomial-tangent_metal_flux)"}),
+                    "absolute_error_C": rational(absolute_error), "original": gaps[-1],
+                    "original_call_range": original_calls,
+                    **certify_fixed4_partition(lower, 0, absolute_error, gaps[-1], tuple(cells))})
         # Total-current and body/metal charge rows are different quantities.
         # A terminal L1 bound alone cannot bound its two charge contributions.
         # The endpoint-carrier terms are polynomials, so their second moments
@@ -740,9 +797,11 @@ class SlabPathObserver:
             return rational_sqrt_upper(-lower*moment, rational(absolute_error)/2)
 
         endpoint_l1 = tuple(polynomial_l1(p) for p in self.endpoint_carrier_rate)
-        charge_gap = (polynomial_l1(sum(self.endpoint_carrier_rate, Polynomial())),
-                      *(gap.upper+endpoint for gap, endpoint in zip(gaps, endpoint_l1, strict=True)))
-        return {"raw_polynomial": (sum(raw_conduction, Enclosure(0)),
+        body_l1 = polynomial_l1(sum(self.endpoint_carrier_rate, Polynomial()))
+        terminal_upper = (tuple(row["retained_upper_C"] for row in partitions) if partition_cells is not None
+                          else tuple(gap.upper for gap in gaps))
+        charge_gap = (body_l1, *(gap+endpoint for gap, endpoint in zip(terminal_upper, endpoint_l1, strict=True)))
+        result = {"raw_polynomial": (sum(raw_conduction, Enclosure(0)),
                                     *(Enclosure(path.integrate(p)) for p in self.raw_metal)),
                 "same_state_affine_tangent": (sum(tangent_conduction, Enclosure(0)), *tangent_metal),
                 "raw_tangent_L1_upper_bounds": tuple(gaps),
@@ -751,6 +810,12 @@ class SlabPathObserver:
                 "path_identity": path.identity,
                 "certification_scope": "represented polynomial physical observations only",
                 "DAE_time_accuracy_certified": False, "continuum_space_accuracy_certified": False}
+        if partition_cells is not None:
+            result["terminal_partition"] = {"schema": "solarlab.terminal-partition.v1",
+                "path_identity": path.identity, "normalized_interval": (lower, Fraction(0)),
+                "cells_per_port": 4, "ports": tuple(partitions),
+                "endpoint_carrier_L1_upper_C": endpoint_l1, "body_L1_upper_C": body_l1}
+        return result
 
     def strip_current_debit(self, arithmetic: BallIntegrator):
         """Conservative absolute current-charge debit on a declared extension.

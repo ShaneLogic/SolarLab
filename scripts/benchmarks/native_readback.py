@@ -19,7 +19,7 @@ import time
 import zlib
 
 from scripts.benchmarks.native_history import (
-    HistoryReader, configure_integer_io, decode_integer_values, integer_io_observed,
+    HistoryReader, configure_integer_io, decode_integer_values, encode_integer_values, integer_io_observed,
 )
 
 
@@ -424,6 +424,206 @@ class SegmentStartupCheck:
                 "scope": "source-bound constructor kwargs and actual IDAGetIntegratorStats h0u; no accuracy qualification"}
 
 
+_CHARGE_ROWS = ("device", "left_metal", "right_metal")
+_CHARGE_CHANNELS = tuple(f"{ledger}.{row}.{kind}" for ledger in _LEDGERS
+                         for row in _CHARGE_ROWS for kind in ("total", "reference"))
+_CHARGE_LOCAL_FIELDS = ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C",
+                        "error_components_C", "signed_saved_defect_C", "interval_total_bound_C",
+                        "interval_reference_error_C", "original_charge_budget_C", "original_reference_share_C")
+
+
+def _exact_ratio(value):
+    _require(type(value) is list and len(value) == 2 and all(type(v) is int for v in value)
+             and value[1] > 0 and max(abs(v).bit_length() for v in value) <= 131072,
+             "partition_rational_pair")
+    result = Fraction(*value)
+    _require([result.numerator, result.denominator] == value, "partition_noncanonical_ratio")
+    return result
+
+
+class _ChargeRefinement:
+    """Independent certificate arithmetic; no observer or accumulator imports.
+
+    Moment enclosures remain source-bound evidence, not a new evaluation of the
+    physical integrand. Twelve dyadic prefixes persist across every segment.
+    """
+
+    quantum = Fraction(1, 1 << 120)
+    maximum_terms = 200000
+    maximum_bits = 65675
+
+    def __init__(self, request, source_identity):
+        self.request, self.source_identity = request, source_identity
+        policy = request["interval_observation"]
+        base = {k: v for k, v in policy.items() if k not in ("charge_refinement", "parent_policy_sha256")}
+        base["schema"] = "solarlab.interval-observation-policy.v1"
+        static = {
+            "arithmetic": {"python_flint": "0.8.0", "bits": 256, "evaluations": 2048, "depth": 16},
+            "quadrature_error_allocation": "charge_C/12 * actual_interval/full_protocol / 32 per integral",
+            "sampling": "original requested and 8/16/32 times, explicitly declared polynomial reconstruction",
+            "history": "actual accepted predecessor/endpoint plus source-owned immutable phi/psi/Dky and error metadata",
+            "qualification": "represented numerical path only; original independent time/state/space refinements remain pending",
+        }
+        expected_keys = {"schema", "map_identity", "protocol_sha256", "controls_sha256", "budgets_sha256",
+                         "sampling_sha256", "binding_identity", "header_sha256", "backend_modules", *static}
+        _require(policy.get("schema") == "solarlab.interval-observation-policy.v2"
+                 and set(base) == expected_keys and all(_digest(base[k]) == _digest(v) for k, v in static.items())
+                 and policy.get("parent_policy_sha256") == _digest(base), "charge_refinement_parent_policy")
+        slack = self.maximum_terms * self.quantum
+        constants = {"schema": "solarlab.nonnegative-upper-sum.v1", "quantum_bits": 120,
+                     "max_terms": self.maximum_terms, "max_increment_bits": 65536,
+                     "max_evidence_bytes": 8 * 1024 * 1024,
+                     "max_slack_per_channel": [slack.numerator, slack.denominator],
+                     "channel_ids": list(_CHARGE_CHANNELS)}
+        _require(_digest(policy.get("charge_refinement")) == _digest({
+            "name": "fixed4-upper120-v1", "partition_cells": 4, "upper_sum": constants,
+            "prefix_semantics": "exact signed local evidence; non-resetting upward dyadic upper bounds; original gates"})
+            and type(request["budgets"]["native_steps"]) is int
+            and request["budgets"]["native_steps"] == self.maximum_terms, "charge_refinement_constants")
+        self.policy_id = _digest({"schema": constants["schema"], "source_identity": source_identity,
+            "channels": [{"id": name, "unit": "C", "increment":
+                "interval_total_bound_C" if name.endswith(".total") else "interval_reference_error_C",
+                "role": "nonnegative_upper_bound"} for name in _CHARGE_CHANNELS],
+            "quantum_bits": 120, "max_terms": self.maximum_terms,
+            "max_slack_per_channel_hex": [hex(slack.numerator), hex(slack.denominator)],
+            "max_increment_bits": 65536, "max_evidence_bytes": 8 * 1024 * 1024})
+        self.index = 0
+        self.numerators = self.rounded = (0,) * 12
+
+    def _absolute_bound(self, payload, left, right, allocation, calls, call_range):
+        _require(type(payload) is dict and set(payload) == {
+            "upper", "method", "squared_integral", "numerical_excess_bound", "is_integral_value_estimate"}
+            and payload["method"] == "Cauchy-Schwarz from a certified squared integral"
+            and payload["is_integral_value_estimate"] is False, "partition_bound_structure")
+        upper, excess = _exact_ratio(payload["upper"]), _exact_ratio(payload["numerical_excess_bound"])
+        moment = _enclosures([payload["squared_integral"]], 1)[0]
+        center, radius = moment["center"], moment["absolute_error_bound"]
+        _require(type(call_range) is tuple and len(call_range) == 2
+                 and all(type(v) is int for v in call_range)
+                 and self.call_end <= call_range[0] < call_range[1] <= len(calls), "partition_call_range")
+        self.call_end = call_range[1]
+        receipts = calls[call_range[0]:call_range[1]]
+        _require(receipts[0] == {"evaluations": 1, "purpose": "full-real-interval-precheck", "working_bits": 512}
+                 and type(receipts[0]["evaluations"]) is int and type(receipts[0]["working_bits"]) is int,
+                 "partition_real_precheck")
+        _require(right > left and allocation > 0 and upper >= 0 and 0 <= excess <= allocation
+                 and center + radius >= 0, "partition_moment_bounds")
+        if len(receipts) == 1:
+            _require(upper == center == radius == excess == 0, "partition_zero_range_certificate")
+        else:
+            _require(len(receipts) == 2 and excess == allocation, "partition_moment_receipts")
+            receipt = receipts[1]
+            goal = allocation ** 2 / (8 * (right - left))
+            _require(receipt.get("purpose") == "L2-moment" and receipt.get("working_bits") == 512
+                     and type(receipt.get("working_bits")) is int
+                     and receipt.get("absolute_integrand") is False
+                     and type(receipt.get("evaluations")) is int and 0 < receipt["evaluations"] <= 2047
+                     and _exact_ratio(receipt["actual_error"]) == radius
+                     and _exact_ratio(receipt["requested_error"]) == goal and radius <= goal,
+                     "partition_moment_radius")
+        square = (right - left) * (center + radius)
+        _require(upper ** 2 >= square and max(Fraction(0), upper - allocation / 2) ** 2 <= square,
+                 "partition_outward_root")
+        return upper
+
+    def partition(self, evidence, calls, path_identity):
+        part = evidence["terminal_partition"]
+        _require(type(part) is dict and set(part) == {"schema", "path_identity", "normalized_interval",
+            "cells_per_port", "ports", "endpoint_carrier_L1_upper_C", "body_L1_upper_C"}
+            and part["schema"] == "solarlab.terminal-partition.v1" and part["path_identity"] == path_identity
+            and type(part["cells_per_port"]) is int and part["cells_per_port"] == 4, "partition_identity")
+        clock = evidence["clock"]
+        before, now, h = (_exact_ratio(clock[k]) for k in ("predecessor", "tn", "hused"))
+        _require(now > before and h > 0, "partition_clock")
+        left, right = (before - now) / h, Fraction(0)
+        _require(part["normalized_interval"] == (left, right), "partition_clock_coverage")
+        allocation = Fraction(self.request["budgets"]["charge_C"]) / 12 * (now - before)
+        allocation /= Fraction(self.request["segments"][-1]["end"]) * 32
+        ports = _vector(part["ports"], 2)
+        originals = _vector(evidence["raw_tangent_L1_current_bounds"], 2)
+        self.call_end = 0
+        retained = []
+        for index, port in enumerate(ports):
+            name = _CHARGE_ROWS[index + 1]
+            _require(type(port) is dict and set(port) == {"port", "integrand_identity", "absolute_error_C",
+                "original", "original_call_range", "cells", "partition_upper_C", "retained_upper_C"}
+                and port["port"] == name and port["integrand_identity"] == _digest({
+                    "schema": "solarlab.terminal-departure.v1", "path_identity": path_identity, "port": name,
+                    "formula": "hused*(endpoint_carrier_rate+raw_metal-tangent_metal_polynomial-tangent_metal_flux)"})
+                and type(port["absolute_error_C"]) is Fraction and port["absolute_error_C"] == allocation
+                and port["original"] == originals[index], "partition_port_binding")
+            original = self._absolute_bound(port["original"], left, right, allocation, calls, port["original_call_range"])
+            total = Fraction(0)
+            for j, cell in enumerate(_vector(port["cells"], 4)):
+                a, b = left + (right - left) * Fraction(j, 4), left + (right - left) * Fraction(j + 1, 4)
+                _require(type(cell) is dict and set(cell) == {"left", "right", "allocation_C", "bound", "call_range"}
+                         and type(cell["left"]) is Fraction and type(cell["right"]) is Fraction
+                         and (cell["left"], cell["right"]) == (a, b)
+                         and type(cell["allocation_C"]) is Fraction and cell["allocation_C"] == allocation / 4,
+                         "partition_cell_clock_or_allocation")
+                total += self._absolute_bound(cell["bound"], a, b, allocation / 4, calls, cell["call_range"])
+            values = _nonnegative((port["partition_upper_C"], port["retained_upper_C"]), 2)
+            _require(values == (total, min(original, total)), "partition_upper_selection")
+            retained.append(values[1])
+        carrier = _nonnegative(part["endpoint_carrier_L1_upper_C"], 2)
+        body, = _nonnegative((part["body_L1_upper_C"],), 1)
+        inputs = evidence["input_error"]
+        gap_inputs = tuple(a + b for a, b in zip(inputs["raw_charge_integral_error_C"],
+                                                inputs["tangent_charge_integral_error_C"]))
+        expected = (body, retained[0] + carrier[0], retained[1] + carrier[1])
+        _require(evidence["ledgers"]["raw_polynomial"]["error_components_C"]["raw_tangent_departure"]
+                 == tuple(a + b for a, b in zip(expected, gap_inputs))
+                 and evidence["ledgers"]["same_state_affine_tangent"]["error_components_C"]["raw_tangent_departure"]
+                 == (Fraction(0),) * 3, "partition_charge_debits")
+
+    def step(self, raw_observation, evidence, interval_index):
+        cert = evidence["upper_sum"]
+        _require(type(cert) is dict and set(cert) == {"schema", "policy_sha256", "source_identity", "channel_ids",
+            "index", "interval_sha256", "upper_numerators", "rounded_terms", "slack_upper_bounds"}
+            and cert["schema"] == "solarlab.nonnegative-upper-step.v1" and cert["policy_sha256"] == self.policy_id
+            and cert["source_identity"] == self.source_identity and cert["channel_ids"] == _CHARGE_CHANNELS
+            and type(cert["index"]) is int and cert["index"] == self.index + 1 == interval_index
+            and cert["index"] <= self.maximum_terms, "charge_upper_identity_or_index")
+        # Select already serialized local fields before decoded enclosures are
+        # converted for arithmetic. Re-tagging those conversions changes bytes.
+        selected = {"schema": "solarlab.native-charge-local-evidence.v1", "source_identity": self.source_identity,
+                    "frame_identity": raw_observation["frame_identity"], "path_identity": raw_observation["path_identity"],
+                    "clock": raw_observation["clock"],
+                    "ledgers": {k: {f: raw_observation["ledgers"][k][f] for f in _CHARGE_LOCAL_FIELDS} for k in _LEDGERS}}
+        encoded = encode_integer_values(selected, {"max_integer_bits": 65536})
+        signed = json.dumps(encoded, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        _require(0 < len(signed) <= 8 * 1024 * 1024 and hashlib.sha256(signed).hexdigest() == cert["interval_sha256"],
+                 "charge_upper_local_evidence")
+        values = tuple(evidence["ledgers"][key][field][row] for key in _LEDGERS for row in range(3)
+                       for field in ("interval_total_bound_C", "interval_reference_error_C"))
+        _nonnegative(values, 12)
+        numerators, rounded, slack = (tuple(_vector(cert[k], 12)) for k in
+                                      ("upper_numerators", "rounded_terms", "slack_upper_bounds"))
+        received = []
+        for j, value in enumerate(values):
+            n, events = numerators[j], rounded[j]
+            _require(max(value.numerator.bit_length(), value.denominator.bit_length()) <= 65536
+                     and type(n) is int and n >= 0 and n.bit_length() <= self.maximum_bits
+                     and type(events) is int and 0 <= events <= cert["index"], "charge_upper_integer_limits")
+            lower = self.numerators[j] * self.quantum + value
+            upper = n * self.quantum
+            _require(lower <= upper < lower + self.quantum, "charge_upper_recurrence")
+            _require(events == self.rounded[j] + int(upper > lower)
+                     and type(slack[j]) is Fraction and slack[j] == events * self.quantum
+                     and slack[j] <= self.maximum_terms * self.quantum, "charge_upper_rounding_slack")
+            received.append(upper)
+        return cert["index"], numerators, rounded, tuple(received)
+
+    def commit(self, step):
+        self.index, self.numerators, self.rounded = step[:3]
+
+    def summary(self):
+        return {"schema": "solarlab.native-upper-prefix-state.v1", "policy_sha256": self.policy_id,
+                "source_identity": self.source_identity, "channel_ids": _CHARGE_CHANNELS, "index": self.index,
+                "upper_numerators": self.numerators, "rounded_terms": self.rounded,
+                "slack_upper_bounds": tuple(n * self.quantum for n in self.rounded)}
+
+
 class _Protocol:
     def __init__(self, request, rows):
         self.request, self.rows = request, rows
@@ -440,6 +640,15 @@ class _Protocol:
                            ("budgets_sha256", _digest(request["budgets"])),
                            ("sampling_sha256", _digest((request["observation_times"], request["quadrature"])))):
             _require(self.policy[key] == value, "request_policy_binding")
+        refinement = self.policy.get("charge_refinement")
+        _require(self.policy.get("schema") in (None, "solarlab.interval-observation-policy.v1",
+                                               "solarlab.interval-observation-policy.v2"), "observation_policy_schema")
+        if "charge_refinement" in self.policy or self.policy.get("schema") == "solarlab.interval-observation-policy.v2":
+            _require(type(refinement) is dict, "charge_refinement_policy_missing")
+            self.charge_refinement = _ChargeRefinement(request, self.request_id)
+        else:
+            _require("parent_policy_sha256" not in self.policy, "legacy_policy_refinement_metadata")
+            self.charge_refinement = None
         _require(set(request["quadrature"]) == {"8", "16", "32"}, "quadrature_orders")
         for order in (8, 16, 32):
             table = request["quadrature"][str(order)]
@@ -625,7 +834,8 @@ class _Protocol:
                  and all(v <= limit for v in combined), "current_bound_consistency")
 
     def _interval(self, left, right, frame):
-        row = self.rows.take("voltage_lift_interval_charge")
+        kind = "voltage_lift_interval_charge_v2" if self.charge_refinement is not None else "voltage_lift_interval_charge"
+        row = self.rows.take(kind)
         evidence = _decode(row["observation"])
         _require(row["segment_id"] == self.segment["id"] and row["left"] == self._pointer(left)
                  and row["right"] == self._pointer(right) and row["coefficient_frame_identity"] == self.frame_id
@@ -656,6 +866,14 @@ class _Protocol:
         # Charge balances have three ledger rows; the L1 departure has two ports.
         _nonnegative(inputs["raw_tangent_L1_additional_error_C"], 2)
         _require(set(evidence["ledgers"]) == set(_LEDGERS), "missing_charge_ledger")
+        calls = row["arithmetic_calls"]
+        _require(type(calls) is list and bool(calls) and all(type(c) is dict for c in calls), "arithmetic_receipts_missing")
+        upper_step = None
+        if self.charge_refinement is not None:
+            self.charge_refinement.partition(evidence, calls, self.path_id)
+            upper_step = self.charge_refinement.step(row["observation"], evidence, self.intervals + 1)
+        else:
+            _require("terminal_partition" not in evidence and "upper_sum" not in evidence, "legacy_record_refinement_metadata")
         for key in _LEDGERS:
             ledger = evidence["ledgers"][key]
             _require(ledger["passed"] is True and ledger["endpoint_debited_once"] is True
@@ -689,11 +907,14 @@ class _Protocol:
                                     "absolute_error_bound": a["absolute_error_bound"] + b["absolute_error_bound"]},
                          "saved_charge_defect_words")
             old_abs, old_error = self.prefix[key]
-            _require(absolute == tuple(a + b for a, b in zip(old_abs, bound))
-                     and cumulative == tuple(a + b for a, b in zip(old_error, error)), "charge_prefix_reset_or_error")
+            if upper_step is None:
+                _require(absolute == tuple(a + b for a, b in zip(old_abs, bound))
+                         and cumulative == tuple(a + b for a, b in zip(old_error, error)), "charge_prefix_reset_or_error")
+            else:
+                offset = _LEDGERS.index(key) * 6
+                _require(absolute == upper_step[3][offset:offset + 6:2]
+                         and cumulative == upper_step[3][offset + 1:offset + 6:2], "charge_upper_ledger_prefix")
             self.prefix[key] = absolute, cumulative
-        calls = row["arithmetic_calls"]
-        _require(type(calls) is list and bool(calls), "arithmetic_receipts_missing")
         for call in calls:
             if call.get("purpose") == "full-real-interval-precheck":
                 # BallIntegrator.absolute_bound first checks a real enclosure;
@@ -705,6 +926,8 @@ class _Protocol:
             actual, requested = Fraction(*call["actual_error"]), Fraction(*call["requested_error"])
             _require(type(call["evaluations"]) is int and call["evaluations"] > 0
                      and 0 <= actual <= requested, "arithmetic_receipt_error")
+        if upper_step is not None:
+            self.charge_refinement.commit(upper_step)
         self.intervals += 1
 
     def run(self):
@@ -927,6 +1150,15 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         for key, (absolute, error) in protocol.prefix.items():
             _require(_decode(result["cumulative_absolute_charge_bounds_C"][key]) == absolute
                      and _decode(result["cumulative_observation_reference_bounds_C"][key]) == error, "result_charge_prefix")
+        if protocol.charge_refinement is not None:
+            representation = _decode(result["cumulative_representation"])
+            _require(type(representation) is dict and representation == protocol.charge_refinement.summary()
+                     and type(representation["index"]) is int
+                     and all(type(v) is int for k in ("upper_numerators", "rounded_terms") for v in representation[k])
+                     and all(type(v) is Fraction for v in representation["slack_upper_bounds"]),
+                     "result_charge_representation")
+        else:
+            _require("cumulative_representation" not in result, "legacy_result_refinement_metadata")
         last = _read_json(folder / "LastRecord.json", max_record_bytes, checkpoint)
         accepted = _read_json(folder / "LastAccepted.json", max_record_bytes, checkpoint)
         _require({k: last[k] for k in rows.last} == rows.last
@@ -968,6 +1200,12 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                              "physical_word_layers": 4, "record_counts": dict(rows.counts)},
                 "pointers": {"last_record": last, "last_accepted": accepted}, "elapsed_s": time.perf_counter() - started,
                 **({"segment_startup": protocol.startup.finish(complete=True)} if protocol.startup.enabled else {}),
+                **({"charge_refinement": {"name": "fixed4-upper120-v1", "channels": 12,
+                    "intervals": protocol.charge_refinement.index, "policy_sha256": protocol.charge_refinement.policy_id,
+                    "quantum_ratio": [1, 1 << 120], "rounded_terms": list(protocol.charge_refinement.rounded),
+                    "slack_upper_bounds_C": [[v.numerator, v.denominator] for v in
+                        (n * protocol.charge_refinement.quantum for n in protocol.charge_refinement.rounded)]}}
+                   if protocol.charge_refinement is not None else {}),
                 **({"integer_io": {"role": "independent_reader", **integer_io_observed(integer_io_policy)}}
                    if integer_io_policy is not None else {}),
                 "scope": "stored artifact integrity, complete request coverage and recorded gate consistency; no numerical replay",

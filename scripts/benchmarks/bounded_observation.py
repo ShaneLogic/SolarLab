@@ -4,8 +4,8 @@ Only nonnegative *bound increments* are rounded. Every step certificate carries
 the untouched interval/signed-evidence bytes. The verifier consumes independent
 expected terms and delivers each checked certificate to a required retention
 sink; only its final return certifies complete consumption. The sink still owns
-durable storage and its I/O/resource checks. No model, solver or native reader
-imports this module, and no physical acceptance threshold is changed here.
+durable storage and its I/O/resource checks. This module evaluates no model or
+solver, and no physical acceptance threshold is changed here.
 """
 from dataclasses import dataclass
 from fractions import Fraction
@@ -180,6 +180,15 @@ class UpperAccumulator:
     @property
     def count(self):
         return self._count
+
+    @property
+    def upper_numerators(self):
+        """Producer state only, not an independently verified prefix."""
+        return self._upper
+
+    @property
+    def rounded_terms(self):
+        return self._rounded
 
     def append(self, term: ExactBoundTerm) -> UpperStepCertificate:
         _require(self._count < self.policy.max_terms, "too_many_terms")

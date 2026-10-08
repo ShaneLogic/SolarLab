@@ -36,6 +36,157 @@ STAMP_NAMES = ('IDAGetNumSteps', 'IDAGetCurrentTime', 'IDAGetLastStep',
                'IDAGetLastOrder', 'IDAGetCurrentStep', 'IDAGetCurrentOrder')
 
 
+def _charge_refinement_request():
+    """Schema-only input: never a native request or physical case."""
+    return {'map_identity': '1'*64, 'segments': [{'id': 'synthetic'}],
+            'controls': {'rtol': 1e-8}, 'budgets': {'native_steps': 200000, 'charge_C': 1.0},
+            'observation_times': {'synthetic': [0.0, 1.0]}, 'quadrature': {}}
+
+
+def test_charge_refinement_default_and_parent_binding():
+    from scripts.benchmarks.native_observation import prepare_charge_accumulator, CHARGE_REFINEMENT
+    from scripts.benchmarks.coupled_device_prototype import digest
+    request = _charge_refinement_request()
+    before = copy.deepcopy(request)
+    arguments = dict(binding_identity='a'*64, header_sha256='b'*64, backend_modules={})
+    legacy = prepare_interval_observation_policy(request, **arguments)
+    assert prepare_interval_observation_policy(request, charge_refinement=None, **arguments) == legacy
+    assert prepare_charge_accumulator(request, legacy) is None
+    refined = prepare_interval_observation_policy(request, charge_refinement=CHARGE_REFINEMENT, **arguments)
+    assert request == before
+    assert refined['parent_policy_sha256'] == digest(legacy)
+    assert {k: refined[k] for k in legacy if k != 'schema'} == {k: v for k, v in legacy.items() if k != 'schema'}
+    request['interval_observation'] = refined
+    accumulator = prepare_charge_accumulator(request, refined)
+    assert accumulator.policy.source_identity == digest(request)
+    assert accumulator.policy.quantum == Fraction(1, 2**120)
+    assert accumulator.policy.max_terms*accumulator.policy.quantum == accumulator.policy.max_slack_per_channel
+    assert accumulator.policy.upper_integer_bits == 65675 < 131072
+    request['controls']['rtol'] *= 2
+    with pytest.raises(ContractError, match='charge_policy_changed'):
+        prepare_charge_accumulator(request, refined)
+
+
+@pytest.mark.parametrize('fault', ['name', 'cells', 'quantum', 'channels', 'extra', 'parent', 'null'])
+def test_charge_refinement_rejects_tampering(fault):
+    from scripts.benchmarks.native_observation import prepare_charge_accumulator, CHARGE_REFINEMENT
+    request = _charge_refinement_request()
+    policy = prepare_interval_observation_policy(request, binding_identity='a'*64, header_sha256='b'*64,
+        backend_modules={}, charge_refinement=CHARGE_REFINEMENT)
+    refinement = policy['charge_refinement']
+    if fault == 'name': refinement['name'] = 'fixed8'
+    if fault == 'cells': refinement['partition_cells'] = 2
+    if fault == 'quantum': refinement['upper_sum']['quantum_bits'] = 119
+    if fault == 'channels': refinement['upper_sum']['channel_ids'].pop()
+    if fault == 'extra': refinement['unbound'] = True
+    if fault == 'parent': policy['parent_policy_sha256'] = 'f'*64
+    if fault == 'null': policy['charge_refinement'] = None
+    with pytest.raises(ContractError, match='charge_(policy|refinement)'):
+        prepare_charge_accumulator(request, policy)
+
+
+def _synthetic_charge_observer(monkeypatch, source='a'*64):
+    from types import SimpleNamespace
+    from scripts.benchmarks.interval_observation import Enclosure
+    import scripts.benchmarks.native_observation as module
+
+    observer = object.__new__(AcceptedIntervalObserver)
+    zeros = (Fraction(0),)*3
+    inputs = {'raw_charge_integral_error_C': zeros, 'tangent_charge_integral_error_C': zeros}
+    monkeypatch.setattr(module, 'propagated_input_error', lambda *_: inputs)
+    monkeypatch.setattr(module, 'endpoint_charge_mismatch', lambda *_: zeros)
+    monkeypatch.setattr(module, 'public_action_enclosures', lambda values: values)
+    path = SimpleNamespace(identity='b'*64, clock=SimpleNamespace(payload=lambda: {'segment_id': 'synthetic'}))
+    observer.prepared = SimpleNamespace(path=path)
+    observer.frame = SimpleNamespace(identity='c'*64)
+    observer.binding = SimpleNamespace(context=SimpleNamespace(request_sha256=source))
+    observer.arithmetic = object()
+    values = (Enclosure(0), Enclosure(Fraction(-1, 7), Fraction(1, 1000)), Enclosure(0))
+    calls = []
+    def integrate(*args, **kwargs):
+        calls.append(kwargs)
+        return {'raw_polynomial': values, 'same_state_affine_tangent': values,
+                'raw_tangent_charge_L1_upper_C': zeros, 'raw_tangent_L1_upper_bounds': (),
+                'terminal_partition': {'synthetic_routing_fixture': True}}
+    model = SimpleNamespace(linear_action=lambda name, *args, **kwargs:
+                            (Enclosure(0),)*(1 if name == 'body_charge' else 2))
+    observer.observer = SimpleNamespace(model=model, path=path, integrate=integrate,
+        affine={'body_charge': {'left': (0,), 'right': (0,)}, 'metal_charge': {'left': (0, 0), 'right': (0, 0)}},
+        strip_current_debit=lambda _: {key: zeros for key in ('raw_polynomial', 'same_state_affine_tangent')})
+    return observer, calls
+
+
+def test_charge_refinement_actual_routing_signed_evidence_and_nonresetting_prefix(monkeypatch):
+    from scripts.benchmarks.interval_observation import ChargePrefix
+    from scripts.benchmarks.bounded_observation import UpperAccumulator, verify_upper_prefix, UpperStepCertificate
+    from scripts.benchmarks.native_observation import charge_upper_policy, charge_upper_term
+    observer, calls = _synthetic_charge_observer(monkeypatch)
+    def prefixes(): return {key: ChargePrefix.start((1,)*3) for key in ('raw_polynomial', 'same_state_affine_tangent')}
+    exact, old = observer.charge_evidence((None,), (None, None), prefixes(), absolute_error=Fraction(1, 10000), charge_budget=1)
+    assert calls == [{}] and 'upper_sum' not in old and 'terminal_partition' not in old
+    accumulator = UpperAccumulator(charge_upper_policy('a'*64))
+    current, certificates, terms = prefixes(), [], []
+    for index in range(1, 4):
+        current, evidence = observer.charge_evidence((None,), (None, None), current,
+            absolute_error=Fraction(1, 10000), charge_budget=1, charge_accumulator=accumulator)
+        assert calls[-1] == {'partition_cells': 4}
+        upper = evidence['upper_sum']
+        term = charge_upper_term('a'*64, 'c'*64, 'b'*64, evidence['clock'], evidence['ledgers'])
+        assert term.interval_sha256 == upper['interval_sha256']
+        assert upper['index'] == index and accumulator.count == index
+        terms.append(term)
+        certificates.append(UpperStepCertificate(upper['policy_sha256'], index, term,
+            upper['upper_numerators'], upper['rounded_terms'], upper['slack_upper_bounds']))
+        for key, ledger in evidence['ledgers'].items():
+            assert ledger['signed_integral_C'][1].center == Fraction(-1, 7)
+            for name in ('signed_integral_C', 'signed_saved_defect_C', 'interval_reference_error_C', 'interval_total_bound_C'):
+                assert ledger[name] == old['ledgers'][key][name]
+            assert current[key].absolute_defects[0] == current[key].absolute_defects[2] == 0
+            assert 0 <= current[key].absolute_defects[1]-index*exact[key].absolute_defects[1] < index*accumulator.policy.quantum
+        # A fresh segment observer shares this accumulator; its history cannot reset.
+        observer, calls = _synthetic_charge_observer(monkeypatch)
+    retained = []
+    verified = verify_upper_prefix(accumulator.policy, certificates, terms, retain=retained.append)
+    assert verified.count == 3 and len(retained) == 3
+    assert all(v <= accumulator.policy.max_slack_per_channel for v in verified.slack_upper_bounds)
+    with pytest.raises(ContractError, match='upper_prefix_reset'):
+        observer.charge_evidence((None,), (None, None), prefixes(), absolute_error=Fraction(1, 10000),
+                                  charge_budget=1, charge_accumulator=accumulator)
+
+
+def test_charge_refinement_rejects_foreign_source_before_observation(monkeypatch):
+    from scripts.benchmarks.interval_observation import ChargePrefix
+    from scripts.benchmarks.bounded_observation import UpperAccumulator
+    from scripts.benchmarks.native_observation import charge_upper_policy
+    observer, calls = _synthetic_charge_observer(monkeypatch)
+    prefixes = {key: ChargePrefix.start((1,)*3) for key in ('raw_polynomial', 'same_state_affine_tangent')}
+    with pytest.raises(ContractError, match='upper_source_policy'):
+        observer.charge_evidence((None,), (None, None), prefixes, absolute_error=Fraction(1, 10000), charge_budget=1,
+                                  charge_accumulator=UpperAccumulator(charge_upper_policy('d'*64)))
+    assert calls == []
+
+
+def test_charge_refinement_retains_large_signed_integer_words(monkeypatch):
+    from scripts.benchmarks.interval_observation import ChargePrefix, Enclosure
+    from scripts.benchmarks.native_history import decode_integer_values, INTEGER_HEX_TAG
+    from scripts.benchmarks.native_observation import charge_upper_term
+    observer, _ = _synthetic_charge_observer(monkeypatch)
+    prefixes = {key: ChargePrefix.start((1,)*3) for key in ('raw_polynomial', 'same_state_affine_tangent')}
+    _, evidence = observer.charge_evidence((None,), (None, None), prefixes,
+                                          absolute_error=Fraction(1, 10000), charge_budget=1)
+    # Encoding-only fixture, not a physical/arithmetic acceptance record.
+    signed = Fraction(-1, 2**20000+3)
+    ledgers = evidence['ledgers']
+    ledgers['raw_polynomial']['signed_saved_defect_C'] = (Enclosure(signed), Enclosure(0), Enclosure(0))
+    term = charge_upper_term('a'*64, 'c'*64, 'b'*64, evidence['clock'], ledgers)
+    assert INTEGER_HEX_TAG.encode() in term.signed_evidence
+    decoded = decode_integer_values(json.loads(term.signed_evidence), {'max_integer_bits': 65536})
+    value = decoded['ledgers']['raw_polynomial']['signed_saved_defect_C']['tuple'][0]['center']
+    assert Fraction(*value) == signed
+    ledgers['raw_polynomial']['signed_saved_defect_C'] = (Enclosure(-signed), Enclosure(0), Enclosure(0))
+    assert charge_upper_term('a'*64, 'c'*64, 'b'*64, evidence['clock'], ledgers).interval_sha256 != term.interval_sha256
+
+
 @lru_cache(maxsize=2)
 def independent_test_support(filename):
     # The old simulator also has a package named tests. Resolve this test's

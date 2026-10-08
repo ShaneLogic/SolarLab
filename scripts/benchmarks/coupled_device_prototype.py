@@ -3787,6 +3787,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     from scripts.benchmarks.native_observation import (
         AcceptedIntervalObserver, observation_record, read_native_basis_packet,
         require_loaded_observation_backend, validate_interval_observation_admission,
+        prepare_charge_accumulator, charge_upper_summary,
     )
     from scripts.benchmarks.interval_observation import BallIntegrator, ChargePrefix, rational
 
@@ -3802,6 +3803,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
               "normal_queries": 0, "polynomial_queries": 0, "initializations": 0, "history_bytes": 0}
     prefixes = {key: ChargePrefix.start((budgets["charge_C"],)*3)
                 for key in ("raw_polynomial", "same_state_affine_tangent")}
+    charge_accumulator = prepare_charge_accumulator(request, observer_policy)
     previous_observer = None
     first_failure = last_attempt = last_numerical = last_accepted = None
     history = VoltageLiftHistory(mapping)
@@ -4042,11 +4044,13 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     duration = observer.prepared.path.clock.tn-observer.prepared.path.clock.predecessor
                     error_allocation = rational(budgets["charge_C"])/12*duration/rational(segments[-1].end)/32
                     prefixes, evidence = observer.charge_evidence(left_pair, right_pair, prefixes,
-                        absolute_error=error_allocation, charge_budget=budgets["charge_C"])
+                        absolute_error=error_allocation, charge_budget=budgets["charge_C"],
+                        charge_accumulator=charge_accumulator)
                     while cursor < len(sample_times) and sample_times[cursor] <= t:
                         save({"kind": "requested_sample", **pointer(query(float(sample_times[cursor])))})
                         cursor += 1
-                    interval = {"kind": "voltage_lift_interval_charge", "segment_id": segment.id,
+                    interval = {"kind": ("voltage_lift_interval_charge_v2" if charge_accumulator is not None
+                                         else "voltage_lift_interval_charge"), "segment_id": segment.id,
                                 "left": pointer(left_pair), "right": pointer(right_pair),
                                 "coefficient_frame_identity": frame.identity,
                                 "observation": observation_record(evidence),
@@ -4081,4 +4085,6 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         cumulative_scope="includes the fully evaluated first failed interval; no prefix reset at a protocol event",
         scientific_or_G2_qualification=False, DAE_time_accuracy_certified=False, continuum_space_accuracy_certified=False,
     )
+    if charge_accumulator is not None:
+        result["cumulative_representation"] = observation_record(charge_upper_summary(charge_accumulator))
     return result

@@ -20,7 +20,7 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from scripts.benchmarks.native_history import HistoryWriter, integer_io_observed, integer_json_dumps
+from scripts.benchmarks.native_history import HistoryWriter, encode_integer_values, integer_io_observed, integer_json_dumps
 from scripts.benchmarks.native_readback import HistoryVerificationError, verify_history, _Protocol, _native_packet
 
 
@@ -82,7 +82,7 @@ def initial_fields(segment):
             "desired_tangent_residual_SI": double(6), "represented_rate_residual_SI": double(6)}
 
 
-def fixture():
+def fixture(policy_factory=None):
     size = 6
     source = ("sksundae.ida.accepted-step-observation.v1", "scikit-sundae=1.1.3",
               "synthetic-library", "synthetic-compiler", "synthetic-source", "a" * 64, "b" * 64, "test-only")
@@ -110,6 +110,8 @@ def fixture():
               "controls_sha256": digest(request["controls"]), "budgets_sha256": digest(request["budgets"]),
               "sampling_sha256": digest((request["observation_times"], request["quadrature"])),
               "binding_identity": binding, "header_sha256": source[5]}
+    if policy_factory is not None:
+        policy = policy_factory(request, policy)
     request["interval_observation"] = policy
     request_id, policy_id = digest(request), digest(policy)
     ref = {"schema": "solarlab.voltage-lift-reference.v1", "map": mapping,
@@ -671,6 +673,309 @@ class RecordedNativeIntervalTests(unittest.TestCase):
         call["actual_error"] = [2 * bound.numerator, bound.denominator]
         with self.assertRaisesRegex(HistoryVerificationError, "arithmetic_receipt_error"):
             verify_saved_interval(data)
+
+def _untag_fixture(value):
+    """Test-only inverse for invented records; no producer or numerical imports."""
+    if isinstance(value, list):
+        return [_untag_fixture(v) for v in value]
+    if isinstance(value, dict):
+        if set(value) == {"rational"}:
+            return Fraction(*value["rational"])
+        if set(value) == {"tuple"}:
+            return tuple(_untag_fixture(v) for v in value["tuple"])
+        if set(value) == {"binary64"}:
+            return float.fromhex(value["binary64"])
+        if set(value) == {"bytes_hex"}:
+            return bytes.fromhex(value["bytes_hex"])
+        return {k: _untag_fixture(v) for k, v in value.items()}
+    return value
+
+
+def _partition_fixture_policy(request, policy):
+    """Set the synthetic policy before the original fixture hashes its rows."""
+    request["budgets"]["native_steps"] = 200000
+    ledgers = ("raw_polynomial", "same_state_affine_tangent")
+    channels = tuple(f"{k}.{r}.{v}" for k in ledgers for r in ("device", "left_metal", "right_metal")
+                     for v in ("total", "reference"))
+    quantum, maximum_slack = Fraction(1, 2**120), Fraction(200000, 2**120)
+    base = {**policy, "schema": "solarlab.interval-observation-policy.v1",
+            "budgets_sha256": digest(request["budgets"]), "backend_modules": {},
+            "arithmetic": {"python_flint": "0.8.0", "bits": 256, "evaluations": 2048, "depth": 16},
+            "quadrature_error_allocation": "charge_C/12 * actual_interval/full_protocol / 32 per integral",
+            "sampling": "original requested and 8/16/32 times, explicitly declared polynomial reconstruction",
+            "history": "actual accepted predecessor/endpoint plus source-owned immutable phi/psi/Dky and error metadata",
+            "qualification": "represented numerical path only; original independent time/state/space refinements remain pending"}
+    constants = {"schema": "solarlab.nonnegative-upper-sum.v1", "quantum_bits": 120, "max_terms": 200000,
+                 "max_increment_bits": 65536, "max_evidence_bytes": 8*1024*1024,
+                 "max_slack_per_channel": [maximum_slack.numerator, maximum_slack.denominator], "channel_ids": list(channels)}
+    return {**base, "schema": "solarlab.interval-observation-policy.v2",
+        "parent_policy_sha256": digest(base), "charge_refinement": {"name": "fixed4-upper120-v1", "partition_cells": 4,
+            "upper_sum": constants, "prefix_semantics": "exact signed local evidence; non-resetting upward dyadic upper bounds; original gates"}}
+
+
+def partition_fixture(*, zero=False):
+    """Synthetic constant-function certificates; no physical/native calls.
+
+    Policy, moments and prefixes do not use producer or reader check helpers.
+    """
+    request, rows, result = fixture(_partition_fixture_policy)
+    request_id = digest(request)
+    ledgers = ("raw_polynomial", "same_state_affine_tangent")
+    channels = tuple(f"{k}.{r}.{v}" for k in ledgers for r in ("device", "left_metal", "right_metal")
+                     for v in ("total", "reference"))
+    quantum, maximum_slack = Fraction(1, 2**120), Fraction(200000, 2**120)
+    constants = request["interval_observation"]["charge_refinement"]["upper_sum"]
+    upper_policy = digest({"schema": constants["schema"], "source_identity": request_id,
+        "channels": [{"id": c, "unit": "C", "increment": "interval_total_bound_C" if c.endswith(".total")
+                      else "interval_reference_error_C", "role": "nonnegative_upper_bound"} for c in channels],
+        "quantum_bits": 120, "max_terms": 200000,
+        "max_slack_per_channel_hex": [hex(maximum_slack.numerator), hex(maximum_slack.denominator)],
+        "max_increment_bits": 65536, "max_evidence_bytes": 8*1024*1024})
+    local_fields = ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C", "error_components_C",
+                    "signed_saved_defect_C", "interval_total_bound_C", "interval_reference_error_C",
+                    "original_charge_budget_C", "original_reference_share_C")
+    numbers, events, index = [0]*12, [0]*12, 0
+    for row in rows:
+        if row["kind"] != "voltage_lift_interval_charge":
+            continue
+        row["kind"] = "voltage_lift_interval_charge_v2"
+        obs = _untag_fixture(row["observation"])
+        before, now, h = (Fraction(*obs["clock"][k]) for k in ("predecessor", "tn", "hused"))
+        left = (before-now)/h
+        allocation = Fraction(request["budgets"]["charge_C"])/12*(now-before)/Fraction(request["segments"][-1]["end"])/32
+        calls = [{"evaluations": 1, "actual_error": [0, 1], "requested_error": [1, 32]}]
+
+        def constant_bound(a, b, epsilon):
+            value = Fraction(0) if zero else Fraction(1, 100000)
+            moment, upper = (b-a)*value**2, (b-a)*value
+            start = len(calls)
+            calls.append({"evaluations": 1, "purpose": "full-real-interval-precheck", "working_bits": 512})
+            if not zero:
+                goal = epsilon**2/(8*(b-a))
+                calls.append({"evaluations": 1, "actual_error": [0, 1], "requested_error": [goal.numerator, goal.denominator],
+                              "purpose": "L2-moment", "working_bits": 512, "absolute_integrand": False})
+            excess = Fraction(0) if zero else epsilon
+            return {"upper": [upper.numerator, upper.denominator], "method": "Cauchy-Schwarz from a certified squared integral",
+                    "squared_integral": {"center": [moment.numerator, moment.denominator], "absolute_error_bound": [0, 1]},
+                    "numerical_excess_bound": [excess.numerator, excess.denominator], "is_integral_value_estimate": False}, (start, len(calls))
+
+        ports = []
+        for port in ("left_metal", "right_metal"):
+            original, original_calls = constant_bound(left, Fraction(0), allocation)
+            cells = []
+            for j in range(4):
+                a, b = left*(1-Fraction(j, 4)), left*(1-Fraction(j+1, 4))
+                bound, call_range = constant_bound(a, b, allocation/4)
+                cells.append({"left": a, "right": b, "allocation_C": allocation/4, "bound": bound, "call_range": call_range})
+            total = sum((Fraction(*c["bound"]["upper"]) for c in cells), Fraction(0))
+            ports.append({"port": port, "integrand_identity": digest({"schema": "solarlab.terminal-departure.v1",
+                "path_identity": obs["path_identity"], "port": port,
+                "formula": "hused*(endpoint_carrier_rate+raw_metal-tangent_metal_polynomial-tangent_metal_flux)"}),
+                "absolute_error_C": allocation, "original": original, "original_call_range": original_calls,
+                "cells": tuple(cells), "partition_upper_C": total, "retained_upper_C": min(Fraction(*original["upper"]), total)})
+        carrier, body = (Fraction(1, 10**8), Fraction(2, 10**8)), Fraction(3, 10**8)
+        obs["terminal_partition"] = {"schema": "solarlab.terminal-partition.v1", "path_identity": obs["path_identity"],
+            "normalized_interval": (left, Fraction(0)), "cells_per_port": 4, "ports": tuple(ports),
+            "endpoint_carrier_L1_upper_C": carrier, "body_L1_upper_C": body}
+        obs["raw_tangent_L1_current_bounds"] = tuple(p["original"] for p in ports)
+        raw_ledger = obs["ledgers"]["raw_polynomial"]
+        raw_ledger["error_components_C"]["raw_tangent_departure"] = (body, *(p["retained_upper_C"]+c for p,c in zip(ports,carrier)))
+        for k in ledgers:
+            ledger = obs["ledgers"][k]
+            local = tuple(sum((v[i] for v in ledger["error_components_C"].values()), Fraction(0)) for i in range(3))
+            ledger["interval_total_bound_C"] = ledger["interval_reference_error_C"] = local
+        index += 1
+        for j, value in enumerate(v for k in ledgers for i in range(3)
+                                  for v in (obs["ledgers"][k]["interval_total_bound_C"][i], obs["ledgers"][k]["interval_reference_error_C"][i])):
+            exact = numbers[j]*quantum+value
+            ratio = exact/quantum
+            n = -(-ratio.numerator//ratio.denominator)
+            events[j] += int(n*quantum > exact)
+            numbers[j] = n
+        for j, k in enumerate(ledgers):
+            obs["ledgers"][k]["prefix_absolute_defect_C"] = tuple(n*quantum for n in numbers[j*6:j*6+6:2])
+            obs["ledgers"][k]["prefix_reference_error_C"] = tuple(n*quantum for n in numbers[j*6+1:j*6+6:2])
+        local = {"schema": "solarlab.native-charge-local-evidence.v1", "source_identity": request_id,
+                 "frame_identity": obs["frame_identity"], "path_identity": obs["path_identity"], "clock": obs["clock"],
+                 "ledgers": {k: {f: obs["ledgers"][k][f] for f in local_fields} for k in ledgers}}
+        local_bytes = json.dumps(encode_integer_values(tag(local), {"max_integer_bits": 65536}),
+                                sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        summary = {"schema": "solarlab.native-upper-prefix-state.v1", "policy_sha256": upper_policy,
+                   "source_identity": request_id, "channel_ids": channels, "index": index,
+                   "upper_numerators": tuple(numbers), "rounded_terms": tuple(events),
+                   "slack_upper_bounds": tuple(n*quantum for n in events)}
+        obs["upper_sum"] = {**summary, "schema": "solarlab.nonnegative-upper-step.v1",
+                            "interval_sha256": hashlib.sha256(local_bytes).hexdigest()}
+        row["observation"], row["arithmetic_calls"] = tag(obs), calls
+    for j, key in enumerate(ledgers):
+        result["cumulative_absolute_charge_bounds_C"][key] = tag(tuple(n*quantum for n in numbers[j*6:j*6+6:2]))
+        result["cumulative_observation_reference_bounds_C"][key] = tag(tuple(n*quantum for n in numbers[j*6+1:j*6+6:2]))
+    result["cumulative_representation"] = tag(summary)
+    return request, rows, result
+
+
+class PartitionReadbackTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.template = partition_fixture()
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.case_number = 0
+        self.reset()
+
+    def reset(self, template=None):
+        self.case_number += 1
+        self.folder = Path(self.temp.name)/str(self.case_number)
+        self.folder.mkdir()
+        self.request, self.rows, self.result = deepcopy(self.template if template is None else template)
+
+    publish = NativeReadbackTests.publish
+    verify = NativeReadbackTests.verify
+    bad = NativeReadbackTests.bad
+
+    def interval(self, index=0):
+        return [r for r in self.rows if r["kind"].startswith("voltage_lift_interval_charge")][index]
+
+    def mutate_observation(self, change, index=0):
+        row = self.interval(index)
+        obs = _untag_fixture(row["observation"])
+        change(obs)
+        row["observation"] = tag(obs)
+
+    def test_complete_partition_and_nonresetting_twelve_prefixes(self):
+        self.publish()
+        receipt = self.verify()
+        self.assertEqual(receipt["charge_refinement"]["intervals"], 3)
+        self.assertEqual(receipt["charge_refinement"]["channels"], 12)
+        self.assertEqual(receipt["charge_refinement"]["rounded_terms"], [3]*12)
+
+    def test_exact_zero_range_shortcut(self):
+        self.reset(partition_fixture(zero=True))
+        self.publish()
+        self.assertTrue(self.verify()["verified"])
+
+    def test_legacy_and_v2_record_kinds_cannot_mix(self):
+        self.interval()["kind"] = "voltage_lift_interval_charge"
+        self.publish()
+        self.bad("record_order_expected_voltage_lift_interval_charge_v2")
+        self.reset(fixture())
+        self.interval()["kind"] = "voltage_lift_interval_charge_v2"
+        self.publish()
+        self.bad("record_order_expected_voltage_lift_interval_charge")
+
+    def test_frozen_parent_and_refinement_constants(self):
+        for field in ("parent", "quantum", "channels", "max_terms", "quantum_float", "precision_float"):
+            with self.subTest(field=field):
+                self.reset()
+                policy = self.request["interval_observation"]
+                if field == "parent":
+                    policy["parent_policy_sha256"] = "0"*64
+                elif field == "quantum_float":
+                    policy["charge_refinement"]["upper_sum"]["quantum_bits"] = 120.0
+                elif field == "precision_float":
+                    policy["arithmetic"]["bits"] = 256.0
+                    base = {k: v for k, v in policy.items() if k not in ("parent_policy_sha256", "charge_refinement")}
+                    base["schema"] = "solarlab.interval-observation-policy.v1"
+                    policy["parent_policy_sha256"] = digest(base)
+                elif field == "channels":
+                    policy["charge_refinement"]["upper_sum"]["channel_ids"].reverse()
+                else:
+                    policy["charge_refinement"]["upper_sum"]["quantum_bits" if field == "quantum" else "max_terms"] -= 1
+                self.publish()
+                self.bad("charge_refinement_parent_policy" if field == "precision_float" else
+                         "charge_refinement_constants" if field == "quantum_float" else None)
+
+    def test_working_precision_is_an_integer_schema_field(self):
+        row = self.interval()
+        port = _untag_fixture(row["observation"])["terminal_partition"]["ports"][0]
+        row["arithmetic_calls"][port["original_call_range"][0]+1]["working_bits"] = 512.0
+        self.publish()
+        self.bad("partition_moment_radius")
+
+    def test_cells_cannot_be_missing_reordered_or_wrong_clock(self):
+        for change in ("missing", "clock", "overlap", "port"):
+            with self.subTest(change=change):
+                self.reset()
+                def corrupt(obs):
+                    part = obs["terminal_partition"]
+                    port = part["ports"][0]
+                    if change == "missing":
+                        port["cells"] = port["cells"][:-1]
+                    elif change == "clock":
+                        port["cells"][0]["left"] += Fraction(1, 100)
+                    elif change == "overlap":
+                        port["cells"][1]["call_range"] = port["cells"][0]["call_range"]
+                    else:
+                        part["ports"] = tuple(reversed(part["ports"]))
+                self.mutate_observation(corrupt)
+                self.publish()
+                self.bad()
+
+    def test_outward_root_radius_and_minimum_are_independent_checks(self):
+        for change in ("root", "radius", "minimum", "allocation"):
+            with self.subTest(change=change):
+                self.reset()
+                def corrupt(obs):
+                    port = obs["terminal_partition"]["ports"][0]
+                    cell = port["cells"][0]
+                    if change == "root":
+                        cell["bound"]["upper"] = [0, 1]
+                    elif change == "radius":
+                        cell["bound"]["squared_integral"]["absolute_error_bound"] = [1, 1]
+                    elif change == "minimum":
+                        port["retained_upper_C"] = Fraction(0)
+                    else:
+                        cell["allocation_C"] *= 2
+                self.mutate_observation(corrupt)
+                self.publish()
+                self.bad()
+
+    def test_endpoint_carrier_debit_cannot_be_dropped(self):
+        self.mutate_observation(lambda o: o["terminal_partition"].update(endpoint_carrier_L1_upper_C=(Fraction(0),)*2))
+        self.publish()
+        self.bad("partition_charge_debits")
+
+    def test_prefix_understatement_extra_quantum_reset_and_slack(self):
+        for change in ("under", "over", "reset", "slack", "count", "source"):
+            with self.subTest(change=change):
+                self.reset()
+                def corrupt(obs):
+                    cert = obs["upper_sum"]
+                    if change in ("under", "over", "reset"):
+                        values = list(cert["upper_numerators"])
+                        values[0] = 0 if change == "reset" else values[0]+(-1 if change == "under" else 1)
+                        cert["upper_numerators"] = tuple(values)
+                    elif change == "slack":
+                        cert["slack_upper_bounds"] = (Fraction(0),)*12
+                    elif change == "count":
+                        cert["index"] = 1
+                    else:
+                        cert["source_identity"] = "0"*64
+                self.mutate_observation(corrupt, index=2)
+                self.publish()
+                self.bad()
+
+    def test_signed_evidence_digest_and_final_representation(self):
+        self.mutate_observation(lambda o: o["upper_sum"].update(interval_sha256="0"*64))
+        self.publish()
+        self.bad("charge_upper_local_evidence")
+        self.reset()
+        summary = _untag_fixture(self.result["cumulative_representation"])
+        summary["rounded_terms"] = (0,)*12
+        self.result["cumulative_representation"] = tag(summary)
+        self.publish()
+        self.bad("result_charge_representation")
+
+    def test_new_representation_does_not_accept_incomplete_or_failed_result(self):
+        for key, value in (("complete_protocol", False), ("first_failure", {"reason": "original gate"})):
+            with self.subTest(key=key):
+                self.reset()
+                self.result[key] = value
+                self.publish()
+                self.bad("incomplete_native_result")
+
 
 if __name__ == "__main__":
     unittest.main()

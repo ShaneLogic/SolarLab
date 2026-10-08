@@ -232,7 +232,8 @@ class HistoryWriter:
                    "record_sha256": row.get("record_sha256"),
                    "history_encoding": self.encoding, "encoded_byte_offset_after_record": encoded}
         values: list[tuple[str, Any]] = [("LastRecord.json", pointer)]
-        if row.get("kind") == "voltage_lift_interval_charge" and row.get("observation", {}).get("passed") is True:
+        if (row.get("kind") in {"voltage_lift_interval_charge", "voltage_lift_interval_charge_v2"}
+                and row.get("observation", {}).get("passed") is True):
             values.append(("LastAccepted.json", {"pointer": pointer, "right": row["right"],
                                                 "frame": row["coefficient_frame_identity"]}))
         plan = [(name, (integer_json_dumps(value, self.integer_io_policy, allow_nan=False) + "\n").encode())

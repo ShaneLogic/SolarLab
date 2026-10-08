@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from hashlib import sha256
+import json
 from math import prod
 from pathlib import Path
 from types import MappingProxyType
@@ -29,6 +30,60 @@ from scripts.benchmarks.interval_observation import (
     endpoint_charge_mismatch, identity, newton_polynomials, public_action_enclosures,
     rational, segment_input_roundoff,
 )
+from scripts.benchmarks.bounded_observation import (
+    BoundChannel, ExactBoundTerm, UpperAccumulator, UpperSumPolicy,
+)
+from scripts.benchmarks.native_history import encode_integer_values
+
+
+CHARGE_REFINEMENT = "fixed4-upper120-v1"
+CHARGE_LEDGERS = ("raw_polynomial", "same_state_affine_tangent")
+CHARGE_CHANNELS = tuple(BoundChannel(ledger, row, kind) for ledger in CHARGE_LEDGERS
+    for row in ("device", "left_metal", "right_metal") for kind in ("total", "reference"))
+CHARGE_LOCAL_FIELDS = ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C",
+    "error_components_C", "signed_saved_defect_C", "interval_total_bound_C", "interval_reference_error_C",
+    "original_charge_budget_C", "original_reference_share_C")
+
+
+def charge_upper_policy(source_identity):
+    """The single explicit bounded representation; no scientific tolerance."""
+    return UpperSumPolicy(source_identity, CHARGE_CHANNELS, 120, 200000,
+                          Fraction(200000, 2**120), 65536, 8*1024*1024)
+
+
+def prepare_charge_accumulator(request, observer_policy):
+    """Construct once per whole protocol, only for the matching v2 policy."""
+    refinement = observer_policy.get("charge_refinement")
+    expected = prepare_interval_observation_policy(request,
+        binding_identity=observer_policy["binding_identity"], header_sha256=observer_policy["header_sha256"],
+        backend_modules=observer_policy["backend_modules"],
+        charge_refinement=refinement.get("name") if isinstance(refinement, Mapping) else None)
+    if digest(expected) != digest(observer_policy):
+        raise ContractError("native_observation_charge_policy_changed")
+    return UpperAccumulator(charge_upper_policy(digest(request))) if refinement is not None else None
+
+
+def charge_upper_summary(accumulator):
+    """Actual producer representation, including conservative rounding cost."""
+    p = accumulator.policy
+    return {"schema": "solarlab.native-upper-prefix-state.v1", "policy_sha256": p.identity,
+            "source_identity": p.source_identity, "channel_ids": p.channel_ids, "index": accumulator.count,
+            "upper_numerators": accumulator.upper_numerators, "rounded_terms": accumulator.rounded_terms,
+            "slack_upper_bounds": tuple(n*p.quantum for n in accumulator.rounded_terms)}
+
+
+def charge_upper_term(source_identity, frame_identity, path_identity, clock, ledgers):
+    """Bind untouched local signed evidence; omit cumulative/self-hash fields."""
+    selected = {"schema": "solarlab.native-charge-local-evidence.v1", "source_identity": source_identity,
+                "frame_identity": frame_identity, "path_identity": path_identity, "clock": clock,
+                "ledgers": {key: {name: ledgers[key][name] for name in CHARGE_LOCAL_FIELDS}
+                            for key in CHARGE_LEDGERS}}
+    encoded = encode_integer_values(observation_record(selected), {"max_integer_bits": 65536})
+    signed = json.dumps(encoded, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    increments = tuple(ledgers[channel.ledger][channel.source_increment][i]
+        for channel in CHARGE_CHANNELS for i in (("device", "left_metal", "right_metal").index(channel.row),))
+    return ExactBoundTerm(source_identity, tuple(c.identity for c in CHARGE_CHANNELS),
+                          sha256(signed).hexdigest(), increments, signed)
 
 
 def input_evaluation_bounds(segment, clock):
@@ -692,7 +747,8 @@ class AcceptedIntervalObserver:
                 "metrics": values, "checks": checks, "passed": all(checks.values()),
                 "scope": "declared polynomial domain only; actual sample state/affine-constraint gates also remain required"}
 
-    def charge_evidence(self, left_pair, right_pair, prefixes, *, absolute_error, charge_budget):
+    def charge_evidence(self, left_pair, right_pair, prefixes, *, absolute_error, charge_budget,
+                        charge_accumulator=None):
         """Each body/metal row carries disjoint positive error debits.
 
         The nominal-path defect plus an absolute endpoint mismatch bounds the
@@ -706,7 +762,19 @@ class AcceptedIntervalObserver:
             row = inputs.get(name)
             if (not isinstance(row, tuple) or len(row) != 3 or any(value is None or rational(value) < 0 for value in row)):
                 raise ContractError("native_observation_missing_input_error_term:"+name)
-        integral = self.observer.integrate(self.arithmetic, absolute_error)
+        if charge_accumulator is not None:
+            expected_policy = charge_upper_policy(self.binding.context.request_sha256)
+            if (type(charge_accumulator) is not UpperAccumulator
+                    or charge_accumulator.policy.identity != expected_policy.identity):
+                raise ContractError("native_observation_upper_source_policy")
+            old = tuple(Fraction(v, 2**120) for v in charge_accumulator.upper_numerators)
+            for j, key in enumerate(CHARGE_LEDGERS):
+                if (prefixes[key].intervals != charge_accumulator.count
+                        or prefixes[key].absolute_defects != old[j*6:j*6+6:2]
+                        or prefixes[key].reference_errors != old[j*6+1:j*6+6:2]):
+                    raise ContractError("native_observation_upper_prefix_reset")
+        integral = (self.observer.integrate(self.arithmetic, absolute_error, partition_cells=4)
+                    if charge_accumulator is not None else self.observer.integrate(self.arithmetic, absolute_error))
         strip = self.observer.strip_current_debit(self.arithmetic)
         actual = (*public_action_enclosures(model.linear_action("body_charge", right, increment=increment, left=left)),
                   *public_action_enclosures(model.linear_action("metal_charge", right, increment=increment, left=left)))
@@ -747,7 +815,7 @@ class AcceptedIntervalObserver:
                             "original_charge_budget_C": rational(charge_budget), "original_reference_share_C": limit,
                             "row_checks": checks, "passed": all(checks), "endpoint_debited_once": True}
             successors[key] = successor
-        return successors, {"path_identity": path.identity, "frame_identity": self.frame.identity,
+        evidence = {"path_identity": path.identity, "frame_identity": self.frame.identity,
                             "clock": path.clock.payload(), "input_error": inputs,
                             "raw_tangent_L1_current_bounds": integral["raw_tangent_L1_upper_bounds"],
                             "ledgers": ledgers, "passed": all(row["passed"] for row in ledgers.values()),
@@ -755,11 +823,32 @@ class AcceptedIntervalObserver:
                             "raw_rate_projection_role": "retained counterfactual, not charged as if still used",
                             "source_arithmetic_scope": "the bound ball integrals evaluate the physical sources with the frozen coefficients; no projected nodal source is an integral input",
                             "DAE_time_accuracy_certified": False, "continuum_space_accuracy_certified": False}
+        if charge_accumulator is not None:
+            certificate = charge_accumulator.append(charge_upper_term(self.binding.context.request_sha256,
+                self.frame.identity, path.identity, path.clock.payload(), ledgers))
+            upper = tuple(k*charge_accumulator.policy.quantum for k in certificate.upper_numerators)
+            for j, key in enumerate(CHARGE_LEDGERS):
+                absolute, reference = upper[j*6:j*6+6:2], upper[j*6+1:j*6+6:2]
+                successor = ChargePrefix(prefixes[key].budgets, absolute, reference, certificate.index)
+                # Local terms remain exact; only the cumulative upper is rounded.
+                # A straddling enclosure cannot earn a pass by using its lower end.
+                checks = tuple(check and a <= budget and 3*r <= budget and r <= limit
+                    for check, a, r, budget in zip(ledgers[key]["row_checks"], absolute, reference,
+                                                   successor.budgets, strict=True))
+                ledgers[key].update(prefix_absolute_defect_C=absolute, prefix_reference_error_C=reference,
+                                    row_checks=checks, passed=all(checks))
+                successors[key] = successor
+            evidence.update(terminal_partition=integral["terminal_partition"],
+                upper_sum={**charge_upper_summary(charge_accumulator), "schema": certificate.schema,
+                           "interval_sha256": certificate.term.interval_sha256},
+                passed=all(row["passed"] for row in ledgers.values()))
+        return successors, evidence
 
 
-def prepare_interval_observation_policy(request, *, binding_identity, header_sha256, backend_modules):
+def prepare_interval_observation_policy(request, *, binding_identity, header_sha256, backend_modules,
+                                        charge_refinement=None):
     """A concrete review packet; preparing it gives no native authorization."""
-    return {"schema": "solarlab.interval-observation-policy.v1",
+    policy = {"schema": "solarlab.interval-observation-policy.v1",
             "map_identity": request["map_identity"],
             "protocol_sha256": digest(request["segments"]),
             "controls_sha256": digest(request["controls"]),
@@ -772,6 +861,19 @@ def prepare_interval_observation_policy(request, *, binding_identity, header_sha
             "sampling": "original requested and 8/16/32 times, explicitly declared polynomial reconstruction",
             "history": "actual accepted predecessor/endpoint plus source-owned immutable phi/psi/Dky and error metadata",
             "qualification": "represented numerical path only; original independent time/state/space refinements remain pending"}
+    if charge_refinement is not None:
+        if charge_refinement != CHARGE_REFINEMENT or type(request["budgets"].get("native_steps")) is not int or request["budgets"]["native_steps"] != 200000:
+            raise ContractError("native_observation_unsupported_charge_refinement")
+        p = charge_upper_policy("0"*64)  # Only constants enter the request; runtime source binds its final digest.
+        parent = digest(policy)
+        policy.update(schema="solarlab.interval-observation-policy.v2", parent_policy_sha256=parent,
+            charge_refinement={"name": CHARGE_REFINEMENT, "partition_cells": 4,
+                "upper_sum": {"schema": p.schema, "quantum_bits": p.quantum_bits, "max_terms": p.max_terms,
+                    "max_increment_bits": p.max_increment_bits, "max_evidence_bytes": p.max_evidence_bytes,
+                    "max_slack_per_channel": [p.max_slack_per_channel.numerator, p.max_slack_per_channel.denominator],
+                    "channel_ids": list(p.channel_ids)},
+                "prefix_semantics": "exact signed local evidence; non-resetting upward dyadic upper bounds; original gates"})
+    return policy
 
 
 def validate_interval_observation_admission(request, admission):
@@ -790,15 +892,18 @@ def validate_interval_observation_admission(request, admission):
     try:
         expected = prepare_interval_observation_policy(
             request, binding_identity=policy["binding_identity"], header_sha256=policy["header_sha256"],
-            backend_modules=policy["backend_modules"])
+            backend_modules=policy["backend_modules"],
+            charge_refinement=policy["charge_refinement"]["name"] if "charge_refinement" in policy else None)
     except (KeyError, TypeError) as exc:
         raise ContractError("native_observation_policy_incomplete") from exc
     if (digest(expected) != digest(policy) or any(not isinstance(policy[k], str) or len(policy[k]) != 64
                                                   for k in ("binding_identity", "header_sha256"))):
         raise ContractError("native_observation_policy_changed")
     source_pins = admission.get("source_sha256", {})
-    required = tuple(str(Path(__file__).with_name(name).resolve()) for name in
-                     ("native_observation.py", "interval_observation.py", "coupled_device_prototype.py"))
+    names = ("native_observation.py", "interval_observation.py", "coupled_device_prototype.py")
+    if "charge_refinement" in policy:
+        names += ("bounded_observation.py", "native_history.py")
+    required = tuple(str(Path(__file__).with_name(name).resolve()) for name in names)
     if any(path not in source_pins or sha256(Path(path).read_bytes()).hexdigest() != source_pins[path]
            for path in required):
         raise ContractError("native_observation_executing_sources_not_bound")

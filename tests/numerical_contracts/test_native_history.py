@@ -53,6 +53,24 @@ def integer_policy():
             "decimal_digits": 4300, "max_integer_bits": 131072}
 
 
+@pytest.mark.parametrize("kind", ["voltage_lift_interval_charge", "voltage_lift_interval_charge_v2"])
+def test_partition_history_v2_pointer_and_failed_successor(tmp_path, kind):
+    """Storage semantics only: these synthetic records certify no physics."""
+    path = tmp_path / "history.jsonl.gz"
+    accepted = {"kind": kind, "observation": {"passed": True}, "right": {"point": "synthetic"},
+                "coefficient_frame_identity": "a"*64, "record_sha256": "b"*64}
+    failed = dict(accepted, observation={"passed": False}, record_sha256="c"*64)
+    with HistoryWriter(path, encoding="gzip", total_output_bytes=2*METADATA_RESERVE) as writer:
+        first = writer.append(accepted)
+        pointer = (tmp_path / "LastAccepted.json").read_bytes()
+        writer.append(failed)
+        assert (tmp_path / "LastAccepted.json").read_bytes() == pointer
+        assert json.loads(pointer)["pointer"]["history_byte_offset_after_record"] == first.logical_bytes
+    with reader(path, "gzip") as stream:
+        assert list(stream.records()) == [accepted, failed]
+        assert stream.eof_seen and stream.container_complete
+
+
 def test_bounded_integer_codec_preserves_exact_values_and_legacy_bytes(tmp_path):
     policy = configure_integer_io(integer_policy(), 1048576)
     small = {"a": [0, -1, True, None, -0.0, 1.25], "z": "unchanged"}

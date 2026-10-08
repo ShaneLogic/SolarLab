@@ -18,6 +18,7 @@ from scripts.benchmarks.interval_observation import (
     SlabPathObserver, affine_interval_actions, endpoint_charge_mismatch, identity,
     native_observation_readiness, newton_polynomials, public_action_enclosures,
     rational, segment_input_roundoff,
+    certify_fixed4_partition, rational_sqrt_upper,
 )
 from perovskite_sim.constants import Q
 
@@ -27,6 +28,106 @@ PLAN = Path(os.environ["REAL_DEVICE_PLAN"])
 CASES = ("S0NeutralPublicDeviceV1", "DynamicAcceptorIonPublicDeviceV1")
 # These are numerical oracle work goals, not replacements for a physical gate.
 ORACLE_GOAL = Fraction(1, 2**160)
+
+
+def _fixed4_polynomial_certificates(polynomial, lower):
+    error = Fraction(1, 2**140)
+
+    def bound(a, b, allocation):
+        moment = (polynomial*polynomial).integral(a, b)
+        return AbsoluteIntegralBound(rational_sqrt_upper((b-a)*moment, allocation/2),
+                                     Enclosure(moment), allocation)
+
+    cells = tuple({"left": lower*(1-Fraction(i, 4)), "right": lower*(1-Fraction(i+1, 4)),
+                   "allocation_C": error/4,
+                   "bound": bound(lower*(1-Fraction(i, 4)), lower*(1-Fraction(i+1, 4)), error/4)}
+                  for i in range(4))
+    return error, bound(lower, 0, error), cells
+
+
+@pytest.mark.parametrize("polynomial", [Polynomial(), Polynomial((-3,)), Polynomial((Fraction(1, 2), 1)),
+                                         Polynomial((1, -2, 0, 3, 0, -1))])
+def test_fixed4_exact_coverage_signed_zero_and_extension(polynomial):
+    lower = -1-Fraction(123, 7564452398733701)
+    error, original, cells = _fixed4_polynomial_certificates(polynomial, lower)
+    result = certify_fixed4_partition(lower, 0, error, original, cells)
+    assert sum((c["right"]-c["left"] for c in cells), Fraction(0)) == -lower
+    assert sum((c["allocation_C"] for c in cells), Fraction(0)) == error
+    assert result["partition_upper_C"] == sum((c["bound"].upper for c in cells), Fraction(0))
+    assert result["retained_upper_C"] == min(original.upper, result["partition_upper_C"])
+    assert result["retained_upper_C"] >= abs(polynomial.integral(lower, 0))
+
+
+@pytest.mark.parametrize("fault", ["gap", "extension", "allocation", "missing", "under", "over", "radius"])
+def test_fixed4_rejects_invalid_certificates(fault):
+    lower = -1-Fraction(1, 2**50)
+    error, original, cells = _fixed4_polynomial_certificates(Polynomial((-1,)), lower)
+    cells = [dict(c) for c in cells]
+    if fault == "gap": cells[1]["left"] += Fraction(1, 100)
+    if fault == "extension": cells[0]["left"] = Fraction(-1)
+    if fault == "allocation": cells[0]["allocation_C"] = error
+    if fault == "missing": cells.pop()
+    if fault == "under": cells[0]["bound"] = replace(cells[0]["bound"], upper=0)
+    if fault == "over": cells[0]["bound"] = replace(cells[0]["bound"], upper=10)
+    if fault == "radius": cells[0]["bound"] = replace(cells[0]["bound"], squared_integral=Enclosure(1, 1))
+    with pytest.raises(ContractError, match="observation_partition"):
+        certify_fixed4_partition(lower, 0, error, original, tuple(cells))
+
+
+def test_fixed4_producer_keeps_integrals_carrier_body_and_default(monkeypatch):
+    """Polynomial stand-in exercises real routing; no physical function calls."""
+    from types import SimpleNamespace
+
+    class Arithmetic:
+        def __init__(self): self.calls = []; self.absolute_calls = 0
+        def number(self, value): return rational(value)
+        def polynomial(self, p, u):
+            result = Polynomial()
+            for coefficient in reversed(p.coefficients): result = result*u+coefficient
+            return result
+        def integrate(self, function, a, b, error):
+            p = function(Polynomial((0, 1)), False)
+            self.calls.append({"synthetic_signed": True})
+            return Enclosure(p.integral(a, b))
+        def absolute_bound(self, function, a, b, error):
+            self.absolute_calls += 1
+            p = function(Polynomial((0, 1)), False)
+            moment = (p*p).integral(a, b)
+            self.calls.append({"synthetic_moment": True})
+            return AbsoluteIntegralBound(rational_sqrt_upper((b-a)*moment, rational(error)/2),
+                                         Enclosure(moment), error)
+
+    c = clock(predecessor=0, tn=1, hused=Fraction(7, 8))
+    lower = c.coordinate(c.predecessor)
+    o = object.__new__(SlabPathObserver)
+    o.path = SimpleNamespace(clock=c, identity="1"*64, require_covered=lambda: None,
+                             integrate=lambda p: c.hused*p.integral(lower, 0))
+    o.model = SimpleNamespace(count=2)
+    o.area = Fraction(1)
+    o.capture_charge_rate = (Polynomial((2,)), Polynomial((-3,)))
+    o.endpoint_carrier_rate = (Polynomial((1, 1)), Polynomial((-1, 2)))
+    o.raw_metal = (Polynomial((1, 2)), Polynomial((-2, 1)))
+    o.tangent_metal_polynomial = (Polynomial((2,)), Polynomial((-1,)))
+    o.fluxes = lambda a, u, analytic: ((u+2,), ())
+    o.tangent_metal_flux = lambda a, u, analytic: (u, u*u)
+    a, b, d = Arithmetic(), Arithmetic(), Arithmetic()
+    legacy = o.integrate(a, ORACLE_GOAL)
+    assert o.integrate(d, ORACLE_GOAL, partition_cells=None) == legacy
+    refined = o.integrate(b, ORACLE_GOAL, partition_cells=4)
+    assert a.absolute_calls == 2 and b.absolute_calls == 10
+    assert {k: refined[k] for k in ("raw_polynomial", "same_state_affine_tangent", "raw_tangent_L1_upper_bounds")} == {
+        k: legacy[k] for k in ("raw_polynomial", "same_state_affine_tangent", "raw_tangent_L1_upper_bounds")}
+    certificate = refined["terminal_partition"]
+    assert certificate["normalized_interval"] == (lower, 0) and lower != -1
+    assert refined["raw_tangent_charge_L1_upper_C"][0] == legacy["raw_tangent_charge_L1_upper_C"][0]
+    for i, row in enumerate(certificate["ports"]):
+        assert row["port"] == ("left_metal", "right_metal")[i]
+        assert row["original"] == legacy["raw_tangent_L1_upper_bounds"][i]
+        assert refined["raw_tangent_charge_L1_upper_C"][i+1] == (
+            row["retained_upper_C"]+certificate["endpoint_carrier_L1_upper_C"][i])
+    for unsupported in (False, 0, 2, 8, 4.0):
+        with pytest.raises(ContractError, match="unsupported_partition"):
+            o.integrate(Arithmetic(), ORACLE_GOAL, partition_cells=unsupported)
 
 
 def report(request, **values):
