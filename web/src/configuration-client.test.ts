@@ -1,11 +1,32 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceInput, TandemInput } from './generated/configuration-inputs';
+import { configurationSchemaSha256 } from './generated/configuration-schema';
 import {
-  ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration,
+  ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, spatialExperimentInputFromPreview,
 } from './configuration-client';
 
 const endpoint = 'http://127.0.0.1:9000/configuration-preview/device';
+
+describe('exact experiment input reopen', () => {
+  function saved(integer: string, digest = configurationSchemaSha256) {
+    return `{"schema":"solarlab.configuration-preview.v1","kind":"experiment","can_execute":false,"identity":{"configuration_schema_sha256":"${digest}"},"input":{"schema_version":"solarlab.experiment-preparation.v1","id":"saved","device":{"id":"device","settings":{"phi_left":-0.0},"extension":{"integer":${integer},"word":"0.00000000000000000001 m","empty":null}},"experiment":{"kind":"jv_2d"}}}`;
+  }
+  it('recovers exactly representable large SCAPS numbers and preserves signed zero/words/null', () => {
+    const json = saved('100000000000000000000');
+    const result = spatialExperimentInputFromPreview(json);
+    expect(Reflect.get(result.device, 'extension')).toStrictEqual({ integer: 1e20, word: '0.00000000000000000001 m', empty: null });
+    expect(Object.is(result.device.settings!.phi_left, -0)).toBe(true);
+    expect(json).toContain('100000000000000000000');
+  });
+  it('rejects a nonrepresentable integer with its path instead of truncating it', () => {
+    expect(() => spatialExperimentInputFromPreview(saved('100000000000000000001')))
+      .toThrow('not exactly representable at ["device","extension","integer"]');
+  });
+  it('keeps schema mismatch visible when reopening', () => {
+    expect(() => spatialExperimentInputFromPreview(saved('0', '0'.repeat(64)))).toThrow('schema identity');
+  });
+});
 // Transport-only DTOs. Actual material configurations run through the real
 // resolver and HTTP service in test_configuration_preview.py.
 function device(): DeviceInput {

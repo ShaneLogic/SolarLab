@@ -1,7 +1,8 @@
 /** Explicit prepared-configuration transport; no default selection or execution. */
-import type { DeviceInput, TandemInput } from './generated/configuration-inputs';
+import type { DeviceInput, TandemInput, SpatialExperimentInput } from './generated/configuration-inputs';
+import { configurationSchemaSha256 } from './generated/configuration-schema';
 
-type Kind = 'device' | 'tandem';
+type Kind = 'device' | 'tandem' | 'experiment';
 type ErrorCode = 'input' | 'http' | 'malformed' | 'protocol' | 'precision_unavailable';
 
 export class ConfigurationPreviewError extends Error {
@@ -36,6 +37,7 @@ export interface ConfigurationPreview {
     readonly content_sha256: string;
     readonly default_catalog_sha256: string;
     readonly resource_library_sha256: string;
+    readonly configuration_schema_sha256?: string;
   };
 }
 
@@ -102,12 +104,13 @@ function freeze(value: unknown): void {
 }
 
 async function preview(
-  endpoint: string | URL, kind: Kind, input: DeviceInput | TandemInput, signal?: AbortSignal,
+  endpoint: string | URL, kind: Kind, input: DeviceInput | TandemInput | SpatialExperimentInput, signal?: AbortSignal,
 ): Promise<ConfigurationPreviewDocument> {
   const body = encode(input);
   const requestedId = input.id;
   const response = await fetch(endpoint, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal,
+    method: 'POST', headers: { 'Content-Type': 'application/json',
+      ...(kind === 'experiment' ? { 'X-Solarlab-Configuration-Schema': configurationSchemaSha256 } : {}) }, body, signal,
   });
   const bytes = await response.arrayBuffer();
   let json: string;
@@ -133,13 +136,15 @@ async function preview(
   requireValue(object(value.input) && value.input.id === requestedId
     && value.input.schema_version === `solarlab.${kind}-preparation.v1`, 'Preview input identity mismatch');
   requireValue(object(value.resolved) && value.resolved.id === requestedId
-    && value.resolved.schema === `solarlab.resolved-${kind}-preparation.v1`
+    && value.resolved.schema === `solarlab.resolved-${kind === 'experiment' ? 'spatial-experiment' : kind}-preparation.v1`
     && value.resolved.can_execute === false, 'Unexpected resolved configuration identity or execution status');
   requireValue(object(value.identity) && value.identity.scope === 'configuration_content', 'Expected configuration content identity');
   for (const field of ['content_sha256', 'default_catalog_sha256', 'resource_library_sha256']) {
     requireValue(typeof value.identity[field] === 'string' && /^[a-f0-9]{64}$/.test(value.identity[field]),
       `Invalid preview ${field}`);
   }
+  if (kind === 'experiment') requireValue(value.identity.configuration_schema_sha256 === configurationSchemaSha256,
+    'Experiment preview schema identity does not match this client');
   freeze(value);
   return Object.freeze({ value: value as unknown as ConfigurationPreview, json });
 }
@@ -154,4 +159,36 @@ export function previewTandemConfiguration(
   endpoint: string | URL, input: TandemInput, signal?: AbortSignal,
 ): Promise<ConfigurationPreviewDocument> {
   return preview(endpoint, 'tandem', input, signal);
+}
+
+export function previewSpatialExperiment(
+  endpoint: string | URL, input: SpatialExperimentInput, signal?: AbortSignal,
+): Promise<ConfigurationPreviewDocument> {
+  return preview(endpoint, 'experiment', input, signal);
+}
+
+/** Reopen editable input from the original response text. JSON integers that
+ * originated as exactly representable numbers can exceed MAX_SAFE_INTEGER.
+ * Recover only those values; never round other integers into a generated DTO. */
+export function spatialExperimentInputFromPreview(json: string): SpatialExperimentInput {
+  const doc = parse(json);
+  requireValue(object(doc) && doc.schema === 'solarlab.configuration-preview.v1'
+    && doc.kind === 'experiment' && doc.can_execute === false && object(doc.input)
+    && doc.input.schema_version === 'solarlab.experiment-preparation.v1', 'Expected an experiment preparation preview');
+  requireValue(object(doc.identity) && doc.identity.configuration_schema_sha256 === configurationSchemaSha256,
+    'Saved experiment schema identity does not match this client');
+  function editable(value: unknown, path: (string | number)[]): unknown {
+    if (typeof value === 'bigint') {
+      const number = Number(value);
+      requireValue(Number.isFinite(number) && BigInt(number) === value,
+        `Saved input integer is not exactly representable at ${JSON.stringify(path)}`, 'precision_unavailable');
+      return number;
+    }
+    if (Array.isArray(value)) return value.map((item, index) => editable(item, [...path, index]));
+    if (object(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, editable(item, [...path, key])]));
+    return value;
+  }
+  const input = editable(doc.input, []);
+  encode(input); // Check representability without using this text as an export.
+  return input as SpatialExperimentInput;
 }

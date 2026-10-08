@@ -13,14 +13,17 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
 from solarlab.config.resolve_device import resolve_device, resolve_tandem
+from solarlab.config.schema import configuration_schema_representation
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.inputs import DeviceInput, TandemInput
 from solarlab.device.resolved import PreparedDevice, PreparedTandem
+from solarlab.experiments.two_dimensional.inputs import SpatialExperimentInput
+from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment, prepare_spatial_experiment
 from solarlab.materials.resources import ResourceLibrary
 from solarlab.materials.source import SourceDocument
 
 router = APIRouter()
-Kind = Literal["device", "tandem"]
+Kind = Literal["device", "tandem", "experiment"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,13 +80,16 @@ def _constant(text: str) -> Any:
 
 def _resolve(kind: Kind, data: Any, context: ConfigurationPreviewContext) -> dict[str, Any]:
     try:
-        prepared: PreparedDevice | PreparedTandem
+        prepared: PreparedDevice | PreparedTandem | PreparedSpatialExperiment
         if kind == "device":
             prepared = resolve_device(DeviceInput.model_validate(data), context.defaults,
                                       context.resources, sources=context.sources)
-        else:
+        elif kind == "tandem":
             prepared = resolve_tandem(TandemInput.model_validate(data), context.defaults,
                                       context.resources, sources=context.sources)
+        else:
+            prepared = prepare_spatial_experiment(SpatialExperimentInput.model_validate(data), context.defaults,
+                                                  context.resources, sources=context.sources)
     except ValidationError as error:
         fields = [dict(field) for field in error.errors(include_url=False, include_context=False)]
         raise _error(422, "configuration_validation", "Invalid configuration input", fields) from error
@@ -100,6 +106,7 @@ def _resolve(kind: Kind, data: Any, context: ConfigurationPreviewContext) -> dic
             "content_sha256": prepared.content_sha256,
             "default_catalog_sha256": context.defaults.content_sha256,
             "resource_library_sha256": context.resources.content_sha256,
+            **({"configuration_schema_sha256": configuration_schema_representation()[1]} if kind == "experiment" else {}),
         },
     }
 
@@ -109,6 +116,14 @@ async def _preview(request: Request, kind: Kind) -> JSONResponse:
     if context is None:
         raise _error(503, "configuration_context_missing",
                      "Configuration preview requires an explicitly supplied trusted catalog and resource library")
+    if kind == "experiment":
+        if not context.defaults.experiment_defaults:
+            raise _error(503, "configuration_experiment_context_missing", "Experiment preview requires explicit source-bound experiment defaults")
+        declared_schema = request.headers.get("x-solarlab-configuration-schema")
+        if declared_schema is None:
+            raise _error(428, "configuration_schema_required", "Send the generated configuration schema SHA-256 in X-Solarlab-Configuration-Schema")
+        if declared_schema != configuration_schema_representation()[1]:
+            raise _error(409, "configuration_schema_mismatch", "Configuration schema identity does not match this server")
     if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
         raise _error(415, "configuration_content_type", "Expected application/json")
     raw = bytearray()
@@ -136,3 +151,9 @@ async def preview_device(request: Request) -> JSONResponse:
 async def preview_tandem(request: Request) -> JSONResponse:
     """Resolve a TandemInput with supplied subcells; references are not file paths."""
     return await _preview(request, "tandem")
+
+
+@router.post("/configuration-preview/experiment")
+async def preview_experiment(request: Request) -> JSONResponse:
+    """Prepare declared geometry/protocol controls without generating a mesh or state."""
+    return await _preview(request, "experiment")

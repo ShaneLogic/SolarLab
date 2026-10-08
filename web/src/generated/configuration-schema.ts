@@ -14895,6 +14895,6217 @@ export const configurationSchema = {
         "type": "object"
       }
     },
+    "SpatialExperimentInput": {
+      "python_type": "solarlab.experiments.two_dimensional.inputs:SpatialExperimentInput",
+      "representation": "editable_input",
+      "schema": {
+        "$defs": {
+          "BandToBandInput": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Enabled"
+              },
+              "energy_quadrature_order": {
+                "anyOf": [
+                  {
+                    "minimum": 4,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Energy Quadrature Order"
+              },
+              "minimum_field_V_m": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Minimum Field V M",
+                "unit": "V/m"
+              },
+              "reduced_effective_mass_rel": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Reduced Effective Mass Rel",
+                "unit": "1"
+              }
+            },
+            "title": "BandToBandInput",
+            "type": "object"
+          },
+          "BulkDefectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "charge_transition": {
+                "enum": [
+                  "neutral",
+                  "acceptor",
+                  "donor",
+                  "unresolved"
+                ],
+                "title": "Charge Transition",
+                "type": "string"
+              },
+              "degeneracy": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Degeneracy",
+                "unit": "1"
+              },
+              "distribution": {
+                "$ref": "#/$defs/DistributionInput"
+              },
+              "energy_level": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EnergyLevelInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "kinetics": {
+                "$ref": "#/$defs/KineticsInput"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Name"
+              },
+              "neutral_reference": {
+                "enum": [
+                  "all_occupancies",
+                  "empty",
+                  "filled",
+                  "unresolved"
+                ],
+                "title": "Neutral Reference",
+                "type": "string"
+              },
+              "spatial_profile": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SpatialProfileInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "distribution",
+              "charge_transition",
+              "neutral_reference",
+              "kinetics",
+              "degeneracy"
+            ],
+            "title": "BulkDefectInput",
+            "type": "object"
+          },
+          "CigsOpticsInput": {
+            "additionalProperties": false,
+            "description": "GGI endpoints follow the layer's electrical grading coordinate.\n\nAbsent model, slice and quadrature values are supplied by the injected catalog,\ncompiled from the existing model declaration. None is never a numeric default.",
+            "properties": {
+              "cgi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Cgi",
+                "unit": "1"
+              },
+              "ggi_back": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Ggi Back",
+                "unit": "1"
+              },
+              "ggi_front": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Ggi Front",
+                "unit": "1"
+              },
+              "kk_quadrature_order": {
+                "anyOf": [
+                  {
+                    "maximum": 2048,
+                    "minimum": 48,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Kk Quadrature Order"
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "const": "minoura_2015",
+                    "type": "string"
+                  }
+                ],
+                "title": "Model"
+              },
+              "slices": {
+                "anyOf": [
+                  {
+                    "maximum": 512,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Slices"
+              }
+            },
+            "required": [
+              "ggi_front",
+              "ggi_back",
+              "cgi"
+            ],
+            "title": "CigsOpticsInput",
+            "type": "object"
+          },
+          "ComponentwiseAtolInput": {
+            "additionalProperties": false,
+            "properties": {
+              "carrier_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Carrier Fraction",
+                "unit": "1"
+              },
+              "interface_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Interface Fraction",
+                "unit": "1"
+              },
+              "ion_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Ion Fraction",
+                "unit": "1"
+              },
+              "minimum_atol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Minimum Atol",
+                "unit": "m^-3"
+              },
+              "refinement_factor": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Refinement Factor",
+                "unit": "1"
+              }
+            },
+            "required": [
+              "carrier_fraction",
+              "ion_fraction",
+              "interface_fraction",
+              "minimum_atol",
+              "refinement_factor"
+            ],
+            "title": "ComponentwiseAtolInput",
+            "type": "object"
+          },
+          "ContactInput": {
+            "additionalProperties": false,
+            "properties": {
+              "S_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "S N",
+                "unit": "m/s"
+              },
+              "S_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "S P",
+                "unit": "m/s"
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "layer": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Layer",
+                "type": "string"
+              },
+              "side": {
+                "enum": [
+                  "left",
+                  "right"
+                ],
+                "title": "Side",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "side",
+              "layer"
+            ],
+            "title": "ContactInput",
+            "type": "object"
+          },
+          "ContactTunnellingInput": {
+            "additionalProperties": false,
+            "properties": {
+              "barrier_height_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Barrier Height Ev",
+                "unit": "eV"
+              },
+              "electron_effective_mass_rel": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Electron Effective Mass Rel",
+                "unit": "1"
+              },
+              "enabled": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Enabled"
+              },
+              "energy_quadrature_order": {
+                "anyOf": [
+                  {
+                    "minimum": 4,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Energy Quadrature Order"
+              },
+              "hole_effective_mass_rel": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Hole Effective Mass Rel",
+                "unit": "1"
+              },
+              "side": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "both",
+                      "left",
+                      "right"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Side"
+              }
+            },
+            "title": "ContactTunnellingInput",
+            "type": "object"
+          },
+          "DefectAssistedInput": {
+            "additionalProperties": false,
+            "properties": {
+              "electron_effective_mass_rel": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Electron Effective Mass Rel",
+                "unit": "1"
+              },
+              "enabled": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Enabled"
+              },
+              "hole_effective_mass_rel": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Hole Effective Mass Rel",
+                "unit": "1"
+              },
+              "requires_explicit_occupancy": {
+                "anyOf": [
+                  {
+                    "const": true,
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Requires Explicit Occupancy"
+              }
+            },
+            "title": "DefectAssistedInput",
+            "type": "object"
+          },
+          "DeviceInput": {
+            "additionalProperties": false,
+            "properties": {
+              "contacts": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ContactInput"
+                },
+                "title": "Contacts",
+                "type": "array"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Description"
+              },
+              "electrical_grid": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/GridLayerInput"
+                },
+                "title": "Electrical Grid",
+                "type": "array"
+              },
+              "fixed_generation": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Fixed Generation"
+              },
+              "grain_boundaries": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/GrainBoundaryInput"
+                },
+                "title": "Grain Boundaries",
+                "type": "array"
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "interfaces": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/InterfaceInput"
+                },
+                "title": "Interfaces",
+                "type": "array"
+              },
+              "layers": {
+                "items": {
+                  "$ref": "#/$defs/FullLayerInput"
+                },
+                "title": "Layers",
+                "type": "array"
+              },
+              "materials": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/NamedMaterialInput"
+                },
+                "title": "Materials",
+                "type": "array"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Name"
+              },
+              "schema_version": {
+                "const": "solarlab.device-preparation.v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "settings": {
+                "$ref": "#/$defs/DeviceSettingsInput"
+              },
+              "simulation_hints": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SimulationHintsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source_format": {
+                "enum": [
+                  "standard",
+                  "scaps",
+                  "canonical"
+                ],
+                "title": "Source Format",
+                "type": "string"
+              },
+              "source_schema_version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Schema Version"
+              },
+              "spectrum": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Spectrum"
+              },
+              "tunnelling_channels": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TunnellingInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "schema_version",
+              "id",
+              "source_format",
+              "layers"
+            ],
+            "title": "DeviceInput",
+            "type": "object"
+          },
+          "DeviceSettingsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "Phi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Phi",
+                "unit": "m^-2/s"
+              },
+              "T": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "T",
+                "unit": "K"
+              },
+              "V_bi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "V Bi",
+                "unit": "V"
+              },
+              "band_grading": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Band Grading"
+              },
+              "built_in_potential_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "legacy_manual",
+                      "semiconductor_work_function",
+                      "metal_work_function"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Built In Potential Mode"
+              },
+              "contact_phi_B_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Contact Phi B Ev",
+                "unit": "eV"
+              },
+              "dos_band_potentials": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Dos Band Potentials"
+              },
+              "flat_band_contacts": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Flat Band Contacts"
+              },
+              "flat_band_metal_contacts": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Flat Band Metal Contacts"
+              },
+              "graded_optics": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Graded Optics"
+              },
+              "het_recomb_despike": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Het Recomb Despike",
+                "unit": "1"
+              },
+              "interface_charge_closure": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "off",
+                      "equilibrium_referenced"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Interface Charge Closure"
+              },
+              "interface_charge_rebaseline_acknowledged": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Charge Rebaseline Acknowledged"
+              },
+              "interface_plane_closure": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Plane Closure"
+              },
+              "interface_plane_generation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Plane Generation"
+              },
+              "interface_plane_projection": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Plane Projection"
+              },
+              "interface_shared_occupancy": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Shared Occupancy"
+              },
+              "interface_tunneling": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Tunneling"
+              },
+              "interface_two_sided": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Interface Two Sided"
+              },
+              "ion_steric_diffusion_only": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Ion Steric Diffusion Only"
+              },
+              "ion_steric_shared_site": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Ion Steric Shared Site"
+              },
+              "jv_solver_policy": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "general",
+                      "cancellation_safe_qf_required"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Jv Solver Policy"
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "legacy",
+                      "fast",
+                      "full"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Mode"
+              },
+              "phi_left": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Phi Left",
+                "unit": "V"
+              },
+              "te_physical_norm": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Te Physical Norm"
+              },
+              "tunnel_mass_eff": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Tunnel Mass Eff",
+                "unit": "1"
+              },
+              "work_function_left_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Work Function Left Ev",
+                "unit": "eV"
+              },
+              "work_function_right_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Work Function Right Ev",
+                "unit": "eV"
+              }
+            },
+            "title": "DeviceSettingsInput",
+            "type": "object"
+          },
+          "DistributionInput": {
+            "additionalProperties": false,
+            "properties": {
+              "center_eV_above_vb": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Center Ev Above Vb",
+                "unit": "eV"
+              },
+              "energy_reference": {
+                "anyOf": [
+                  {
+                    "const": "above_valence_band",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Energy Reference"
+              },
+              "kind": {
+                "enum": [
+                  "single_level",
+                  "gaussian",
+                  "uniform",
+                  "conduction_band_tail",
+                  "valence_band_tail"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "normalization": {
+                "const": "integrated_total",
+                "title": "Normalization",
+                "type": "string"
+              },
+              "support_width_multiplier": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Support Width Multiplier",
+                "unit": "1"
+              },
+              "total_density_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Total Density M3",
+                "unit": "m^-3"
+              },
+              "width_convention": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "not_applicable",
+                      "gaussian_standard_deviation",
+                      "scaps_characteristic_energy",
+                      "uniform_full_width",
+                      "unresolved"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Width Convention"
+              },
+              "width_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Width Ev",
+                "unit": "eV"
+              }
+            },
+            "required": [
+              "kind",
+              "normalization",
+              "total_density_m3"
+            ],
+            "title": "DistributionInput",
+            "type": "object"
+          },
+          "EnergyLevelInput": {
+            "additionalProperties": false,
+            "properties": {
+              "reference": {
+                "enum": [
+                  "below_conduction_band",
+                  "above_valence_band"
+                ],
+                "title": "Reference",
+                "type": "string"
+              },
+              "value_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Value Ev",
+                "unit": "eV"
+              }
+            },
+            "required": [
+              "reference",
+              "value_eV"
+            ],
+            "title": "EnergyLevelInput",
+            "type": "object"
+          },
+          "FullLayerInput": {
+            "additionalProperties": false,
+            "properties": {
+              "bulk_defects": {
+                "default": [],
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/BulkDefectInput"
+                    },
+                    {
+                      "$ref": "#/$defs/MultivalentDefectInput"
+                    }
+                  ]
+                },
+                "title": "Bulk Defects",
+                "type": "array"
+              },
+              "bulk_trap_distribution": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/LegacyBulkTrapInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cigs_graded_optics": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CigsOpticsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "defect_model": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "effective_lifetime",
+                      "explicit_quasi_steady"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Defect Model"
+              },
+              "defect_schema_version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Defect Schema Version"
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "material": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Material"
+              },
+              "metastable_document": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MetastableDocumentInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "metastable_preparation": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MetastablePreparationInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "name": {
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "parameterization": {
+                "default": "standard",
+                "enum": [
+                  "standard",
+                  "scaps"
+                ],
+                "title": "Parameterization",
+                "type": "string"
+              },
+              "parameters": {
+                "$ref": "#/$defs/FullParameterInput"
+              },
+              "role": {
+                "minLength": 1,
+                "title": "Role",
+                "type": "string"
+              },
+              "scaps_defect_metadata": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ScapsDefectMetadataInput"
+                },
+                "title": "Scaps Defect Metadata",
+                "type": "array"
+              },
+              "thickness": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Thickness",
+                "unit": "m"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role",
+              "thickness"
+            ],
+            "title": "FullLayerInput",
+            "type": "object"
+          },
+          "FullParameterInput": {
+            "additionalProperties": false,
+            "properties": {
+              "A_star_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "A Star N",
+                "unit": "A/(m^2 K^2)"
+              },
+              "A_star_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "A Star P",
+                "unit": "A/(m^2 K^2)"
+              },
+              "B_rad": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "B Rad",
+                "unit": "m^3/s"
+              },
+              "B_rad_T_gamma": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "B Rad T Gamma",
+                "unit": "1"
+              },
+              "C_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "C N",
+                "unit": "m^6/s"
+              },
+              "C_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "C P",
+                "unit": "m^6/s"
+              },
+              "D_ion": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "D Ion",
+                "unit": "m^2/s"
+              },
+              "D_ion_neg": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "D Ion Neg",
+                "unit": "m^2/s"
+              },
+              "E_a_ion": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "E A Ion",
+                "unit": "eV"
+              },
+              "Eg": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "Eg",
+                "unit": "eV"
+              },
+              "Eg_back": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Eg Back",
+                "unit": "eV"
+              },
+              "N_A": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "N A",
+                "unit": "m^-3"
+              },
+              "N_A_bulk": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "N A Bulk",
+                "unit": "m^-3"
+              },
+              "N_D": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "N D",
+                "unit": "m^-3"
+              },
+              "N_D_bulk": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "N D Bulk",
+                "unit": "m^-3"
+              },
+              "Nc300": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Nc300",
+                "unit": "m^-3"
+              },
+              "Nv300": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Nv300",
+                "unit": "m^-3"
+              },
+              "P0": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "P0",
+                "unit": "m^-3"
+              },
+              "P0_neg": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "P0 Neg",
+                "unit": "m^-3"
+              },
+              "P_lim": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "P Lim",
+                "unit": "m^-3"
+              },
+              "P_lim_neg": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "P Lim Neg",
+                "unit": "m^-3"
+              },
+              "acceptor_binding_energy_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Acceptor Binding Energy Ev",
+                "unit": "eV"
+              },
+              "acceptor_degeneracy": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Acceptor Degeneracy",
+                "unit": "1"
+              },
+              "alpha": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "Alpha",
+                "unit": "m^-1"
+              },
+              "band_gap_narrowing_model": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "off",
+                      "slotboom"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Band Gap Narrowing Model"
+              },
+              "bgn_conduction_band_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Bgn Conduction Band Fraction",
+                "unit": "1"
+              },
+              "bgn_log_shape": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Bgn Log Shape",
+                "unit": "1"
+              },
+              "bgn_reference_density_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Bgn Reference Density M3",
+                "unit": "m^-3"
+              },
+              "bgn_reference_energy_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Bgn Reference Energy Ev",
+                "unit": "eV"
+              },
+              "carrier_statistics": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "maxwell_boltzmann",
+                      "fermi_dirac"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Carrier Statistics"
+              },
+              "chi": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": false,
+                "positive": false,
+                "title": "Chi",
+                "unit": "eV"
+              },
+              "chi_back": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": true,
+                "positive": false,
+                "title": "Chi Back",
+                "unit": "eV"
+              },
+              "ct_beta_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Ct Beta N",
+                "unit": "1"
+              },
+              "ct_beta_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Ct Beta P",
+                "unit": "1"
+              },
+              "donor_binding_energy_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Donor Binding Energy Ev",
+                "unit": "eV"
+              },
+              "donor_degeneracy": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Donor Degeneracy",
+                "unit": "1"
+              },
+              "dopant_ionization_model": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "fully_ionized",
+                      "discrete_level"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Dopant Ionization Model"
+              },
+              "doping_decay_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Doping Decay Length",
+                "unit": "m"
+              },
+              "doping_edge": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "front",
+                      "back"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Doping Edge"
+              },
+              "doping_profile_shape": {
+                "anyOf": [
+                  {
+                    "const": "gaussian",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Doping Profile Shape"
+              },
+              "eps_r": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": true,
+                "title": "Eps R",
+                "unit": "1"
+              },
+              "grading_N_mult": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Grading N Mult"
+              },
+              "grading_bowing": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Grading Bowing",
+                "unit": "eV"
+              },
+              "grading_char_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Grading Char Length",
+                "unit": "m"
+              },
+              "grading_direction": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "front_to_back",
+                      "back_to_front"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Grading Direction"
+              },
+              "grading_profile": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "linear",
+                      "parabolic",
+                      "exponential"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Grading Profile"
+              },
+              "incoherent": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Incoherent"
+              },
+              "mu_T_gamma": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Mu T Gamma",
+                "unit": "1"
+              },
+              "mu_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "Mu N",
+                "unit": "m^2/(V s)"
+              },
+              "mu_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "Mu P",
+                "unit": "m^2/(V s)"
+              },
+              "n1": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "N1",
+                "unit": "m^-3"
+              },
+              "n_optical": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "N Optical",
+                "unit": "1"
+              },
+              "ni": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "Ni",
+                "unit": "m^-3"
+              },
+              "optical_material": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Optical Material"
+              },
+              "p1": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": false,
+                "title": "P1",
+                "unit": "m^-3"
+              },
+              "pf_gamma_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Pf Gamma N",
+                "unit": "(m/V)^0.5"
+              },
+              "pf_gamma_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Pf Gamma P",
+                "unit": "(m/V)^0.5"
+              },
+              "tau_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": true,
+                "title": "Tau N",
+                "unit": "s"
+              },
+              "tau_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "nonnegative": true,
+                "positive": true,
+                "title": "Tau P",
+                "unit": "s"
+              },
+              "trap_N_t_bulk": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Trap N T Bulk",
+                "unit": "m^-3"
+              },
+              "trap_N_t_interface": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Trap N T Interface",
+                "unit": "m^-3"
+              },
+              "trap_decay_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "Trap Decay Length",
+                "unit": "m"
+              },
+              "trap_edge": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "both",
+                      "left",
+                      "right"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Trap Edge"
+              },
+              "trap_profile_shape": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "exponential",
+                      "gaussian"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Trap Profile Shape"
+              },
+              "v_sat_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "V Sat N",
+                "unit": "m/s"
+              },
+              "v_sat_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "V Sat P",
+                "unit": "m/s"
+              },
+              "v_th": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Th",
+                "unit": "m/s"
+              },
+              "varshni_alpha": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Varshni Alpha",
+                "unit": "eV/K"
+              },
+              "varshni_beta": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Varshni Beta",
+                "unit": "K"
+              }
+            },
+            "title": "FullParameterInput",
+            "type": "object"
+          },
+          "GrainBoundaryInput": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "layer_ids": {
+                "items": {
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                  "type": "string"
+                },
+                "title": "Layer Ids",
+                "type": "array"
+              },
+              "source_layer_role": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Source Layer Role"
+              },
+              "tau_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Tau N",
+                "unit": "s"
+              },
+              "tau_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Tau P",
+                "unit": "s"
+              },
+              "width": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Width",
+                "unit": "m"
+              },
+              "x_position": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "X Position",
+                "unit": "m"
+              }
+            },
+            "required": [
+              "id",
+              "layer_ids",
+              "x_position",
+              "width",
+              "tau_n",
+              "tau_p"
+            ],
+            "title": "GrainBoundaryInput",
+            "type": "object"
+          },
+          "GrainSweepInput": {
+            "additionalProperties": false,
+            "properties": {
+              "Nx": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Lateral intervals (Nx)"
+              },
+              "Ny_per_layer": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Vertical intervals per electrical layer"
+              },
+              "V_max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "V Max",
+                "unit": "V"
+              },
+              "V_step": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Step",
+                "unit": "V"
+              },
+              "gb_width": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Gb Width",
+                "unit": "m"
+              },
+              "grain_sizes": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "minItems": 0,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "item_input_unit": "nm",
+                "item_positive": true,
+                "item_unit": "m",
+                "title": "Grain Sizes"
+              },
+              "grain_sizes_nm": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "minItems": 0,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "item_input_unit": "nm",
+                "item_positive": true,
+                "item_unit": "m",
+                "title": "Grain Sizes Nm"
+              },
+              "illuminated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Illuminated"
+              },
+              "kind": {
+                "const": "voc_grain_sweep",
+                "title": "Kind",
+                "type": "string"
+              },
+              "settle_t": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Settle T",
+                "unit": "s"
+              },
+              "tau_gb_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Tau Gb N",
+                "unit": "s"
+              },
+              "tau_gb_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Tau Gb P",
+                "unit": "s"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "GrainSweepInput",
+            "type": "object"
+          },
+          "GridLayerInput": {
+            "additionalProperties": false,
+            "properties": {
+              "alpha": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Alpha",
+                "unit": "1"
+              },
+              "interval_weight": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Interval Weight",
+                "unit": "1"
+              },
+              "layer": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Layer",
+                "type": "string"
+              }
+            },
+            "required": [
+              "layer",
+              "interval_weight",
+              "alpha"
+            ],
+            "title": "GridLayerInput",
+            "type": "object"
+          },
+          "InterfaceDefectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "calibration_factor": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Calibration Factor",
+                "unit": "1"
+              },
+              "energy_reference": {
+                "enum": [
+                  "below_conduction_band",
+                  "above_valence_band"
+                ],
+                "title": "Energy Reference",
+                "type": "string"
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "iface_state_calibration_factor": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Iface State Calibration Factor",
+                "unit": "1"
+              },
+              "kinetics": {
+                "$ref": "#/$defs/KineticsInput"
+              },
+              "partner_metadata": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ScapsDefectMetadataInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "total_density_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Total Density M2",
+                "unit": "m^-2"
+              },
+              "trap_depth_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Trap Depth Ev",
+                "unit": "eV"
+              }
+            },
+            "required": [
+              "id",
+              "trap_depth_eV",
+              "energy_reference",
+              "total_density_m2",
+              "kinetics",
+              "calibration_factor",
+              "iface_state_calibration_factor"
+            ],
+            "title": "InterfaceDefectInput",
+            "type": "object"
+          },
+          "InterfaceInput": {
+            "additionalProperties": false,
+            "properties": {
+              "defect": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/InterfaceDefectInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "left": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Left",
+                "type": "string"
+              },
+              "right": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Right",
+                "type": "string"
+              },
+              "v_n": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "V N",
+                "unit": "m/s"
+              },
+              "v_p": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "V P",
+                "unit": "m/s"
+              }
+            },
+            "required": [
+              "id",
+              "left",
+              "right"
+            ],
+            "title": "InterfaceInput",
+            "type": "object"
+          },
+          "IntrabandInput": {
+            "additionalProperties": false,
+            "properties": {
+              "carrier": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "electron",
+                      "hole",
+                      "both"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Carrier"
+              },
+              "electron_effective_mass_rel": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Electron Effective Mass Rel",
+                "unit": "1"
+              },
+              "enabled": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Enabled"
+              },
+              "energy_quadrature_order": {
+                "anyOf": [
+                  {
+                    "minimum": 4,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Energy Quadrature Order"
+              },
+              "hole_effective_mass_rel": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Hole Effective Mass Rel",
+                "unit": "1"
+              }
+            },
+            "title": "IntrabandInput",
+            "type": "object"
+          },
+          "JV2DAtolInput": {
+            "additionalProperties": false,
+            "properties": {
+              "carrier_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Carrier Fraction",
+                "unit": "1"
+              },
+              "interface_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Interface Fraction",
+                "unit": "1"
+              },
+              "ion_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Ion Fraction",
+                "unit": "1"
+              },
+              "minimum_atol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Minimum Atol",
+                "unit": "m^-3"
+              },
+              "mode": {
+                "enum": [
+                  "scalar",
+                  "componentwise"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "refinement_factor": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Refinement Factor",
+                "unit": "1"
+              },
+              "scalar_atol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Scalar Atol",
+                "unit": "m^-3"
+              }
+            },
+            "required": [
+              "mode",
+              "scalar_atol",
+              "carrier_fraction",
+              "ion_fraction",
+              "interface_fraction",
+              "minimum_atol",
+              "refinement_factor"
+            ],
+            "title": "JV2DAtolInput",
+            "type": "object"
+          },
+          "JV2DGrainProtocolInput": {
+            "additionalProperties": false,
+            "properties": {
+              "layer_role": {
+                "minLength": 1,
+                "title": "Layer Role",
+                "type": "string"
+              },
+              "tau_n_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Tau N S",
+                "unit": "s"
+              },
+              "tau_p_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Tau P S",
+                "unit": "s"
+              },
+              "width_m": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Width M",
+                "unit": "m"
+              },
+              "x_position_m": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "X Position M",
+                "unit": "m"
+              }
+            },
+            "required": [
+              "x_position_m",
+              "width_m",
+              "tau_n_s",
+              "tau_p_s",
+              "layer_role"
+            ],
+            "title": "JV2DGrainProtocolInput",
+            "type": "object"
+          },
+          "JV2DInput": {
+            "additionalProperties": false,
+            "properties": {
+              "Nx": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Lateral intervals (Nx)"
+              },
+              "Ny_per_layer": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Vertical intervals per electrical layer"
+              },
+              "V_max": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "V Max",
+                "unit": "V"
+              },
+              "V_step": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "V Step",
+                "unit": "V"
+              },
+              "atol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Atol",
+                "unit": "m^-3"
+              },
+              "componentwise_atol": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ComponentwiseAtolInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "illuminated": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Illuminated"
+              },
+              "initial_state_settle_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Initial State Settle S",
+                "unit": "s"
+              },
+              "interface_srh": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "off",
+                      "two_sided_cross_node"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Interface Srh"
+              },
+              "ion_dynamics": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "frozen",
+                      "single_mobile"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Ion Dynamics"
+              },
+              "ion_inventory_rtol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Ion Inventory Rtol",
+                "unit": "1"
+              },
+              "jv_2d_protocol": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/JV2DProtocolInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "jv_2d",
+                "title": "Kind",
+                "type": "string"
+              },
+              "lateral_bc": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "periodic",
+                      "neumann"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Lateral Bc"
+              },
+              "lateral_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Lateral Length",
+                "unit": "m"
+              },
+              "max_bisect": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Max Bisect"
+              },
+              "max_nfev_per_solve": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  }
+                ],
+                "title": "Max Nfev Per Solve"
+              },
+              "microstructure": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MicrostructureInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "protocol_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "compatibility",
+                      "research_strict"
+                    ],
+                    "type": "string"
+                  }
+                ],
+                "title": "Protocol Mode"
+              },
+              "rtol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Rtol",
+                "unit": "1"
+              },
+              "save_snapshots": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  }
+                ],
+                "title": "Save Snapshots"
+              },
+              "settle_t": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Settle T",
+                "unit": "s"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "JV2DInput",
+            "type": "object"
+          },
+          "JV2DProtocolInput": {
+            "additionalProperties": false,
+            "description": "Supplied execution-protocol declaration, not a generated or bound mesh.",
+            "properties": {
+              "applied_voltage_rate_at_sampling_V_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Applied Voltage Rate At Sampling V S",
+                "unit": "V/s"
+              },
+              "carrier_boundary_condition": {
+                "enum": [
+                  "ohmic",
+                  "selective_robin"
+                ],
+                "title": "Carrier Boundary Condition",
+                "type": "string"
+              },
+              "current_composition": {
+                "enum": [
+                  "electron_hole_conduction",
+                  "electron_hole_positive_ion_displacement"
+                ],
+                "title": "Current Composition",
+                "type": "string"
+              },
+              "current_sampling": {
+                "const": "instantaneous_dwell_endpoint",
+                "title": "Current Sampling",
+                "type": "string"
+              },
+              "dwell_time_per_voltage_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Dwell Time Per Voltage S",
+                "unit": "s"
+              },
+              "grain_boundaries": {
+                "items": {
+                  "$ref": "#/$defs/JV2DGrainProtocolInput"
+                },
+                "title": "Grain Boundaries",
+                "type": "array"
+              },
+              "illuminated": {
+                "title": "Illuminated",
+                "type": "boolean"
+              },
+              "illumination_source": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Illumination Source"
+              },
+              "implicit_legacy_protocol": {
+                "title": "Implicit Legacy Protocol",
+                "type": "boolean"
+              },
+              "initial_state_settle_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "Initial State Settle S",
+                "unit": "s"
+              },
+              "initial_state_source": {
+                "enum": [
+                  "one_dimensional_illuminated_finite_time",
+                  "one_dimensional_dark_equilibrium"
+                ],
+                "title": "Initial State Source",
+                "type": "string"
+              },
+              "initial_state_voltage_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Initial State Voltage V",
+                "unit": "V"
+              },
+              "interface_srh": {
+                "enum": [
+                  "off",
+                  "two_sided_cross_node"
+                ],
+                "title": "Interface Srh",
+                "type": "string"
+              },
+              "ion_boundary_condition": {
+                "enum": [
+                  "frozen",
+                  "blocking"
+                ],
+                "title": "Ion Boundary Condition",
+                "type": "string"
+              },
+              "ion_inventory_rtol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Ion Inventory Rtol",
+                "unit": "1"
+              },
+              "lateral_bc": {
+                "enum": [
+                  "periodic",
+                  "neumann"
+                ],
+                "title": "Lateral Bc",
+                "type": "string"
+              },
+              "max_bisect": {
+                "minimum": 0,
+                "title": "Max Bisect",
+                "type": "integer"
+              },
+              "max_nfev_per_solve": {
+                "exclusiveMinimum": 0,
+                "title": "Max Nfev Per Solve",
+                "type": "integer"
+              },
+              "save_snapshots": {
+                "title": "Save Snapshots",
+                "type": "boolean"
+              },
+              "schema_version": {
+                "const": "jv-2d-execution-protocol-v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "solver_atol": {
+                "$ref": "#/$defs/JV2DAtolInput"
+              },
+              "solver_max_step_divisor": {
+                "exclusiveMinimum": 0,
+                "title": "Solver Max Step Divisor",
+                "type": "integer"
+              },
+              "solver_method": {
+                "const": "Radau",
+                "title": "Solver Method",
+                "type": "string"
+              },
+              "solver_rtol": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Solver Rtol",
+                "unit": "1"
+              },
+              "state_topology": {
+                "enum": [
+                  "frozen_ion_background",
+                  "single_positive_mobile_ion"
+                ],
+                "title": "State Topology",
+                "type": "string"
+              },
+              "temperature_K": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Temperature K",
+                "unit": "K"
+              },
+              "voltage_values_V": {
+                "item_input_unit": null,
+                "item_positive": false,
+                "item_unit": "V",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "minItems": 1,
+                "title": "Voltage Values V",
+                "type": "array"
+              },
+              "x_coordinates_m": {
+                "item_input_unit": null,
+                "item_positive": false,
+                "item_unit": "m",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "minItems": 2,
+                "title": "X Coordinates M",
+                "type": "array"
+              },
+              "y_coordinates_m": {
+                "item_input_unit": null,
+                "item_positive": false,
+                "item_unit": "m",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "minItems": 3,
+                "title": "Y Coordinates M",
+                "type": "array"
+              }
+            },
+            "required": [
+              "temperature_K",
+              "illuminated",
+              "illumination_source",
+              "initial_state_source",
+              "initial_state_voltage_V",
+              "initial_state_settle_s",
+              "voltage_values_V",
+              "dwell_time_per_voltage_s",
+              "state_topology",
+              "ion_boundary_condition",
+              "carrier_boundary_condition",
+              "interface_srh",
+              "lateral_bc",
+              "x_coordinates_m",
+              "y_coordinates_m",
+              "grain_boundaries",
+              "current_composition",
+              "current_sampling",
+              "applied_voltage_rate_at_sampling_V_s",
+              "solver_method",
+              "solver_rtol",
+              "solver_atol",
+              "solver_max_step_divisor",
+              "max_nfev_per_solve",
+              "max_bisect",
+              "ion_inventory_rtol",
+              "save_snapshots",
+              "implicit_legacy_protocol",
+              "schema_version"
+            ],
+            "title": "JV2DProtocolInput",
+            "type": "object"
+          },
+          "KineticsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "sigma_n_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Sigma N M2",
+                "unit": "m^2"
+              },
+              "sigma_p_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Sigma P M2",
+                "unit": "m^2"
+              },
+              "thermal_velocity_n_m_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Thermal Velocity N M S",
+                "unit": "m/s"
+              },
+              "thermal_velocity_p_m_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Thermal Velocity P M S",
+                "unit": "m/s"
+              }
+            },
+            "required": [
+              "sigma_n_m2",
+              "sigma_p_m2",
+              "thermal_velocity_n_m_s",
+              "thermal_velocity_p_m_s"
+            ],
+            "title": "KineticsInput",
+            "type": "object"
+          },
+          "LegacyBulkTrapInput": {
+            "additionalProperties": false,
+            "properties": {
+              "center_eV_above_vb": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Center Ev Above Vb",
+                "unit": "eV"
+              },
+              "charge_transition": {
+                "enum": [
+                  "acceptor",
+                  "donor"
+                ],
+                "title": "Charge Transition",
+                "type": "string"
+              },
+              "distribution": {
+                "enum": [
+                  "single_level",
+                  "gaussian"
+                ],
+                "title": "Distribution",
+                "type": "string"
+              },
+              "energy_sigma_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Energy Sigma Ev",
+                "unit": "eV"
+              },
+              "sigma_n_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Sigma N M2",
+                "unit": "m^2"
+              },
+              "sigma_p_m2": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Sigma P M2",
+                "unit": "m^2"
+              },
+              "thermal_velocity_m_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Thermal Velocity M S",
+                "unit": "m/s"
+              },
+              "total_density_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Total Density M3",
+                "unit": "m^-3"
+              }
+            },
+            "required": [
+              "distribution",
+              "total_density_m3",
+              "center_eV_above_vb",
+              "sigma_n_m2",
+              "sigma_p_m2",
+              "thermal_velocity_m_s",
+              "charge_transition"
+            ],
+            "title": "LegacyBulkTrapInput",
+            "type": "object"
+          },
+          "MetastableConversionInput": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_n_m3_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Capture N M3 S",
+                "unit": "m^3/s"
+              },
+              "capture_p_m3_s": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Capture P M3 S",
+                "unit": "m^3/s"
+              },
+              "electron_capture_activation_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Electron Capture Activation Ev",
+                "unit": "eV"
+              },
+              "electron_capture_path": {
+                "enum": [
+                  "double_electron_capture",
+                  "electron_capture_plus_hole_emission"
+                ],
+                "title": "Electron Capture Path",
+                "type": "string"
+              },
+              "electron_emission_activation_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Electron Emission Activation Ev",
+                "unit": "eV"
+              },
+              "hole_capture_activation_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Hole Capture Activation Ev",
+                "unit": "eV"
+              },
+              "hole_capture_path": {
+                "enum": [
+                  "double_hole_capture",
+                  "hole_capture_plus_electron_emission"
+                ],
+                "title": "Hole Capture Path",
+                "type": "string"
+              },
+              "hole_emission_activation_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Hole Emission Activation Ev",
+                "unit": "eV"
+              },
+              "phonon_frequency_Hz": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Phonon Frequency Hz",
+                "unit": "Hz"
+              },
+              "transition_energy_eV_above_vb": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Transition Energy Ev Above Vb",
+                "unit": "eV"
+              }
+            },
+            "required": [
+              "transition_energy_eV_above_vb",
+              "electron_capture_activation_eV",
+              "electron_emission_activation_eV",
+              "hole_capture_activation_eV",
+              "hole_emission_activation_eV",
+              "electron_capture_path",
+              "hole_capture_path",
+              "capture_n_m3_s",
+              "capture_p_m3_s",
+              "phonon_frequency_Hz"
+            ],
+            "title": "MetastableConversionInput",
+            "type": "object"
+          },
+          "MetastableDefectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "acceptor_configuration": {
+                "$ref": "#/$defs/MultivalentConfigurationInput"
+              },
+              "acceptor_conversion_state_index": {
+                "minimum": 0,
+                "title": "Acceptor Conversion State Index",
+                "type": "integer"
+              },
+              "conversion_kinetics": {
+                "$ref": "#/$defs/MetastableConversionInput"
+              },
+              "donor_configuration": {
+                "$ref": "#/$defs/MultivalentConfigurationInput"
+              },
+              "donor_conversion_state_index": {
+                "minimum": 0,
+                "title": "Donor Conversion State Index",
+                "type": "integer"
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "total_density_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Total Density M3",
+                "unit": "m^-3"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "total_density_m3",
+              "donor_configuration",
+              "acceptor_configuration",
+              "donor_conversion_state_index",
+              "acceptor_conversion_state_index",
+              "conversion_kinetics"
+            ],
+            "title": "MetastableDefectInput",
+            "type": "object"
+          },
+          "MetastableDocumentInput": {
+            "additionalProperties": false,
+            "properties": {
+              "defect_model": {
+                "const": "explicit_metastable_frozen",
+                "title": "Defect Model",
+                "type": "string"
+              },
+              "metastable_defects": {
+                "items": {
+                  "$ref": "#/$defs/MetastableDefectInput"
+                },
+                "title": "Metastable Defects",
+                "type": "array"
+              },
+              "schema_version": {
+                "const": "solarlab-metastable-bulk-defects-v1",
+                "title": "Schema Version",
+                "type": "string"
+              }
+            },
+            "required": [
+              "schema_version",
+              "defect_model",
+              "metastable_defects"
+            ],
+            "title": "MetastableDocumentInput",
+            "type": "object"
+          },
+          "MetastableNumericsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "clamping_factor": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Clamping Factor",
+                "unit": "1"
+              },
+              "final_unclamped_refinement": {
+                "const": true,
+                "title": "Final Unclamped Refinement",
+                "type": "boolean"
+              },
+              "initial_donor_fraction_guess": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Initial Donor Fraction Guess",
+                "unit": "1"
+              },
+              "max_iterations": {
+                "exclusiveMinimum": 0,
+                "title": "Max Iterations",
+                "type": "integer"
+              },
+              "relative_tolerance": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Relative Tolerance",
+                "unit": "1"
+              }
+            },
+            "required": [
+              "initial_donor_fraction_guess",
+              "max_iterations",
+              "relative_tolerance",
+              "clamping_factor",
+              "final_unclamped_refinement"
+            ],
+            "title": "MetastableNumericsInput",
+            "type": "object"
+          },
+          "MetastablePreparationInput": {
+            "additionalProperties": false,
+            "properties": {
+              "configuration_freeze_stage": {
+                "const": "after_stationary_preparation_before_measurement",
+                "title": "Configuration Freeze Stage",
+                "type": "string"
+              },
+              "freeze_configuration_during_measurement": {
+                "const": true,
+                "title": "Freeze Configuration During Measurement",
+                "type": "boolean"
+              },
+              "illumination_continuation_steps": {
+                "minimum": 0,
+                "title": "Illumination Continuation Steps",
+                "type": "integer"
+              },
+              "measurement_protocol_sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Measurement Protocol Sha256",
+                "type": "string"
+              },
+              "measurement_temperature_K": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Measurement Temperature K",
+                "unit": "K"
+              },
+              "numerics": {
+                "$ref": "#/$defs/MetastableNumericsInput"
+              },
+              "preparation_illumination_suns": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Preparation Illumination Suns",
+                "unit": "1"
+              },
+              "preparation_limit": {
+                "const": "stationary_infinite_time",
+                "title": "Preparation Limit",
+                "type": "string"
+              },
+              "preparation_temperature_K": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Preparation Temperature K",
+                "unit": "K"
+              },
+              "preparation_voltage_V": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": false,
+                "nullable": false,
+                "positive": false,
+                "title": "Preparation Voltage V",
+                "unit": "V"
+              },
+              "schema_version": {
+                "const": "solarlab-metastable-preparation-v1",
+                "title": "Schema Version",
+                "type": "string"
+              },
+              "voltage_continuation_steps": {
+                "minimum": 0,
+                "title": "Voltage Continuation Steps",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schema_version",
+              "preparation_limit",
+              "preparation_temperature_K",
+              "preparation_voltage_V",
+              "preparation_illumination_suns",
+              "voltage_continuation_steps",
+              "illumination_continuation_steps",
+              "measurement_temperature_K",
+              "configuration_freeze_stage",
+              "freeze_configuration_during_measurement",
+              "measurement_protocol_sha256",
+              "numerics"
+            ],
+            "title": "MetastablePreparationInput",
+            "type": "object"
+          },
+          "MicrostructureInput": {
+            "additionalProperties": false,
+            "properties": {
+              "grain_boundaries": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/GrainBoundaryInput"
+                },
+                "title": "Grain Boundaries",
+                "type": "array"
+              }
+            },
+            "title": "MicrostructureInput",
+            "type": "object"
+          },
+          "MultivalentConfigurationInput": {
+            "additionalProperties": false,
+            "properties": {
+              "charge_states_e": {
+                "items": {
+                  "type": "integer"
+                },
+                "title": "Charge States E",
+                "type": "array"
+              },
+              "degeneracy_convention": {
+                "enum": [
+                  "scaps_binomial",
+                  "unity",
+                  "explicit"
+                ],
+                "title": "Degeneracy Convention",
+                "type": "string"
+              },
+              "energy_levels": {
+                "$ref": "#/$defs/MultivalentEnergyInput"
+              },
+              "family": {
+                "enum": [
+                  "single_donor",
+                  "single_acceptor",
+                  "double_donor",
+                  "double_acceptor",
+                  "amphoteric",
+                  "custom_multilevel"
+                ],
+                "title": "Family",
+                "type": "string"
+              },
+              "state_degeneracies": {
+                "item_positive": true,
+                "item_unit": "1",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "title": "State Degeneracies",
+                "type": "array"
+              },
+              "transition_kinetics": {
+                "items": {
+                  "$ref": "#/$defs/KineticsInput"
+                },
+                "title": "Transition Kinetics",
+                "type": "array"
+              }
+            },
+            "required": [
+              "family",
+              "charge_states_e",
+              "degeneracy_convention",
+              "state_degeneracies",
+              "energy_levels",
+              "transition_kinetics"
+            ],
+            "title": "MultivalentConfigurationInput",
+            "type": "object"
+          },
+          "MultivalentDefectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "configuration": {
+                "$ref": "#/$defs/MultivalentConfigurationInput"
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "total_density_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": true,
+                "title": "Total Density M3",
+                "unit": "m^-3"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "total_density_m3",
+              "configuration"
+            ],
+            "title": "MultivalentDefectInput",
+            "type": "object"
+          },
+          "MultivalentEnergyInput": {
+            "additionalProperties": false,
+            "properties": {
+              "correlation_energies_eV": {
+                "item_unit": "eV",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "title": "Correlation Energies Ev",
+                "type": "array"
+              },
+              "energy_reference": {
+                "const": "above_valence_band",
+                "title": "Energy Reference",
+                "type": "string"
+              },
+              "first_transition_eV_above_vb": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "First Transition Ev Above Vb",
+                "unit": "eV"
+              }
+            },
+            "required": [
+              "first_transition_eV_above_vb",
+              "correlation_energies_eV",
+              "energy_reference"
+            ],
+            "title": "MultivalentEnergyInput",
+            "type": "object"
+          },
+          "NamedMaterialInput": {
+            "additionalProperties": false,
+            "properties": {
+              "cigs_graded_optics": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CigsOpticsInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "parameters": {
+                "$ref": "#/$defs/FullParameterInput"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "parameters"
+            ],
+            "title": "NamedMaterialInput",
+            "type": "object"
+          },
+          "ScapsDefectMetadataInput": {
+            "additionalProperties": false,
+            "description": "Preserved partner metadata; a Gaussian note is not a qualified closure.",
+            "properties": {
+              "E_char_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": true,
+                "title": "E Char Ev",
+                "unit": "eV"
+              },
+              "N_peak_m3": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": true,
+                "positive": false,
+                "title": "N Peak M3",
+                "unit": "m^-3"
+              },
+              "defect_id": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+                "title": "Defect Id",
+                "type": "string"
+              },
+              "distribution": {
+                "enum": [
+                  "single",
+                  "gaussian"
+                ],
+                "title": "Distribution",
+                "type": "string"
+              },
+              "energy_reference": {
+                "enum": [
+                  "below_conduction_band",
+                  "above_valence_band"
+                ],
+                "title": "Energy Reference",
+                "type": "string"
+              },
+              "trap_depth_eV": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Trap Depth Ev",
+                "unit": "eV"
+              }
+            },
+            "required": [
+              "distribution",
+              "energy_reference",
+              "trap_depth_eV",
+              "defect_id"
+            ],
+            "title": "ScapsDefectMetadataInput",
+            "type": "object"
+          },
+          "SimulationHintsInput": {
+            "additionalProperties": false,
+            "properties": {
+              "min_N_grid": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Min N Grid"
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Notes"
+              }
+            },
+            "title": "SimulationHintsInput",
+            "type": "object"
+          },
+          "SpatialKnotInput": {
+            "additionalProperties": false,
+            "properties": {
+              "density_multiplier": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Density Multiplier",
+                "unit": "1"
+              },
+              "position_fraction": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "input_unit": null,
+                "nonnegative": true,
+                "nullable": false,
+                "positive": false,
+                "title": "Position Fraction",
+                "unit": "1"
+              }
+            },
+            "required": [
+              "position_fraction",
+              "density_multiplier"
+            ],
+            "title": "SpatialKnotInput",
+            "type": "object"
+          },
+          "SpatialProfileInput": {
+            "additionalProperties": false,
+            "properties": {
+              "coordinate": {
+                "const": "normalized_layer_coordinate",
+                "title": "Coordinate",
+                "type": "string"
+              },
+              "density_normalization": {
+                "const": "layer_average_unity",
+                "title": "Density Normalization",
+                "type": "string"
+              },
+              "interpolation": {
+                "const": "piecewise_linear",
+                "title": "Interpolation",
+                "type": "string"
+              },
+              "knots": {
+                "items": {
+                  "$ref": "#/$defs/SpatialKnotInput"
+                },
+                "title": "Knots",
+                "type": "array"
+              }
+            },
+            "required": [
+              "coordinate",
+              "interpolation",
+              "density_normalization",
+              "knots"
+            ],
+            "title": "SpatialProfileInput",
+            "type": "object"
+          },
+          "TunnellingInput": {
+            "additionalProperties": false,
+            "properties": {
+              "band_to_band": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BandToBandInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contact": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ContactTunnellingInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "interface_defect_assisted": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DefectAssistedInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "intraband": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/IntrabandInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "schema_version": {
+                "const": "solarlab-wkb-tunnelling-channels-v1",
+                "default": "solarlab-wkb-tunnelling-channels-v1",
+                "title": "Schema Version",
+                "type": "string"
+              }
+            },
+            "title": "TunnellingInput",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "device": {
+            "$ref": "#/$defs/DeviceInput"
+          },
+          "experiment": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/JV2DInput"
+              },
+              {
+                "$ref": "#/$defs/GrainSweepInput"
+              }
+            ],
+            "title": "Experiment"
+          },
+          "id": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "solarlab.experiment-preparation.v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "id",
+          "device",
+          "experiment"
+        ],
+        "title": "SpatialExperimentInput",
+        "type": "object"
+      }
+    },
     "TandemInput": {
       "python_type": "solarlab.device.inputs:TandemInput",
       "representation": "editable_input",
@@ -22290,6 +28501,10 @@ export const configurationSchema = {
       "V/cm",
       "V/m"
     ],
+    "V/s": [
+      "V/s",
+      "mV/s"
+    ],
     "eV": [
       "J",
       "eV",
@@ -22359,6 +28574,6 @@ export const configurationSchema = {
   }
 } as const;
 
-export const configurationSchemaSha256 = "b7966bcf9a73251c4c58d4c095d8acd01642fb730946eb825609c7f06272fc96";
+export const configurationSchemaSha256 = "29bf293c1475db5dc0c3ddc7684d7de426ce540f594be676bc39a6f5a9fbb92c";
 
 export type ConfigurationSchemaMetadata = typeof configurationSchema;

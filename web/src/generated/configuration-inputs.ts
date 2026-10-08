@@ -2266,6 +2266,1017 @@ export declare namespace NamedMaterialInputDefinitions {
 }
 export type NamedMaterialInput = NamedMaterialInputDefinitions.NamedMaterialInput;
 
+// Source DTO: solarlab.experiments.two_dimensional.inputs:SpatialExperimentInput
+// Schema SHA-256 (JSON.stringify): c77dc508f85cd22431b70d89357883c110a29cd69554966496fec0f0750d9883
+export declare namespace SpatialExperimentInputDefinitions {
+  export type SN = (number | string | null) | null;
+  export type SP = (number | string | null) | null;
+  export type Id = string;
+  export type Layer = string;
+  export type Side = 'left' | 'right';
+  export type Contacts = ContactInput[];
+  export type Description = string | null;
+  export type Alpha = number | string;
+  export type IntervalWeight = number | string;
+  export type Layer1 = string;
+  export type ElectricalGrid = GridLayerInput[];
+  export type FixedGeneration = string | null;
+  export type Id1 = string;
+  export type LayerIds = string[];
+  export type SourceLayerRole = string | null;
+  export type TauN = number | string;
+  export type TauP = number | string;
+  export type Width = number | string;
+  export type XPosition = number | string;
+  export type GrainBoundaries = GrainBoundaryInput[];
+  export type Id2 = string;
+  export type CalibrationFactor = number | string;
+  export type EnergyReference = 'below_conduction_band' | 'above_valence_band';
+  export type Id3 = string;
+  export type IfaceStateCalibrationFactor = number | string;
+  export type SigmaNM2 = number | string;
+  export type SigmaPM2 = number | string;
+  export type ThermalVelocityNMS = number | string;
+  export type ThermalVelocityPMS = number | string;
+  export type ECharEv = (number | string | null) | null;
+  export type NPeakM3 = (number | string | null) | null;
+  export type DefectId = string;
+  export type Distribution = 'single' | 'gaussian';
+  export type EnergyReference1 = 'below_conduction_band' | 'above_valence_band';
+  export type TrapDepthEv = number | string;
+  export type TotalDensityM2 = number | string;
+  export type TrapDepthEv1 = number | string;
+  export type Id4 = string;
+  export type Left = string;
+  export type Right = string;
+  export type VN = (number | string | null) | null;
+  export type VP = (number | string | null) | null;
+  export type Interfaces = InterfaceInput[];
+  export type ChargeTransition = 'neutral' | 'acceptor' | 'donor' | 'unresolved';
+  export type Degeneracy = number | string;
+  export type CenterEvAboveVb = (number | string | null) | null;
+  export type EnergyReference2 = 'above_valence_band' | null;
+  export type Kind =
+    'single_level' | 'gaussian' | 'uniform' | 'conduction_band_tail' | 'valence_band_tail';
+  export type Normalization = 'integrated_total';
+  export type SupportWidthMultiplier = (number | string | null) | null;
+  export type TotalDensityM3 = number | string;
+  export type WidthConvention =
+    | (
+        | 'not_applicable'
+        | 'gaussian_standard_deviation'
+        | 'scaps_characteristic_energy'
+        | 'uniform_full_width'
+        | 'unresolved'
+      )
+    | null;
+  export type WidthEv = (number | string | null) | null;
+  export type Reference = 'below_conduction_band' | 'above_valence_band';
+  export type ValueEv = number | string;
+  export type Id5 = string;
+  export type Name = string | null;
+  export type NeutralReference = 'all_occupancies' | 'empty' | 'filled' | 'unresolved';
+  export type Coordinate = 'normalized_layer_coordinate';
+  export type DensityNormalization = 'layer_average_unity';
+  export type Interpolation = 'piecewise_linear';
+  export type DensityMultiplier = number | string;
+  export type PositionFraction = number | string;
+  export type Knots = SpatialKnotInput[];
+  export type ChargeStatesE = number[];
+  export type DegeneracyConvention = 'scaps_binomial' | 'unity' | 'explicit';
+  export type CorrelationEnergiesEv = (number | string)[];
+  export type EnergyReference3 = 'above_valence_band';
+  export type FirstTransitionEvAboveVb = number | string;
+  export type Family =
+    | 'single_donor'
+    | 'single_acceptor'
+    | 'double_donor'
+    | 'double_acceptor'
+    | 'amphoteric'
+    | 'custom_multilevel';
+  export type StateDegeneracies = (number | string)[];
+  export type TransitionKinetics = KineticsInput[];
+  export type Id6 = string;
+  export type Name1 = string;
+  export type TotalDensityM31 = number | string;
+  export type BulkDefects = (BulkDefectInput | MultivalentDefectInput)[];
+  export type CenterEvAboveVb1 = number | string;
+  export type ChargeTransition1 = 'acceptor' | 'donor';
+  export type Distribution1 = 'single_level' | 'gaussian';
+  export type EnergySigmaEv = number | string;
+  export type SigmaNM21 = number | string;
+  export type SigmaPM21 = number | string;
+  export type ThermalVelocityMS = number | string;
+  export type TotalDensityM32 = number | string;
+  export type Cgi = number | string;
+  export type GgiBack = number | string;
+  export type GgiFront = number | string;
+  export type KkQuadratureOrder = number;
+  export type Model = 'minoura_2015';
+  export type Slices = number;
+  export type DefectModel = ('effective_lifetime' | 'explicit_quasi_steady') | null;
+  export type DefectSchemaVersion = string | null;
+  export type Id7 = string;
+  export type Material = string | null;
+  export type DefectModel1 = 'explicit_metastable_frozen';
+  export type AcceptorConversionStateIndex = number;
+  export type CaptureNM3S = number | string;
+  export type CapturePM3S = number | string;
+  export type ElectronCaptureActivationEv = number | string;
+  export type ElectronCapturePath = 'double_electron_capture' | 'electron_capture_plus_hole_emission';
+  export type ElectronEmissionActivationEv = number | string;
+  export type HoleCaptureActivationEv = number | string;
+  export type HoleCapturePath = 'double_hole_capture' | 'hole_capture_plus_electron_emission';
+  export type HoleEmissionActivationEv = number | string;
+  export type PhononFrequencyHz = number | string;
+  export type TransitionEnergyEvAboveVb = number | string;
+  export type DonorConversionStateIndex = number;
+  export type Id8 = string;
+  export type Name2 = string;
+  export type TotalDensityM33 = number | string;
+  export type MetastableDefects = MetastableDefectInput[];
+  export type SchemaVersion = 'solarlab-metastable-bulk-defects-v1';
+  export type ConfigurationFreezeStage = 'after_stationary_preparation_before_measurement';
+  export type FreezeConfigurationDuringMeasurement = true;
+  export type IlluminationContinuationSteps = number;
+  export type MeasurementProtocolSha256 = string;
+  export type MeasurementTemperatureK = number | string;
+  export type ClampingFactor = number | string;
+  export type FinalUnclampedRefinement = true;
+  export type InitialDonorFractionGuess = number | string;
+  export type MaxIterations = number;
+  export type RelativeTolerance = number | string;
+  export type PreparationIlluminationSuns = number | string;
+  export type PreparationLimit = 'stationary_infinite_time';
+  export type PreparationTemperatureK = number | string;
+  export type PreparationVoltageV = number | string;
+  export type SchemaVersion1 = 'solarlab-metastable-preparation-v1';
+  export type VoltageContinuationSteps = number;
+  export type Name3 = string;
+  export type Parameterization = 'standard' | 'scaps';
+  export type AStarN = number | string;
+  export type AStarP = number | string;
+  export type BRad = number | string;
+  export type BRadTGamma = number | string;
+  export type CN = number | string;
+  export type CP = number | string;
+  export type DIon = number | string;
+  export type DIonNeg = number | string;
+  export type EAIon = number | string;
+  export type Eg = number | string;
+  export type EgBack = (number | string | null) | null;
+  export type NA = number | string;
+  export type NABulk = (number | string | null) | null;
+  export type ND = number | string;
+  export type NDBulk = (number | string | null) | null;
+  export type Nc300 = (number | string | null) | null;
+  export type Nv300 = (number | string | null) | null;
+  export type P0 = number | string;
+  export type P0Neg = number | string;
+  export type PLim = number | string;
+  export type PLimNeg = number | string;
+  export type AcceptorBindingEnergyEv = (number | string | null) | null;
+  export type AcceptorDegeneracy = number | string;
+  export type Alpha1 = number | string;
+  export type BandGapNarrowingModel = 'off' | 'slotboom';
+  export type BgnConductionBandFraction = number | string;
+  export type BgnLogShape = number | string;
+  export type BgnReferenceDensityM3 = number | string;
+  export type BgnReferenceEnergyEv = number | string;
+  export type CarrierStatistics = 'maxwell_boltzmann' | 'fermi_dirac';
+  export type Chi = number | string;
+  export type ChiBack = (number | string | null) | null;
+  export type CtBetaN = number | string;
+  export type CtBetaP = number | string;
+  export type DonorBindingEnergyEv = (number | string | null) | null;
+  export type DonorDegeneracy = number | string;
+  export type DopantIonizationModel = 'fully_ionized' | 'discrete_level';
+  export type DopingDecayLength = (number | string | null) | null;
+  export type DopingEdge = 'front' | 'back';
+  export type DopingProfileShape = 'gaussian' | null;
+  export type EpsR = number | string;
+  export type GradingNMult = number;
+  export type GradingBowing = number | string;
+  export type GradingCharLength = (number | string | null) | null;
+  export type GradingDirection = 'front_to_back' | 'back_to_front';
+  export type GradingProfile = 'linear' | 'parabolic' | 'exponential';
+  export type Incoherent = boolean;
+  export type MuTGamma = number | string;
+  export type MuN = number | string;
+  export type MuP = number | string;
+  export type N1 = number | string;
+  export type NOptical = (number | string | null) | null;
+  export type Ni = number | string;
+  export type OpticalMaterial = string | null;
+  export type P1 = number | string;
+  export type PfGammaN = number | string;
+  export type PfGammaP = number | string;
+  export type TauN1 = number | string;
+  export type TauP1 = number | string;
+  export type TrapNTBulk = (number | string | null) | null;
+  export type TrapNTInterface = (number | string | null) | null;
+  export type TrapDecayLength = (number | string | null) | null;
+  export type TrapEdge = 'both' | 'left' | 'right';
+  export type TrapProfileShape = 'exponential' | 'gaussian';
+  export type VSatN = number | string;
+  export type VSatP = number | string;
+  export type VTh = number | string;
+  export type VarshniAlpha = number | string;
+  export type VarshniBeta = number | string;
+  export type Role = string;
+  export type ScapsDefectMetadata = ScapsDefectMetadataInput[];
+  export type Thickness = number | string;
+  export type Layers = FullLayerInput[];
+  export type Id9 = string;
+  export type Name4 = string;
+  export type Materials = NamedMaterialInput[];
+  export type Name5 = string | null;
+  export type SchemaVersion2 = 'solarlab.device-preparation.v1';
+  export type Phi = number | string;
+  export type T = number | string;
+  export type VBi = number | string;
+  export type BandGrading = boolean;
+  export type BuiltInPotentialMode =
+    ('legacy_manual' | 'semiconductor_work_function' | 'metal_work_function') | null;
+  export type ContactPhiBEv = number | string;
+  export type DosBandPotentials = boolean;
+  export type FlatBandContacts = boolean;
+  export type FlatBandMetalContacts = boolean;
+  export type GradedOptics = boolean;
+  export type HetRecombDespike = number | string;
+  export type InterfaceChargeClosure = 'off' | 'equilibrium_referenced';
+  export type InterfaceChargeRebaselineAcknowledged = boolean;
+  export type InterfacePlaneClosure = boolean;
+  export type InterfacePlaneGeneration = boolean;
+  export type InterfacePlaneProjection = boolean;
+  export type InterfaceSharedOccupancy = boolean;
+  export type InterfaceTunneling = boolean;
+  export type InterfaceTwoSided = boolean;
+  export type IonStericDiffusionOnly = boolean;
+  export type IonStericSharedSite = boolean;
+  export type JvSolverPolicy = 'general' | 'cancellation_safe_qf_required';
+  export type Mode = 'legacy' | 'fast' | 'full';
+  export type PhiLeft = number | string;
+  export type TePhysicalNorm = boolean;
+  export type TunnelMassEff = number | string;
+  export type WorkFunctionLeftEv = (number | string | null) | null;
+  export type WorkFunctionRightEv = (number | string | null) | null;
+  export type MinNGrid = number | null;
+  export type Notes = string | null;
+  export type SourceFormat = 'standard' | 'scaps' | 'canonical';
+  export type SourceSchemaVersion = string | number | null;
+  export type Spectrum = string | null;
+  export type Enabled = boolean;
+  export type EnergyQuadratureOrder = number;
+  export type MinimumFieldVM = number | string;
+  export type ReducedEffectiveMassRel = number | string;
+  export type BarrierHeightEv = number | string;
+  export type ElectronEffectiveMassRel = number | string;
+  export type Enabled1 = boolean;
+  export type EnergyQuadratureOrder1 = number;
+  export type HoleEffectiveMassRel = number | string;
+  export type Side1 = 'both' | 'left' | 'right';
+  export type ElectronEffectiveMassRel1 = number | string;
+  export type Enabled2 = boolean;
+  export type HoleEffectiveMassRel1 = number | string;
+  export type RequiresExplicitOccupancy = true;
+  export type Carrier = 'electron' | 'hole' | 'both';
+  export type ElectronEffectiveMassRel2 = number | string;
+  export type Enabled3 = boolean;
+  export type EnergyQuadratureOrder2 = number;
+  export type HoleEffectiveMassRel2 = number | string;
+  export type SchemaVersion3 = 'solarlab-wkb-tunnelling-channels-v1';
+  export type Experiment = JV2DInput | GrainSweepInput;
+  export type LateralIntervalsNx = number;
+  export type VerticalIntervalsPerElectricalLayer = number;
+  export type VMax = number | string;
+  export type VStep = number | string;
+  export type Atol = number | string;
+  export type CarrierFraction = number | string;
+  export type InterfaceFraction = number | string;
+  export type IonFraction = number | string;
+  export type MinimumAtol = number | string;
+  export type RefinementFactor = number | string;
+  export type Illuminated = boolean;
+  export type InitialStateSettleS = number | string;
+  export type InterfaceSrh = 'off' | 'two_sided_cross_node';
+  export type IonDynamics = 'frozen' | 'single_mobile';
+  export type IonInventoryRtol = number | string;
+  export type AppliedVoltageRateAtSamplingVS = number | string;
+  export type CarrierBoundaryCondition = 'ohmic' | 'selective_robin';
+  export type CurrentComposition =
+    'electron_hole_conduction' | 'electron_hole_positive_ion_displacement';
+  export type CurrentSampling = 'instantaneous_dwell_endpoint';
+  export type DwellTimePerVoltageS = number | string;
+  export type LayerRole = string;
+  export type TauNS = number | string;
+  export type TauPS = number | string;
+  export type WidthM = number | string;
+  export type XPositionM = number | string;
+  export type GrainBoundaries1 = JV2DGrainProtocolInput[];
+  export type Illuminated1 = boolean;
+  export type IlluminationSource = string | null;
+  export type ImplicitLegacyProtocol = boolean;
+  export type InitialStateSettleS1 = (number | string | null) | null;
+  export type InitialStateSource =
+    'one_dimensional_illuminated_finite_time' | 'one_dimensional_dark_equilibrium';
+  export type InitialStateVoltageV = number | string;
+  export type InterfaceSrh1 = 'off' | 'two_sided_cross_node';
+  export type IonBoundaryCondition = 'frozen' | 'blocking';
+  export type IonInventoryRtol1 = number | string;
+  export type LateralBc = 'periodic' | 'neumann';
+  export type MaxBisect = number;
+  export type MaxNfevPerSolve = number;
+  export type SaveSnapshots = boolean;
+  export type SchemaVersion4 = 'jv-2d-execution-protocol-v1';
+  export type CarrierFraction1 = (number | string | null) | null;
+  export type InterfaceFraction1 = (number | string | null) | null;
+  export type IonFraction1 = (number | string | null) | null;
+  export type MinimumAtol1 = (number | string | null) | null;
+  export type Mode1 = 'scalar' | 'componentwise';
+  export type RefinementFactor1 = (number | string | null) | null;
+  export type ScalarAtol = (number | string | null) | null;
+  export type SolverMaxStepDivisor = number;
+  export type SolverMethod = 'Radau';
+  export type SolverRtol = number | string;
+  export type StateTopology = 'frozen_ion_background' | 'single_positive_mobile_ion';
+  export type TemperatureK = number | string;
+  /**
+   * @minItems 1
+   */
+  export type VoltageValuesV = [
+    number | number | string | string,
+    ...(number | number | string | string)[]
+  ];
+  /**
+   * @minItems 2
+   */
+  export type XCoordinatesM = [
+    number | number | string | string,
+    number | number | string | string,
+    ...(number | number | string | string)[]
+  ];
+  /**
+   * @minItems 3
+   */
+  export type YCoordinatesM = [
+    number | number | string | string,
+    number | number | string | string,
+    number | number | string | string,
+    ...(number | number | string | string)[]
+  ];
+  export type Kind1 = 'jv_2d';
+  export type LateralBc1 = ('periodic' | 'neumann') | null;
+  export type LateralLength = number | string;
+  export type MaxBisect1 = number;
+  export type MaxNfevPerSolve1 = number;
+  export type GrainBoundaries2 = GrainBoundaryInput[];
+  export type ProtocolMode = 'compatibility' | 'research_strict';
+  export type Rtol = number | string;
+  export type SaveSnapshots1 = boolean;
+  export type SettleT = number | string;
+  export type LateralIntervalsNx1 = number;
+  export type VerticalIntervalsPerElectricalLayer1 = number;
+  export type VMax1 = number | string;
+  export type VStep1 = number | string;
+  export type GbWidth = number | string;
+  export type GrainSizes = (number | string)[] | null;
+  export type GrainSizesNm = (number | string)[] | null;
+  export type Illuminated2 = boolean;
+  export type Kind2 = 'voc_grain_sweep';
+  export type SettleT1 = number | string;
+  export type TauGbN = number | string;
+  export type TauGbP = number | string;
+  export type Id10 = string;
+  export type SchemaVersion5 = 'solarlab.experiment-preparation.v1';
+
+  export interface SpatialExperimentInput {
+    device: DeviceInput;
+    experiment: Experiment;
+    id: Id10;
+    schema_version: SchemaVersion5;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "DeviceInput".
+   */
+  export interface DeviceInput {
+    contacts?: Contacts;
+    description?: Description;
+    electrical_grid?: ElectricalGrid;
+    fixed_generation?: FixedGeneration;
+    grain_boundaries?: GrainBoundaries;
+    id: Id2;
+    interfaces?: Interfaces;
+    layers: Layers;
+    materials?: Materials;
+    name?: Name5;
+    schema_version: SchemaVersion2;
+    settings?: DeviceSettingsInput;
+    simulation_hints?: SimulationHintsInput | null;
+    source_format: SourceFormat;
+    source_schema_version?: SourceSchemaVersion;
+    spectrum?: Spectrum;
+    tunnelling_channels?: TunnellingInput | null;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "ContactInput".
+   */
+  export interface ContactInput {
+    S_n?: SN;
+    S_p?: SP;
+    id: Id;
+    layer: Layer;
+    side: Side;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "GridLayerInput".
+   */
+  export interface GridLayerInput {
+    alpha: Alpha;
+    interval_weight: IntervalWeight;
+    layer: Layer1;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "GrainBoundaryInput".
+   */
+  export interface GrainBoundaryInput {
+    id: Id1;
+    layer_ids: LayerIds;
+    source_layer_role?: SourceLayerRole;
+    tau_n: TauN;
+    tau_p: TauP;
+    width: Width;
+    x_position: XPosition;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "InterfaceInput".
+   */
+  export interface InterfaceInput {
+    defect?: InterfaceDefectInput | null;
+    id: Id4;
+    left: Left;
+    right: Right;
+    v_n?: VN;
+    v_p?: VP;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "InterfaceDefectInput".
+   */
+  export interface InterfaceDefectInput {
+    calibration_factor: CalibrationFactor;
+    energy_reference: EnergyReference;
+    id: Id3;
+    iface_state_calibration_factor: IfaceStateCalibrationFactor;
+    kinetics: KineticsInput;
+    partner_metadata?: ScapsDefectMetadataInput | null;
+    total_density_m2: TotalDensityM2;
+    trap_depth_eV: TrapDepthEv1;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "KineticsInput".
+   */
+  export interface KineticsInput {
+    sigma_n_m2: SigmaNM2;
+    sigma_p_m2: SigmaPM2;
+    thermal_velocity_n_m_s: ThermalVelocityNMS;
+    thermal_velocity_p_m_s: ThermalVelocityPMS;
+  }
+  /**
+   * Preserved partner metadata; a Gaussian note is not a qualified closure.
+   *
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "ScapsDefectMetadataInput".
+   */
+  export interface ScapsDefectMetadataInput {
+    E_char_eV?: ECharEv;
+    N_peak_m3?: NPeakM3;
+    defect_id: DefectId;
+    distribution: Distribution;
+    energy_reference: EnergyReference1;
+    trap_depth_eV: TrapDepthEv;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "FullLayerInput".
+   */
+  export interface FullLayerInput {
+    bulk_defects?: BulkDefects;
+    bulk_trap_distribution?: LegacyBulkTrapInput | null;
+    cigs_graded_optics?: CigsOpticsInput | null;
+    defect_model?: DefectModel;
+    defect_schema_version?: DefectSchemaVersion;
+    id: Id7;
+    material?: Material;
+    metastable_document?: MetastableDocumentInput | null;
+    metastable_preparation?: MetastablePreparationInput | null;
+    name: Name3;
+    parameterization?: Parameterization;
+    parameters?: FullParameterInput;
+    role: Role;
+    scaps_defect_metadata?: ScapsDefectMetadata;
+    thickness: Thickness;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "BulkDefectInput".
+   */
+  export interface BulkDefectInput {
+    charge_transition: ChargeTransition;
+    degeneracy: Degeneracy;
+    distribution: DistributionInput;
+    energy_level?: EnergyLevelInput | null;
+    id: Id5;
+    kinetics: KineticsInput;
+    name?: Name;
+    neutral_reference: NeutralReference;
+    spatial_profile?: SpatialProfileInput | null;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "DistributionInput".
+   */
+  export interface DistributionInput {
+    center_eV_above_vb?: CenterEvAboveVb;
+    energy_reference?: EnergyReference2;
+    kind: Kind;
+    normalization: Normalization;
+    support_width_multiplier?: SupportWidthMultiplier;
+    total_density_m3: TotalDensityM3;
+    width_convention?: WidthConvention;
+    width_eV?: WidthEv;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "EnergyLevelInput".
+   */
+  export interface EnergyLevelInput {
+    reference: Reference;
+    value_eV: ValueEv;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "SpatialProfileInput".
+   */
+  export interface SpatialProfileInput {
+    coordinate: Coordinate;
+    density_normalization: DensityNormalization;
+    interpolation: Interpolation;
+    knots: Knots;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "SpatialKnotInput".
+   */
+  export interface SpatialKnotInput {
+    density_multiplier: DensityMultiplier;
+    position_fraction: PositionFraction;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MultivalentDefectInput".
+   */
+  export interface MultivalentDefectInput {
+    configuration: MultivalentConfigurationInput;
+    id: Id6;
+    name: Name1;
+    total_density_m3: TotalDensityM31;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MultivalentConfigurationInput".
+   */
+  export interface MultivalentConfigurationInput {
+    charge_states_e: ChargeStatesE;
+    degeneracy_convention: DegeneracyConvention;
+    energy_levels: MultivalentEnergyInput;
+    family: Family;
+    state_degeneracies: StateDegeneracies;
+    transition_kinetics: TransitionKinetics;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MultivalentEnergyInput".
+   */
+  export interface MultivalentEnergyInput {
+    correlation_energies_eV: CorrelationEnergiesEv;
+    energy_reference: EnergyReference3;
+    first_transition_eV_above_vb: FirstTransitionEvAboveVb;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "LegacyBulkTrapInput".
+   */
+  export interface LegacyBulkTrapInput {
+    center_eV_above_vb: CenterEvAboveVb1;
+    charge_transition: ChargeTransition1;
+    distribution: Distribution1;
+    energy_sigma_eV?: EnergySigmaEv;
+    sigma_n_m2: SigmaNM21;
+    sigma_p_m2: SigmaPM21;
+    thermal_velocity_m_s: ThermalVelocityMS;
+    total_density_m3: TotalDensityM32;
+  }
+  /**
+   * GGI endpoints follow the layer's electrical grading coordinate.
+   *
+   * Absent model, slice and quadrature values are supplied by the injected catalog,
+   * compiled from the existing model declaration. None is never a numeric default.
+   *
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "CigsOpticsInput".
+   */
+  export interface CigsOpticsInput {
+    cgi: Cgi;
+    ggi_back: GgiBack;
+    ggi_front: GgiFront;
+    kk_quadrature_order?: KkQuadratureOrder;
+    model?: Model;
+    slices?: Slices;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MetastableDocumentInput".
+   */
+  export interface MetastableDocumentInput {
+    defect_model: DefectModel1;
+    metastable_defects: MetastableDefects;
+    schema_version: SchemaVersion;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MetastableDefectInput".
+   */
+  export interface MetastableDefectInput {
+    acceptor_configuration: MultivalentConfigurationInput;
+    acceptor_conversion_state_index: AcceptorConversionStateIndex;
+    conversion_kinetics: MetastableConversionInput;
+    donor_configuration: MultivalentConfigurationInput;
+    donor_conversion_state_index: DonorConversionStateIndex;
+    id: Id8;
+    name: Name2;
+    total_density_m3: TotalDensityM33;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MetastableConversionInput".
+   */
+  export interface MetastableConversionInput {
+    capture_n_m3_s: CaptureNM3S;
+    capture_p_m3_s: CapturePM3S;
+    electron_capture_activation_eV: ElectronCaptureActivationEv;
+    electron_capture_path: ElectronCapturePath;
+    electron_emission_activation_eV: ElectronEmissionActivationEv;
+    hole_capture_activation_eV: HoleCaptureActivationEv;
+    hole_capture_path: HoleCapturePath;
+    hole_emission_activation_eV: HoleEmissionActivationEv;
+    phonon_frequency_Hz: PhononFrequencyHz;
+    transition_energy_eV_above_vb: TransitionEnergyEvAboveVb;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MetastablePreparationInput".
+   */
+  export interface MetastablePreparationInput {
+    configuration_freeze_stage: ConfigurationFreezeStage;
+    freeze_configuration_during_measurement: FreezeConfigurationDuringMeasurement;
+    illumination_continuation_steps: IlluminationContinuationSteps;
+    measurement_protocol_sha256: MeasurementProtocolSha256;
+    measurement_temperature_K: MeasurementTemperatureK;
+    numerics: MetastableNumericsInput;
+    preparation_illumination_suns: PreparationIlluminationSuns;
+    preparation_limit: PreparationLimit;
+    preparation_temperature_K: PreparationTemperatureK;
+    preparation_voltage_V: PreparationVoltageV;
+    schema_version: SchemaVersion1;
+    voltage_continuation_steps: VoltageContinuationSteps;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MetastableNumericsInput".
+   */
+  export interface MetastableNumericsInput {
+    clamping_factor: ClampingFactor;
+    final_unclamped_refinement: FinalUnclampedRefinement;
+    initial_donor_fraction_guess: InitialDonorFractionGuess;
+    max_iterations: MaxIterations;
+    relative_tolerance: RelativeTolerance;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "FullParameterInput".
+   */
+  export interface FullParameterInput {
+    A_star_n?: AStarN;
+    A_star_p?: AStarP;
+    B_rad?: BRad;
+    B_rad_T_gamma?: BRadTGamma;
+    C_n?: CN;
+    C_p?: CP;
+    D_ion?: DIon;
+    D_ion_neg?: DIonNeg;
+    E_a_ion?: EAIon;
+    Eg?: Eg;
+    Eg_back?: EgBack;
+    N_A?: NA;
+    N_A_bulk?: NABulk;
+    N_D?: ND;
+    N_D_bulk?: NDBulk;
+    Nc300?: Nc300;
+    Nv300?: Nv300;
+    P0?: P0;
+    P0_neg?: P0Neg;
+    P_lim?: PLim;
+    P_lim_neg?: PLimNeg;
+    acceptor_binding_energy_eV?: AcceptorBindingEnergyEv;
+    acceptor_degeneracy?: AcceptorDegeneracy;
+    alpha?: Alpha1;
+    band_gap_narrowing_model?: BandGapNarrowingModel;
+    bgn_conduction_band_fraction?: BgnConductionBandFraction;
+    bgn_log_shape?: BgnLogShape;
+    bgn_reference_density_m3?: BgnReferenceDensityM3;
+    bgn_reference_energy_eV?: BgnReferenceEnergyEv;
+    carrier_statistics?: CarrierStatistics;
+    chi?: Chi;
+    chi_back?: ChiBack;
+    ct_beta_n?: CtBetaN;
+    ct_beta_p?: CtBetaP;
+    donor_binding_energy_eV?: DonorBindingEnergyEv;
+    donor_degeneracy?: DonorDegeneracy;
+    dopant_ionization_model?: DopantIonizationModel;
+    doping_decay_length?: DopingDecayLength;
+    doping_edge?: DopingEdge;
+    doping_profile_shape?: DopingProfileShape;
+    eps_r?: EpsR;
+    grading_N_mult?: GradingNMult;
+    grading_bowing?: GradingBowing;
+    grading_char_length?: GradingCharLength;
+    grading_direction?: GradingDirection;
+    grading_profile?: GradingProfile;
+    incoherent?: Incoherent;
+    mu_T_gamma?: MuTGamma;
+    mu_n?: MuN;
+    mu_p?: MuP;
+    n1?: N1;
+    n_optical?: NOptical;
+    ni?: Ni;
+    optical_material?: OpticalMaterial;
+    p1?: P1;
+    pf_gamma_n?: PfGammaN;
+    pf_gamma_p?: PfGammaP;
+    tau_n?: TauN1;
+    tau_p?: TauP1;
+    trap_N_t_bulk?: TrapNTBulk;
+    trap_N_t_interface?: TrapNTInterface;
+    trap_decay_length?: TrapDecayLength;
+    trap_edge?: TrapEdge;
+    trap_profile_shape?: TrapProfileShape;
+    v_sat_n?: VSatN;
+    v_sat_p?: VSatP;
+    v_th?: VTh;
+    varshni_alpha?: VarshniAlpha;
+    varshni_beta?: VarshniBeta;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "NamedMaterialInput".
+   */
+  export interface NamedMaterialInput {
+    cigs_graded_optics?: CigsOpticsInput | null;
+    id: Id9;
+    name: Name4;
+    parameters: FullParameterInput;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "DeviceSettingsInput".
+   */
+  export interface DeviceSettingsInput {
+    Phi?: Phi;
+    T?: T;
+    V_bi?: VBi;
+    band_grading?: BandGrading;
+    built_in_potential_mode?: BuiltInPotentialMode;
+    contact_phi_B_eV?: ContactPhiBEv;
+    dos_band_potentials?: DosBandPotentials;
+    flat_band_contacts?: FlatBandContacts;
+    flat_band_metal_contacts?: FlatBandMetalContacts;
+    graded_optics?: GradedOptics;
+    het_recomb_despike?: HetRecombDespike;
+    interface_charge_closure?: InterfaceChargeClosure;
+    interface_charge_rebaseline_acknowledged?: InterfaceChargeRebaselineAcknowledged;
+    interface_plane_closure?: InterfacePlaneClosure;
+    interface_plane_generation?: InterfacePlaneGeneration;
+    interface_plane_projection?: InterfacePlaneProjection;
+    interface_shared_occupancy?: InterfaceSharedOccupancy;
+    interface_tunneling?: InterfaceTunneling;
+    interface_two_sided?: InterfaceTwoSided;
+    ion_steric_diffusion_only?: IonStericDiffusionOnly;
+    ion_steric_shared_site?: IonStericSharedSite;
+    jv_solver_policy?: JvSolverPolicy;
+    mode?: Mode;
+    phi_left?: PhiLeft;
+    te_physical_norm?: TePhysicalNorm;
+    tunnel_mass_eff?: TunnelMassEff;
+    work_function_left_eV?: WorkFunctionLeftEv;
+    work_function_right_eV?: WorkFunctionRightEv;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "SimulationHintsInput".
+   */
+  export interface SimulationHintsInput {
+    min_N_grid?: MinNGrid;
+    notes?: Notes;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "TunnellingInput".
+   */
+  export interface TunnellingInput {
+    band_to_band?: BandToBandInput | null;
+    contact?: ContactTunnellingInput | null;
+    interface_defect_assisted?: DefectAssistedInput | null;
+    intraband?: IntrabandInput | null;
+    schema_version?: SchemaVersion3;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "BandToBandInput".
+   */
+  export interface BandToBandInput {
+    enabled?: Enabled;
+    energy_quadrature_order?: EnergyQuadratureOrder;
+    minimum_field_V_m?: MinimumFieldVM;
+    reduced_effective_mass_rel?: ReducedEffectiveMassRel;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "ContactTunnellingInput".
+   */
+  export interface ContactTunnellingInput {
+    barrier_height_eV?: BarrierHeightEv;
+    electron_effective_mass_rel?: ElectronEffectiveMassRel;
+    enabled?: Enabled1;
+    energy_quadrature_order?: EnergyQuadratureOrder1;
+    hole_effective_mass_rel?: HoleEffectiveMassRel;
+    side?: Side1;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "DefectAssistedInput".
+   */
+  export interface DefectAssistedInput {
+    electron_effective_mass_rel?: ElectronEffectiveMassRel1;
+    enabled?: Enabled2;
+    hole_effective_mass_rel?: HoleEffectiveMassRel1;
+    requires_explicit_occupancy?: RequiresExplicitOccupancy;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "IntrabandInput".
+   */
+  export interface IntrabandInput {
+    carrier?: Carrier;
+    electron_effective_mass_rel?: ElectronEffectiveMassRel2;
+    enabled?: Enabled3;
+    energy_quadrature_order?: EnergyQuadratureOrder2;
+    hole_effective_mass_rel?: HoleEffectiveMassRel2;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JV2DInput".
+   */
+  export interface JV2DInput {
+    Nx?: LateralIntervalsNx;
+    Ny_per_layer?: VerticalIntervalsPerElectricalLayer;
+    V_max?: VMax;
+    V_step?: VStep;
+    atol?: Atol;
+    componentwise_atol?: ComponentwiseAtolInput | null;
+    illuminated?: Illuminated;
+    initial_state_settle_s?: InitialStateSettleS;
+    interface_srh?: InterfaceSrh;
+    ion_dynamics?: IonDynamics;
+    ion_inventory_rtol?: IonInventoryRtol;
+    jv_2d_protocol?: JV2DProtocolInput | null;
+    kind: Kind1;
+    lateral_bc?: LateralBc1;
+    lateral_length?: LateralLength;
+    max_bisect?: MaxBisect1;
+    max_nfev_per_solve?: MaxNfevPerSolve1;
+    microstructure?: MicrostructureInput | null;
+    protocol_mode?: ProtocolMode;
+    rtol?: Rtol;
+    save_snapshots?: SaveSnapshots1;
+    settle_t?: SettleT;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "ComponentwiseAtolInput".
+   */
+  export interface ComponentwiseAtolInput {
+    carrier_fraction: CarrierFraction;
+    interface_fraction: InterfaceFraction;
+    ion_fraction: IonFraction;
+    minimum_atol: MinimumAtol;
+    refinement_factor: RefinementFactor;
+  }
+  /**
+   * Supplied execution-protocol declaration, not a generated or bound mesh.
+   *
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JV2DProtocolInput".
+   */
+  export interface JV2DProtocolInput {
+    applied_voltage_rate_at_sampling_V_s: AppliedVoltageRateAtSamplingVS;
+    carrier_boundary_condition: CarrierBoundaryCondition;
+    current_composition: CurrentComposition;
+    current_sampling: CurrentSampling;
+    dwell_time_per_voltage_s: DwellTimePerVoltageS;
+    grain_boundaries: GrainBoundaries1;
+    illuminated: Illuminated1;
+    illumination_source: IlluminationSource;
+    implicit_legacy_protocol: ImplicitLegacyProtocol;
+    initial_state_settle_s: InitialStateSettleS1;
+    initial_state_source: InitialStateSource;
+    initial_state_voltage_V: InitialStateVoltageV;
+    interface_srh: InterfaceSrh1;
+    ion_boundary_condition: IonBoundaryCondition;
+    ion_inventory_rtol: IonInventoryRtol1;
+    lateral_bc: LateralBc;
+    max_bisect: MaxBisect;
+    max_nfev_per_solve: MaxNfevPerSolve;
+    save_snapshots: SaveSnapshots;
+    schema_version: SchemaVersion4;
+    solver_atol: JV2DAtolInput;
+    solver_max_step_divisor: SolverMaxStepDivisor;
+    solver_method: SolverMethod;
+    solver_rtol: SolverRtol;
+    state_topology: StateTopology;
+    temperature_K: TemperatureK;
+    voltage_values_V: VoltageValuesV;
+    x_coordinates_m: XCoordinatesM;
+    y_coordinates_m: YCoordinatesM;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JV2DGrainProtocolInput".
+   */
+  export interface JV2DGrainProtocolInput {
+    layer_role: LayerRole;
+    tau_n_s: TauNS;
+    tau_p_s: TauPS;
+    width_m: WidthM;
+    x_position_m: XPositionM;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "JV2DAtolInput".
+   */
+  export interface JV2DAtolInput {
+    carrier_fraction: CarrierFraction1;
+    interface_fraction: InterfaceFraction1;
+    ion_fraction: IonFraction1;
+    minimum_atol: MinimumAtol1;
+    mode: Mode1;
+    refinement_factor: RefinementFactor1;
+    scalar_atol: ScalarAtol;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "MicrostructureInput".
+   */
+  export interface MicrostructureInput {
+    grain_boundaries?: GrainBoundaries2;
+  }
+  /**
+   * This interface was referenced by `SpatialExperimentInput`'s JSON-Schema
+   * via the `definition` "GrainSweepInput".
+   */
+  export interface GrainSweepInput {
+    Nx?: LateralIntervalsNx1;
+    Ny_per_layer?: VerticalIntervalsPerElectricalLayer1;
+    V_max?: VMax1;
+    V_step?: VStep1;
+    gb_width?: GbWidth;
+    grain_sizes?: GrainSizes;
+    grain_sizes_nm?: GrainSizesNm;
+    illuminated?: Illuminated2;
+    kind: Kind2;
+    settle_t?: SettleT1;
+    tau_gb_n?: TauGbN;
+    tau_gb_p?: TauGbP;
+  }
+}
+export type SpatialExperimentInput = SpatialExperimentInputDefinitions.SpatialExperimentInput;
+
 // Source DTO: solarlab.device.inputs:TandemInput
 // Schema SHA-256 (JSON.stringify): 47cfc6435d1ee92e5a64924e7faed6a303ff4ae9df7b6c620e48404cc1efaac1
 export declare namespace TandemInputDefinitions {

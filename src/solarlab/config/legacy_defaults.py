@@ -12,6 +12,7 @@ from solarlab.materials.source import SourceDocument
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.device.tunnelling import CHANNEL_TYPES
+from solarlab.experiments.two_dimensional.inputs import EXPERIMENT_DEFAULT_FIELDS
 from solarlab.materials.full_parameters import FullParameterInput
 from solarlab.units import normalize_quantity
 
@@ -71,7 +72,7 @@ class _LiteralReader:
     def fields(self, class_name: str, names: tuple[str, ...]) -> dict[str, Any]:
         if class_name not in {"MaterialParams", "DeviceStack", "InterfaceDefect", "BulkDefectSpecies", "BulkDefectDistribution", "GrainBoundary", "JunctionLayer",
                               "CIGSGradedOptics", "BandToBandTunnellingChannel", "IntrabandTunnellingChannel",
-                              "InterfaceDefectAssistedTunnellingChannel", "ContactTunnellingChannel"}:
+                              "InterfaceDefectAssistedTunnellingChannel", "ContactTunnellingChannel", "ComponentwiseAtol"}:
             raise ValueError("class is outside the bounded legacy default adapter")
         matches = [node for tree in self._trees() for node in tree.body
                    if isinstance(node, ast.ClassDef) and node.name == class_name]
@@ -115,8 +116,52 @@ class _LiteralReader:
     def content_sha256(self) -> str:
         return hashlib.sha256(json.dumps([(item.id, item.sha256) for item in self.sources], separators=(",", ":")).encode()).hexdigest()
 
+    def experiment_fallbacks(self, kind: str, names: tuple[str, ...]) -> dict[str, Any]:
+        """Only the actual start_job branch; never import or execute backend."""
+        if kind not in {"jv_2d", "voc_grain_sweep"}:
+            raise ValueError("unknown spatial experiment default branch")
+        functions = [node for tree in self._trees() for node in tree.body
+                     if isinstance(node, ast.FunctionDef) and node.name == "start_job"]
+        if len(functions) != 1:
+            raise ValueError("expected one supplied start_job declaration")
+        branches = [node for node in ast.walk(functions[0]) if isinstance(node, ast.If)
+                    and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name)
+                    and node.test.left.id == "kind" and len(node.test.ops) == 1
+                    and isinstance(node.test.ops[0], ast.Eq) and len(node.test.comparators) == 1
+                    and isinstance(node.test.comparators[0], ast.Constant) and node.test.comparators[0].value == kind]
+        if len(branches) != 1:
+            raise ValueError(f"expected one supplied {kind} backend branch")
+        branch = ast.Module(body=branches[0].body, type_ignores=[])
+        values: dict[str, Any] = {}
+        for node in ast.walk(branch):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "p"
+                    and node.func.attr == "get" and len(node.args) == 2
+                    and isinstance(node.args[0], ast.Constant) and node.args[0].value in names):
+                name, value = node.args[0].value, self._literal(node.args[1])
+                if name in values and values[name] != value:
+                    raise ValueError(f"ambiguous backend experiment default: {name}")
+                values[name] = value
+        if kind == "jv_2d" and "atol" in names:
+            assignments = [node for node in ast.walk(branch) if isinstance(node, ast.Assign)
+                           and any(isinstance(target, ast.Name) and target.id == "solver_atol" for target in node.targets)
+                           and isinstance(node.value, ast.IfExp)]
+            if len(assignments) != 1:
+                raise ValueError("scalar/componentwise tolerance fallback changed")
+            conditional = assignments[0].value.orelse
+            if not (isinstance(conditional, ast.IfExp) and isinstance(conditional.test, ast.Name)
+                    and conditional.test.id == "extended_topology" and isinstance(conditional.body, ast.Call)
+                    and isinstance(conditional.body.func, ast.Name) and conditional.body.func.id == "ComponentwiseAtol"
+                    and not conditional.body.args and not conditional.body.keywords):
+                raise ValueError("unknown 2D tolerance default policy")
+            values["atol"] = self._literal(conditional.orelse)
+        if set(values) != set(names):
+            raise ValueError(f"missing source experiment defaults: {sorted(set(names) - set(values))}")
+        return values
 
-def read_legacy_default_catalog(sources: tuple[SourceDocument, ...], *, model_sources: tuple[SourceDocument, ...] = ()) -> DefaultCatalog:
+
+def read_legacy_default_catalog(sources: tuple[SourceDocument, ...], *, model_sources: tuple[SourceDocument, ...] = (),
+                                experiment_sources: tuple[SourceDocument, ...] = ()) -> DefaultCatalog:
     """Compile data once; the resulting catalog needs no legacy source files."""
     reader = _LiteralReader((*sources, *model_sources))
     material = reader.fields("MaterialParams", tuple(FullParameterInput.model_fields))
@@ -153,9 +198,17 @@ def read_legacy_default_catalog(sources: tuple[SourceDocument, ...], *, model_so
                    "interface_defect_assisted": "InterfaceDefectAssistedTunnellingChannel", "contact": "ContactTunnellingChannel"}
         for name, model in CHANNEL_TYPES.items():
             complex_defaults[name] = model_reader.fields(classes[name], tuple(model.model_fields))
+    experiment_defaults = {}
+    if experiment_sources:
+        experiment_reader = _LiteralReader(experiment_sources)
+        for name in ("jv_2d", "voc_grain_sweep"):
+            experiment_defaults[name] = experiment_reader.experiment_fallbacks(name, EXPERIMENT_DEFAULT_FIELDS[name])
+        experiment_defaults["jv_2d_componentwise_atol"] = experiment_reader.fields(
+            "ComponentwiseAtol", EXPERIMENT_DEFAULT_FIELDS["jv_2d_componentwise_atol"])
     return DefaultCatalog(tuple(material.items()), tuple(device.items()), tuple(scaps.items()), tuple(interface.items()),
                           tuple((name, reader.constant(name)) for name in ("Q", "K_B", "T")),
                           tuple(contacts.items()), tuple(structural.items()),
                           defect["defect_model"], defect["defect_schema_version"], degeneracy, width,
-                          tuple((source.id, source.sha256) for source in (*sources, *model_sources)),
-                          tuple((name, tuple(values.items())) for name, values in complex_defaults.items()))
+                          tuple((source.id, source.sha256) for source in (*sources, *model_sources, *experiment_sources)),
+                          tuple((name, tuple(values.items())) for name, values in complex_defaults.items()),
+                          tuple((name, tuple(values.items())) for name, values in experiment_defaults.items()))

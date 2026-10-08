@@ -51,7 +51,7 @@ function supplied(owner: object | undefined, field: string): FieldValue {
 /** Non-quantity scalar controls use only the generated primitive/enum metadata.
  * Numeric-only integers require a complete safe token; unit input goes through
  * the quantity control unchanged, including decimal strings and numeric -0. */
-function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, required: boolean,
+export function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, required: boolean,
   initial: FieldValue, onChange: (edit: FieldEdit) => void) {
   if (metadata.unit !== undefined) return mountQuantityInput(root, {
     name, metadata: { title: metadata.title, unit: metadata.unit, nullable: allowsNull(metadata) }, required,

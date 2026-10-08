@@ -260,10 +260,15 @@ const source = fs.readFileSync(process.argv[1], 'utf8');
 const result = ts.transpileModule(source, {compilerOptions: {
   module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023, verbatimModuleSyntax: true
 }});
-fs.writeFileSync(process.argv[2], result.outputText);
+fs.writeFileSync(process.argv[2], result.outputText.replace('./generated/configuration-schema', './configuration-schema.mjs'));
+const metadata = ts.transpileModule(fs.readFileSync(process.argv[3], 'utf8'), {compilerOptions: {
+  module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023
+}});
+fs.writeFileSync(process.argv[2].replace('configuration-client.mjs', 'configuration-schema.mjs'), metadata.outputText);
 """
     subprocess.run(["node", "--input-type=module", "-e", script,
-                    str(ROOT / "web/src/configuration-client.ts"), str(target)],
+                    str(ROOT / "web/src/configuration-client.ts"), str(target),
+                    str(ROOT / "web/src/generated/configuration-schema.ts")],
                    cwd=ROOT / "web", check=True, timeout=15, capture_output=True)
     return target
 

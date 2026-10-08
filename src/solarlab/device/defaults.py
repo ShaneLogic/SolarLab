@@ -10,6 +10,9 @@ from typing import Any
 
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.device.tunnelling import CHANNEL_TYPES
+from solarlab.experiments.two_dimensional.inputs import (
+    ComponentwiseAtolInput, EXPERIMENT_DEFAULT_FIELDS, GrainSweepInput, JV2DInput,
+)
 from solarlab.materials.full_parameters import full_parameter_items
 from solarlab.materials.optics import CigsOpticsInput
 from solarlab.materials.parameters import Scalar
@@ -42,8 +45,26 @@ class DefaultCatalog:
     distribution_width_convention: str
     evidence: tuple[tuple[str, str], ...]
     complex_defaults: tuple[tuple[str, tuple[tuple[str, Scalar], ...]], ...] = ()
+    experiment_defaults: tuple[tuple[str, tuple[tuple[str, Scalar], ...]], ...] = ()
 
     def __post_init__(self) -> None:
+        experiment_pairs = tuple(self.experiment_defaults)
+        names = [name for name, _ in experiment_pairs]
+        if len(names) != len(set(names)) or names and set(names) != set(EXPERIMENT_DEFAULT_FIELDS):
+            raise ValueError("experiment defaults require the three source-bound 2D sections")
+        experimental = []
+        for name, values in experiment_pairs:
+            data = _pairs(tuple(values))
+            if set(data) != set(EXPERIMENT_DEFAULT_FIELDS[name]):
+                raise ValueError(f"incomplete experiment defaults: {name}")
+            if name == "jv_2d_componentwise_atol":
+                checked = ComponentwiseAtolInput.model_validate(data).normalized_data()
+            else:
+                model = JV2DInput if name == "jv_2d" else GrainSweepInput
+                checked = model.model_validate({"kind": name, **data}).normalized_data()
+                checked.pop("kind")
+            experimental.append((name, tuple(sorted(checked.items()))))
+        object.__setattr__(self, "experiment_defaults", tuple(sorted(experimental)))
         complex_pairs = tuple(self.complex_defaults)
         names = [name for name, _ in complex_pairs]
         if len(names) != len(set(names)) or (names and set(names) != {"cigs_graded_optics", *CHANNEL_TYPES}):
@@ -132,19 +153,23 @@ class DefaultCatalog:
                 "defect_degeneracy": self.defect_degeneracy,
                 "distribution_width_convention": self.distribution_width_convention,
                 "evidence": [list(pair) for pair in self.evidence],
-                **({"complex_defaults": {name: dict(values) for name, values in self.complex_defaults}} if self.complex_defaults else {})}
+                **({"complex_defaults": {name: dict(values) for name, values in self.complex_defaults}} if self.complex_defaults else {}),
+                **({"experiment_defaults": {name: dict(values) for name, values in self.experiment_defaults}} if self.experiment_defaults else {})}
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> DefaultCatalog:
         expected = {"schema", "material", "device", "scaps", "interface", "constants", "contacts", "structural", "defect_model",
                     "defect_schema_version", "defect_degeneracy", "distribution_width_convention", "evidence"}
-        if not isinstance(data, dict) or set(data) - {"complex_defaults"} != expected or data["schema"] != "solarlab.default-catalog.v1":
+        if not isinstance(data, dict) or set(data) - {"complex_defaults", "experiment_defaults"} != expected or data["schema"] != "solarlab.default-catalog.v1":
             raise ValueError("invalid default catalog schema/keys")
         if any(not isinstance(data[name], dict) for name in ("material", "device", "scaps", "interface", "constants", "contacts", "structural")):
             raise ValueError("catalog sections require explicit mappings")
         complex_values = data.get("complex_defaults", {})
         if not isinstance(complex_values, dict) or any(not isinstance(value, dict) for value in complex_values.values()):
             raise ValueError("complex defaults require named model mappings")
+        experiment_values = data.get("experiment_defaults", {})
+        if not isinstance(experiment_values, dict) or any(not isinstance(value, dict) for value in experiment_values.values()):
+            raise ValueError("experiment defaults require named mappings")
         return cls(material=tuple(data["material"].items()), device=tuple(data["device"].items()),
                    scaps=tuple(data["scaps"].items()), interface=tuple(data["interface"].items()),
                    constants=tuple(data["constants"].items()), contacts=tuple(data["contacts"].items()),
@@ -152,7 +177,8 @@ class DefaultCatalog:
                    defect_schema_version=data["defect_schema_version"], defect_degeneracy=data["defect_degeneracy"],
                    distribution_width_convention=data["distribution_width_convention"],
                    evidence=tuple(tuple(pair) for pair in data["evidence"]),
-                   complex_defaults=tuple((name, tuple(values.items())) for name, values in complex_values.items()))
+                   complex_defaults=tuple((name, tuple(values.items())) for name, values in complex_values.items()),
+                   experiment_defaults=tuple((name, tuple(values.items())) for name, values in experiment_values.items()))
 
     @property
     def content_sha256(self) -> str:
@@ -164,3 +190,9 @@ class DefaultCatalog:
             if model == name:
                 return dict(values)
         raise ValueError(f"missing supplied complex model defaults: {name}")
+
+    def experiment_defaults_for(self, name: str) -> dict[str, Scalar]:
+        for experiment, values in self.experiment_defaults:
+            if experiment == name:
+                return dict(values)
+        raise ValueError(f"experiment defaults not supplied: {name}")
