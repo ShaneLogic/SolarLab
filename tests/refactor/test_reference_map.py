@@ -450,7 +450,7 @@ class NumericParameterPreparationTests(unittest.TestCase):
         self.assertEqual(lockin["limits"]["frequency_phase"]["atol"], 0.01 * math.pi / 180.0)
         self.assertEqual(lockin["limits"]["frequency_phase"]["unit"], "rad")
         self.assertEqual(lockin["limits"]["frequency_phase"]["rtol"], 0.0)
-        self.assertEqual(lockin["numeric_parameter_status"], "partially_specified")
+        self.assertEqual(lockin["numeric_parameter_status"], "prospective_complete")
         transient = cases["original_clean_exponential_fit_and_zero_perturbation"]
         self.assertIsNone(transient["known_parameters"]["zero_case_lifetime"])
         self.assertEqual(transient["known_parameters"]["zero_case_samples"], 100)
@@ -594,6 +594,63 @@ class ComparisonScaleClosureTests(unittest.TestCase):
         for closure in self.closures.values():
             self.assertFalse(closure["eligibility"]["reference_qualified"])
             self.assertIsNone(closure["eligibility"]["reference_error_bound"])
+
+
+class FourCaseDefinitionIntegrationTests(unittest.TestCase):
+    """Numeric completeness and original coverage do not activate comparisons."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = Path(__file__).resolve().parents[2]
+        cls.scopes = json.loads((cls.repo / "reproducibility/RefactorComparisonScopesV1.json").read_text())
+        cls.packets = {p["case_definition"]["kind"]: p for row in cls.scopes["records"]
+                       for p in row.get("parameter_bindings", []) if "case_definition" in p}
+
+    def test_four_original_cases_have_callable_definitions_but_no_eligible_data(self):
+        import ast
+        from case_comparison import validate_case_definition
+
+        self.assertEqual(set(self.packets), {"twod", "lockin", "el", "eqe"})
+        for packet in self.packets.values():
+            definition = packet["case_definition"]
+            self.assertTrue(validate_case_definition(definition))
+            self.assertEqual(definition["protocol"], packet["known_parameters"])
+            self.assertIsNone(packet["reference_eligibility"]["reference_error_bound"])
+            self.assertFalse(packet["reference_eligibility"]["reference_qualified"])
+            self.assertIsNone(packet["reference_eligibility"]["active_comparison"])
+            self.assertTrue(packet["remaining_parameters"])
+            for key in ("comparator", "definition_validator"):
+                source = self.scopes["sources"][packet[key]["source_id"]]
+                raw = (self.repo/source["path"]).read_bytes()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), source["sha256"])
+                self.assertIn(packet[key]["symbol"], {x.name for x in ast.parse(raw).body if isinstance(x, ast.FunctionDef)})
+
+    def test_source_words_protocols_and_engineering_rounding_remain_exact(self):
+        from fractions import Fraction
+        import math
+
+        d = {k: p["case_definition"] for k, p in self.packets.items()}
+        self.assertEqual({(c["vertical"], c["horizontal"]) for c in d["twod"]["contexts"]},
+                         {(16, 2), (32, 2), (64, 2), (32, 4), (32, 8)})
+        self.assertEqual(d["twod"]["rules"]["log"]["atol"], 1e-6)
+        self.assertIn("continuum", d["twod"]["comparison_target"])
+        self.assertEqual(d["lockin"]["protocol"]["points_per_cycle"], [20, 40, 80])
+        self.assertEqual(len(d["lockin"]["contexts"]), 6)
+        for key, value in (("frequency_domain", .01*math.pi/180), ("time_resolution", .001*math.pi/180)):
+            self.assertEqual(d["lockin"]["phase_limits"][key].hex(), value.hex())
+        self.assertEqual(d["lockin"]["phase_operator"], "lt")
+        self.assertEqual(d["el"]["source_log_floor_hex"], (1e-30).hex())
+        self.assertTrue(d["el"]["mandatory_independent_emission_gate"])
+        self.assertEqual(d["eqe"]["wavelengths_nm"], [400, 500, 600, 700, 800])
+        self.assertEqual(d["el"]["wavelengths_nm"], [400, 500, 600, 700, 800, 900])
+        self.assertEqual(Fraction(d["eqe"]["current_scale_exact"]), Fraction("640.8706536"))
+        self.assertEqual(d["eqe"]["protocol"]["incident_photon_flux_m2_s"], 4e21)
+        for definition in d.values():
+            for rule in definition["rules"].values():
+                for name in ("atol", "rtol"):
+                    if "nominal_"+name+"_exact" in rule:
+                        self.assertLessEqual(Fraction(rule[name]), Fraction(rule["nominal_"+name+"_exact"]))
+        self.assertFalse(self.scopes["four_case_definition_closure"]["G0_awarded"])
 
 
 if __name__ == "__main__":

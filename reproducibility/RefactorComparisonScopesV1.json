@@ -16,12 +16,12 @@
     "validator": {
       "root": "repository",
       "path": "scripts/benchmarks/reference_map.py",
-      "sha256": "5fc4af5d52794871899d0fd94c264d79e5085dd00fb9ba910f951684035ac0f2"
+      "sha256": "d80a4241df0bfb3280f40a047397c1beb5fc1979199271dcdec8fdf31f5be6d9"
     },
     "formal": {
       "root": "archive",
       "path": "plans/Impl/ArchitectureRefactorExecutionV1.md",
-      "sha256": "36942cbcae7ab01a2302e09c73bdfc365b730f830f0500b2c4150073558b2a3f"
+      "sha256": "f23f96552b11f6a1000fab4f91c1be940156f21e802ef74570cdb0d688ea6a9f"
     },
     "lane_evaluator": {
       "root": "repository",
@@ -222,6 +222,31 @@
       "root": "archive",
       "path": "test/ArchitectureRefactor/Stage00/SGActionReferenceV1/Review.json",
       "sha256": "aed1eeff40845207fc6bb6792488d7cfa98d8b380535842490c10efb7fd3ef4d"
+    },
+    "four_case_proposal": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/DefinitionClosureV1/DefinitionProposal.json",
+      "sha256": "fc345c2da20f3446e51bb04824e4c800270744870619c852fa74797151979dd5"
+    },
+    "four_case_amendments": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/DefinitionClosureV1/Amendments.json",
+      "sha256": "bda37bd2512b60f393f8307e2280dbad0e494b9966e449a59c07c15ed551dae2"
+    },
+    "four_case_amendment_review": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/DefinitionClosureV1/Science/AmendmentReview.json",
+      "sha256": "b984beca1d94d41289803b8bfb999a15c9c6e082a776b491d75acab82208058c"
+    },
+    "four_case_arithmetic": {
+      "root": "archive",
+      "path": "test/ArchitectureRefactor/Stage00/DefinitionClosureV1/ArithmeticChecks.json",
+      "sha256": "10557e78477a6f6df4ba1ffd01ebba0e5d17d8e778b5655cfca56232aca0f5f3"
+    },
+    "four_case_comparator": {
+      "root": "repository",
+      "path": "tests/refactor/case_comparison.py",
+      "sha256": "c30d53888c7512ee4620f5d845aa65bc5329b693572f7e3dc5079ea5ffb1e808"
     }
   },
   "rules": {
@@ -9493,9 +9518,9 @@
       ],
       "remaining_inputs": [
         {
-          "field": "Actual x/y dual-cell areas, the declared out-of-plane depth or per-unit-depth convention, component labels and conservative overlap matrix for the chosen mesh pair; do not label m2 areas as m3 volumes.",
-          "needed_from": "benchmark-d84b2405628c3df6 / two_layer_active_TE_uniform_axis_fixture: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "benchmark:foundation-twod-active-transport-reference: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Actual mesh coordinates, unit-depth convention, material-side average/support mapping, all trace indices/positions and every state/time requested by the original axes fixture.",
+          "needed_from": "benchmark-d84b2405628c3df6 / two_layer_active_TE_uniform_axis_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P00-03",
             "P03-06",
@@ -9503,9 +9528,19 @@
           ]
         },
         {
-          "field": "Independent per-component inventory/L1 and both-interface-trace limits and projection/reference errors; old max-state/current normalized errors and 0.005 vertical envelope cannot fill these N gates.",
-          "needed_from": "benchmark-d84b2405628c3df6 / two_layer_active_TE_uniform_axis_fixture: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "benchmark:foundation-twod-active-transport-reference: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Approved geometric overlap evidence and arithmetic/representation error; per-component inventory, L1, positive log and per-side trace independent reference bounds, each within the relevant 1/3 budget.",
+          "needed_from": "benchmark-d84b2405628c3df6 / two_layer_active_TE_uniform_axis_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
+          "downstream_tasks": [
+            "P00-03",
+            "P03-06",
+            "P09-01"
+          ]
+        },
+        {
+          "field": "Independent trace-reconstruction error if physical limiting traces, or a clearly fixed-discrete source-stencil target; an unresolved representation cannot be qualified by the old0.005 refinement envelope.",
+          "needed_from": "benchmark-d84b2405628c3df6 / two_layer_active_TE_uniform_axis_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P00-03",
             "P03-06",
@@ -9530,7 +9565,7 @@
           "family_rule_id": "projection_packet",
           "case_id": "two_layer_active_TE_uniform_axis_fixture",
           "applicability": "Original extruded 1D/2D, Neumann lateral-boundary fixture with active TE; old pointwise/lateral-mean errors are not conservative cross-grid gates.",
-          "numeric_parameter_status": "partially_specified",
+          "numeric_parameter_status": "prospective_complete",
           "known_parameters": {
             "layer_thickness_m": [
               1e-07,
@@ -9597,11 +9632,24 @@
                 931
               ],
               "text_sha256": "b72c4040bcf0248f9b08eca8c8ecf561fb82e0f5fa637d76d2551b6dc22f4a60"
+            },
+            {
+              "source_id": "four_case_proposal"
+            },
+            {
+              "source_id": "four_case_amendments"
+            },
+            {
+              "source_id": "four_case_amendment_review"
+            },
+            {
+              "source_id": "four_case_arithmetic"
             }
           ],
           "remaining_parameters": [
-            "Actual x/y dual-cell areas, the declared out-of-plane depth or per-unit-depth convention, component labels and conservative overlap matrix for the chosen mesh pair; do not label m2 areas as m3 volumes.",
-            "Independent per-component inventory/L1 and both-interface-trace limits and projection/reference errors; old max-state/current normalized errors and 0.005 vertical envelope cannot fill these N gates."
+            "Actual mesh coordinates, unit-depth convention, material-side average/support mapping, all trace indices/positions and every state/time requested by the original axes fixture.",
+            "Approved geometric overlap evidence and arithmetic/representation error; per-component inventory, L1, positive log and per-side trace independent reference bounds, each within the relevant 1/3 budget.",
+            "Independent trace-reconstruction error if physical limiting traces, or a clearly fixed-discrete source-stencil target; an unresolved representation cannot be qualified by the old0.005 refinement envelope."
           ],
           "reference_eligibility": {
             "status": "blocked_pending_independent_reference_and_review",
@@ -9611,6 +9659,189 @@
             "unused_error_shares_redistributed": false,
             "reference_qualified": false,
             "active_comparison": null
+          },
+          "case_definition": {
+            "schema": "solarlab.four_case_definition.v1",
+            "kind": "twod",
+            "scope_id": "scope-benchmark-d84b2405628c3df6",
+            "case_id": "two_layer_active_TE_uniform_axis_fixture",
+            "status": "prospective_complete",
+            "reference_error_bound": null,
+            "reference_qualified": false,
+            "active_comparison": null,
+            "protocol": {
+              "layer_thickness_m": [
+                1e-07,
+                1e-07
+              ],
+              "width_m": 3e-07,
+              "interface_y_m": 1e-07,
+              "vertical_intervals_per_layer": [
+                16,
+                32,
+                64
+              ],
+              "horizontal_intervals": [
+                2,
+                4,
+                8
+              ],
+              "vertical_tanh_alpha": 2.0,
+              "voltage_V": 0.02,
+              "end_time_s": 1e-10,
+              "max_step_s": 1e-11,
+              "lateral_boundary": "neumann",
+              "contact_electron_velocity_m_s": 1000.0,
+              "contact_hole_velocity_m_s": 0.0,
+              "TE_physical_norm": true,
+              "density_unit": "m-3",
+              "current_unit": "A m-2",
+              "traces": "Separate limits approaching y=100nm from left and right; no interpolation through chi=4.0 to3.8eV step",
+              "zero_policy": "Blocking contact and absent ions remain distinct; no whole-device averaging to erase a component."
+            },
+            "common_contract": {
+              "classification": "These are proposed accuracy allocations. Source-derived scales are dimensional normalizations, not observations, reference error certificates, measured resolution limits or device-area/noise assumptions.",
+              "mixed_rule": "T(S_ref,U)=a+r*S_ref; epsilon=1e-4, a=(epsilon^2/2)*U, r=epsilon/2, S_ref=abs(the frozen same-channel reference); no candidate-dependent normalization.",
+              "accuracy_argument": "For S_ref>=epsilon*U, T<=epsilon*S_ref; for S_ref<epsilon*U, T<=epsilon^2*U. The crossover epsilon*U is fixed prospectively and is not a detector noise floor. This preserves the 1e-4 meaningful-relative objective and adds a stricter dimensioned weak/zero branch.",
+              "reference_error": "Each actual independent reference error B_ref must be finite, nonnegative, source-bound and <=T/3, or the stricter original share. B_ref is null here. Require observed_difference+B_ref<=T; preserve any stricter existing gates. Unused shares are not redistributed.",
+              "empirical_refinement": "Differences across meshes, time grids, solver tolerances or arithmetic precisions are diagnostics, not automatically independent error bounds; a justified estimator with assumptions/remainder or an independent formulation/analytic enclosure must support reference qualification.",
+              "before_candidate": "Root/SCI must approve the prospective definition; bind the exact reference, material/input/source identities, all channel scales and actual error evidence, then freeze the fully materialized existing GateSpec before the candidate begins.",
+              "unknown_or_weak": "Unknown/over-budget error, missing channels, unresolved denominators or an unverified projection produce unknown/unresolved. A zero computed value is not evidence of an exact physical zero. Do not raise floors, clip, omit a coordinate or reinterpret a historical finite/range check to obtain acceptance.",
+              "rounding": "New mixed coefficients are downward binary64 allocations and fixed floors are upward. Original phase words are nearest-binary64 exceptions and retain strict < with both-side error."
+            },
+            "pending_observables": [
+              "Actual mesh coordinates, unit-depth convention, material-side average/support mapping, all trace indices/positions and every state/time requested by the original axes fixture.",
+              "Approved geometric overlap evidence and arithmetic/representation error; per-component inventory, L1, positive log and per-side trace independent reference bounds, each within the relevant 1/3 budget.",
+              "Independent trace-reconstruction error if physical limiting traces, or a clearly fixed-discrete source-stencil target; an unresolved representation cannot be qualified by the old0.005 refinement envelope."
+            ],
+            "approval_sources": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "rules": {
+              "n_trace": {
+                "atol": 100000000000000.0,
+                "rtol": 0,
+                "unit": "m-3",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 1e+20
+              },
+              "n_l1": {
+                "atol": 2.9999999999999996,
+                "rtol": 0,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 2999999.9999999995
+              },
+              "n_inventory": {
+                "atol": 2.9999999999999996,
+                "rtol": 0,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 2999999.9999999995
+              },
+              "p_trace": {
+                "atol": 69.32458184442733,
+                "rtol": 0,
+                "unit": "m-3",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 69324581.84442733
+              },
+              "p_l1": {
+                "atol": 2.0797374553328196e-12,
+                "rtol": 0,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 2.0797374553328198e-06
+              },
+              "p_inventory": {
+                "atol": 2.0797374553328196e-12,
+                "rtol": 0,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 2.0797374553328198e-06
+              },
+              "log": {
+                "atol": 1e-06,
+                "rtol": 0,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound."
+              },
+              "zero": {
+                "atol": 0,
+                "rtol": 0,
+                "unit": "m-3",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound."
+              }
+            },
+            "contexts": [
+              {
+                "id": "v16_h2",
+                "vertical": 16,
+                "horizontal": 2
+              },
+              {
+                "id": "v32_h2",
+                "vertical": 32,
+                "horizontal": 2
+              },
+              {
+                "id": "v64_h2",
+                "vertical": 64,
+                "horizontal": 2
+              },
+              {
+                "id": "v32_h4",
+                "vertical": 32,
+                "horizontal": 4
+              },
+              {
+                "id": "v32_h8",
+                "vertical": 32,
+                "horizontal": 8
+              }
+            ],
+            "components": [
+              "n:layer_chi4.0",
+              "n:layer_chi3.8",
+              "p:layer_chi4.0",
+              "p:layer_chi3.8"
+            ],
+            "geometry": {
+              "node_order": "index(j,i)=j*Nx+i, shape(Ny,Nx)",
+              "dual_edges": "For sorted x0..xN: e0=x0, e_(i+1)=(x_i+x_(i+1))/2, e_(N+1)=xN; analogously y. Thus endpoint dual widths are half cells.",
+              "weights": "A_ji=(ex_(i+1)-ex_i)*(ey_(j+1)-ey_j) in m2; V_ji=A_ji*1 m. Preserve exact supplied coordinate words and compute overlap/rational mass identities from them, not rounded nominal spacings.",
+              "components": [
+                "n:layer_chi4.0",
+                "n:layer_chi3.8",
+                "p:layer_chi4.0",
+                "p:layer_chi3.8"
+              ],
+              "material_boundary": "y=100 nm. Bind actual raw-layer tags, electrical interface_y_faces, their adjacent state indices and positions, and the accepted source-side CV interpretation. A dual support that intersects a material boundary needs a verified source-side partition/average; do not copy a mixed nodal value into both sides or silently equate a stencil face with the physical boundary.",
+              "overlap": "O_ab=volume(C_ref_a intersect C_new_b intersect same_material). O>=0, row sums=reference volumes, column sums=candidate volumes, cross-material entries=0; independent geometric evidence is required in addition to these sums.",
+              "representation": "Declared source-consistent piecewise-constant CV averages; any nodal-to-average or interface-support reconstruction carries its own bound. Unsupported material-side data blocks the comparison instead of inventing it.",
+              "trace_definition": "For each actual interface face and each lateral common-support segment, retain the left and right source-side carrier observations separately with actual node/face positions. Discrete stencil values are labeled as such. A claim about the limiting physical y=100nm traces additionally needs an independently bounded one-sided reconstruction; never interpolate across chi4.0/3.8 or lateral-average the traces."
+            },
+            "metrics": {
+              "component_inventory": "abs(sum_a V_ref_a*u_ref_a - sum_b V_new_b*u_new_b) <= 1e-6*u_star*V_component",
+              "component_l1": "sum_ab O_ab*abs(u_ref_a-u_new_b) <= 1e-6*u_star*V_component, separately for each carrier/material component",
+              "positive_log_rms": "sqrt(sum_(O_ab>0) O_ab*log(u_new_b/u_ref_a)^2 / V_component) <=1e-6",
+              "positive_log_max": "max_(O_ab>0) abs(log(u_new_b/u_ref_a)) <=1e-6",
+              "trace": "Every carrier/material-side/lateral-segment absolute difference <=1e-6*u_star; rtol=0 and fixed input scale, with no division by a weak trace.",
+              "absent_ions": "P=P_background=0 exactly in both input and observed state; zero-species atol=rtol=0, no positive floor."
+            },
+            "comparison_target": "fixed_discrete migration on each named input; continuum refinement and the old 0.005 envelope remain separate",
+            "normalization_origin": "The original axes fixture explicitly uses n_star=1e20 and p_star=ni^2/1e20, ni=1e24*exp(-1.2/(2*V_T)), V_T=K_B*300/Q. Reuse its scalar binary64 words. Each geometric layer is 300 nm by100 nm with the declared unit depth1 m; unit depth is a normalization, not a measured device depth."
+          },
+          "comparator": {
+            "source_id": "four_case_comparator",
+            "symbol": "compare_case"
+          },
+          "definition_validator": {
+            "source_id": "four_case_comparator",
+            "symbol": "validate_case_definition"
           }
         }
       ],
@@ -9668,13 +9899,29 @@
             "classification_basis": "mixed original source/identity/use-review obligation; no new tolerance inferred"
           }
         ],
-        "new_source_resolved_cases": [],
+        "new_source_resolved_cases": [
+          {
+            "case_id": "two_layer_active_TE_uniform_axis_fixture",
+            "status": "prospective_complete",
+            "comparator": {
+              "source_id": "four_case_comparator",
+              "symbol": "compare_case"
+            },
+            "source_ids": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "qualification_granted": false
+          }
+        ],
         "prior_gaps_apply_outside_listed_source_resolved_cases": true,
         "reference_error_bound": null,
         "reference_eligibility_is_separate": true,
         "fixed_discrete_target_requires_continuum_qualification": false,
         "scope_extension_or_tolerance_decisions": [],
-        "current_numeric_status": "prior_exact_scope_gaps_retained_and_classified"
+        "current_numeric_status": "named_case_prospective_complete_actual_data_error_identity_review_pending"
       }
     },
     {
@@ -25159,9 +25406,9 @@
       ],
       "remaining_inputs": [
         {
-          "field": "At each of 0.001/0.01/1 Hz, retain complex reference Z plus real/imaginary/complex uncertainty bounds and absolute current uncertainty for the extraction windows.",
-          "needed_from": "oracle-23a290eced9bdb76 / ion_aware_lockin_three_frequencies: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "oracle:time_domain_lockin: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Per-frequency real/imag/complex reference values and independent current/voltage/Z errors, with exact DC state, window, sample operator, interpolation/history and applied controls.",
+          "needed_from": "oracle-23a290eced9bdb76 / ion_aware_lockin_three_frequencies: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P00-03",
             "P05-03",
@@ -25169,9 +25416,9 @@
           ]
         },
         {
-          "field": "Provide an independently resolvable amplitude floor in ohm m2 for those same frequencies and real/imaginary/complex mixed absolute allowances; the 0.01-degree assertion supplies an angle limit, not a signal floor.",
-          "needed_from": "oracle-23a290eced9bdb76 / ion_aware_lockin_three_frequencies: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "oracle:time_domain_lockin: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Error budgets cover solve/time discretization, extraction/operator rounding, residual DC drift, finite-window/cycle settling and any finite-amplitude-to-linear-response target discrepancy;20/40/80 changes alone are empirical.",
+          "needed_from": "oracle-23a290eced9bdb76 / ion_aware_lockin_three_frequencies: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P00-03",
             "P05-03",
@@ -25179,9 +25426,9 @@
           ]
         },
         {
-          "field": "Exact retained grid/DC state/frequency protocol and all three time-resolution records must match; thermodynamic certification is explicitly absent in this source.",
-          "needed_from": "oracle-23a290eced9bdb76 / ion_aware_lockin_three_frequencies: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "oracle:time_domain_lockin: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "At each frequency the actual current and impedance uncertainty must satisfy the fixed floor, all three mixed gates, 1/3reference shares and the appropriate strict phase budget. Missing/unresolved frequencies block case acceptance.",
+          "needed_from": "oracle-23a290eced9bdb76 / ion_aware_lockin_three_frequencies: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P00-03",
             "P05-03",
@@ -25206,7 +25453,7 @@
           "family_rule_id": "complex_packet",
           "case_id": "ion_aware_lockin_three_frequencies",
           "applicability": "Original ionmonger DC=0.9 V fixture; circular phase thresholds converted from the applicable integration assertions, with unresolved amplitude/uncertainty admission.",
-          "numeric_parameter_status": "partially_specified",
+          "numeric_parameter_status": "prospective_complete",
           "known_parameters": {
             "unit": "ohm m2",
             "current_unit": "A m-2",
@@ -25269,12 +25516,24 @@
                 931
               ],
               "text_sha256": "b72c4040bcf0248f9b08eca8c8ecf561fb82e0f5fa637d76d2551b6dc22f4a60"
+            },
+            {
+              "source_id": "four_case_proposal"
+            },
+            {
+              "source_id": "four_case_amendments"
+            },
+            {
+              "source_id": "four_case_amendment_review"
+            },
+            {
+              "source_id": "four_case_arithmetic"
             }
           ],
           "remaining_parameters": [
-            "At each of 0.001/0.01/1 Hz, retain complex reference Z plus real/imaginary/complex uncertainty bounds and absolute current uncertainty for the extraction windows.",
-            "Provide an independently resolvable amplitude floor in ohm m2 for those same frequencies and real/imaginary/complex mixed absolute allowances; the 0.01-degree assertion supplies an angle limit, not a signal floor.",
-            "Exact retained grid/DC state/frequency protocol and all three time-resolution records must match; thermodynamic certification is explicitly absent in this source."
+            "Per-frequency real/imag/complex reference values and independent current/voltage/Z errors, with exact DC state, window, sample operator, interpolation/history and applied controls.",
+            "Error budgets cover solve/time discretization, extraction/operator rounding, residual DC drift, finite-window/cycle settling and any finite-amplitude-to-linear-response target discrepancy;20/40/80 changes alone are empirical.",
+            "At each frequency the actual current and impedance uncertainty must satisfy the fixed floor, all three mixed gates, 1/3reference shares and the appropriate strict phase budget. Missing/unresolved frequencies block case acceptance."
           ],
           "reference_eligibility": {
             "status": "blocked_pending_independent_reference_and_review",
@@ -25284,6 +25543,158 @@
             "unused_error_shares_redistributed": false,
             "reference_qualified": false,
             "active_comparison": null
+          },
+          "case_definition": {
+            "schema": "solarlab.four_case_definition.v1",
+            "kind": "lockin",
+            "scope_id": "scope-oracle-23a290eced9bdb76",
+            "case_id": "ion_aware_lockin_three_frequencies",
+            "status": "prospective_complete",
+            "reference_error_bound": null,
+            "reference_qualified": false,
+            "active_comparison": null,
+            "protocol": {
+              "unit": "ohm m2",
+              "current_unit": "A m-2",
+              "frequencies_Hz": [
+                0.001,
+                0.01,
+                1.0
+              ],
+              "dc_voltage_V": 0.9,
+              "cycles": 4,
+              "extraction_cycles": 2,
+              "points_per_cycle": [
+                20,
+                40,
+                80
+              ],
+              "rtol": 1e-05,
+              "phase_rule": "abs(angle(new*conj(reference))) in radians; branch-cut circular distance, never relative angle",
+              "phase_conversion": "original degrees * pi / 180",
+              "weak_signal": "Both amplitudes must exceed a separately justified, frozen floor; the old symmetric max(abs(left),abs(right),np.finfo(float).tiny) normalization cannot supply that floor.",
+              "original_assertion_magnitude_relative_limit": 0.01,
+              "prospective_N_relative_target": 0.0001,
+              "current_convention": "passive"
+            },
+            "common_contract": {
+              "classification": "These are proposed accuracy allocations. Source-derived scales are dimensional normalizations, not observations, reference error certificates, measured resolution limits or device-area/noise assumptions.",
+              "mixed_rule": "T(S_ref,U)=a+r*S_ref; epsilon=1e-4, a=(epsilon^2/2)*U, r=epsilon/2, S_ref=abs(the frozen same-channel reference); no candidate-dependent normalization.",
+              "accuracy_argument": "For S_ref>=epsilon*U, T<=epsilon*S_ref; for S_ref<epsilon*U, T<=epsilon^2*U. The crossover epsilon*U is fixed prospectively and is not a detector noise floor. This preserves the 1e-4 meaningful-relative objective and adds a stricter dimensioned weak/zero branch.",
+              "reference_error": "Each actual independent reference error B_ref must be finite, nonnegative, source-bound and <=T/3, or the stricter original share. B_ref is null here. Require observed_difference+B_ref<=T; preserve any stricter existing gates. Unused shares are not redistributed.",
+              "empirical_refinement": "Differences across meshes, time grids, solver tolerances or arithmetic precisions are diagnostics, not automatically independent error bounds; a justified estimator with assumptions/remainder or an independent formulation/analytic enclosure must support reference qualification.",
+              "before_candidate": "Root/SCI must approve the prospective definition; bind the exact reference, material/input/source identities, all channel scales and actual error evidence, then freeze the fully materialized existing GateSpec before the candidate begins.",
+              "unknown_or_weak": "Unknown/over-budget error, missing channels, unresolved denominators or an unverified projection produce unknown/unresolved. A zero computed value is not evidence of an exact physical zero. Do not raise floors, clip, omit a coordinate or reinterpret a historical finite/range check to obtain acceptance.",
+              "rounding": "New mixed coefficients are downward binary64 allocations and fixed floors are upward. Original phase words are nearest-binary64 exceptions and retain strict < with both-side error."
+            },
+            "pending_observables": [
+              "Per-frequency real/imag/complex reference values and independent current/voltage/Z errors, with exact DC state, window, sample operator, interpolation/history and applied controls.",
+              "Error budgets cover solve/time discretization, extraction/operator rounding, residual DC drift, finite-window/cycle settling and any finite-amplitude-to-linear-response target discrepancy;20/40/80 changes alone are empirical.",
+              "At each frequency the actual current and impedance uncertainty must satisfy the fixed floor, all three mixed gates, 1/3reference shares and the appropriate strict phase budget. Missing/unresolved frequencies block case acceptance."
+            ],
+            "approval_sources": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "rules": {
+              "I": {
+                "atol": 1.1215236437999998e-06,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "A m-2",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 224.30472876,
+                "weak_crossover": 0.022430472876,
+                "nominal_atol_exact": "5607618219/5000000000000000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "Z": {
+                "atol": 2.2291103837359865e-13,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "ohm m2",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 4.4582207674719734e-05,
+                "weak_crossover": 4.458220767471974e-09,
+                "nominal_atol_exact": "1/4486094575200",
+                "nominal_rtol_exact": "1/20000"
+              }
+            },
+            "contexts": [
+              {
+                "id": "frequency_domain:0.001Hz",
+                "frequency": 0.001,
+                "samples": 80,
+                "phase_kind": "frequency_domain",
+                "reference_samples": null
+              },
+              {
+                "id": "time_resolution:0.001Hz",
+                "frequency": 0.001,
+                "samples": 80,
+                "phase_kind": "time_resolution",
+                "reference_samples": 40
+              },
+              {
+                "id": "frequency_domain:0.01Hz",
+                "frequency": 0.01,
+                "samples": 80,
+                "phase_kind": "frequency_domain",
+                "reference_samples": null
+              },
+              {
+                "id": "time_resolution:0.01Hz",
+                "frequency": 0.01,
+                "samples": 80,
+                "phase_kind": "time_resolution",
+                "reference_samples": 40
+              },
+              {
+                "id": "frequency_domain:1Hz",
+                "frequency": 1.0,
+                "samples": 80,
+                "phase_kind": "frequency_domain",
+                "reference_samples": null
+              },
+              {
+                "id": "time_resolution:1Hz",
+                "frequency": 1.0,
+                "samples": 80,
+                "phase_kind": "time_resolution",
+                "reference_samples": 40
+              }
+            ],
+            "original_pair_selection": "Original _certificate compares final80 with the frequency-domain point, and40 with80; all20/40/80 level records and their original certificates remain required. No additional20-to40 strict phase condition is introduced.",
+            "floors": {
+              "I": 0.022430472876,
+              "Z": 4.458220767471974e-09
+            },
+            "delta_V": 0.01,
+            "phase_limits": {
+              "frequency_domain": 0.00017453292519943296,
+              "time_resolution": 1.7453292519943296e-05
+            },
+            "phase_operator": "lt",
+            "phase_rounding": "Original nearest binary64 phase words retained, exceptions to downward mixed coefficients.",
+            "phase_error_each_side_fraction": "1/6",
+            "resolvability": {
+              "status": "Prospective engineering accuracy/resolution allocation only; the required numerical resolution evidence remains unmeasured.",
+              "allocation": "I_floor=epsilon*I_star; Z_floor=epsilon*Z_star. Both sides must exceed the corresponding frozen amplitude floor and have a positive lower signal bound. Do not manufacture frequency-dependent noise or raise a floor after seeing output.",
+              "current_and_division": "For each side, I_abs>B_I and V uncertainty B_V is retained. For Z=V/I, B_Z <= (I_abs*B_V+V_abs*B_I)/(I_abs*(I_abs-B_I)), plus separately bounded division/extraction rounding.",
+              "phase": "For Z_abs>B_Z, a conservative disk phase bound is B_phi<=B_Z/(Z_abs-B_Z). Require B_phi_ref and B_phi_new each<=theta/6 and measured circular phase difference+B_phi_ref+B_phi_new<theta. Actual phase-evaluation rounding is also included in this allowance.",
+              "at_floor_allocation": "To make phase resolution possible at a declared floor F, require B <= (theta/6)/(1+theta/6)*F. The numeric time-phase allowances in input_scale_and_constants are allocations, not achieved uncertainties; larger B makes the case unresolved.",
+              "exact_zero": "No exact-zero frequency is established by this fixture. Do not populate zero_indices from small computed values; weak amplitudes remain unresolved for phase, although absolute complex/component differences are still reportable."
+            },
+            "reference_target_alignment": "The new1e-4 gates compare the same bound physical/discrete observable. Treating a finite-amplitude time response as an infinitesimal frequency-domain reference additionally requires a bound on the nonlinear/finite-amplitude discrepancy. Old1%frequency-magnitude and1e-3time-magnitude checks remain original diagnostics and do not establish1e-4 reference accuracy.",
+            "extraction_error": "Use the original joint least-squares extraction with columns[1,scaled_time,sin,cos] and its exact phasor sign map. If L is the exact frozen full-rank extraction operator, each real/imag coefficient bound is sum_k abs(L_row_k)*B_sample_k+B_LS_rounding. Bind actual sample times, rows and full-rank/conditioning evidence; do not substitute a simple Fourier sum."
+          },
+          "comparator": {
+            "source_id": "four_case_comparator",
+            "symbol": "compare_case"
+          },
+          "definition_validator": {
+            "source_id": "four_case_comparator",
+            "symbol": "validate_case_definition"
           }
         }
       ],
@@ -25358,13 +25769,29 @@
             "classification_basis": "mixed original source/identity/use-review obligation; no new tolerance inferred"
           }
         ],
-        "new_source_resolved_cases": [],
+        "new_source_resolved_cases": [
+          {
+            "case_id": "ion_aware_lockin_three_frequencies",
+            "status": "prospective_complete",
+            "comparator": {
+              "source_id": "four_case_comparator",
+              "symbol": "compare_case"
+            },
+            "source_ids": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "qualification_granted": false
+          }
+        ],
         "prior_gaps_apply_outside_listed_source_resolved_cases": true,
         "reference_error_bound": null,
         "reference_eligibility_is_separate": true,
         "fixed_discrete_target_requires_continuum_qualification": false,
         "scope_extension_or_tolerance_decisions": [],
-        "current_numeric_status": "prior_exact_scope_gaps_retained_and_classified"
+        "current_numeric_status": "named_case_prospective_complete_actual_data_error_identity_review_pending"
       }
     },
     {
@@ -28562,9 +28989,9 @@
       ],
       "remaining_inputs": [
         {
-          "field": "A qualified same-temperature six-channel spectral photon-flux packet with explicit per-metre/per-nanometre units and absolute/relative tolerances; finite/range/monotonicity tests do not provide it.",
-          "needed_from": "experiment-ddece0c2ae0c1f35 / nip_tmm_six_wavelength_EL_fixture: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "experiment:perovskite_sim.experiments.el_spectrum.run_el_spectrum: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Same-temperature6channel independent spectral/absorptance packet with exact optical n/k, effective parameters, units and material/mesh/source identities.",
+          "needed_from": "experiment-ddece0c2ae0c1f35 / nip_tmm_six_wavelength_EL_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P04-06",
             "P05-01",
@@ -28572,9 +28999,19 @@
           ]
         },
         {
-          "field": "Independent emitted-current and injected-current errors, and a lower resolved EQE_EL bound for propagating uncertainty to the logarithmic nonradiative-voltage loss.",
-          "needed_from": "experiment-ddece0c2ae0c1f35 / nip_tmm_six_wavelength_EL_fixture: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "experiment:perovskite_sim.experiments.el_spectrum.run_el_spectrum: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Independent spectral channel and emitted/injected-current error intervals, plus arithmetic/integration/ratio/log errors; include both raw and reported clipping states.",
+          "needed_from": "experiment-ddece0c2ae0c1f35 / nip_tmm_six_wavelength_EL_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
+          "downstream_tasks": [
+            "P04-06",
+            "P05-01",
+            "P05-03"
+          ]
+        },
+        {
+          "field": "The original finite/range/monotonicity checks and coarse dark-sweep solver tolerances remain diagnostics, not precision evidence. The fixed six-node quadrature target is not a claim about the continuum400-900nm integral.",
+          "needed_from": "experiment-ddece0c2ae0c1f35 / nip_tmm_six_wavelength_EL_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P04-06",
             "P05-01",
@@ -28599,7 +29036,7 @@
           "family_rule_id": "spectrum_packet",
           "case_id": "nip_tmm_six_wavelength_EL_fixture",
           "applicability": "Only the existing 1 V coarse EL fixture; no universal blackbody or emission reference is synthesized.",
-          "numeric_parameter_status": "partially_specified",
+          "numeric_parameter_status": "prospective_complete",
           "known_parameters": {
             "wavelengths_nm": [
               400.0,
@@ -28672,11 +29109,24 @@
                 285
               ],
               "text_sha256": "43381c1d30c80fdc2bacededcd9f5756e7b9e8cd8f29f35ae3a419fc19eb1d7f"
+            },
+            {
+              "source_id": "four_case_proposal"
+            },
+            {
+              "source_id": "four_case_amendments"
+            },
+            {
+              "source_id": "four_case_amendment_review"
+            },
+            {
+              "source_id": "four_case_arithmetic"
             }
           ],
           "remaining_parameters": [
-            "Qualified spectral values and per-channel absolute/relative/weak-signal tolerances at the six source wavelengths; output units and nm/m conversion are now source-resolved, not unknown.",
-            "Independent emitted-current and injected-current errors, and a lower resolved EQE_EL bound for propagating uncertainty to the logarithmic nonradiative-voltage loss."
+            "Same-temperature6channel independent spectral/absorptance packet with exact optical n/k, effective parameters, units and material/mesh/source identities.",
+            "Independent spectral channel and emitted/injected-current error intervals, plus arithmetic/integration/ratio/log errors; include both raw and reported clipping states.",
+            "The original finite/range/monotonicity checks and coarse dark-sweep solver tolerances remain diagnostics, not precision evidence. The fixed six-node quadrature target is not a claim about the continuum400-900nm integral."
           ],
           "reference_eligibility": {
             "status": "blocked_pending_independent_reference_and_review",
@@ -28686,6 +29136,223 @@
             "unused_error_shares_redistributed": false,
             "reference_qualified": false,
             "active_comparison": null
+          },
+          "case_definition": {
+            "schema": "solarlab.four_case_definition.v1",
+            "kind": "el",
+            "scope_id": "scope-experiment-ddece0c2ae0c1f35",
+            "case_id": "nip_tmm_six_wavelength_EL_fixture",
+            "status": "prospective_complete",
+            "reference_error_bound": null,
+            "reference_qualified": false,
+            "active_comparison": null,
+            "protocol": {
+              "wavelengths_nm": [
+                400.0,
+                500.0,
+                600.0,
+                700.0,
+                800.0,
+                900.0
+              ],
+              "injection_voltage_V": 1.0,
+              "grid_request": 30,
+              "dark_sweep_points": 10,
+              "trapezoid_weights_m": [
+                5e-08,
+                1e-07,
+                1e-07,
+                1e-07,
+                1e-07,
+                5e-08
+              ],
+              "components": [
+                "EL_spectrum",
+                "absorber_absorptance",
+                "J_em_rad",
+                "J_inj",
+                "EQE_EL",
+                "delta_V_nr_mV"
+              ],
+              "zero_policy": "Nonpositive injection and unresolvable emitted/injected flux require explicit rejection or unresolved status, never an invented logarithmic floor.",
+              "EL_spectrum_unit": "photons m-2 s-1 nm-1",
+              "internal_spectral_flux_unit": "photons m-2 s-1 m-1",
+              "stored_spectral_conversion": "EL_spectrum_per_nm=Phi_EL_per_m*1e-9",
+              "stored_to_SI_spectral_multiplier": 1000000000.0,
+              "emission_current_formula": "Q*trapezoid(Phi_EL_per_m,wavelength_m) = Q*trapezoid(EL_spectrum_per_nm,wavelength_nm)",
+              "voltage_loss_unit": "mV",
+              "voltage_loss_to_V_multiplier": 0.001
+            },
+            "common_contract": {
+              "classification": "These are proposed accuracy allocations. Source-derived scales are dimensional normalizations, not observations, reference error certificates, measured resolution limits or device-area/noise assumptions.",
+              "mixed_rule": "T(S_ref,U)=a+r*S_ref; epsilon=1e-4, a=(epsilon^2/2)*U, r=epsilon/2, S_ref=abs(the frozen same-channel reference); no candidate-dependent normalization.",
+              "accuracy_argument": "For S_ref>=epsilon*U, T<=epsilon*S_ref; for S_ref<epsilon*U, T<=epsilon^2*U. The crossover epsilon*U is fixed prospectively and is not a detector noise floor. This preserves the 1e-4 meaningful-relative objective and adds a stricter dimensioned weak/zero branch.",
+              "reference_error": "Each actual independent reference error B_ref must be finite, nonnegative, source-bound and <=T/3, or the stricter original share. B_ref is null here. Require observed_difference+B_ref<=T; preserve any stricter existing gates. Unused shares are not redistributed.",
+              "empirical_refinement": "Differences across meshes, time grids, solver tolerances or arithmetic precisions are diagnostics, not automatically independent error bounds; a justified estimator with assumptions/remainder or an independent formulation/analytic enclosure must support reference qualification.",
+              "before_candidate": "Root/SCI must approve the prospective definition; bind the exact reference, material/input/source identities, all channel scales and actual error evidence, then freeze the fully materialized existing GateSpec before the candidate begins.",
+              "unknown_or_weak": "Unknown/over-budget error, missing channels, unresolved denominators or an unverified projection produce unknown/unresolved. A zero computed value is not evidence of an exact physical zero. Do not raise floors, clip, omit a coordinate or reinterpret a historical finite/range check to obtain acceptance.",
+              "rounding": "New mixed coefficients are downward binary64 allocations and fixed floors are upward. Original phase words are nearest-binary64 exceptions and retain strict < with both-side error."
+            },
+            "pending_observables": [
+              "Same-temperature6channel independent spectral/absorptance packet with exact optical n/k, effective parameters, units and material/mesh/source identities.",
+              "Independent spectral channel and emitted/injected-current error intervals, plus arithmetic/integration/ratio/log errors; include both raw and reported clipping states.",
+              "The original finite/range/monotonicity checks and coarse dark-sweep solver tolerances remain diagnostics, not precision evidence. The fixed six-node quadrature target is not a claim about the continuum400-900nm integral."
+            ],
+            "approval_sources": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "rules": {
+              "spectrum:400": {
+                "atol": 1.967525e-18,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "photons m-2 s-1 nm-1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 3.93505e-10,
+                "weak_crossover": 3.93505e-14,
+                "nominal_atol_exact": "78701/40000000000000000000000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "spectrum:500": {
+                "atol": 2.0916749999999998e-08,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "photons m-2 s-1 nm-1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 4.18335,
+                "weak_crossover": 0.00041833500000000004,
+                "nominal_atol_exact": "83667/4000000000000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "spectrum:600": {
+                "atol": 0.08842599999999999,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "photons m-2 s-1 nm-1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 17685200.0,
+                "weak_crossover": 1768.5200000000002,
+                "nominal_atol_exact": "44213/500000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "spectrum:700": {
+                "atol": 4344.514999999999,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "photons m-2 s-1 nm-1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 868903000000.0,
+                "weak_crossover": 86890300.0,
+                "nominal_atol_exact": "868903/200",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "spectrum:800": {
+                "atol": 13345550.0,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "photons m-2 s-1 nm-1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 2669110000000000.0,
+                "weak_crossover": 266911000000.0,
+                "nominal_atol_exact": "13345550",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "spectrum:900": {
+                "atol": 6509750000.0,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "photons m-2 s-1 nm-1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 1.30195e+18,
+                "weak_crossover": 130195000000000.0,
+                "nominal_atol_exact": "6509750000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "absorptance": {
+                "atol": 4.999999999999999e-09,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 1.0,
+                "weak_crossover": 0.0001,
+                "nominal_atol_exact": "1/200000000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "J_em_rad": {
+                "atol": 5.236273560790722e-08,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "A m-2",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 10.472547121581444,
+                "weak_crossover": 0.0010472547121581446,
+                "nominal_atol_exact": "209450942431628874682416484431826451636217/4000000000000000000000000000000000000000000000000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "J_inj": {
+                "atol": 5.236273560790722e-08,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "A m-2",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 10.472547121581444,
+                "weak_crossover": 0.0010472547121581446,
+                "nominal_atol_exact": "209450942431628874682416484431826451636217/4000000000000000000000000000000000000000000000000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "EQE_EL": {
+                "atol": 0.0,
+                "rtol": 9.999999999999999e-05,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound."
+              },
+              "delta_V_nr": {
+                "atol": 2.5853292472604647e-06,
+                "rtol": 0,
+                "unit": "V",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound."
+              }
+            },
+            "contexts": [
+              {
+                "id": "fixture"
+              }
+            ],
+            "wavelengths_nm": [
+              400,
+              500,
+              600,
+              700,
+              800,
+              900
+            ],
+            "weights_nm": [
+              50.0,
+              100.0,
+              100.0,
+              100.0,
+              100.0,
+              50.0
+            ],
+            "charge_exact_C": "1.602176634e-19",
+            "thermal_voltage_exact_V": "6903245/267029439",
+            "source_log_floor_hex": "0x1.4484bfeebc2a0p-100",
+            "normalization_formula": "U_lambda=1e-9*(2*pi*c/lambda_m^4)/(exp(h*c/(lambda_m*k_B*T))-1)*exp(V_inj/V_T), at the six declared wavelengths, A_abs=1 only for this normalization. Round nominal U upward to6 significant decimal digits before defining allocations. This scalar input-scale arithmetic does not evaluate TMM, a device spectrum or a reference.",
+            "normalization_limit": "U_lambda is the nominal unabsorbed source-formula scale, not a measured spectrum or a certified physical upper bound; J_star=Q*sum(weights_nm*U_lambda) is a same-band dimensional normalization, not a bound on the dark injection current.",
+            "error_propagation": {
+              "emission": "B_E<=Q*sum_i abs(w_nm_i)*B_F_i+B_sum_rounding. Nonnegative spectra make the nominal sum of per-channel mixed tolerances equal the emission-current mixed tolerance; rounded values are still checked explicitly. Optical/material and source-approximation uncertainty must match the stated target.",
+              "injection": "I=-J_inj>0 under the declared solar convention. Bind B_I from an independent same-protocol dark-current reference, never from the1V value, a relative solver request, or J_star alone.",
+              "ratio_interval": "Require E-B_E>0 and I-B_I>0. R_lo=(E-B_E)/(I+B_I), R_hi=(E+B_E)/(I-B_I); B_R=max(R_hat-R_lo,R_hi-R_hat). For a relative ratio target require B_R<=epsilon*abs(R_hat)/3 (or stricter existing share) and the total comparison margin.",
+              "log_interval": "For0<R_lo<=R_hi<=1, L_lo=-V_T*ln(R_hi), L_hi=-V_T*ln(R_lo); include log/arithmetic error. Require B_L<=log_atol/3 and observed log-loss difference+B_L<=log_atol. A resolved lower ratio bound is the actual positive R_lo, not an invented1e-30 floor.",
+              "clamp_and_sign": "Preserve the source raw EQE_EL, source abs(J_inj) branch, the I<1e-30 zero sentinel and the separate[1e-30,1] clamp used only for delta_V_nr. Export signed J_inj, raw absorptance before its[0,1]clip, raw ratio and all branch indicators. Non-injection sign, unresolved intervals or a ratio interval crossing the log-clamp boundary cannot be claimed as an unclipped physical log result; the historical output may still be recorded."
+            },
+            "amended_log_eligibility": "For EACH reference and candidate, a physical unclipped log result is eligible only if the complete raw ratio interval lies in [the exact source binary64 1e-30 value,1], the complete injection-magnitude interval lies in [the exact source binary64 1e-30 value,+infinity), the signed current is injection under the original solar convention, and raw ratio, source clamp and sentinel flags agree. Include ratio/log/arithmetic error margins. Otherwise preserve raw and legacy outputs and report this channel unavailable/unresolved; do not clamp interval bounds, drop coordinates or manufacture zero.",
+            "mandatory_independent_emission_gate": true,
+            "rounded_spectral_sum_slack_A_m2_exact": "-14625750197241763261806606198564663/8112963841460668169578900514406400000000000000000000000000",
+            "rounding_slack_meaning": "J_em_rad.atol - Q*sum(weights_nm*spectral_atol), exact stored coefficients; negative slack forbids inferring emission pass from six spectral passes."
+          },
+          "comparator": {
+            "source_id": "four_case_comparator",
+            "symbol": "compare_case"
+          },
+          "definition_validator": {
+            "source_id": "four_case_comparator",
+            "symbol": "validate_case_definition"
           }
         }
       ],
@@ -28799,6 +29466,21 @@
             "measurement_inputs_pending": [
               "Original six-wavelength same-temperature spectral/reference packet"
             ]
+          },
+          {
+            "case_id": "nip_tmm_six_wavelength_EL_fixture",
+            "status": "prospective_complete",
+            "comparator": {
+              "source_id": "four_case_comparator",
+              "symbol": "compare_case"
+            },
+            "source_ids": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "qualification_granted": false
           }
         ],
         "prior_gaps_apply_outside_listed_source_resolved_cases": true,
@@ -28806,7 +29488,7 @@
         "reference_eligibility_is_separate": true,
         "fixed_discrete_target_requires_continuum_qualification": false,
         "scope_extension_or_tolerance_decisions": [],
-        "current_numeric_status": "named_input_or_subgates_resolved"
+        "current_numeric_status": "named_case_prospective_complete_actual_data_error_identity_review_pending"
       }
     },
     {
@@ -29066,9 +29748,9 @@
       ],
       "remaining_inputs": [
         {
-          "field": "Qualified signed J_light/J_dark/EQE values at the five exact wavelengths, their joint subtraction error, and an absolute dimensionless weak-EQE allowance justified before the candidate run.",
-          "needed_from": "experiment-d99a1dd374330649 / nip_tmm_five_wavelength_EQE_fixture: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "experiment:perovskite_sim.experiments.eqe.compute_eqe: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Actual J_light,J_dark,signed increments and independent errors at400/500/600/700/800nm, plus exact source optical n/k,AM1.5G bytes,flux,controls,raw-state identities and settling status.",
+          "needed_from": "experiment-d99a1dd374330649 / nip_tmm_five_wavelength_EQE_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P04-06",
             "P05-01",
@@ -29076,9 +29758,19 @@
           ]
         },
         {
-          "field": "Bind the actual nip optical n/k and AM1.5G resource bytes, protocol and raw electrical states; independent spectral/discretization error is needed. The roughly20-percent integrated-Jsc assertion and 1.01 range ceiling do not supply 1e-4 EQE accuracy.",
-          "needed_from": "experiment-d99a1dd374330649 / nip_tmm_five_wavelength_EQE_fixture: original bound source/input and independently reviewed ReferenceQualification packet",
-          "blocked_use": "experiment:perovskite_sim.experiments.eqe.compute_eqe: new N acceptance outside the explicitly limited fixture meaning",
+          "field": "Independent electrical/optical/settling/error evidence for the stated same-protocol target; old20%integrated-Jsc and finite/range/bandgap checks are not1e-4 accuracy evidence.",
+          "needed_from": "experiment-d99a1dd374330649 / nip_tmm_five_wavelength_EQE_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
+          "downstream_tasks": [
+            "P04-06",
+            "P05-01",
+            "P05-03"
+          ]
+        },
+        {
+          "field": "All5coordinates remain required including zero/weak/negative values; no fitted area, integration time or hypothetical detector noise is introduced.",
+          "needed_from": "experiment-d99a1dd374330649 / nip_tmm_five_wavelength_EQE_fixture: independently qualified source/input/reference evidence",
+          "blocked_use": "Any active new numerical comparison before the exact data/error/identity/review gate is frozen",
           "downstream_tasks": [
             "P04-06",
             "P05-01",
@@ -29103,7 +29795,7 @@
           "family_rule_id": "spectrum_packet",
           "case_id": "nip_tmm_five_wavelength_EQE_fixture",
           "applicability": "Original coarse EQE fixture with explicit 5 wavelengths; range and bandgap assertions are not accuracy certificates.",
-          "numeric_parameter_status": "partially_specified",
+          "numeric_parameter_status": "prospective_complete",
           "known_parameters": {
             "wavelengths_nm": [
               400.0,
@@ -29158,11 +29850,24 @@
                 931
               ],
               "text_sha256": "b72c4040bcf0248f9b08eca8c8ecf561fb82e0f5fa637d76d2551b6dc22f4a60"
+            },
+            {
+              "source_id": "four_case_proposal"
+            },
+            {
+              "source_id": "four_case_amendments"
+            },
+            {
+              "source_id": "four_case_amendment_review"
+            },
+            {
+              "source_id": "four_case_arithmetic"
             }
           ],
           "remaining_parameters": [
-            "Qualified signed J_light/J_dark/EQE values at the five exact wavelengths, their joint subtraction error, and an absolute dimensionless weak-EQE allowance justified before the candidate run.",
-            "Bind the actual nip optical n/k and AM1.5G resource bytes, protocol and raw electrical states; independent spectral/discretization error is needed. The roughly20-percent integrated-Jsc assertion and 1.01 range ceiling do not supply 1e-4 EQE accuracy."
+            "Actual J_light,J_dark,signed increments and independent errors at400/500/600/700/800nm, plus exact source optical n/k,AM1.5G bytes,flux,controls,raw-state identities and settling status.",
+            "Independent electrical/optical/settling/error evidence for the stated same-protocol target; old20%integrated-Jsc and finite/range/bandgap checks are not1e-4 accuracy evidence.",
+            "All5coordinates remain required including zero/weak/negative values; no fitted area, integration time or hypothetical detector noise is introduced."
           ],
           "reference_eligibility": {
             "status": "blocked_pending_independent_reference_and_review",
@@ -29172,6 +29877,115 @@
             "unused_error_shares_redistributed": false,
             "reference_qualified": false,
             "active_comparison": null
+          },
+          "case_definition": {
+            "schema": "solarlab.four_case_definition.v1",
+            "kind": "eqe",
+            "scope_id": "scope-experiment-d99a1dd374330649",
+            "case_id": "nip_tmm_five_wavelength_EQE_fixture",
+            "status": "prospective_complete",
+            "reference_error_bound": null,
+            "reference_qualified": false,
+            "active_comparison": null,
+            "protocol": {
+              "wavelengths_nm": [
+                400.0,
+                500.0,
+                600.0,
+                700.0,
+                800.0
+              ],
+              "grid_request": 30,
+              "settle_s": 0.0005,
+              "incident_photon_flux_m2_s": 4e+21,
+              "source_current_scale_A_m2": 640.8706536,
+              "EQE_unit": "1",
+              "current_unit": "A m-2",
+              "EQE_definition": "(J_light(lambda)-J_dark)/(Q*Phi_incident), retaining the source signed current convention",
+              "integrated_current_definition": "Q * trapezoid(EQE * AM1.5G_photon_flux_per_m, wavelength_m)",
+              "trapezoid_weights_m": [
+                5e-08,
+                1e-07,
+                1e-07,
+                1e-07,
+                5e-08
+              ],
+              "mask": "all five coordinates including weak/band-edge channels",
+              "N_relative_target": 0.0001,
+              "zero_policy": "Dark subtraction retains both original currents and their errors; zero/sub-gap response is not normalized by itself."
+            },
+            "common_contract": {
+              "classification": "These are proposed accuracy allocations. Source-derived scales are dimensional normalizations, not observations, reference error certificates, measured resolution limits or device-area/noise assumptions.",
+              "mixed_rule": "T(S_ref,U)=a+r*S_ref; epsilon=1e-4, a=(epsilon^2/2)*U, r=epsilon/2, S_ref=abs(the frozen same-channel reference); no candidate-dependent normalization.",
+              "accuracy_argument": "For S_ref>=epsilon*U, T<=epsilon*S_ref; for S_ref<epsilon*U, T<=epsilon^2*U. The crossover epsilon*U is fixed prospectively and is not a detector noise floor. This preserves the 1e-4 meaningful-relative objective and adds a stricter dimensioned weak/zero branch.",
+              "reference_error": "Each actual independent reference error B_ref must be finite, nonnegative, source-bound and <=T/3, or the stricter original share. B_ref is null here. Require observed_difference+B_ref<=T; preserve any stricter existing gates. Unused shares are not redistributed.",
+              "empirical_refinement": "Differences across meshes, time grids, solver tolerances or arithmetic precisions are diagnostics, not automatically independent error bounds; a justified estimator with assumptions/remainder or an independent formulation/analytic enclosure must support reference qualification.",
+              "before_candidate": "Root/SCI must approve the prospective definition; bind the exact reference, material/input/source identities, all channel scales and actual error evidence, then freeze the fully materialized existing GateSpec before the candidate begins.",
+              "unknown_or_weak": "Unknown/over-budget error, missing channels, unresolved denominators or an unverified projection produce unknown/unresolved. A zero computed value is not evidence of an exact physical zero. Do not raise floors, clip, omit a coordinate or reinterpret a historical finite/range check to obtain acceptance.",
+              "rounding": "New mixed coefficients are downward binary64 allocations and fixed floors are upward. Original phase words are nearest-binary64 exceptions and retain strict < with both-side error."
+            },
+            "pending_observables": [
+              "Actual J_light,J_dark,signed increments and independent errors at400/500/600/700/800nm, plus exact source optical n/k,AM1.5G bytes,flux,controls,raw-state identities and settling status.",
+              "Independent electrical/optical/settling/error evidence for the stated same-protocol target; old20%integrated-Jsc and finite/range/bandgap checks are not1e-4 accuracy evidence.",
+              "All5coordinates remain required including zero/weak/negative values; no fitted area, integration time or hypothetical detector noise is introduced."
+            ],
+            "approval_sources": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "rules": {
+              "EQE": {
+                "atol": 4.999999999999999e-09,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "1",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 1.0,
+                "weak_crossover": 0.0001,
+                "nominal_atol_exact": "1/200000000",
+                "nominal_rtol_exact": "1/20000"
+              },
+              "current": {
+                "atol": 3.2043532679999996e-06,
+                "rtol": 4.9999999999999996e-05,
+                "unit": "A m-2",
+                "basis": "Prospective engineering accuracy allocation from the declared source-input scale; not a measured error bound.",
+                "input_scale": 640.8706536,
+                "weak_crossover": 0.06408706536,
+                "nominal_atol_exact": "801088317/250000000000000",
+                "nominal_rtol_exact": "1/20000"
+              }
+            },
+            "contexts": [
+              {
+                "id": "fixture"
+              }
+            ],
+            "wavelengths_nm": [
+              400,
+              500,
+              600,
+              700,
+              800
+            ],
+            "current_scale_exact": "801088317/1250000",
+            "error_propagation": {
+              "signed_difference": "DeltaJ=J_light-J_dark, with no abs,clipping,or removal of negative or sub-gap channels. B_DeltaJ<=B_light+B_dark+B_subtraction_rounding; retain both actual signed currents. No covariance cancellation is presumed.",
+              "EQE": "B_EQE<=B_DeltaJ/K plus division/constant-representation error for the exact declared source-input convention. If the denominator is assigned nonzero uncertainty, use the quotient bound with K>B_K; no measurement flux uncertainty is fabricated.",
+              "reference_budget": "Require B_EQE<=T_EQE/3. The weak-absolute component permits total light+dark error <=K*epsilon^2/6; equal allocations to the two currents are each K*epsilon^2/12, before consuming any arithmetic-error share. These are allocations, not measured errors.",
+              "integrated_Jsc": "For the existing fixed5point spectral quadrature, B_Jsc<=Q*sum_i abs(w_m_i*phi_AM_per_m_i)*B_EQE_i plus AM/resource/quadrature-arithmetic error. If AM1.5G values are exact bound source data, do not invent measurement uncertainty; if a continuum/broader-band target is claimed, supply separate quadrature/tail error."
+            },
+            "zero_policy": "At a zero reference, use the finite dimensionless absolute allowance4.999999999999999e-9 (nominal5e-9); do not divide by zero or normalize by candidate amplitude. A sign/noise resolution claim needs abs(DeltaJ)>B_DeltaJ; otherwise retain the signed result and unresolved sign while evaluating the absolute accuracy branch. A computed zero is not automatically an exact zero species.",
+            "normalization_origin": "Phi_incident=4e21 photons/m2/s and exact Q=1.602176634e-19 C give K=640.8706536 A/m2; U_EQE=1 is a declared dimensionless source scale, not an imposed physical range or a measured uncertainty."
+          },
+          "comparator": {
+            "source_id": "four_case_comparator",
+            "symbol": "compare_case"
+          },
+          "definition_validator": {
+            "source_id": "four_case_comparator",
+            "symbol": "validate_case_definition"
           }
         }
       ],
@@ -29229,13 +30043,29 @@
             "classification_basis": "mixed original source/identity/use-review obligation; no new tolerance inferred"
           }
         ],
-        "new_source_resolved_cases": [],
+        "new_source_resolved_cases": [
+          {
+            "case_id": "nip_tmm_five_wavelength_EQE_fixture",
+            "status": "prospective_complete",
+            "comparator": {
+              "source_id": "four_case_comparator",
+              "symbol": "compare_case"
+            },
+            "source_ids": [
+              "four_case_proposal",
+              "four_case_amendments",
+              "four_case_amendment_review",
+              "four_case_arithmetic"
+            ],
+            "qualification_granted": false
+          }
+        ],
         "prior_gaps_apply_outside_listed_source_resolved_cases": true,
         "reference_error_bound": null,
         "reference_eligibility_is_separate": true,
         "fixed_discrete_target_requires_continuum_qualification": false,
         "scope_extension_or_tolerance_decisions": [],
-        "current_numeric_status": "prior_exact_scope_gaps_retained_and_classified"
+        "current_numeric_status": "named_case_prospective_complete_actual_data_error_identity_review_pending"
       }
     },
     {
@@ -41657,15 +42487,26 @@
       },
       "unchanged_prefix_bytes": 138722,
       "latest_preparation_update": {
-        "prior_sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef",
-        "current_sha256": "36942cbcae7ab01a2302e09c73bdfc365b730f830f0500b2c4150073558b2a3f",
-        "scope": "Root-authorized engineering resources, explicit UI preparation and TimeWeights prototype schedule; all13 source-bound formal citation texts rechecked unchanged."
+        "prior_sha256": "36942cbcae7ab01a2302e09c73bdfc365b730f830f0500b2c4150073558b2a3f",
+        "current_sha256": "f23f96552b11f6a1000fab4f91c1be940156f21e802ef74570cdb0d688ea6a9f",
+        "scope": "Root-authorized section19.33 completed-work/resource append; all13 original formal citation texts remain unchanged. No plan bytes, scientific limits or original citations edited by Engineering.",
+        "authority": {
+          "root": "archive",
+          "path": "test/ArchitectureRefactor/Stage00/DefinitionClosureV1/RootFormalPinUpdate.json",
+          "sha256": "a778150ce093bcb5e087a40f004e1db824456893a580f512c87c2e9fb7087a2b"
+        },
+        "intermediate_observed_sha256": "6229e3b1455000e98bf8f85cda9ed9dc52e5971b496df43192e00c61392ba5e5"
       },
       "preparation_updates": [
         {
           "prior_sha256": "6445d0e6d3c53ae31933001eb1df0c73cd05baad27a4bcdfe88829bc56166627",
           "current_sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef",
           "scope": "Section19.15 read-only stored-run client scheduling; existing scientific criterion text unchanged."
+        },
+        {
+          "prior_sha256": "8496780b7d619460ab65dabf817c3ecd6f3abf6834f1cdae75d34ce9d56b2eef",
+          "current_sha256": "36942cbcae7ab01a2302e09c73bdfc365b730f830f0500b2c4150073558b2a3f",
+          "scope": "Root-authorized engineering resources, explicit UI preparation and TimeWeights prototype schedule; all13 source-bound formal citation texts rechecked unchanged."
         }
       ]
     }
@@ -41820,5 +42661,36 @@
     "old_scope_sha256": "7c1354aceb4ac58b579f6340494df7cc0928d6a085fa67f4a67da97097dbbb1f",
     "reference_qualified": false,
     "scientific_gates_awarded": []
+  },
+  "four_case_definition_closure": {
+    "schema": "solarlab.four-case-numeric-closure.v1",
+    "source_HEAD": "c214679898105a0e5d82d61f2d064744d5e767aa",
+    "status": "prospective_definitions_implemented_pending_independent_delta_review",
+    "scope_ids": [
+      "scope-benchmark-d84b2405628c3df6",
+      "scope-oracle-23a290eced9bdb76",
+      "scope-experiment-ddece0c2ae0c1f35",
+      "scope-experiment-d99a1dd374330649"
+    ],
+    "sources": [
+      "four_case_proposal",
+      "four_case_amendments",
+      "four_case_amendment_review",
+      "four_case_arithmetic"
+    ],
+    "comparator": {
+      "source_id": "four_case_comparator",
+      "symbol": "compare_case"
+    },
+    "definition_validator": {
+      "source_id": "four_case_comparator",
+      "symbol": "validate_case_definition"
+    },
+    "previous_summary_sections": "Historical preparation counts retain their original source_HEAD; this section records the four additional numeric completions.",
+    "reference_errors_measured": false,
+    "reference_qualified": false,
+    "active_comparison": null,
+    "G0_awarded": false,
+    "SCAPS_HI_unchanged": true
   }
 }

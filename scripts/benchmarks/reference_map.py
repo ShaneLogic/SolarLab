@@ -179,6 +179,29 @@ def validate_comparison_scopes(scopes, mapping, repo, archive):
         _require(bool(row.get("classification_basis")), "scope_classification_basis")
         for binding in row.get("citations", []):
             cite(binding)
+        for packet in row.get("parameter_bindings", []):
+            definition = packet.get("case_definition")
+            if definition is None:
+                continue
+            _require(definition.get("schema") == "solarlab.four_case_definition.v1"
+                     and definition.get("scope_id") == row["id"]
+                     and definition.get("case_id") == packet["case_id"]
+                     and definition.get("protocol") == packet["known_parameters"],
+                     "case_definition_binding")
+            _require(packet.get("numeric_parameter_status") == definition.get("status") == "prospective_complete"
+                     and definition.get("reference_error_bound") is None
+                     and definition.get("reference_qualified") is False
+                     and definition.get("active_comparison") is None
+                     and bool(definition.get("pending_observables")), "case_definition_eligibility")
+            _require(bool(definition.get("rules")) and bool(definition.get("contexts")), "case_definition_incomplete")
+            for rule in definition["rules"].values():
+                _require(bool(rule.get("unit")) and bool(rule.get("basis"))
+                         and all(type(rule.get(k)) in (int, float) and math.isfinite(rule[k])
+                                 and rule[k] >= 0 for k in ("atol", "rtol")), "case_definition_threshold")
+            cite(packet["comparator"])
+            cite(packet["definition_validator"])
+            for binding in packet.get("citations", []):
+                cite(binding)
         _require(bool(row.get("remaining_inputs")), "scope_missing_qualification_obligation")
         for need in row["remaining_inputs"]:
             _require(all(need.get(k) for k in ("field", "needed_from", "blocked_use")), "scope_vague_missing_input")
