@@ -309,6 +309,117 @@ class _Rows:
         return row
 
 
+def segment_startup_controls(request, segment):
+    """Independently bind the sole permitted override, without producer imports."""
+    controls = dict(request["controls"])
+    _require("segment_startup_overrides" not in request, "segment_startup_unbound_override")
+    if "segment_startup_policy" not in request:
+        return controls
+    policy = request["segment_startup_policy"]
+    expected = {
+        "schema": "solarlab.voltage-lift-segment-startup.v1",
+        "ancestor_request_sha256": request["prior_request_sha256"],
+        "base_controls_sha256": _digest(controls),
+        "segments_sha256": _digest(request["segments"]),
+        "time_weight_policy_sha256": _digest(request.get("time_weight_policy")),
+        "overrides": {"slow_state_hold": {"first_step": 0.0}},
+        "application": "fresh_segment_initialization_before_first_solve",
+    }
+    _require(type(policy) is dict and _digest(policy) == _digest(expected)
+             and request["case_id"] == "DynamicAcceptorIonPublicDeviceV1"
+             and [s["id"] for s in request["segments"]] == [
+                 "dark_equilibrium_hold", "voltage_ramp", "slow_state_hold"]
+             and segment in request["segments"]
+             and controls.get("first_step") == 7.8125e-7
+             and len(controls.get("atol", [])) == 45
+             and controls.get("nonlin_conv_coef") == 1.024e-5
+             and controls.get("nonlin_guard") == "first-correction-wrms-v1"
+             and controls.get("nonlin_trace_capacity") == 4096
+             and request.get("time_weight_policy", {}).get("kappa") == 1024,
+             "segment_startup_policy_binding")
+    if segment["id"] == "slow_state_hold":
+        controls["first_step"] = 0.0
+    return controls
+
+
+class SegmentStartupCheck:
+    """Bounded constructor/native-stat association, also usable on failed runs.
+
+    Constructor words are source evidence, not a native requested-step getter.
+    h0u independently checks explicit steps and records automatic selection;
+    it cannot prove which automatic-start algorithm was executed.
+    """
+    def __init__(self, request):
+        self.request = request
+        self.enabled = "segment_startup_policy" in request
+        self.expected = [segment_startup_controls(request, s) for s in request["segments"]]
+        self.contexts = []
+
+    def consume(self, row):
+        kind = row.get("kind")
+        if kind == "voltage_lift_initialization_controls":
+            ordinal = len(self.contexts) + 1
+            _require(self.enabled and ordinal <= len(self.expected), "segment_startup_unexpected_constructor")
+            segment = self.request["segments"][ordinal - 1]
+            controls = self.expected[ordinal - 1]
+            _require(row["request_sha256"] == _digest(self.request)
+                     and row["map_identity"] == self.request["map_identity"]
+                     and row["segment_id"] == segment["id"]
+                     and row["segment_sha256"] == _digest(segment)
+                     and type(row["logical_initialization_index"]) is int
+                     and row["logical_initialization_index"] == ordinal
+                     and row["segment_startup_policy_sha256"] == _digest(self.request["segment_startup_policy"])
+                     and _digest(row["constructor_controls"]) == row["constructor_controls_sha256"] == _digest(controls)
+                     and row["requested_first_step_hex"] == float(controls["first_step"]).hex(),
+                     "segment_startup_constructor_binding")
+            self.contexts.append({"ordinal": ordinal, "segment_id": segment["id"],
+                "constructor_record_sha256": _digest(row), "controls_sha256": _digest(controls),
+                "requested_first_step_hex": row["requested_first_step_hex"],
+                "native_owner": None, "actual_initial_step_hex": None, "accepted_steps": 0,
+                "first_return_record_sha256": None})
+        elif self.enabled and kind == "native_statistics":
+            ordinal = row["logical_initialization_index"]
+            _require(type(ordinal) is int and ordinal == len(self.contexts) and ordinal > 0,
+                     "segment_startup_missing_constructor")
+            context, raw = self.contexts[-1], row["raw_statistics"]
+            _require(row["segment_id"] == context["segment_id"], "segment_startup_statistics_segment")
+            owner = [raw["observation_owner"], raw["observation_generation"]]
+            if row["phase"] == "initialization_return":
+                _require(context["native_owner"] is None and raw["num_steps"] == 0,
+                         "segment_startup_initialization_sequence")
+                context["native_owner"] = owner
+            else:
+                _require(context["native_owner"] == owner, "segment_startup_native_owner")
+            if row["phase"] in ("after_onestep", "onestep_exception"):
+                h0, count = raw["initial_step"], raw["num_steps"]
+                _require(type(count) is int and count >= context["accepted_steps"],
+                         "segment_startup_step_count")
+                if count > 0:
+                    _require(type(h0) is float and math.isfinite(h0) and h0 > 0,
+                             "segment_startup_actual_initial_step")
+                    requested = self.expected[ordinal - 1]["first_step"]
+                    _require(requested == 0 or h0.hex() == float(requested).hex(),
+                             "segment_startup_explicit_step_not_applied")
+                    _require(context["actual_initial_step_hex"] in (None, h0.hex()),
+                             "segment_startup_actual_step_changed")
+                    context["actual_initial_step_hex"] = h0.hex()
+                if context["first_return_record_sha256"] is None:
+                    context["first_return_record_sha256"] = _digest(row)
+                    context["first_return_steps"] = count
+                    context["raw_first_return_initial_step"] = h0
+                context["accepted_steps"] = count
+
+    def finish(self, *, complete):
+        if self.enabled and complete:
+            _require(len(self.contexts) == len(self.expected)
+                     and all(c["native_owner"] is not None and c["accepted_steps"] > 0
+                             and c["actual_initial_step_hex"] is not None for c in self.contexts),
+                     "segment_startup_incomplete_application")
+        return {"enabled": self.enabled, "initializations": self.contexts,
+                "native_requested_first_step_getter": "unavailable",
+                "scope": "source-bound constructor kwargs and actual IDAGetIntegratorStats h0u; no accuracy qualification"}
+
+
 class _Protocol:
     def __init__(self, request, rows):
         self.request, self.rows = request, rows
@@ -335,6 +446,7 @@ class _Protocol:
         self.prefix = {k: ((Fraction(0),) * 3, (Fraction(0),) * 3) for k in _LEDGERS}
         self.coverage = []
         self.native_owner = None
+        self.startup = SegmentStartupCheck(request)
 
     def _context(self, row):
         _require(row["request_sha256"] == self.request_id and row["map_identity"] == self.map_id,
@@ -357,6 +469,7 @@ class _Protocol:
         _require(row["kind"] == "native_statistics" and row["phase"] == phase
                  and row["segment_id"] == self.segment["id"]
                  and row["logical_initialization_index"] == self.ordinal, "statistics_order_or_context")
+        self.startup.consume(row)
         target = self.segment["start"] if phase == "initialization_return" else self.segment["end"]
         _require(_hex(row["requested_time_hex"]) == target, "statistics_requested_time")
         raw = row["raw_statistics"]
@@ -624,6 +737,8 @@ class _Protocol:
                             "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
                             "desired_tangent_residual_SI", "represented_rate_residual_SI"):
                     _require(proof[key] == self.request["initial_preparation"][key], "initial_preparation_changed")
+            if self.startup.enabled:
+                self.startup.consume(self.rows.take("voltage_lift_initialization_controls"))
             stats = self._statistics("initialization_return", start)
             _require(stats["num_steps"] == 0, "initialization_step_counter")
             left = self._sample(start, "segment_initial", predecessor, initial=True)
@@ -725,6 +840,7 @@ class _Protocol:
             self.coverage.append({"segment_id": self.segment["id"], "intervals": segment_intervals,
                                   "requested_samples": cursor, "start_s": start, "end_s": end})
         _require(self.coverage and self.intervals > 0, "empty_protocol")
+        self.startup.finish(complete=True)
         self.rows.take(eof=True)
 
     def _requested(self, pointer):
@@ -836,6 +952,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                              "rate_pairs": protocol.samples, "quadrature_orders": [8, 16, 32], "ports": 2,
                              "physical_word_layers": 4, "record_counts": dict(rows.counts)},
                 "pointers": {"last_record": last, "last_accepted": accepted}, "elapsed_s": time.perf_counter() - started,
+                **({"segment_startup": protocol.startup.finish(complete=True)} if protocol.startup.enabled else {}),
                 "scope": "stored artifact integrity, complete request coverage and recorded gate consistency; no numerical replay",
                 "scientific_qualification": False}
     except HistoryVerificationError as error:

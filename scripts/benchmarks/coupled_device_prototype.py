@@ -3502,6 +3502,69 @@ def _voltage_lift_guard_applied(raw_statistics, controls):
         raise ContractError("voltage_lift_nonlinear_guard_not_applied")
 
 
+def _voltage_lift_segment_startup(request, overrides):
+    """Bind the single hold-only candidate to its unchanged parent controls."""
+    controls = request["controls"]
+    if (not isinstance(overrides, Mapping) or set(overrides) != {"slow_state_hold"}
+            or not isinstance(overrides["slow_state_hold"], Mapping)
+            or set(overrides["slow_state_hold"]) != {"first_step"}):
+        raise ContractError("voltage_lift_invalid_segment_startup")
+    value = overrides["slow_state_hold"]["first_step"]
+    if (type(value) not in (int, float) or value != 0 or math.copysign(1, value) != 1
+            or request["case_id"] != "DynamicAcceptorIonPublicDeviceV1"
+            or [s["id"] for s in request["segments"]] != [
+                "dark_equilibrium_hold", "voltage_ramp", "slow_state_hold"]
+            or controls.get("first_step") != 7.8125e-7
+            or len(controls.get("atol", [])) != 45
+            or controls.get("nonlin_conv_coef") != 1.024e-5
+            or controls.get("nonlin_guard") != "first-correction-wrms-v1"
+            or controls.get("nonlin_trace_capacity") != 4096
+            or request.get("time_weight_policy", {}).get("kappa") != 1024):
+        raise ContractError("voltage_lift_invalid_segment_startup")
+    return {"schema": "solarlab.voltage-lift-segment-startup.v1",
+            "ancestor_request_sha256": request["prior_request_sha256"],
+            "base_controls_sha256": digest(controls),
+            "segments_sha256": digest(request["segments"]),
+            "time_weight_policy_sha256": digest(request["time_weight_policy"]),
+            "overrides": {"slow_state_hold": {"first_step": 0.0}},
+            "application": "fresh_segment_initialization_before_first_solve"}
+
+
+def _voltage_lift_initialization_controls(request, segment):
+    """Copy base controls; an explicit zero applies only to the named hold."""
+    controls = dict(request["controls"])
+    if "segment_startup_policy" in request:
+        policy = request["segment_startup_policy"]
+        if not isinstance(policy, Mapping):
+            raise ContractError("voltage_lift_invalid_segment_startup")
+        expected = _voltage_lift_segment_startup(request, policy.get("overrides"))
+        if digest(policy) != digest(expected):
+            raise ContractError("voltage_lift_segment_startup_binding")
+        if asdict(segment) not in request["segments"]:
+            raise ContractError("voltage_lift_segment_startup_unbound_segment")
+        controls.update(expected["overrides"].get(segment.id, {}))
+    return controls
+
+
+def _voltage_lift_segment_solver(ida, request, segment, ordinal, residual, jacobian,
+                                 sparsity, algebraic):
+    """Record the exact constructor kwargs; native h0u is recorded separately."""
+    controls = _voltage_lift_initialization_controls(request, segment)
+    recorded = json.loads(json.dumps(controls, allow_nan=False))
+    solver = ida(residual, jacfn=jacobian, sparsity=sparsity, algebraic_idx=algebraic, **controls)
+    receipt = None
+    if "segment_startup_policy" in request:
+        receipt = {"kind": "voltage_lift_initialization_controls",
+                   "request_sha256": digest(request), "map_identity": request["map_identity"],
+                   "segment_id": segment.id, "segment_sha256": digest(asdict(segment)),
+                   "logical_initialization_index": ordinal,
+                   "segment_startup_policy_sha256": digest(request["segment_startup_policy"]),
+                   "constructor_controls": recorded, "constructor_controls_sha256": digest(recorded),
+                   "requested_first_step_hex": float(recorded["first_step"]).hex(),
+                   "evidence": "exact kwargs passed to the returned IDA constructor; not a native option getter"}
+    return solver, receipt
+
+
 def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         segments: tuple[ProtocolSegment, ...],
                                         previous_request: Mapping, *,
@@ -3509,7 +3572,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         nonlin_guard: str | None = None,
                                         nonlin_trace_capacity: int = 4096,
                                         first_step: float | None = None,
-                                        time_weight_kappa: int | None = None) -> dict:
+                                        time_weight_kappa: int | None = None,
+                                        segment_startup_overrides: Mapping | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     if (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3
@@ -3590,6 +3654,9 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
         request["startup_step_policy"] = startup
     if time_weights is not None:
         request["time_weight_policy"] = time_weights
+    if segment_startup_overrides is not None:
+        request["segment_startup_policy"] = _voltage_lift_segment_startup(
+            request, segment_startup_overrides)
     # This preparation context deliberately precedes the final request. Its
     # digest remains labelled as such; no self-referential hash is invented.
     context = AffineSamplingContext(model, request)
@@ -3657,6 +3724,11 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
             or controls.get("linsolver") != "sparse"
             or any(k in controls for k in ("constraints_idx", "constraints_type"))):
         raise ContractError("voltage_lift_native_controls_changed")
+    if "segment_startup_overrides" in request:
+        raise ContractError("voltage_lift_segment_startup_unbound_override")
+    if "segment_startup_policy" in request:
+        for segment in segments:
+            _voltage_lift_initialization_controls(request, segment)
     if (digest(request["budgets"]) != digest(request["original_budgets"])
             or not all(request["mandatory"].values())
             or not request["mandatory"].get("mapped_rate_projection_budget")):
@@ -3862,7 +3934,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                             "time_hex": float(segment.start).hex(), "proof": initial_proof}
             save({"kind": "voltage_lift_initialization_input", **last_attempt})
             resource_check()
-            solver = IDA(residual, jacfn=jacobian, sparsity=sparsity, algebraic_idx=algebraic, **controls)
+            solver, control_receipt = _voltage_lift_segment_solver(
+                IDA, request, segment, segment_index+1, residual, jacobian, sparsity, algebraic)
+            if control_receipt is not None:
+                save(control_receipt)
             counts["initializations"] += 1
             initialized = snapshot_solver_result(solver.init_step(segment.start, z, initial_zdot))
             last_attempt = snapshot_receipt("initialization_return", segment, initialized)
