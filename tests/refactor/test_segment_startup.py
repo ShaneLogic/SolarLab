@@ -154,6 +154,41 @@ def test_actual_constructor_kwargs_and_independent_reader(requests):
     assert result["native_requested_first_step_getter"] == "unavailable"
 
 
+def test_plan_factory_constructor_reader_binding(requests):
+    """Keep the real factory's tuple pairs through the production constructor."""
+    from dataclasses import replace
+    from math import inf, nextafter
+
+    mapping, _, previous, options, _, selected = requests
+    plan = os.environ.get("REAL_DEVICE_PLAN")
+    if plan is None:
+        pytest.skip("typed protocol factory check requires the explicitly bound REAL_DEVICE_PLAN")
+    typed = device.protocol_from_plan(Path(plan), selected["case_id"])
+    assert all(type(segment.voltage) is tuple and type(segment.photons) is tuple for segment in typed)
+    assert all(asdict(segment) not in selected["segments"] for segment in typed)
+    constructed = device.prepare_voltage_lift_native_request(
+        mapping, typed, previous, **options,
+        segment_startup_overrides={"slow_state_hold": {"first_step": 0.0}})
+    device.validate_voltage_lift_native_request(mapping, typed, constructed)
+    # Certificates also retain their input container forms until serialization.
+    assert device.digest(constructed) == device.digest(selected)
+    check = SegmentStartupCheck(constructed)
+    for ordinal, segment in enumerate(typed, 1):
+        controls, receipt = constructor(constructed, segment, ordinal)
+        expected = dict(constructed["controls"], first_step=0.0 if ordinal == 3 else 7.8125e-7)
+        assert controls == expected
+        check.consume(receipt)
+        check.consume(stats(segment, ordinal, "initialization_return"))
+        check.consume(stats(segment, ordinal, "after_onestep", 1, 1e-15 if ordinal == 3 else 7.8125e-7))
+    assert len(check.finish(complete=True)["initializations"]) == 3
+    for changed in (replace(typed[-1], end=9.3), replace(typed[-1], id="voltage_ramp"),
+                    replace(typed[-1], voltage=(typed[-1].voltage[0], nextafter(typed[-1].voltage[1], inf)))):
+        with pytest.raises(device.ContractError, match="unbound_segment"):
+            device._voltage_lift_initialization_controls(constructed, changed)
+    with pytest.raises(device.ContractError, match="native_request_binding"):
+        device.validate_voltage_lift_native_request(mapping, tuple(reversed(typed)), constructed)
+
+
 def test_reader_rejects_missing_forged_or_misapplied_controls(requests):
     _, segments, _, _, parent, selected = requests
     _, receipt = constructor(selected, segments[0], 1)

@@ -3540,7 +3540,7 @@ def _voltage_lift_initialization_controls(request, segment):
         expected = _voltage_lift_segment_startup(request, policy.get("overrides"))
         if digest(policy) != digest(expected):
             raise ContractError("voltage_lift_segment_startup_binding")
-        if asdict(segment) not in request["segments"]:
+        if digest(asdict(segment)) not in {digest(s) for s in request["segments"]}:
             raise ContractError("voltage_lift_segment_startup_unbound_segment")
         controls.update(expected["overrides"].get(segment.id, {}))
     return controls
