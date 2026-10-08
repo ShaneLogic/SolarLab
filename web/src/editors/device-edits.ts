@@ -5,13 +5,36 @@ export type EditorInput = DeviceInput | TandemInput
 export type Cell = 'device' | 'top_cell' | 'bottom_cell'
 export type ItemIdentity = { id: string; occurrence: number }
 export type DefectSelection = { cell: Cell; kind: 'interface_defect'; parent: ItemIdentity; id: string }
-  | { cell: Cell; kind: 'bulk_defect'; parent: ItemIdentity; id: string; occurrence: number }
+  | { cell: Cell; kind: 'bulk_defect' | 'metastable_defect'; parent: ItemIdentity; id: string; occurrence: number }
+export type LayerDocumentSelection = { cell: Cell; kind: 'metastable_document' | 'metastable_preparation' } & ItemIdentity
 export type Selection = { cell: Cell } & (
   { kind: 'settings' } | ({ kind: 'layer' | 'material' | 'interface' | 'contact' } & ItemIdentity)
-) | DefectSelection
+) | DefectSelection | LayerDocumentSelection
 export type FieldValue = { kind: 'omit' } | { kind: 'value'; value: string | number | boolean | null }
 export type FieldEdit = FieldValue | { kind: 'incomplete'; text: string; message: string }
 export type Path = (string | number)[]
+export type RowMutation = { kind: 'insert'; index: number } | { kind: 'remove'; index: number } | { kind: 'move'; from: number; to: number }
+
+/** Reindex a pending edit with its row, including explicit removal of that row. */
+export function movedRow(index: number, action: RowMutation): number | undefined {
+  if (action.kind === 'insert') return index >= action.index ? index + 1 : index
+  if (action.kind === 'remove') return index === action.index ? undefined : index > action.index ? index - 1 : index
+  if (index === action.from) return action.to
+  if (action.from < action.to && index > action.from && index <= action.to) return index - 1
+  if (action.to < action.from && index >= action.to && index < action.from) return index + 1
+  return index
+}
+
+/** Only called on a copied draft; never sorts or couples other arrays. */
+export function mutateRows(rows: unknown[], action: RowMutation, path: Path, inserted?: unknown) {
+  const indices = action.kind === 'move' ? [action.from, action.to] : [action.index]
+  if (indices.some(index => !Number.isSafeInteger(index) || index < 0 || index >= rows.length + (action.kind === 'insert' ? 1 : 0))) {
+    throw new DeviceEditError('The selected row is no longer available.', [path])
+  }
+  if (action.kind === 'insert') rows.splice(action.index, 0, structuredClone(inserted))
+  else if (action.kind === 'remove') rows.splice(action.index, 1)
+  else rows.splice(action.to, 0, rows.splice(action.from, 1)[0])
+}
 
 /** Only the schema features needed to present supplied scalar fields and audit
  * a layer-ID rewrite. This is not a replacement for Python validation. */
@@ -28,10 +51,11 @@ export interface FieldSchema {
   readonly properties?: Readonly<Record<string, FieldSchema>>
   readonly required?: readonly string[]
   readonly items?: FieldSchema
+  readonly item_unit?: string
   readonly $defs?: Readonly<Record<string, FieldSchema>>
 }
 
-export const fieldSchemas: Record<'layer' | 'material' | 'parameters' | 'settings' | 'interface' | 'contact' | 'interface_defect' | 'bulk_defect', FieldSchema> = {
+export const fieldSchemas: Record<Selection['kind'] | 'parameters', FieldSchema> = {
   layer: configurationSchema.dto_schemas.FullLayerInput.schema,
   material: configurationSchema.dto_schemas.NamedMaterialInput.schema,
   parameters: configurationSchema.dto_schemas.FullParameterInput.schema,
@@ -40,6 +64,9 @@ export const fieldSchemas: Record<'layer' | 'material' | 'parameters' | 'setting
   contact: configurationSchema.dto_schemas.ContactInput.schema,
   interface_defect: configurationSchema.dto_schemas.DeviceInput.schema.$defs.InterfaceDefectInput,
   bulk_defect: configurationSchema.dto_schemas.BulkDefectInput.schema,
+  metastable_defect: configurationSchema.dto_schemas.DeviceInput.schema.$defs.MetastableDefectInput,
+  metastable_document: configurationSchema.dto_schemas.MetastableDocumentInput.schema,
+  metastable_preparation: configurationSchema.dto_schemas.MetastablePreparationInput.schema,
 }
 
 export class DeviceEditError extends Error {
@@ -71,7 +98,13 @@ export function selections(input: EditorInput, cell: Cell): Selection[] {
   const layers = entries('layer', device.layers).flatMap((selection, index) => {
     if (selection.kind !== 'layer') return []
     const defects = device.layers[index].bulk_defects ?? []
-    return [selection, ...defects.map((defect, offset) => ({ cell, kind: 'bulk_defect' as const,
+    const layer = device.layers[index], metastable = layer.metastable_document?.metastable_defects ?? []
+    const documents: Selection[] = (['metastable_document', 'metastable_preparation'] as const)
+      .filter(key => Object.hasOwn(layer, key)).map(kind => ({ cell, kind, id: selection.id, occurrence: selection.occurrence }))
+    return [selection, ...documents, ...metastable.map((defect, offset) => ({ cell, kind: 'metastable_defect' as const,
+      parent: { id: selection.id, occurrence: selection.occurrence }, id: defect.id,
+      occurrence: metastable.slice(0, offset).filter(item => item.id === defect.id).length })),
+    ...defects.map((defect, offset) => ({ cell, kind: 'bulk_defect' as const,
       parent: { id: selection.id, occurrence: selection.occurrence }, id: defect.id,
       occurrence: defects.slice(0, offset).filter(item => item.id === defect.id).length }))]
   })
@@ -83,19 +116,25 @@ export function selectedEntity(input: EditorInput, selection: Selection): { valu
   const device = cellInput(input, selection.cell)
   const prefix: Path = selection.cell === 'device' ? [] : [selection.cell]
   if (selection.kind === 'settings') return { value: device.settings, path: [...prefix, 'settings'], index: -1 }
+  if (selection.kind === 'metastable_document' || selection.kind === 'metastable_preparation') {
+    const parent = selectedEntity(input, { ...selection, kind: 'layer' })
+    return { value: device.layers[parent.index][selection.kind] ?? undefined, path: [...parent.path, selection.kind], index: parent.index }
+  }
   if (selection.kind === 'interface_defect') {
     const parent = selectedEntity(input, { cell: selection.cell, kind: 'interface', ...selection.parent })
     const defect = device.interfaces![parent.index].defect
     if (!defect || defect.id !== selection.id) throw new DeviceEditError('The selected interface defect is no longer supplied.', [[...parent.path, 'defect']])
     return { value: defect, path: [...parent.path, 'defect'], index: parent.index }
   }
-  if (selection.kind === 'bulk_defect') {
+  if (selection.kind === 'bulk_defect' || selection.kind === 'metastable_defect') {
     const parent = selectedEntity(input, { cell: selection.cell, kind: 'layer', ...selection.parent })
-    const defects = device.layers[parent.index].bulk_defects ?? []
+    const defects = selection.kind === 'bulk_defect' ? device.layers[parent.index].bulk_defects ?? []
+      : device.layers[parent.index].metastable_document?.metastable_defects ?? []
+    const collectionPath = selection.kind === 'bulk_defect' ? ['bulk_defects'] : ['metastable_document', 'metastable_defects']
     let occurrence = 0
     const index = defects.findIndex(item => item.id === selection.id && occurrence++ === selection.occurrence)
-    if (index < 0) throw new DeviceEditError('The selected bulk defect is no longer supplied.', [[...parent.path, 'bulk_defects']])
-    return { value: defects[index], path: [...parent.path, 'bulk_defects', index], index }
+    if (index < 0) throw new DeviceEditError('The selected defect is no longer supplied.', [[...parent.path, ...collectionPath]])
+    return { value: defects[index], path: [...parent.path, ...collectionPath, index], index }
   }
   const collection = selection.kind === 'layer' ? 'layers' : selection.kind === 'material' ? 'materials'
     : selection.kind === 'interface' ? 'interfaces' : 'contacts'
@@ -129,7 +168,7 @@ export function writeField<T extends EditorInput>(input: T, selection: Selection
   const schema = fieldSchema(selection, parameter), metadata = schema.properties?.[field]
   const selected = selectedEntity(input, selection)
   const path = [...selected.path, ...(parameter ? ['parameters'] : []), field]
-  const basic = selection.kind === 'layer' ? ['name', 'role', 'thickness', 'material', 'defect_model', 'defect_schema_version']
+  const basic = selection.kind === 'layer' ? ['name', 'role', 'thickness', 'material', 'parameterization', 'defect_model', 'defect_schema_version']
     : selection.kind === 'interface' || selection.kind === 'contact' ? Object.keys(schema.properties ?? {}).filter(key => key !== 'id') : ['name']
   if (parameter && selection.kind !== 'layer' && selection.kind !== 'material') throw new DeviceEditError('Select a layer or material parameter.', [path])
   if (!metadata || !scalarField(metadata) || (selection.kind !== 'settings' && !parameter && !basic.includes(field))) {
@@ -220,6 +259,24 @@ export function requireKnownIdentityScope(input: EditorInput, cell: Cell) {
   const schema = configurationSchema.dto_schemas.DeviceInput.schema
   const paths = unknownPaths(cellInput(input, cell), [schema], schema, cell === 'device' ? [] : [cell])
   if (paths.length) throw new DeviceEditError('Cannot guarantee references in unrecognized fields; the ID was not changed.', paths)
+}
+
+export function renameMaterial<T extends EditorInput>(input: T, selection: Selection, id: string) {
+  const found = selectedEntity(input, selection)
+  if (selection.kind !== 'material') throw new DeviceEditError('Select a material.', [found.path])
+  const next = structuredClone(input), device = cellInput(next, selection.cell)
+  if (id !== selection.id) {
+    requireKnownIdentityScope(input, selection.cell)
+    const references = device.layers.flatMap((layer, index) => layer.material === selection.id ? [index] : [])
+    if (references.length && device.materials!.filter(item => item.id === selection.id).length !== 1) {
+      throw new DeviceEditError('The material ID has ambiguous layer references; no IDs were changed.',
+        references.map(index => [...(selection.cell === 'device' ? [] : [selection.cell]), 'layers', index, 'material']))
+    }
+    device.materials![found.index].id = id
+    for (const index of references) device.layers[index].material = id
+  }
+  return { input: next, selection: { ...selection, id,
+    occurrence: device.materials!.slice(0, found.index).filter(item => item.id === id).length } }
 }
 
 export function renameLayer<T extends EditorInput>(input: T, selection: Selection, id: string) {

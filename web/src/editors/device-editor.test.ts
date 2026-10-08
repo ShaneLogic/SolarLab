@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { BulkDefectInput, DeviceInput, TandemInput } from '../generated/configuration-inputs'
+import type { BulkDefectInput, DeviceInput, MetastableDocumentInput, MetastablePreparationInput, MultivalentDefectInput, TandemInput } from '../generated/configuration-inputs'
 import { mountDeviceEditor } from './device-editor'
 import type { DeviceEditor } from './device-editor'
 import type { EditorInput, Selection } from './device-edits'
@@ -326,6 +326,207 @@ describe('existing layer/material draft editor', () => {
     expect(draft.layers[1].bulk_defects![1]).toStrictEqual({ ...item, name: 'Selected trap' })
     view.choose('[data-role=defect-section]', 'kinetics')
     expect(view.editor.read().selection).toMatchObject({ id: 'trap', occurrence: 1, parent: { id: 'front', occurrence: 1 } })
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+})
+
+function complexInput(): DeviceInput {
+  const original = input()
+  original.layers[0].bulk_defects = [{ id: 'multi', name: 'Multivalent', total_density_m3: '2e21', configuration: {
+    family: 'double_donor', charge_states_e: [2, 1, -0], degeneracy_convention: 'explicit', state_degeneracies: [1, '2.00000000000000001', 1],
+    energy_levels: { first_transition_eV_above_vb: '300 meV', correlation_energies_eV: ['-0.10000000000000001 eV'], energy_reference: 'above_valence_band' },
+    transition_kinetics: [{ sigma_n_m2: -0, sigma_p_m2: '1e-19', thermal_velocity_n_m_s: '1e5', thermal_velocity_p_m_s: 1e5 },
+      { sigma_n_m2: '2e-19', sigma_p_m2: 0, thermal_velocity_n_m_s: 1e5, thermal_velocity_p_m_s: '8e4' }],
+  } }]
+  return original
+}
+function arrayInput(view: ReturnType<typeof mount>, index: number) {
+  return view.query<HTMLInputElement>(`[data-role=defect-array] > [data-row="${index}"] [data-role=array-value] input`)
+}
+
+function metastableInput(): DeviceInput {
+  const original = complexInput(), configuration = (original.layers[0].bulk_defects![0] as MultivalentDefectInput).configuration
+  const document: MetastableDocumentInput = { schema_version: 'solarlab-metastable-bulk-defects-v1', defect_model: 'explicit_metastable_frozen',
+    metastable_defects: [{ id: 'meta', name: '<img src=x onerror=alert(1)>', total_density_m3: '3e21',
+      donor_configuration: structuredClone(configuration), acceptor_configuration: structuredClone(configuration), donor_conversion_state_index: 0, acceptor_conversion_state_index: 2,
+      conversion_kinetics: { transition_energy_eV_above_vb: '0.19', electron_capture_activation_eV: '0.1', electron_emission_activation_eV: '0.76',
+        hole_capture_activation_eV: '0.35', hole_emission_activation_eV: '0.73', electron_capture_path: 'electron_capture_plus_hole_emission', hole_capture_path: 'double_hole_capture',
+        capture_n_m3_s: '2e-14', capture_p_m3_s: '3e-14', phonon_frequency_Hz: '1e13' } }] }
+  const preparation: MetastablePreparationInput = { schema_version: 'solarlab-metastable-preparation-v1', preparation_limit: 'stationary_infinite_time',
+    preparation_temperature_K: 330, preparation_voltage_V: -0, preparation_illumination_suns: 0, voltage_continuation_steps: 20,
+    illumination_continuation_steps: 0, measurement_temperature_K: '200 K', configuration_freeze_stage: 'after_stationary_preparation_before_measurement',
+    freeze_configuration_during_measurement: true, measurement_protocol_sha256: 'a'.repeat(64), numerics: {
+      initial_donor_fraction_guess: '0.5', max_iterations: 250, relative_tolerance: '1e-6', clamping_factor: '0.05', final_unclamped_refinement: true } }
+  original.layers[0].metastable_document = document; original.layers[0].metastable_preparation = preparation
+  return original
+}
+function arrayType(view: ReturnType<typeof mount>, index: number, value: string) {
+  const node = arrayInput(view, index); node.value = value; node.dispatchEvent(new Event('input'))
+}
+function rowAction(view: ReturnType<typeof mount>, index: number, action: string) {
+  const row = view.query(`[data-role=defect-array] > [data-row="${index}"]`)
+  const button = row?.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)
+  expect(button, row?.outerHTML ?? 'Missing ordered row').toBeTruthy()
+  button!.click()
+}
+function create(view: ReturnType<typeof mount>, kind: string, id: string, source?: Selection) {
+  view.choose('[data-role=new-record-kind]', kind)
+  if (source) view.choose('[data-role=record-template]', JSON.stringify(source))
+  const node = view.query<HTMLInputElement>('[data-role=new-record-id]'); node.value = id; node.dispatchEvent(new Event('input'))
+  view.click('create-record')
+}
+
+describe('complex array and inventory draft controls', () => {
+  it('keeps exact scalar array words on no-op and sends changed unit strings without conversion', () => {
+    const original = complexInput(), view = mount(original); view.entity('bulk_defect', 'multi')
+    view.choose('[data-role=defect-section]', 'charges'); expect(arrayInput(view, 2).value).toBe('-0')
+    view.choose('[data-role=defect-section]', 'degeneracies'); expect(arrayInput(view, 1).value).toBe('2.00000000000000001')
+    expect(view.editor.apply()).toBe(true); expect(view.onApply.mock.lastCall![0]).toStrictEqual(original)
+    view.choose('[data-role=defect-section]', 'correlations'); arrayType(view, 0, '-150 meV')
+    const changed = view.editor.read().input as DeviceInput, item = changed.layers[0].bulk_defects![0] as MultivalentDefectInput
+    expect(item.configuration.energy_levels.correlation_energies_eV).toStrictEqual(['-150 meV'])
+    expect(item.configuration.charge_states_e).toStrictEqual([2, 1, -0])
+  })
+  it('keeps incomplete scalar text tied to its row across navigation, insertion, movement and removal', () => {
+    const view = mount(complexInput()); view.entity('bulk_defect', 'multi'); view.choose('[data-role=defect-section]', 'degeneracies')
+    arrayType(view, 0, ' '); expect(view.editor.apply()).toBe(false)
+    rowAction(view, 0, 'row-later')
+    expect(view.editor.read().incomplete).toContainEqual(['layers', 0, 'bulk_defects', 0, 'configuration', 'state_degeneracies', 1])
+    expect(arrayInput(view, 1).value).toBe(' ')
+    rowAction(view, 1, 'row-insert')
+    expect(arrayInput(view, 2).value).toBe(' '); expect(view.editor.read().incomplete).toHaveLength(2)
+    rowAction(view, 1, 'row-remove'); expect(arrayInput(view, 1).value).toBe(' ')
+    view.entity('contact', 'left'); expect(view.editor.apply()).toBe(false)
+    view.entity('bulk_defect', 'multi'); view.choose('[data-role=defect-section]', 'degeneracies')
+    expect(arrayInput(view, 1).value).toBe(' ')
+    arrayType(view, 1, '0'); expect(view.editor.apply()).toBe(true)
+    const item = (view.editor.read().input as DeviceInput).layers[0].bulk_defects![0] as MultivalentDefectInput
+    expect(item.configuration.state_degeneracies).toStrictEqual(['2.00000000000000001', '0', 1])
+    expect(item.configuration.charge_states_e).toStrictEqual([2, 1, -0])
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(complexInput())
+  })
+  it('copies the current edited row and duplicates its pending text without sharing state', () => {
+    const view = mount(complexInput()); view.entity('bulk_defect', 'multi'); view.choose('[data-role=defect-section]', 'degeneracies')
+    arrayType(view, 0, '3'); rowAction(view, 0, 'row-copy')
+    expect(arrayInput(view, 1).value).toBe('3')
+    arrayType(view, 1, ''); rowAction(view, 1, 'row-copy')
+    expect(view.editor.read().incomplete).toHaveLength(2)
+    arrayType(view, 1, '4'); expect(view.editor.read().incomplete).toHaveLength(1)
+    expect(arrayInput(view, 2).value).toBe('')
+    rowAction(view, 2, 'row-remove'); expect(view.editor.apply()).toBe(true)
+  })
+  it('moves transition rows with pending fields and preserves independent capture and charge arrays', () => {
+    const original = complexInput(), view = mount(original); view.entity('bulk_defect', 'multi')
+    view.choose('[data-role=defect-section]', 'transition:0'); view.type('sigma_n_m2', '', 'transition:0')
+    view.click('row-later')
+    expect(view.query<HTMLSelectElement>('[data-role=defect-section]').value).toBe('transition:1')
+    expect(view.query<HTMLInputElement>('[data-area="transition:1"][data-field=sigma_n_m2] input').value).toBe('')
+    expect(view.editor.read().incomplete).toContainEqual(['layers', 0, 'bulk_defects', 0, 'configuration', 'transition_kinetics', 1, 'sigma_n_m2'])
+    view.type('sigma_n_m2', '0', 'transition:1'); expect(view.editor.apply()).toBe(true)
+    const item = (view.editor.read().input as DeviceInput).layers[0].bulk_defects![0] as MultivalentDefectInput
+    expect(item.configuration.transition_kinetics[0].sigma_n_m2).toBe('2e-19')
+    expect(item.configuration.transition_kinetics[1].sigma_n_m2).toBe('0')
+    expect(item.configuration.charge_states_e).toStrictEqual([2, 1, -0])
+  })
+  it('starts explicit empty records with all unfilled declarations pending and removes them reversibly', () => {
+    const original = complexInput(), view = mount(original)
+    create(view, 'multivalent_defect', 'new')
+    expect(view.editor.read().selection).toMatchObject({ kind: 'bulk_defect', id: 'new' })
+    expect(view.editor.apply()).toBe(false)
+    expect(view.editor.read().incomplete).toContainEqual(['layers', 0, 'bulk_defects', 1, 'configuration', 'family'])
+    const newItem = (view.editor.read().input as DeviceInput).layers[0].bulk_defects![1] as MultivalentDefectInput
+    expect(newItem.configuration.charge_states_e).toStrictEqual([])
+    expect(Object.hasOwn(newItem.configuration, 'family')).toBe(false)
+    view.entity('layer', 'back'); expect(view.editor.apply()).toBe(false)
+    view.entity('bulk_defect', 'new'); view.click('remove-record')
+    expect(view.editor.read().input).toStrictEqual(original); expect(view.editor.apply()).toBe(true)
+  })
+  it('copies and removes a selected record without changing topology or losing pending fields on another record', () => {
+    const original = complexInput(), view = mount(original)
+    view.type('name', '')
+    const source = view.editor.read().selection
+    create(view, 'layer', 'copy', source)
+    expect(view.editor.read().selection).toMatchObject({ kind: 'layer', id: 'copy' })
+    expect(view.editor.read().incomplete).toContainEqual(['layers', 2, 'name'])
+    view.type('name', 'Copy'); view.click('remove-record')
+    expect(view.editor.read().incomplete).toContainEqual(['layers', 0, 'name'])
+    expect((view.editor.read().input as DeviceInput).contacts).toStrictEqual(original.contacts)
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+  it('keeps created duplicate material IDs and dangling references visible for resolver validation', () => {
+    const original = input(), view = mount(original)
+    create(view, 'material', 'shared', { cell: 'device', kind: 'material', id: 'shared', occurrence: 0 })
+    expect(view.editor.read().selection).toMatchObject({ kind: 'material', occurrence: 1 })
+    expect(view.editor.apply()).toBe(true)
+    view.query<HTMLInputElement>('[data-role=item-id]').value = 'other'; view.click('rename-item')
+    expect(view.query('[data-role=edit-error]').textContent).toContain('ambiguous')
+    view.click('remove-record'); view.entity('material', 'shared'); view.click('remove-record')
+    expect((view.editor.read().input as DeviceInput).layers[0].material).toBe('shared')
+    expect(view.root.textContent).toContain('not a supplied material'); expect(view.editor.apply()).toBe(true)
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+  it('creates and clears metastable documents explicitly and requires generated tags without choosing them', () => {
+    const view = mount(input()); view.click('start-metastable_document')
+    expect(view.editor.read().selection.kind).toBe('metastable_document')
+    expect(view.editor.apply()).toBe(false)
+    const document = (view.editor.read().input as DeviceInput).layers[0].metastable_document
+    expect(document).toStrictEqual({ metastable_defects: [] })
+    view.choose('[data-area=document][data-field=schema_version] [data-role=scalar-value]', 'solarlab-metastable-bulk-defects-v1')
+    view.choose('[data-area=document][data-field=defect_model] [data-role=scalar-value]', 'explicit_metastable_frozen')
+    expect(view.editor.apply()).toBe(true) // Empty inventory is an authoritative semantic error, not auto-filled.
+    view.click('null-metastable_document'); expect((view.editor.read().input as DeviceInput).layers[0].metastable_document).toBeNull()
+    view.click('omit-metastable_document'); expect(Object.hasOwn((view.editor.read().input as DeviceInput).layers[0], 'metastable_document')).toBe(false)
+    view.click('start-metastable_preparation'); view.choose('[data-role=defect-section]', 'numerics')
+    const values = [...view.query<HTMLSelectElement>('[data-area=numerics][data-field=final_unclamped_refinement] [data-role=scalar-value]').options].map(item => item.value)
+    expect(values).toStrictEqual(['', 'true']); expect(view.editor.apply()).toBe(false)
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(input())
+  })
+  it('shows last submitted input separately from a new draft and ignores disposed row controls', () => {
+    const view = mount(complexInput()); view.entity('bulk_defect', 'multi'); view.choose('[data-role=defect-section]', 'charges')
+    expect(view.editor.apply()).toBe(true)
+    arrayType(view, 0, '3'); expect(view.query('[data-editor=device]').getAttribute('data-preview-relation')).toBe('not-submitted')
+    expect(view.editor.apply()).toBe(true); view.choose('[data-role=defect-section]', 'degeneracies')
+    expect(view.root.textContent).toContain('matches the last input sent')
+    const control = arrayInput(view, 0), prior = view.editor.read()
+    view.editor.dispose(); control.value = '9'; control.dispatchEvent(new Event('input'))
+    expect(view.editor.read()).toStrictEqual(prior)
+  })
+  it('updates the override presence label immediately without replacing the focused input', () => {
+    const view = mount(input()); view.entity('material', 'shared'); view.parameter('mu_p')
+    const picker = view.query<HTMLSelectElement>('[data-role=parameter]')
+    expect(picker.selectedOptions[0].textContent).toContain('omitted')
+    view.source('mu_p', 'value')
+    const control = view.query<HTMLInputElement>('[data-area=parameters][data-field=mu_p] input')
+    control.focus(); control.value = '0.0003 m^2/(V s)'; control.setSelectionRange(3, 3); control.dispatchEvent(new Event('input'))
+    expect(picker.selectedOptions[0].textContent).toContain('supplied')
+    expect(document.activeElement).toBe(control); expect(control.selectionStart).toBe(3)
+    view.source('mu_p', 'omit'); expect(picker.selectedOptions[0].textContent).toContain('omitted')
+    expect(Object.hasOwn((view.editor.read().input as DeviceInput).materials![0].parameters, 'mu_p')).toBe(false)
+  })
+  it('edits metastable inventories, both configurations and preparation values without rewriting any other branch', () => {
+    const original = metastableInput(), view = mount(original); view.entity('metastable_defect', 'meta')
+    expect(view.root.querySelector('img,script')).toBeNull()
+    expect(view.root.textContent).toContain('<img src=x onerror=alert(1)>')
+    view.choose('[data-role=defect-section]', 'donor:charges'); arrayType(view, 0, '3')
+    view.choose('[data-role=defect-section]', 'acceptor:correlations'); arrayType(view, 0, '150 meV')
+    view.choose('[data-role=defect-section]', 'conversion'); view.type('capture_n_m3_s', '2e-8 cm^3/s', 'conversion')
+    const expected = structuredClone(original), meta = expected.layers[0].metastable_document!.metastable_defects[0]
+    meta.donor_configuration.charge_states_e[0] = 3; meta.acceptor_configuration.energy_levels.correlation_energies_eV[0] = '150 meV'; meta.conversion_kinetics.capture_n_m3_s = '2e-8 cm^3/s'
+    expect(view.editor.read().input).toStrictEqual(expected)
+    view.entity('metastable_preparation', 'front'); view.choose('[data-role=defect-section]', 'preparation')
+    expect(view.query<HTMLInputElement>('[data-area=preparation][data-field=preparation_voltage_V] input').value).toBe('-0')
+    view.type('preparation_voltage_V', '0 mV', 'preparation'); expected.layers[0].metastable_preparation!.preparation_voltage_V = '0 mV'
+    expect(view.editor.read().input).toStrictEqual(expected)
+    view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
+  })
+  it.each(['top_cell', 'bottom_cell'] as const)('edits complex declarations only in the selected %s', cell => {
+    const original: TandemInput = { schema_version: 'solarlab.tandem-preparation.v1', id: 'tandem', source_schema_version: 1,
+      device_type: 'tandem_2T_monolithic', top_cell: metastableInput(), bottom_cell: metastableInput(), top_cell_reference: 'top', bottom_cell_reference: 'bottom',
+      junction_model: 'ideal_ohmic', light_direction: 'top_first', junction_stack: [], benchmark: null, back_reflector: null }
+    const view = mount(original); view.choose('[data-role=cell]', cell); view.entity('metastable_defect', 'meta'); view.choose('[data-role=defect-section]', 'donor:degeneracies')
+    arrayType(view, 1, '0')
+    const expected = structuredClone(original); expected[cell].layers[0].metastable_document!.metastable_defects[0].donor_configuration.state_degeneracies[1] = '0'
+    expect(view.editor.read().input).toStrictEqual(expected); expect(view.editor.apply()).toBe(true)
     view.click('discard'); expect(view.editor.read().input).toStrictEqual(original)
   })
 })

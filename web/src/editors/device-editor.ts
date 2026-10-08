@@ -1,13 +1,15 @@
 import { mountQuantityInput } from './quantity-input'
 import {
   allowsNull, cellInput, DeviceEditError, exactInputEqual, fieldSchema,
-  layerReferences, moveLayer, renameConnection, renameLayer, scalarField, schemaVariants, selectedEntity,
+  layerReferences, movedRow, moveLayer, renameConnection, renameLayer, renameMaterial, scalarField, schemaVariants, selectedEntity,
   selections, writeConnection, writeField,
 } from './device-edits'
-import type { Cell, EditorInput, FieldEdit, FieldSchema, FieldValue, Path, Selection } from './device-edits'
-import { changeProfileRows, clearInterfaceDefect, defectSections, isDefectSelection, nestedValue,
-  removeBulkDefect, renameDefect, setDefectSection, writeDefectField } from './defect-edits'
+import type { Cell, EditorInput, FieldEdit, FieldSchema, FieldValue, Path, RowMutation, Selection } from './device-edits'
+import { changeDefectRows, changeProfileRows, clearInterfaceDefect, defectArray, defectSections, isDefectSelection, isStructuredSelection, nestedValue,
+  renameDefect, setDefectSection, writeDefectField, writeDefectRow } from './defect-edits'
 import type { DefectSection } from './defect-edits'
+import { createRecord, layerParent, recordKind, removeRecord, setLayerDocument } from './inventory-edits'
+import type { NewRecordKind } from './inventory-edits'
 
 export interface DeviceDraft {
   input: EditorInput
@@ -70,7 +72,7 @@ function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, req
   if (input instanceof HTMLInputElement) { input.type = 'text'; input.spellcheck = false }
   else {
     input.add(new Option('Choose a value', ''))
-    for (const value of boolean ? [true, false] : [...new Set(choices)]) input.add(new Option(text(value), text(value)))
+    for (const value of choices.length ? [...new Set(choices)] : [true, false]) input.add(new Option(text(value), text(value)))
   }
   let edited = false, disposed = false
   const original = initial.kind === 'value' ? initial.value : undefined
@@ -119,8 +121,10 @@ function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, req
  * Discard restores the caller's input, including omitted and empty containers. */
 export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOptions): DeviceEditor {
   let baseline = structuredClone(options.input), draft = structuredClone(options.input)
+  let lastApplied: EditorInput | undefined
   let selection: Selection = selections(draft, draft.schema_version === 'solarlab.device-preparation.v1' ? 'device' : 'top_cell')[0]
   let disposed = false, parameter = '', defectSection = 'defect', connectionsOpen = false
+  let newKind: NewRecordKind = 'layer', newId = '', newTemplate = '', creationOpen = false
   const pending = new Map<string, { edit: Extract<FieldEdit, { kind: 'incomplete' }>; path: Path }>()
   const controls: { dispose(): void }[] = []
   const listeners: (() => void)[] = []
@@ -131,13 +135,13 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   const message = element('p'); message.className = 'status error'; message.setAttribute('role', 'alert'); message.dataset.role = 'edit-error'
   const cell = element('select'); cell.dataset.role = 'cell'; cell.setAttribute('aria-label', 'Device or tandem cell')
   const entity = element('select'); entity.dataset.role = 'entity'; entity.setAttribute('aria-label', 'Layer, material, connection, defect or settings')
-  const fields = element('div'), topology = element('div'), retained = element('div')
+  const fields = element('div'), topology = element('div'), retained = element('div'), creation = element('div')
   const applyButton = button('Apply draft to preview', 'apply', apply)
   const discardButton = button('Discard draft', 'discard', discard)
   const actions = element('div'); actions.className = 'actions'; actions.style.flexWrap = 'wrap'; actions.append(applyButton, discardButton)
   card.append(element('h3', 'Device configuration draft'),
     element('p', 'Edit a draft of the supplied input. The preview shows the last applied values and their origins. Applying checks preparation; it does not run a simulation.'),
-    cell, entity, status, message, actions, fields, topology, retained)
+    cell, entity, status, message, actions, creation, fields, topology, retained)
   root.replaceChildren(card)
 
   function listen(node: HTMLElement, event: string, callback: () => void) {
@@ -162,6 +166,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   function apply() {
     if (disposed || pending.size) return false
     options.onApply(structuredClone(draft))
+    lastApplied = structuredClone(draft)
     status.textContent = 'Draft sent to preview. Read the preparation result or field errors below; execution remains disabled.'
     return true
   }
@@ -172,7 +177,9 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   }
   function updateStatus() {
     card.dataset.state = pending.size ? 'incomplete' : exactInputEqual(baseline, draft) ? 'unchanged' : 'draft'
+    card.dataset.previewRelation = lastApplied && exactInputEqual(lastApplied, draft) ? 'matches-last-submission' : 'not-submitted'
     status.textContent = pending.size ? `Finish incomplete edits before applying: ${[...pending.values()].map(item => JSON.stringify(item.path)).join('; ')}`
+      : card.dataset.previewRelation === 'matches-last-submission' ? 'Draft matches the last input sent to preview. Read its preparation result or field errors below; execution remains disabled.'
       : card.dataset.state === 'draft' ? 'Draft changed. Apply to inspect the resolved values and field errors, or discard to restore the supplied input.'
         : 'Supplied input unchanged. Apply to inspect its preparation.'
     applyButton.disabled = pending.size > 0
@@ -187,9 +194,10 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     cell.value = selection.cell; cell.hidden = cells.length === 1
     entity.replaceChildren(...available.map(item => {
       if (item.kind === 'settings') return new Option('Device settings', JSON.stringify(item))
+      if (item.kind === 'metastable_document' || item.kind === 'metastable_preparation') return new Option(`${item.kind === 'metastable_document' ? 'Metastable inventory' : 'Metastable preparation'} — layer ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`, JSON.stringify(item))
       const found = selectedEntity(draft, item), value = found.value!
       if (item.kind === 'interface_defect') return new Option(`Interface defect ${item.id} — interface ${item.parent.id}${item.parent.occurrence ? ` (duplicate ${item.parent.occurrence + 1})` : ''}`, JSON.stringify(item))
-      if (item.kind === 'bulk_defect') return new Option(`Bulk defect ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}${Reflect.get(value, 'name') == null ? '' : `: ${text(Reflect.get(value, 'name'))}`} — layer ${item.parent.id}${item.parent.occurrence ? ` (duplicate ${item.parent.occurrence + 1})` : ''}`, JSON.stringify(item))
+      if (item.kind === 'bulk_defect' || item.kind === 'metastable_defect') return new Option(`${item.kind === 'bulk_defect' ? 'Bulk' : 'Metastable'} defect ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}${Reflect.get(value, 'name') == null ? '' : `: ${text(Reflect.get(value, 'name'))}`} — layer ${item.parent.id}${item.parent.occurrence ? ` (duplicate ${item.parent.occurrence + 1})` : ''}`, JSON.stringify(item))
       const title = item.kind === 'layer' ? 'Layer' : item.kind === 'material' ? 'Material' : item.kind === 'interface' ? 'Interface' : 'Contact'
       const name = Reflect.get(value, 'name')
       const label = `${title} ${item.id}${name === undefined ? '' : `: ${text(name)}`}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`
@@ -203,7 +211,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     const owner = section ? nestedValue(selected.value, section.path)
       : parameterField && selected.value ? Reflect.get(selected.value, 'parameters') : selected.value
     const path = [...selected.path, ...(section?.path ?? (parameterField ? ['parameters'] : [])), name]
-    const target = structuredClone(selection), key = JSON.stringify([target, section?.key ?? parameterField, name])
+    const target = structuredClone(selection), key = JSON.stringify(path)
     const saved = pending.get(key)
     const initial = saved ? { kind: 'value' as const, value: saved.edit.text } : supplied(owner, name)
     const container = element('div'); container.dataset.field = name; container.dataset.area = section?.key ?? (parameterField ? 'parameters' : 'basic')
@@ -213,13 +221,13 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
       if (edit.kind === 'incomplete') pending.set(key, { edit, path })
       else {
         try {
-          draft = section && isDefectSelection(target) ? writeDefectField(draft, target, section.key, name, edit)
+          draft = section && isStructuredSelection(target) ? writeDefectField(draft, target, section.key, name, edit)
             : writeField(draft, target, name, edit, parameterField)
           pending.delete(key)
         }
         catch (error) { showError(error); return }
       }
-      renderNavigation(); updateStatus(); refreshReferenceNotices()
+      renderNavigation(); updateStatus(); refreshReferenceNotices(); refreshParameterPresence()
     })
     controls.push(control)
     // Preserve pre-existing invalid values without normalizing them on mount.
@@ -252,6 +260,15 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     detail.append(list.childElementCount ? list : element('p', 'No additional fields supplied. Omitted fields remain omitted.'))
     return detail
   }
+  function refreshParameterPresence() {
+    if (selection.kind !== 'settings' && selection.kind !== 'layer' && selection.kind !== 'material') return
+    const picker = fields.querySelector<HTMLSelectElement>('[data-role=parameter]')
+    if (!picker) return
+    const selected = selectedEntity(draft, selection), parameterField = selection.kind !== 'settings'
+    const owner = parameterField && selected.value ? Reflect.get(selected.value, 'parameters') : selected.value
+    const schema = fieldSchema(selection, parameterField)
+    for (const option of picker.options) option.textContent = `${schema.properties![option.value].title ?? option.value} (${option.value})${owner && Object.hasOwn(owner, option.value) ? ' — supplied' : ' — omitted'}`
+  }
   function refreshReferenceNotices() {
     const notices = topology.querySelector('[data-role=reference-notices]')
     if (!notices) return
@@ -267,6 +284,8 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
       if (layer.material != null && !(device.materials ?? []).some(material => material.id === layer.material)) items.push(element('li', `layers[${index}].material: ${layer.material} is not a supplied material`))
       const defects = layer.bulk_defects ?? []
       for (const [offset, defect] of defects.entries()) if (defects.filter(item => item.id === defect.id).length > 1) items.push(element('li', `layers[${index}].bulk_defects[${offset}].id: duplicate ${defect.id}`))
+      const metastable = layer.metastable_document?.metastable_defects ?? []
+      for (const [offset, defect] of metastable.entries()) if (metastable.filter(item => item.id === defect.id).length > 1) items.push(element('li', `layers[${index}].metastable_document.metastable_defects[${offset}].id: duplicate ${defect.id}`))
       for (const [offset, metadata] of (layer.scaps_defect_metadata ?? []).entries()) if (!defects.some(defect => defect.id === metadata.defect_id)) items.push(element('li', `layers[${index}].scaps_defect_metadata[${offset}].defect_id: ${metadata.defect_id} is not a supplied defect`))
     }
     for (const ref of layerReferences(device)) if (!ids.includes(ref.value)) items.push(element('li', `${JSON.stringify(ref.path)}: ${ref.value} is not a supplied layer`))
@@ -316,9 +335,9 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     for (const remove of renderListeners.splice(0)) remove()
     for (const control of controls.splice(0)) control.dispose()
     rendering = true
-    renderNavigation(); fields.replaceChildren(); retained.replaceChildren()
+    renderNavigation(); fields.replaceChildren(); retained.replaceChildren(); renderCreation()
     const selected = selectedEntity(draft, selection), device = cellInput(draft, selection.cell)
-    if (isDefectSelection(selection)) {
+    if (isStructuredSelection(selection)) {
       renderDefect()
     } else if (selection.kind === 'contact' || selection.kind === 'interface') {
       const schema = fieldSchema(selection, false)
@@ -342,7 +361,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     } else if (selection.kind !== 'settings') {
       fields.append(fieldControl('name'))
       if (selection.kind === 'layer') {
-        fields.append(fieldControl('role'), fieldControl('thickness'), fieldControl('material'))
+        fields.append(fieldControl('role'), fieldControl('thickness'), fieldControl('material'), fieldControl('parameterization'))
         const identity = element('details'); identity.className = 'device-settings'; identity.append(element('summary', 'Change layer ID or order'))
         const id = element('input'); id.type = 'text'; id.value = selection.id; id.dataset.role = 'layer-id'; id.setAttribute('aria-label', 'New layer ID')
         const rename = button('Change ID and update references', 'rename-layer', () => {
@@ -374,7 +393,11 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
         }
         if (!(device.layers[selected.index].bulk_defects?.length)) inventory.append(element('p', `No bulk defects are supplied for ${selectedLayer.id}.`))
         fields.append(inventory)
-      } else fields.append(element('p', `Material ID: ${selection.id}. Editing its name keeps this reference unchanged.`))
+        fields.append(layerDocuments())
+      } else {
+        fields.append(element('p', `Material ID: ${selection.id}. Editing its name keeps this reference unchanged.`))
+        identityControl('material')
+      }
     }
     if (selection.kind === 'layer' || selection.kind === 'material' || selection.kind === 'settings') {
     const parameterField = selection.kind !== 'settings', schema = fieldSchema(selection, parameterField)
@@ -400,32 +423,208 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   function clearPending(path: Path) {
     for (const [key, item] of pending) if (path.every((part, index) => item.path[index] === part)) pending.delete(key)
   }
-  function identityControl(kind: 'connection' | 'defect') {
-    if (selection.kind === 'settings' || selection.kind === 'layer' || selection.kind === 'material') return
+  function movePending(path: Path, action: RowMutation, copiedFrom?: Path, copyTo?: Path) {
+    const before = [...pending.values()]
+    pending.clear()
+    for (const item of before) {
+      let nextPath = [...item.path]
+      if (path.every((part, index) => item.path[index] === part) && typeof item.path[path.length] === 'number') {
+        const index = movedRow(item.path[path.length] as number, action)
+        if (index === undefined) continue
+        nextPath[path.length] = index
+      }
+      pending.set(JSON.stringify(nextPath), { edit: item.edit, path: nextPath })
+    }
+    if (copiedFrom && copyTo) for (const item of before) if (copiedFrom.every((part, index) => item.path[index] === part)) {
+      const nextPath = [...copyTo, ...item.path.slice(copiedFrom.length)]
+      pending.set(JSON.stringify(nextPath), { edit: { ...item.edit }, path: nextPath })
+    }
+  }
+  function changeRows(section: DefectSection, action: RowMutation, value?: unknown, copiedIndex?: number) {
+    if (!isStructuredSelection(selection)) return
+    const { path } = defectArray(draft, selection, section.key)
+    const current = defectSections(draft, selection).find(item => item.key === defectSection)?.row
+    draft = changeDefectRows(draft, selection, section.key, action, value)
+    movePending(path, action, copiedIndex === undefined ? undefined : [...path, copiedIndex],
+      action.kind === 'insert' ? [...path, action.index] : undefined)
+    if (current?.arrayKey === section.key) {
+      const index = movedRow(current.index, action)
+      defectSection = defectSections(draft, selection).find(item => item.row?.arrayKey === section.key && item.row.index === index)?.key ?? section.key
+    }
+    if (action.kind === 'insert' && copiedIndex === undefined && section.array!.kind === 'kinetics') {
+      defectSection = defectSections(draft, selection).find(item => item.row?.arrayKey === section.key && item.row.index === action.index)!.key
+    }
+    render()
+  }
+  function rowActions(section: DefectSection, index: number) {
+    const actions = element('div'); actions.className = 'actions'; actions.style.flexWrap = 'wrap'
+    if (!isStructuredSelection(selection)) return actions
+    const { rows } = defectArray(draft, selection, section.key)
+    actions.dataset.arrayKey = section.key; actions.dataset.row = String(index)
+    const empty = () => section.array!.kind === 'kinetics' ? {} : ''
+    actions.append(button('Insert empty row before', 'row-insert', () => changeRows(section, { kind: 'insert', index }, empty())),
+      button('Copy this row', 'row-copy', () => {
+        if (isStructuredSelection(selection)) changeRows(section, { kind: 'insert', index: index + 1 }, defectArray(draft, selection, section.key).rows[index], index)
+      }),
+      button('Remove this row', 'row-remove', () => changeRows(section, { kind: 'remove', index })))
+    for (const direction of [-1, 1] as const) {
+      const move = button(direction < 0 ? 'Move row earlier' : 'Move row later', direction < 0 ? 'row-earlier' : 'row-later',
+        () => changeRows(section, { kind: 'move', from: index, to: index + direction }))
+      move.disabled = index + direction < 0 || index + direction >= rows.length
+      actions.append(move)
+    }
+    return actions
+  }
+  function renderArray(section: DefectSection) {
+    if (!isStructuredSelection(selection)) return
+    const target = structuredClone(selection)
+    let array: ReturnType<typeof defectArray>
+    try { array = defectArray(draft, target, section.key) }
+    catch (error) { fields.append(element('p', String(error))); return }
+    const list = element('div'); list.dataset.role = 'defect-array'; list.dataset.arrayKey = section.key
+    for (const [index, value] of array.rows.entries()) {
+      const row = element('div'); row.className = 'form-group'; row.dataset.row = String(index)
+      if (section.array!.kind === 'value') {
+        const path = [...array.path, index], key = JSON.stringify(path), saved = pending.get(key)
+        const root = element('div'); root.dataset.role = 'array-value'
+        const metadata = { ...section.array!.item, title: `${section.label}: row ${index + 1}` }
+        const control = mountScalar(root, section.key, metadata, true,
+          { kind: 'value', value: saved ? saved.edit.text : value as Extract<FieldValue, { kind: 'value' }>['value'] }, edit => {
+            if (disposed) return
+            if (edit.kind === 'incomplete') pending.set(key, { edit, path })
+            else {
+              try { draft = writeDefectRow(draft, target, section.key, index, edit); pending.delete(key) }
+              catch (error) { showError(error); return }
+            }
+            updateStatus()
+          })
+        controls.push(control)
+        const initial = control.read()
+        if (initial.kind === 'incomplete') pending.set(key, { edit: initial, path })
+        row.append(root)
+      } else {
+        row.append(element('strong', `Transition ${index + 1}`), button('Edit transition kinetics', 'edit-transition', () => {
+          if (!isStructuredSelection(selection)) return
+          defectSection = defectSections(draft, selection).find(item => item.row?.arrayKey === section.key && item.row.index === index)!.key
+          render()
+        }))
+        if (value !== null && typeof value === 'object') row.append(retain('Supplied transition fields', value, []))
+        else row.append(element('p', `Unsupported row retained: ${text(value)}`))
+      }
+      row.append(rowActions(section, index)); list.append(row)
+    }
+    if (!array.rows.length) list.append(element('p', 'Explicit empty array. Related arrays remain unchanged.'))
+    list.append(button('Add empty row', 'row-append', () => changeRows(section, { kind: 'insert', index: array.rows.length }, section.array!.kind === 'kinetics' ? {} : '')))
+    fields.append(list)
+  }
+  function removeSelectedRecord() {
+    const result = removeRecord(draft, selection)
+    if (result.mutation) movePending(result.path, result.mutation)
+    else clearPending(result.path)
+    draft = result.input; selection = result.selection; connectionsOpen = true; render()
+  }
+  function renderCreation() {
+    const detail = element('details'); detail.className = 'device-settings'; detail.open = creationOpen
+    detail.dataset.section = 'record-creation'; detail.append(element('summary', 'Create or remove records'),
+      element('p', 'Create an empty declaration or explicitly copy a record in this cell. New IDs and topology are checked when you apply; references are never removed automatically.'))
+    listen(detail, 'toggle', () => { creationOpen = detail.open })
+    const kinds: [NewRecordKind, string][] = [['layer', 'Layer'], ['material', 'Named material'], ['contact', 'Contact'], ['interface', 'Interface'],
+      ['bulk_defect', 'Ordinary bulk defect'], ['multivalent_defect', 'Multivalent bulk defect'], ['metastable_defect', 'Metastable defect'], ['interface_defect', 'Interface defect']]
+    const kind = element('select'); kind.dataset.role = 'new-record-kind'; kind.setAttribute('aria-label', 'New record type')
+    for (const [value, label] of kinds) kind.add(new Option(label, value))
+    kind.value = newKind
+    listen(kind, 'change', () => { newKind = kind.value as NewRecordKind; newTemplate = ''; render() })
+    const template = element('select'); template.dataset.role = 'record-template'; template.setAttribute('aria-label', 'Start from an empty declaration or a supplied record')
+    template.add(new Option('Empty declaration — enter required fields', ''))
+    for (const item of selections(draft, selection.cell)) if (recordKind(draft, item) === newKind) {
+      const value = JSON.stringify(item), label = [...entity.options].find(option => option.value === value)?.textContent
+      template.add(new Option(`Copy ${label ?? ('id' in item ? item.id : '')}`, value))
+    }
+    if (![...template.options].some(item => item.value === newTemplate)) newTemplate = ''
+    template.value = newTemplate; listen(template, 'change', () => { newTemplate = template.value })
+    const id = element('input'); id.type = 'text'; id.value = newId; id.dataset.role = 'new-record-id'; id.setAttribute('aria-label', 'ID for the new record')
+    listen(id, 'input', () => { newId = id.value })
+    detail.append(element('label', 'New record type'), kind, element('label', 'Start from'), template, element('label', 'New record ID'), id,
+      button('Create record', 'create-record', () => {
+        const result = createRecord(draft, selection, newKind, newId, newTemplate ? JSON.parse(newTemplate) as Selection : undefined)
+        if (result.mutation?.kind === 'insert') movePending(result.path, result.mutation, result.copiedFrom, [...result.path, result.mutation.index])
+        draft = result.input; selection = result.selection; newId = ''; connectionsOpen = true; defectSection = 'defect'; render()
+      }))
+    if (selection.kind !== 'settings' && selection.kind !== 'metastable_document' && selection.kind !== 'metastable_preparation') detail.append(button('Remove selected record', 'remove-record', removeSelectedRecord))
+    detail.append(element('p', 'Bulk and metastable defects are created on the selected layer. Start a metastable inventory first if it is absent. An interface can hold one defect; select its target interface explicitly.'))
+    creation.replaceChildren(detail)
+  }
+  function layerDocuments() {
+    const detail = element('details'); detail.className = 'device-settings'; detail.dataset.section = 'metastable-documents'
+    detail.append(element('summary', 'Metastable inventory and preparation'))
+    const parent = layerParent(selection)
+    if (!parent) return detail
+    const layer = selectedEntity(draft, { cell: selection.cell, kind: 'layer', ...parent })
+    for (const key of ['metastable_document', 'metastable_preparation'] as const) {
+      const title = key === 'metastable_document' ? 'Metastable inventory' : 'Metastable preparation', value = Reflect.get(layer.value!, key)
+      const group = element('div'); group.className = 'form-group'; group.dataset.document = key
+      group.append(element('p', `${title}: ${value === null ? 'explicit null' : value === undefined ? 'omitted' : 'supplied'}.`))
+      if (value && typeof value === 'object') group.append(button(`Edit ${title.toLowerCase()}`, `edit-${key}`, () => { selection = { cell: selection.cell, kind: key, ...parent }; render() }))
+      else group.append(button(`Start empty ${title.toLowerCase()}`, `start-${key}`, () => {
+        draft = setLayerDocument(draft, selection.cell, parent, key, 'empty'); selection = { cell: selection.cell, kind: key, ...parent }; render()
+      }))
+      for (const mode of ['null', 'omit'] as const) group.append(button(mode === 'null' ? `Clear ${title.toLowerCase()} (null)` : `Remove ${title.toLowerCase()} override`, `${mode}-${key}`, () => {
+        draft = setLayerDocument(draft, selection.cell, parent, key, mode); clearPending([...layer.path, key])
+        selection = { cell: selection.cell, kind: 'layer', ...parent }; render()
+      }))
+      detail.append(group)
+    }
+    detail.append(element('p', 'Document tags, donor/acceptor configurations and preparation controls are explicit declarations. This editor never prepares a metastable state.'))
+    return detail
+  }
+  function identityControl(kind: 'connection' | 'defect' | 'material') {
+    if (selection.kind === 'settings' || selection.kind === 'layer' || selection.kind === 'metastable_document' || selection.kind === 'metastable_preparation') return
     const detail = element('details'); detail.className = 'device-settings'; detail.append(element('summary', `Change ${kind} ID`))
     const input = element('input'); input.type = 'text'; input.value = selection.id; input.dataset.role = 'item-id'; input.setAttribute('aria-label', `New ${kind} ID`)
     const change = button('Change ID', 'rename-item', () => {
       if (pending.size) return
-      const result = isDefectSelection(selection) ? renameDefect(draft, selection, input.value) : renameConnection(draft, selection, input.value)
+      const result = isDefectSelection(selection) ? renameDefect(draft, selection, input.value)
+        : selection.kind === 'material' ? renameMaterial(draft, selection, input.value) : renameConnection(draft, selection, input.value)
       draft = result.input; selection = result.selection; render()
       message.className = 'status'; message.setAttribute('role', 'status'); message.textContent = 'ID changed in this draft. Apply to check references and duplicate IDs.'
     })
     change.dataset.structural = 'true'; detail.append(input, change); fields.append(detail)
   }
   function renderDefect() {
-    if (!isDefectSelection(selection)) return
+    if (!isStructuredSelection(selection)) return
     const sections = defectSections(draft, selection), found = selectedEntity(draft, selection)
+    // Empty declarations keep all required scalar fields incomplete, including
+    // those in another section. Nothing is materialized from schema defaults.
+    for (const section of sections) {
+      if (section.array) continue
+      const owner = nestedValue(found.value, section.path)
+      if (!owner) continue
+      for (const name of section.schema.required ?? []) {
+        const metadata = section.schema.properties?.[name]
+        if (name === 'id' || !metadata || !scalarField(metadata) || Object.hasOwn(owner, name)) continue
+        const path = [...found.path, ...section.path, name], key = JSON.stringify(path)
+        if (!pending.has(key)) pending.set(key, { path, edit: { kind: 'incomplete', text: '', message: 'Complete this required declaration.' } })
+      }
+    }
     if (!sections.some(section => section.key === defectSection)) defectSection = sections[0].key
     const picker = element('select'); picker.dataset.role = 'defect-section'; picker.setAttribute('aria-label', 'Defect section')
     for (const section of sections) picker.add(new Option(section.label, section.key))
     picker.value = defectSection
     listen(picker, 'change', () => { defectSection = picker.value; render() })
-    fields.append(element('h4', `${selection.kind === 'bulk_defect' ? 'Bulk' : 'Interface'} defect ${selection.id}`), picker)
+    const title = selection.kind === 'metastable_document' ? `Metastable inventory for ${selection.id}`
+      : selection.kind === 'metastable_preparation' ? `Metastable preparation for ${selection.id}`
+        : `${selection.kind === 'bulk_defect' ? 'Bulk' : selection.kind === 'metastable_defect' ? 'Metastable' : 'Interface'} defect ${selection.id}`
+    fields.append(element('h4', title), picker)
     const section = sections.find(item => item.key === defectSection)!
     fields.append(element('p', section.note))
-    if (nestedValue(found.value, section.path)) {
+    if (section.array) renderArray(section)
+    else if (nestedValue(found.value, section.path)) {
       for (const name of Object.keys(section.schema.properties ?? {})) if (name !== 'id' && scalarField(section.schema.properties![name])) fields.append(fieldControl(name, false, section))
     } else fields.append(element('p', 'This section is not supplied. Its current value is retained for authoritative validation.'))
+    if (section.row) {
+      const array = sections.find(item => item.key === section.row!.arrayKey)!
+      fields.append(rowActions(array, section.row.index))
+    }
     if (section.optional) {
       const value = found.value && Reflect.get(found.value, section.optional)
       fields.append(element('p', `Section state: ${value === null ? 'explicit null' : found.value && Object.hasOwn(found.value, section.optional) ? 'supplied' : 'omitted'}.`))
@@ -455,13 +654,12 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
       }
       fields.append(element('p', `${knots.length} supplied knots. Adding a row leaves its two values blank; no interpolation or normalization is performed.`))
     }
-    identityControl('defect')
+    if (isDefectSelection(selection)) identityControl('defect')
+    else fields.append(layerDocuments())
     if (selection.kind === 'bulk_defect') {
       const remove = button('Remove selected bulk defect', 'remove-bulk-defect', () => {
-        if (selection.kind !== 'bulk_defect' || pending.size) return
-        const parent: Selection = { cell: selection.cell, kind: 'layer', ...selection.parent }
-        draft = removeBulkDefect(draft, selection); selection = parent; render()
-      }); remove.dataset.structural = 'true'; fields.append(remove)
+        removeSelectedRecord()
+      }); fields.append(remove)
       fields.append(element('p', 'Removal keeps all partner metadata and references. Any resulting inconsistency is shown by the preview.'))
     }
   }
@@ -470,7 +668,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   render()
   return {
     read, apply, discard,
-    setInput(input) { if (!disposed) { baseline = structuredClone(input); draft = structuredClone(input); pending.clear(); message.textContent = ''; render() } },
+    setInput(input) { if (!disposed) { baseline = structuredClone(input); draft = structuredClone(input); lastApplied = undefined; pending.clear(); message.textContent = ''; render() } },
     dispose() {
       if (disposed) return
       disposed = true
