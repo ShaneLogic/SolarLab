@@ -6,8 +6,13 @@ import type { Cell, EditorInput, ItemIdentity, Path, RowMutation, Selection } fr
 export type NewRecordKind = 'layer' | 'material' | 'contact' | 'interface'
   | 'bulk_defect' | 'multivalent_defect' | 'metastable_defect' | 'interface_defect'
 
+export function canRemoveRecord(selection: Selection) {
+  return ['layer', 'material', 'contact', 'interface', 'bulk_defect', 'metastable_defect', 'interface_defect'].includes(selection.kind)
+}
+
 export function recordKind(input: EditorInput, selection: Selection): NewRecordKind | undefined {
-  if (selection.kind === 'settings' || selection.kind === 'metastable_document' || selection.kind === 'metastable_preparation') return undefined
+  if (selection.kind !== 'layer' && selection.kind !== 'material' && selection.kind !== 'contact' && selection.kind !== 'interface'
+    && selection.kind !== 'bulk_defect' && selection.kind !== 'metastable_defect' && selection.kind !== 'interface_defect') return undefined
   if (selection.kind !== 'bulk_defect') return selection.kind
   const item = selectedEntity(input, selection).value!
   if (Object.hasOwn(item, 'configuration') && !Object.hasOwn(item, 'distribution')) return 'multivalent_defect'
@@ -100,7 +105,7 @@ export function createRecord<T extends EditorInput>(input: T, target: Selection,
 }
 
 export function removeRecord<T extends EditorInput>(input: T, selection: Selection): RecordChange<T> {
-  if (selection.kind === 'settings' || selection.kind === 'metastable_document' || selection.kind === 'metastable_preparation') throw new DeviceEditError('Select a layer, material, contact, interface or defect record.', [selectedEntity(input, selection).path])
+  if (!canRemoveRecord(selection)) throw new DeviceEditError('Select a layer, material, contact, interface or defect record.', [selectedEntity(input, selection).path])
   const next = structuredClone(input), found = selectedEntity(next, selection)
   if (selection.kind === 'interface_defect') {
     const parent: Selection = { cell: selection.cell, kind: 'interface', ...selection.parent }

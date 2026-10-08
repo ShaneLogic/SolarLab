@@ -8,8 +8,11 @@ import type { Cell, EditorInput, FieldEdit, FieldSchema, FieldValue, Path, RowMu
 import { changeDefectRows, changeProfileRows, clearInterfaceDefect, defectArray, defectSections, isDefectSelection, isStructuredSelection, nestedValue,
   renameDefect, setDefectSection, writeDefectField, writeDefectRow } from './defect-edits'
 import type { DefectSection } from './defect-edits'
-import { createRecord, layerParent, recordKind, removeRecord, setLayerDocument } from './inventory-edits'
+import { canRemoveRecord, createRecord, layerParent, recordKind, removeRecord, setLayerDocument } from './inventory-edits'
 import type { NewRecordKind } from './inventory-edits'
+import { changeExtendedRows, extendedArray, extendedReferenceNotices, extendedSections, isExtendedSelection,
+  setExtendedSection, writeExtendedField, writeExtendedRow } from './extended-edits'
+import type { ExtendedSection } from './extended-edits'
 
 export interface DeviceDraft {
   input: EditorInput
@@ -90,6 +93,7 @@ function mountScalar(root: HTMLElement, name: string, metadata: FieldSchema, req
     const incomplete = (message: string): FieldEdit => ({ kind: 'incomplete', text: input.value, message })
     if (mode.value !== 'value') return incomplete('Select a permitted value source.')
     if (input.value.length < minimumLength || input instanceof HTMLSelectElement && !input.value) return incomplete('Enter or choose a value.')
+    if (!input.value && (required || numeric || boolean || choices.length || !edited && initial.kind !== 'value')) return incomplete('Enter or choose a value.')
     if (!edited && initial.kind === 'value' && original !== null) return initial
     if (!edited && original === null) return incomplete('Enter a value or choose a permitted source.')
     if (!input.value && (required || numeric || boolean || choices.length || !edited)) return incomplete('Enter or choose a value.')
@@ -123,7 +127,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   let baseline = structuredClone(options.input), draft = structuredClone(options.input)
   let lastApplied: EditorInput | undefined
   let selection: Selection = selections(draft, draft.schema_version === 'solarlab.device-preparation.v1' ? 'device' : 'top_cell')[0]
-  let disposed = false, parameter = '', defectSection = 'defect', connectionsOpen = false
+  let disposed = false, parameter = '', defectSection = 'defect', extendedKey = '', connectionsOpen = false
   let newKind: NewRecordKind = 'layer', newId = '', newTemplate = '', creationOpen = false
   const pending = new Map<string, { edit: Extract<FieldEdit, { kind: 'incomplete' }>; path: Path }>()
   const controls: { dispose(): void }[] = []
@@ -134,7 +138,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
   const status = element('p'); status.className = 'status'; status.setAttribute('role', 'status'); status.dataset.role = 'draft-status'
   const message = element('p'); message.className = 'status error'; message.setAttribute('role', 'alert'); message.dataset.role = 'edit-error'
   const cell = element('select'); cell.dataset.role = 'cell'; cell.setAttribute('aria-label', 'Device or tandem cell')
-  const entity = element('select'); entity.dataset.role = 'entity'; entity.setAttribute('aria-label', 'Layer, material, connection, defect or settings')
+  const entity = element('select'); entity.dataset.role = 'entity'; entity.setAttribute('aria-label', 'Configuration section or record')
   const fields = element('div'), topology = element('div'), retained = element('div'), creation = element('div')
   const applyButton = button('Apply draft to preview', 'apply', apply)
   const discardButton = button('Discard draft', 'discard', discard)
@@ -194,6 +198,13 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     cell.value = selection.cell; cell.hidden = cells.length === 1
     entity.replaceChildren(...available.map(item => {
       if (item.kind === 'settings') return new Option('Device settings', JSON.stringify(item))
+      if (isExtendedSelection(item)) {
+        const label = item.kind === 'layer_optics' ? `CIGS optics — layer ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`
+          : item.kind === 'material_optics' ? `CIGS optics — material ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`
+            : item.kind === 'tunnelling' ? 'Tunnelling channels' : item.kind === 'microstructure' ? 'Microstructure and electrical grid'
+              : item.kind === 'resources' ? 'Optical and generation resources' : 'Tandem optical stack and reflector'
+        return new Option(label, JSON.stringify(item))
+      }
       if (item.kind === 'metastable_document' || item.kind === 'metastable_preparation') return new Option(`${item.kind === 'metastable_document' ? 'Metastable inventory' : 'Metastable preparation'} — layer ${item.id}${item.occurrence ? ` (duplicate ${item.occurrence + 1})` : ''}`, JSON.stringify(item))
       const found = selectedEntity(draft, item), value = found.value!
       if (item.kind === 'interface_defect') return new Option(`Interface defect ${item.id} — interface ${item.parent.id}${item.parent.occurrence ? ` (duplicate ${item.parent.occurrence + 1})` : ''}`, JSON.stringify(item))
@@ -205,7 +216,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     }))
     entity.value = JSON.stringify(selection)
   }
-  function fieldControl(name: string, parameterField = false, section?: DefectSection) {
+  function fieldControl(name: string, parameterField = false, section?: DefectSection | ExtendedSection) {
     const schema = section?.schema ?? fieldSchema(selection, parameterField), metadata = schema.properties![name]
     const selected = selectedEntity(draft, selection)
     const owner = section ? nestedValue(selected.value, section.path)
@@ -221,13 +232,14 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
       if (edit.kind === 'incomplete') pending.set(key, { edit, path })
       else {
         try {
-          draft = section && isStructuredSelection(target) ? writeDefectField(draft, target, section.key, name, edit)
+          draft = section && isExtendedSelection(target) ? writeExtendedField(draft, target, section.key, name, edit)
+            : section && isStructuredSelection(target) ? writeDefectField(draft, target, section.key, name, edit)
             : writeField(draft, target, name, edit, parameterField)
           pending.delete(key)
         }
         catch (error) { showError(error); return }
       }
-      renderNavigation(); updateStatus(); refreshReferenceNotices(); refreshParameterPresence()
+      renderNavigation(); updateStatus(); refreshReferenceNotices(); refreshParameterPresence(); refreshExtendedLabels()
     })
     controls.push(control)
     // Preserve pre-existing invalid values without normalizing them on mount.
@@ -289,6 +301,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
       for (const [offset, metadata] of (layer.scaps_defect_metadata ?? []).entries()) if (!defects.some(defect => defect.id === metadata.defect_id)) items.push(element('li', `layers[${index}].scaps_defect_metadata[${offset}].defect_id: ${metadata.defect_id} is not a supplied defect`))
     }
     for (const ref of layerReferences(device)) if (!ids.includes(ref.value)) items.push(element('li', `${JSON.stringify(ref.path)}: ${ref.value} is not a supplied layer`))
+    for (const notice of extendedReferenceNotices(draft, selection)) items.push(element('li', `${JSON.stringify(notice.path)}: ${notice.message}`))
     for (const [index, item] of (device.interfaces ?? []).entries()) {
       if (ids.indexOf(item.left) < 0 || ids[ids.indexOf(item.left) + 1] !== item.right) items.push(element('li', `interfaces[${index}]: ${item.left} → ${item.right} is not a directed adjacent pair in this order`))
     }
@@ -337,7 +350,9 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     rendering = true
     renderNavigation(); fields.replaceChildren(); retained.replaceChildren(); renderCreation()
     const selected = selectedEntity(draft, selection), device = cellInput(draft, selection.cell)
-    if (isStructuredSelection(selection)) {
+    if (isExtendedSelection(selection)) {
+      renderExtended()
+    } else if (isStructuredSelection(selection)) {
       renderDefect()
     } else if (selection.kind === 'contact' || selection.kind === 'interface') {
       const schema = fieldSchema(selection, false)
@@ -550,7 +565,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
         if (result.mutation?.kind === 'insert') movePending(result.path, result.mutation, result.copiedFrom, [...result.path, result.mutation.index])
         draft = result.input; selection = result.selection; newId = ''; connectionsOpen = true; defectSection = 'defect'; render()
       }))
-    if (selection.kind !== 'settings' && selection.kind !== 'metastable_document' && selection.kind !== 'metastable_preparation') detail.append(button('Remove selected record', 'remove-record', removeSelectedRecord))
+    if (canRemoveRecord(selection)) detail.append(button('Remove selected record', 'remove-record', removeSelectedRecord))
     detail.append(element('p', 'Bulk and metastable defects are created on the selected layer. Start a metastable inventory first if it is absent. An interface can hold one defect; select its target interface explicitly.'))
     creation.replaceChildren(detail)
   }
@@ -578,7 +593,7 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     return detail
   }
   function identityControl(kind: 'connection' | 'defect' | 'material') {
-    if (selection.kind === 'settings' || selection.kind === 'layer' || selection.kind === 'metastable_document' || selection.kind === 'metastable_preparation') return
+    if (isExtendedSelection(selection) || selection.kind === 'settings' || selection.kind === 'layer' || selection.kind === 'metastable_document' || selection.kind === 'metastable_preparation') return
     const detail = element('details'); detail.className = 'device-settings'; detail.append(element('summary', `Change ${kind} ID`))
     const input = element('input'); input.type = 'text'; input.value = selection.id; input.dataset.role = 'item-id'; input.setAttribute('aria-label', `New ${kind} ID`)
     const change = button('Change ID', 'rename-item', () => {
@@ -662,6 +677,149 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
       }); fields.append(remove)
       fields.append(element('p', 'Removal keeps all partner metadata and references. Any resulting inconsistency is shown by the preview.'))
     }
+  }
+  function refreshExtendedLabels() {
+    if (!isExtendedSelection(selection)) return
+    const picker = fields.querySelector<HTMLSelectElement>('[data-role=extended-section]')
+    const sections = extendedSections(draft, selection)
+    if (picker) for (const option of picker.options) option.textContent = sections.find(item => item.key === option.value)?.label ?? option.textContent
+  }
+  function changeExtended(section: ExtendedSection, action: RowMutation, copiedIndex?: number) {
+    if (!isExtendedSelection(selection)) return
+    const array = extendedArray(draft, selection, section.key)
+    const current = extendedSections(draft, selection).find(item => item.key === extendedKey)
+    let nextPath = current && [...current.path]
+    if (nextPath && section.path.every((part, index) => nextPath![index] === part) && typeof nextPath[section.path.length] === 'number') {
+      const index = movedRow(nextPath[section.path.length] as number, action)
+      nextPath = index === undefined ? section.path : [...nextPath.slice(0, section.path.length), index, ...nextPath.slice(section.path.length + 1)]
+    }
+    draft = changeExtendedRows(draft, selection, section.key, action, copiedIndex)
+    movePending(array.path, action, copiedIndex === undefined ? undefined : [...array.path, copiedIndex],
+      action.kind === 'insert' ? [...array.path, action.index] : undefined)
+    if (action.kind === 'insert' && copiedIndex === undefined && section.array?.rowPrefix) extendedKey = `${section.array.rowPrefix}:${action.index}`
+    else extendedKey = extendedSections(draft, selection).find(item => exactInputEqual(item.path, nextPath))?.key ?? section.key
+    connectionsOpen = true; render()
+  }
+  function extendedRowActions(section: ExtendedSection, index: number) {
+    const actions = element('div'); actions.className = 'actions'; actions.style.flexWrap = 'wrap'
+    if (!isExtendedSelection(selection)) return actions
+    const { rows } = extendedArray(draft, selection, section.key)
+    actions.dataset.arrayKey = section.key; actions.dataset.row = String(index)
+    actions.append(button('Insert empty row before', 'extended-insert', () => changeExtended(section, { kind: 'insert', index })),
+      button('Copy this row', 'extended-copy', () => changeExtended(section, { kind: 'insert', index: index + 1 }, index)),
+      button('Remove this row', 'extended-remove', () => changeExtended(section, { kind: 'remove', index })))
+    for (const direction of [-1, 1] as const) {
+      const move = button(direction < 0 ? 'Move row earlier' : 'Move row later', direction < 0 ? 'extended-earlier' : 'extended-later',
+        () => changeExtended(section, { kind: 'move', from: index, to: index + direction }))
+      move.disabled = index + direction < 0 || index + direction >= rows.length; actions.append(move)
+    }
+    return actions
+  }
+  function renderExtendedArray(section: ExtendedSection) {
+    if (!isExtendedSelection(selection)) return
+    const target = structuredClone(selection)
+    let array: ReturnType<typeof extendedArray>
+    try { array = extendedArray(draft, target, section.key) }
+    catch { return }
+    const list = element('div'); list.dataset.role = 'extended-array'; list.dataset.arrayKey = section.key
+    for (const [index, value] of array.rows.entries()) {
+      const row = element('div'); row.className = 'form-group'; row.dataset.row = String(index)
+      if (section.array!.rowPrefix) {
+        row.append(element('strong', `${index + 1}: ${value && typeof value === 'object' ? text(Reflect.get(value, 'id') ?? Reflect.get(value, 'layer') ?? 'Empty declaration') : text(value)}`),
+          button('Edit this row', 'extended-edit-row', () => { extendedKey = `${section.array!.rowPrefix}:${index}`; render() }))
+      } else {
+        const path = [...array.path, index], key = JSON.stringify(path), saved = pending.get(key)
+        const root = element('div'); root.dataset.role = 'extended-row-value'
+        const control = mountScalar(root, section.key, { ...section.array!.item, title: `Layer reference ${index + 1}` }, true,
+          { kind: 'value', value: saved ? saved.edit.text : value as Extract<FieldValue, { kind: 'value' }>['value'] }, edit => {
+            if (edit.kind === 'incomplete') pending.set(key, { edit, path })
+            else { draft = writeExtendedRow(draft, target, section.key, index, edit); pending.delete(key) }
+            updateStatus(); refreshReferenceNotices()
+          })
+        controls.push(control)
+        const initial = control.read()
+        if (initial.kind === 'incomplete') pending.set(key, { edit: initial, path })
+        const input = root.querySelector('input'), choices = element('datalist'); choices.id = `grain-layers-${++nextId}`
+        for (const layer of cellInput(draft, selection.cell).layers) choices.append(new Option(layer.name, layer.id))
+        if (input) { input.setAttribute('list', choices.id); root.append(choices) }
+        row.append(root)
+      }
+      row.append(extendedRowActions(section, index)); list.append(row)
+    }
+    if (!array.rows.length) list.append(element('p', 'Explicit empty list. No rows or physical values are supplied automatically.'))
+    list.append(button('Add empty row', 'extended-append', () => changeExtended(section, { kind: 'insert', index: array.rows.length })))
+    fields.append(list)
+  }
+  function renderExtendedPresence(section: ExtendedSection) {
+    if (!isExtendedSelection(selection) || !section.document) return
+    const target = structuredClone(selection), selected = selectedEntity(draft, target)
+    const parent = nestedValue(selected.value, section.path.slice(0, -1)), key = section.path.at(-1)!
+    const value = parent && Reflect.get(parent, key), path = [...selected.path, ...section.path]
+    fields.append(element('p', `Declaration: ${value === null ? 'explicit null' : value === undefined ? 'omitted' : 'supplied'}.`))
+    const actions = element('div'); actions.className = 'actions'; actions.style.flexWrap = 'wrap'
+    if (value == null && parent) {
+      actions.append(button(section.array ? 'Start empty list' : 'Start empty declaration', 'extended-empty', () => {
+        draft = setExtendedSection(draft, target, section.key, 'empty'); render()
+      }))
+      // Compatible supplied objects are explicit copy templates. Never copy
+      // across cells or materialize a resolved/default value into the draft.
+      const templates = selections(draft, target.cell).filter(isExtendedSelection).flatMap(item =>
+        extendedSections(draft, item).filter(source => source.schema === section.schema && !source.array && nestedValue(selectedEntity(draft, item).value, source.path))
+          .map(source => ({ selection: item, key: source.key, label: `${source.label}${'id' in item ? ` — ${item.id}` : ''}` })))
+      if (!section.array && templates.length) {
+        const picker = element('select'); picker.dataset.role = 'extended-template'; picker.setAttribute('aria-label', 'Supplied declaration to copy')
+        picker.append(new Option('Choose a supplied declaration to copy', ''))
+        templates.forEach((item, index) => picker.add(new Option(item.label, String(index))))
+        actions.append(picker, button('Copy selected declaration', 'extended-copy-document', () => {
+          if (!picker.value) throw new DeviceEditError('Choose a supplied declaration to copy.', [path])
+          const template = templates[Number(picker.value)], source = selectedEntity(draft, template.selection)
+          const sourceSection = extendedSections(draft, template.selection).find(item => item.key === template.key)!
+          const copiedPending = [...pending.values()].filter(item => [...source.path, ...sourceSection.path].every((part, index) => item.path[index] === part))
+          draft = setExtendedSection(draft, target, section.key, 'empty', template)
+          for (const item of copiedPending) {
+            const nextPath = [...path, ...item.path.slice(source.path.length + sourceSection.path.length)]
+            pending.set(JSON.stringify(nextPath), { edit: { ...item.edit }, path: nextPath })
+          }
+          render()
+        }))
+      }
+    }
+    if (parent && section.document.nullable) actions.append(button('Clear declaration (null)', 'extended-null', () => {
+      draft = setExtendedSection(draft, target, section.key, 'null'); clearPending(path); render()
+    }))
+    if (parent && !section.document.required) actions.append(button('Remove declaration override', 'extended-omit', () => {
+      draft = setExtendedSection(draft, target, section.key, 'omit'); clearPending(path); render()
+    }))
+    fields.append(actions)
+  }
+  function renderExtended() {
+    if (!isExtendedSelection(selection)) return
+    const sections = extendedSections(draft, selection), found = selectedEntity(draft, selection)
+    for (const section of sections) {
+      if (section.array) continue
+      const owner = nestedValue(found.value, section.path)
+      if (!owner) continue
+      for (const name of section.schema.required ?? []) {
+        const metadata = section.schema.properties?.[name]
+        if (!metadata || !scalarField(metadata) || section.fields && !section.fields.includes(name) || Object.hasOwn(owner, name)) continue
+        const path = [...found.path, ...section.path, name], key = JSON.stringify(path)
+        if (!pending.has(key)) pending.set(key, { path, edit: { kind: 'incomplete', text: '', message: 'Complete this required declaration.' } })
+      }
+    }
+    if (!sections.some(section => section.key === extendedKey)) extendedKey = sections[0].key
+    const picker = element('select'); picker.dataset.role = 'extended-section'; picker.setAttribute('aria-label', 'Optical, tunnelling or microstructure section')
+    for (const section of sections) picker.append(new Option(section.label, section.key))
+    picker.value = extendedKey; listen(picker, 'change', () => { extendedKey = picker.value; render() })
+    fields.append(picker)
+    const section = sections.find(item => item.key === extendedKey)!
+    fields.append(element('h4', section.label), element('p', section.note))
+    if (selection.kind === 'microstructure') fields.append(element('p', 'These declarations do not include lateral domain geometry or boundary conditions. The preview keeps that preparation dependency visible; no two-dimensional model is run.'))
+    if (section.array) renderExtendedArray(section)
+    else if (nestedValue(found.value, section.path)) {
+      for (const name of section.fields ?? Object.keys(section.schema.properties ?? {})) if (scalarField(section.schema.properties![name])) fields.append(fieldControl(name, false, section))
+    } else fields.append(element('p', 'No editable object is supplied for this section. Its input remains unchanged until you explicitly start or clear a declaration.'))
+    if (section.row && !section.array) fields.append(extendedRowActions(sections.find(item => item.key === section.row!.arrayKey)!, section.row.index))
+    renderExtendedPresence(section)
   }
   listen(cell, 'change', () => { selection = selections(draft, cell.value as Cell)[0]; message.textContent = ''; render() })
   listen(entity, 'change', () => { selection = JSON.parse(entity.value) as Selection; message.textContent = ''; render() })

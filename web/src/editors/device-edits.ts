@@ -7,9 +7,11 @@ export type ItemIdentity = { id: string; occurrence: number }
 export type DefectSelection = { cell: Cell; kind: 'interface_defect'; parent: ItemIdentity; id: string }
   | { cell: Cell; kind: 'bulk_defect' | 'metastable_defect'; parent: ItemIdentity; id: string; occurrence: number }
 export type LayerDocumentSelection = { cell: Cell; kind: 'metastable_document' | 'metastable_preparation' } & ItemIdentity
+export type ExtendedSelection = ({ cell: Cell; kind: 'layer_optics' | 'material_optics' } & ItemIdentity)
+  | { cell: Cell; kind: 'tunnelling' | 'microstructure' | 'optical_stack' | 'resources' }
 export type Selection = { cell: Cell } & (
   { kind: 'settings' } | ({ kind: 'layer' | 'material' | 'interface' | 'contact' } & ItemIdentity)
-) | DefectSelection | LayerDocumentSelection
+) | DefectSelection | LayerDocumentSelection | ExtendedSelection
 export type FieldValue = { kind: 'omit' } | { kind: 'value'; value: string | number | boolean | null }
 export type FieldEdit = FieldValue | { kind: 'incomplete'; text: string; message: string }
 export type Path = (string | number)[]
@@ -67,6 +69,12 @@ export const fieldSchemas: Record<Selection['kind'] | 'parameters', FieldSchema>
   metastable_defect: configurationSchema.dto_schemas.DeviceInput.schema.$defs.MetastableDefectInput,
   metastable_document: configurationSchema.dto_schemas.MetastableDocumentInput.schema,
   metastable_preparation: configurationSchema.dto_schemas.MetastablePreparationInput.schema,
+  layer_optics: configurationSchema.dto_schemas.FullLayerInput.schema,
+  material_optics: configurationSchema.dto_schemas.NamedMaterialInput.schema,
+  tunnelling: configurationSchema.dto_schemas.DeviceInput.schema,
+  microstructure: configurationSchema.dto_schemas.DeviceInput.schema,
+  resources: configurationSchema.dto_schemas.DeviceInput.schema,
+  optical_stack: configurationSchema.dto_schemas.TandemInput.schema,
 }
 
 export class DeviceEditError extends Error {
@@ -101,20 +109,31 @@ export function selections(input: EditorInput, cell: Cell): Selection[] {
     const layer = device.layers[index], metastable = layer.metastable_document?.metastable_defects ?? []
     const documents: Selection[] = (['metastable_document', 'metastable_preparation'] as const)
       .filter(key => Object.hasOwn(layer, key)).map(kind => ({ cell, kind, id: selection.id, occurrence: selection.occurrence }))
-    return [selection, ...documents, ...metastable.map((defect, offset) => ({ cell, kind: 'metastable_defect' as const,
+    return [selection, { ...selection, kind: 'layer_optics' as const }, ...documents, ...metastable.map((defect, offset) => ({ cell, kind: 'metastable_defect' as const,
       parent: { id: selection.id, occurrence: selection.occurrence }, id: defect.id,
       occurrence: metastable.slice(0, offset).filter(item => item.id === defect.id).length })),
     ...defects.map((defect, offset) => ({ cell, kind: 'bulk_defect' as const,
       parent: { id: selection.id, occurrence: selection.occurrence }, id: defect.id,
       occurrence: defects.slice(0, offset).filter(item => item.id === defect.id).length }))]
   })
-  return [...layers, ...entries('material', device.materials ?? []),
-    ...entries('contact', device.contacts ?? []), ...interfaces, { cell, kind: 'settings' }]
+  const materials = entries('material', device.materials ?? []).flatMap(item => item.kind === 'material'
+    ? [item, { ...item, kind: 'material_optics' as const }] : [])
+  return [...layers, ...materials, ...entries('contact', device.contacts ?? []), ...interfaces,
+    { cell, kind: 'settings' }, { cell, kind: 'resources' }, { cell, kind: 'tunnelling' }, { cell, kind: 'microstructure' },
+    ...(input.schema_version === 'solarlab.tandem-preparation.v1' ? [{ cell, kind: 'optical_stack' as const }] : [])]
 }
 
 export function selectedEntity(input: EditorInput, selection: Selection): { value: object | undefined; path: Path; index: number } {
   const device = cellInput(input, selection.cell)
   const prefix: Path = selection.cell === 'device' ? [] : [selection.cell]
+  if (selection.kind === 'optical_stack') {
+    if (input.schema_version !== 'solarlab.tandem-preparation.v1') throw new DeviceEditError('An optical junction stack belongs to a tandem.', [['junction_stack']])
+    return { value: input, path: [], index: -1 }
+  }
+  if (selection.kind === 'tunnelling' || selection.kind === 'microstructure' || selection.kind === 'resources') return { value: device, path: prefix, index: -1 }
+  if (selection.kind === 'layer_optics' || selection.kind === 'material_optics') return selectedEntity(input, {
+    ...selection, kind: selection.kind === 'layer_optics' ? 'layer' : 'material',
+  })
   if (selection.kind === 'settings') return { value: device.settings, path: [...prefix, 'settings'], index: -1 }
   if (selection.kind === 'metastable_document' || selection.kind === 'metastable_preparation') {
     const parent = selectedEntity(input, { ...selection, kind: 'layer' })
@@ -138,6 +157,7 @@ export function selectedEntity(input: EditorInput, selection: Selection): { valu
   }
   const collection = selection.kind === 'layer' ? 'layers' : selection.kind === 'material' ? 'materials'
     : selection.kind === 'interface' ? 'interfaces' : 'contacts'
+  if (!('id' in selection)) throw new DeviceEditError('Select an identified configuration record.', [prefix])
   const items = device[collection] ?? []
   let occurrence = 0
   const index = items.findIndex(item => item.id === selection.id && occurrence++ === selection.occurrence)
