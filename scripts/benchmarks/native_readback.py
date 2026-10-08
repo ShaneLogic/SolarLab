@@ -313,10 +313,21 @@ class _Rows:
         return row
 
 
+def qualification_coordinate_count(request):
+    """New fixed case contract only; imports no producer, model or solver."""
+    from scripts.benchmarks.qualification_policy import check_initialized_request
+    try:
+        return check_initialized_request(request)
+    except (ValueError, KeyError, TypeError, OverflowError) as error:
+        raise HistoryVerificationError("qualification_request_binding") from error
+
+
 def segment_startup_controls(request, segment):
     """Independently bind the sole permitted override, without producer imports."""
     controls = dict(request["controls"])
     _require("segment_startup_overrides" not in request, "segment_startup_unbound_override")
+    qualified = "qualification_policy" in request
+    size = qualification_coordinate_count(request) if qualified else 45
     if "segment_startup_policy" not in request:
         return controls
     policy = request["segment_startup_policy"]
@@ -329,13 +340,16 @@ def segment_startup_controls(request, segment):
         "overrides": {"slow_state_hold": {"first_step": 0.0}},
         "application": "fresh_segment_initialization_before_first_solve",
     }
+    if qualified:
+        expected.update(schema="solarlab.voltage-lift-segment-startup.v2",
+                        qualification_policy_sha256=_digest(request["qualification_policy"]))
     _require(type(policy) is dict and _digest(policy) == _digest(expected)
              and request["case_id"] == "DynamicAcceptorIonPublicDeviceV1"
              and [s["id"] for s in request["segments"]] == [
                  "dark_equilibrium_hold", "voltage_ramp", "slow_state_hold"]
              and segment in request["segments"]
              and controls.get("first_step") == 7.8125e-7
-             and len(controls.get("atol", [])) == 45
+             and len(controls.get("atol", [])) == size
              and controls.get("nonlin_conv_coef") == 1.024e-5
              and controls.get("nonlin_guard") == "first-correction-wrms-v1"
              and controls.get("nonlin_trace_capacity") == 4096

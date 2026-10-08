@@ -1550,11 +1550,29 @@ class ScaledIDAAdapter:
         return self.problem.storage.delta(left, right, increment)
 
 
-def prepare_native_request(model: CoupledSlab, segments: tuple[ProtocolSegment, ...]) -> dict:
+def _qualification_scope(model, segments, policy):
+    """The explicit P02 extension; the default N8 route never calls this."""
+    from scripts.benchmarks.qualification_policy import validate_policy, validate_layout
+    try:
+        policy = validate_policy(policy)
+        if type(model) not in (CoupledSlab, AffineCoupledSlab):
+            raise ValueError("qualification_model_type")
+        validate_layout(model.numeric_packet(), policy)
+        if digest([asdict(s) for s in segments]) != digest(policy["origin"]["segments"]):
+            raise ValueError("qualification_protocol_changed")
+        return policy
+    except (ValueError, KeyError, TypeError) as error:
+        raise ContractError(str(error)) from error
+
+
+def prepare_native_request(model: CoupledSlab, segments: tuple[ProtocolSegment, ...], *,
+                           qualification_policy: Mapping | None = None) -> dict:
     """Construct exact proposed inputs; no backend import or native execution."""
     if isinstance(model, AffineCoupledSlab):
         raise ContractError("affine_native_request_requires_separate_domain_and_weight_policy")
-    if model.intervals != 8 or len(segments) != 3:
+    if qualification_policy is not None:
+        qualification_policy = _qualification_scope(model, segments, qualification_policy)
+    if (qualification_policy is None and model.intervals != 8) or len(segments) != 3:
         raise ContractError("first_native_pilot_scope")
     m = model.definition
     initial = model.initial()
@@ -1566,11 +1584,16 @@ def prepare_native_request(model: CoupledSlab, segments: tuple[ProtocolSegment, 
     jref = Q*m.vt*(m.mu_n+m.mu_p)*m.ni/m.length
     current_budget = m.area*0.005*(Q*m.photon_reference if m.photon_reference else jref)
     quadrature = {}
-    for order in [8, 16, 32]:
-        nodes, weights = np.polynomial.legendre.leggauss(order)
-        quadrature[str(order)] = {"nodes": nodes.tolist(), "weights": weights.tolist()}
-    times = {s.id: np.linspace(s.start, s.end, 33) for s in segments}
-    if m.dynamic:
+    if qualification_policy is None:
+        for order in [8, 16, 32]:
+            nodes, weights = np.polynomial.legendre.leggauss(order)
+            quadrature[str(order)] = {"nodes": nodes.tolist(), "weights": weights.tolist()}
+        times = {s.id: np.linspace(s.start, s.end, 33) for s in segments}
+    else:
+        quadrature = qualification_policy["origin"]["quadrature"]
+        times = {key: np.asarray(value) for key, value in
+                 qualification_policy["origin"]["observation_times"].items()}
+    if m.dynamic and qualification_policy is None:
         hold = segments[-1]
         elapsed = np.geomspace(1e-7, 9.0, 33)
         elapsed[-1] = hold.end-hold.start
@@ -1580,7 +1603,7 @@ def prepare_native_request(model: CoupledSlab, segments: tuple[ProtocolSegment, 
         section = model.layout.offsets[field]
         indices.extend(range(section.start, section.stop))
         types.extend([2 if field in {"n_m3", "p_m3"} else 1]*model.count)
-    return {"schema": "solarlab.real-device-native-request.v1", "case_id": m.id,
+    request = {"schema": "solarlab.real-device-native-request.v1", "case_id": m.id,
             "numeric_packet": model.numeric_packet(), "segments": [asdict(s) for s in segments],
             "z0": z0.tolist(), "zdot0": (physical_rate/model.S).tolist(),
             "actual_initial_y": decoded.y.tolist(), "initial_scaling_quantization": (decoded.y-initial.y).tolist(),
@@ -1608,6 +1631,13 @@ def prepare_native_request(model: CoupledSlab, segments: tuple[ProtocolSegment, 
             "uncertified_by_first_pilot": ["time and mesh convergence", "independent trajectory state error",
                                            "full real-device current accuracy", "R1 research precision"],
             "admission": "requires a separate coordinator message bound to this exact request digest"}
+    if qualification_policy is not None:
+        from scripts.benchmarks.qualification_policy import raw_controls
+        request.update(qualification_policy=qualification_policy,
+                       controls=raw_controls(qualification_policy, request["numeric_packet"]),
+                       budgets=dict(qualification_policy["origin"]["budgets"]),
+                       mandatory=dict(qualification_policy["origin"]["mandatory"]))
+    return request
 
 
 def snapshot_solver_result(result) -> dict:
@@ -2038,9 +2068,19 @@ def prepare_affine_native_request(model: AffineCoupledSlab,
                                   segments: tuple[ProtocolSegment, ...],
                                   previous_request: Mapping) -> dict:
     """Freeze one full affine pilot from its retained absolute-state request."""
-    if not isinstance(model, AffineCoupledSlab) or model.intervals != 8 or len(segments) != 3:
+    if not isinstance(model, AffineCoupledSlab) or len(segments) != 3:
         raise ContractError("affine_first_native_scope")
     old = json.loads(json.dumps(dict(previous_request)))
+    qualification_policy = old.get("qualification_policy")
+    if qualification_policy is None:
+        if model.intervals != 8:
+            raise ContractError("affine_first_native_scope")
+    else:
+        qualification_policy = _qualification_scope(model, segments, qualification_policy)
+        from scripts.benchmarks.qualification_policy import check_common, raw_controls
+        check_common(old, qualification_policy)
+        if old["controls"] != raw_controls(qualification_policy, old["numeric_packet"]):
+            raise ContractError("qualification_raw_denominator_origin")
     if old["case_id"] != model.definition.id or digest(old["segments"]) != digest([asdict(s) for s in segments]):
         raise ContractError("affine_source_protocol_changed")
     for key, value in asdict(model.definition).items():
@@ -2059,7 +2099,7 @@ def prepare_affine_native_request(model: AffineCoupledSlab,
     initial = AffineScaledIDAAdapter(model, segments[0]).point(segments[0].start, z0)
     initial_rate = model.tangent_rate(initial, segments[0].inputs(segments[0].start)[1])
     zdot0 = initial_rate/model.S
-    return {"schema": "solarlab.affine-native-request.v1", "case_id": model.definition.id,
+    request = {"schema": "solarlab.affine-native-request.v1", "case_id": model.definition.id,
             "prior_request_sha256": digest(old), "numeric_packet": packet,
             "segments": [asdict(s) for s in segments], "z0": z0.tolist(), "zdot0": zdot0.tolist(),
             "initial_tangent_rate_SI": initial_rate.tolist(),
@@ -2081,6 +2121,9 @@ def prepare_affine_native_request(model: AffineCoupledSlab,
             "admission": "requires separate exact request/source/environment/wrapper-bound coordinator message",
             "refinement_or_full_device_qualification": False,
             "uncertified_by_first_pilot": old["uncertified_by_first_pilot"]}
+    if qualification_policy is not None:
+        request.update(qualification_policy=qualification_policy, qualification_ancestor=old)
+    return request
 
 
 def affine_state_quality_evidence(model: AffineCoupledSlab, point: Point, budgets: Mapping, *, evaluation=None) -> dict:
@@ -2213,6 +2256,11 @@ class AffineSamplingContext:
             "budgets": immutable(owned["budgets"]),
         }.items():
             object.__setattr__(self, name, value)
+
+        if "qualification_policy" in owned:
+            policy = _qualification_scope(model, segments, owned["qualification_policy"])
+            object.__setattr__(self, "qualification_scope",
+                               (model.definition.id, policy["intervals"], policy["coordinates"]))
 
     def request_copy(self) -> dict:
         """Return an independent copy for a controller's private working data."""
@@ -3420,16 +3468,24 @@ def _voltage_lift_startup_step(previous_controls, ancestor_sha256, value):
             "ancestor_request_sha256": ancestor_sha256}
 
 
-def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_sha256, kappa):
+def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_sha256, kappa,
+                               qualification_policy=None):
     """One parent-bound time-error experiment; no adaptive-path equivalence.
 
     At identical states/corrections the exact WRMS and Newton thresholds
     scale together. Matching norm histories also preserve rate/ss. Native
     rounded decisions and future weighting states need separate evidence.
     """
+    size = 45
+    if qualification_policy is not None:
+        from scripts.benchmarks.qualification_policy import validate_policy
+        qualification_policy = validate_policy(qualification_policy)
+        size = qualification_policy["coordinates"]
+        if mapping.model.intervals != qualification_policy["intervals"]:
+            raise ContractError("qualification_time_weight_mesh")
     if (type(kappa) is not int or kappa != 1024
             or mapping.model.definition.id != "DynamicAcceptorIonPublicDeviceV1"
-            or mapping.model.layout.size != 45
+            or mapping.model.layout.size != size
             or parent_controls.get("nonlin_conv_coef") != 1e-8
             or parent_controls.get("nonlin_guard") != "first-correction-wrms-v1"
             or parent_controls.get("nonlin_trace_capacity") != 4096
@@ -3445,7 +3501,7 @@ def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_
     pairs = [(old["rtol"], values["rtol"], Fraction(1, kappa)),
              (old["nonlin_conv_coef"], values["nonlin_conv_coef"], Fraction(kappa))]
     pairs += [(a, b, Fraction(1, kappa)) for a, b in zip(old["atol"], values["atol"], strict=True)]
-    if (len(values["atol"]) != 45
+    if (len(values["atol"]) != size
             or any(not math.isfinite(b) or b < sys.float_info.min or f(b) != f(a)*scale
                    for a, b, scale in pairs)):
         raise ContractError("voltage_lift_time_weights_not_exact_normal")
@@ -3463,6 +3519,9 @@ def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_
         "rounded_native_decisions_or_adaptive_path_equal": False,
         "global_accuracy_or_conservation_certified": False,
     }
+    if qualification_policy is not None:
+        policy.update(schema="solarlab.voltage-lift-time-weights.v2",
+                      qualification_policy_sha256=digest(qualification_policy))
     applied = dict(parent_proof, rtol=values["rtol"], atol=values["atol"],
                    rtol_hex=values["rtol"].hex(),
                    parent_weight_certificate_sha256=digest(parent_proof),
@@ -3505,6 +3564,12 @@ def _voltage_lift_guard_applied(raw_statistics, controls):
 def _voltage_lift_segment_startup(request, overrides):
     """Bind the single hold-only candidate to its unchanged parent controls."""
     controls = request["controls"]
+    qualification_policy = request.get("qualification_policy")
+    size = 45
+    if qualification_policy is not None:
+        from scripts.benchmarks.qualification_policy import validate_policy
+        qualification_policy = validate_policy(qualification_policy)
+        size = qualification_policy["coordinates"]
     if (not isinstance(overrides, Mapping) or set(overrides) != {"slow_state_hold"}
             or not isinstance(overrides["slow_state_hold"], Mapping)
             or set(overrides["slow_state_hold"]) != {"first_step"}):
@@ -3515,19 +3580,23 @@ def _voltage_lift_segment_startup(request, overrides):
             or [s["id"] for s in request["segments"]] != [
                 "dark_equilibrium_hold", "voltage_ramp", "slow_state_hold"]
             or controls.get("first_step") != 7.8125e-7
-            or len(controls.get("atol", [])) != 45
+            or len(controls.get("atol", [])) != size
             or controls.get("nonlin_conv_coef") != 1.024e-5
             or controls.get("nonlin_guard") != "first-correction-wrms-v1"
             or controls.get("nonlin_trace_capacity") != 4096
             or request.get("time_weight_policy", {}).get("kappa") != 1024):
         raise ContractError("voltage_lift_invalid_segment_startup")
-    return {"schema": "solarlab.voltage-lift-segment-startup.v1",
+    policy = {"schema": "solarlab.voltage-lift-segment-startup.v1",
             "ancestor_request_sha256": request["prior_request_sha256"],
             "base_controls_sha256": digest(controls),
             "segments_sha256": digest(request["segments"]),
             "time_weight_policy_sha256": digest(request["time_weight_policy"]),
             "overrides": {"slow_state_hold": {"first_step": 0.0}},
             "application": "fresh_segment_initialization_before_first_solve"}
+    if qualification_policy is not None:
+        policy.update(schema="solarlab.voltage-lift-segment-startup.v2",
+                      qualification_policy_sha256=digest(qualification_policy))
+    return policy
 
 
 def _voltage_lift_initialization_controls(request, segment):
@@ -3576,7 +3645,17 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         segment_startup_overrides: Mapping | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
-    if (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3
+    qualification_policy = old.get("qualification_policy")
+    if qualification_policy is not None:
+        qualification_policy = _qualification_scope(model, segments, qualification_policy)
+        from scripts.benchmarks.qualification_policy import options
+        chosen = dict(nonlin_conv_coef=nonlin_conv_coef, nonlin_guard=nonlin_guard,
+                      nonlin_trace_capacity=nonlin_trace_capacity, first_step=first_step,
+                      time_weight_kappa=time_weight_kappa,
+                      segment_startup_overrides=segment_startup_overrides)
+        if chosen != options(qualification_policy):
+            raise ContractError("qualification_unbound_control_options")
+    if ((qualification_policy is None and (model.intervals != 8 or model.layout.size > 45)) or len(segments) != 3
             or old["schema"] != "solarlab.affine-native-request.v1"
             or old["case_id"] != model.definition.id
             or digest(old["segments"]) != digest([asdict(s) for s in segments])):
@@ -3612,7 +3691,7 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
     time_weights = None
     if time_weight_kappa is not None:
         time_weights, controls, proof = _voltage_lift_time_weights(
-            mapping, controls, proof, digest(old), time_weight_kappa)
+            mapping, controls, proof, digest(old), time_weight_kappa, qualification_policy)
     request = {
         "schema": "solarlab.voltage-lift-native-request.v1", "case_id": model.definition.id,
         "prior_request_sha256": digest(old), "numeric_packet": packet,
@@ -3646,6 +3725,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
             "source-bound observation policy and whole-protocol independent time/state/space qualification"],
         "native_admission": False,
     }
+    if qualification_policy is not None:
+        request.update(qualification_policy=qualification_policy, qualification_ancestor=old)
     if refinement is not None:
         request["nonlinear_control_refinement"] = refinement
     if guard is not None:
@@ -3657,6 +3738,9 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
     if segment_startup_overrides is not None:
         request["segment_startup_policy"] = _voltage_lift_segment_startup(
             request, segment_startup_overrides)
+    if qualification_policy is not None:
+        from scripts.benchmarks.qualification_policy import check_applied_ceiling
+        check_applied_ceiling(request)
     # This preparation context deliberately precedes the final request. Its
     # digest remains labelled as such; no self-referential hash is invented.
     context = AffineSamplingContext(model, request)
@@ -3678,8 +3762,21 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
             or digest(model.numeric_packet()) != digest(request["numeric_packet"])
             or digest([asdict(s) for s in segments]) != digest(request["segments"])):
         raise ContractError("voltage_lift_native_request_binding")
-    if model.intervals != 8 or model.layout.size > 45 or len(segments) != 3:
+    qualification_policy = request.get("qualification_policy")
+    if qualification_policy is None and (model.intervals != 8 or model.layout.size > 45 or len(segments) != 3):
         raise ContractError("voltage_lift_native_scope")
+    if qualification_policy is not None:
+        qualification_policy = _qualification_scope(model, segments, qualification_policy)
+        from scripts.benchmarks.qualification_policy import check_applied_ceiling, options
+        check_applied_ceiling(request)
+        chosen = dict(nonlin_conv_coef=request.get("nonlinear_control_refinement", {}).get("value"),
+                      nonlin_guard=request.get("nonlinear_guard_policy", {}).get("policy"),
+                      nonlin_trace_capacity=request.get("nonlinear_guard_policy", {}).get("trace_capacity", 4096),
+                      first_step=request.get("startup_step_policy", {}).get("value"),
+                      time_weight_kappa=request.get("time_weight_policy", {}).get("kappa"),
+                      segment_startup_overrides=request.get("segment_startup_policy", {}).get("overrides"))
+        if chosen != options(qualification_policy):
+            raise ContractError("qualification_unbound_control_options")
     proof = voltage_lift_wrms_policy(mapping, request["previous_controls"], tuple(segments))
     controls = dict(request["previous_controls"], rtol=proof["rtol"], atol=proof["atol"])
     refinement = request.get("nonlinear_control_refinement")
@@ -3715,7 +3812,7 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
         if not isinstance(time_weights, Mapping):
             raise ContractError("voltage_lift_invalid_time_weights")
         expected, controls, proof = _voltage_lift_time_weights(
-            mapping, controls, proof, request["prior_request_sha256"], time_weights.get("kappa"))
+            mapping, controls, proof, request["prior_request_sha256"], time_weights.get("kappa"), qualification_policy)
         if digest(time_weights) != digest(expected):
             raise ContractError("voltage_lift_time_weights_binding")
     if (digest(proof) != digest(request["weight_certificate"])

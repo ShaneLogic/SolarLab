@@ -132,8 +132,11 @@ def _require_map(binding):
         raise ContractError("native_observation_segment_adapter_required")
     mapping, segment = binding.adapter.mapping, binding.segment
     model = mapping.model
+    qualified_scope = getattr(binding.context, "qualification_scope", None)
+    extended = (type(model) is AffineCoupledSlab
+                and qualified_scope == (model.definition.id, model.intervals, model.layout.size))
     if (type(mapping) is not AffineVoltageMap or type(model) is not AffineCoupledSlab
-            or model.intervals != 8 or model.layout.size > 45
+            or ((model.intervals != 8 or model.layout.size > 45) and not extended)
             or model.definition.id not in {"S0NeutralPublicDeviceV1", "DynamicAcceptorIonPublicDeviceV1"}
             or digest(mapping.payload()) != mapping.identity
             or np.any(model.reference.y != 0)):

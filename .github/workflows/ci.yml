@@ -101,6 +101,7 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_temporal_interface.py tests/numerical_contracts/test_trial_interface.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_linear_forms.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_history.py tests/numerical_contracts/test_native_runner.py
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_readback.py tests/numerical_contracts/test_qualification_bridge.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_device.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_ports.py -k 'not test_rc_ida_trajectory_and_every_native_interval'
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/refactor/test_hysteresis_current_bounds.py

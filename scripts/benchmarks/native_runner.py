@@ -277,7 +277,22 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
      source=Path(freeze["model_input_root"]);plan=Path(freeze["isolated_plan"])
      request=json.loads((folder/"NativeRequest.json").read_text())
      if canonical(request)!=freeze["request_sha256"]:raise RuntimeError("native_request_changed")
-     model=AffineCoupledSlab(SlabDefinition.from_plan(plan,source,request["case_id"]),8)
+     intervals = 8
+     if "qualification_policy" in request:
+       from scripts.benchmarks import qualification_policy
+       qualification_policy.check_initialized_request(request)
+       policy_path = str(Path(qualification_policy.__file__).resolve())
+       expected = freeze["source_sha256"].get(policy_path, freeze["external_source_sha256"].get(policy_path))
+       if expected is None or hashlib.sha256(Path(policy_path).read_bytes()).hexdigest() != expected:
+         raise RuntimeError("qualification_policy_source_not_bound")
+       intervals = request["qualification_policy"]["intervals"]
+       write("QualificationPolicyObserved.json", {
+           "schema": "solarlab.qualification-loaded-policy.v1", "source_path": policy_path,
+           "source_sha256": expected, "request_sha256": freeze["request_sha256"],
+           "policy_sha256": canonical(request["qualification_policy"]), "intervals": intervals,
+           "coordinates": request["qualification_policy"]["coordinates"],
+           "scope": "actual loaded metadata-policy binding before model construction; no accuracy qualification"})
+     model=AffineCoupledSlab(SlabDefinition.from_plan(plan,source,request["case_id"]),intervals)
      segments=protocol_from_plan(plan,request["case_id"])
      if flint.__version__!="0.8.0":raise RuntimeError("unreviewed_Arb_binding")
      if request["budgets"]["total_output_bytes"] != freeze["resources"]["total_output_bytes"]:
