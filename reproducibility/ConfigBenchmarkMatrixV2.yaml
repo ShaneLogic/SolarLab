@@ -777,8 +777,8 @@ sources:
   source_commit: e3eee454b1cf61ff43e2cb668035be0527dacdd3
 - id: src/solarlab/config/device_import.py
   path: src/solarlab/config/device_import.py
-  sha256: 230f265d0a465fb6c8b64f9e6f97a50b38e2db44f29d1880836480d880774cb5
-  source_commit: b02d9fcc892558f494c914472da810c4f2d6dc20
+  sha256: f9523decd8e5676c6ef6d49f4aa38b92eeb19b5c1fc5378fa9b061b9740aef41
+  source_commit: 74bfd300681afaddde01835d065077da4e1d265a
 - id: src/solarlab/config/scaps_input.py
   path: src/solarlab/config/scaps_input.py
   sha256: de7b2a5bbf24d52db6997c3bd9d70c929a8be18cfbd91a0a519d5f6d79fc616d
@@ -851,6 +851,38 @@ sources:
   path: perovskite-sim/perovskite_sim/models/tunneling_channels.py
   sha256: 988195babef2c7390bfacd0f849b91a3802abfda3e742332642c1c36a610a114
   source_commit: e3eee454b1cf61ff43e2cb668035be0527dacdd3
+- id: src/solarlab/config/legacy_fields.py
+  path: src/solarlab/config/legacy_fields.py
+  sha256: 7c53be9d2d83d1635aef5e1193f1f97b756a964c532806002b4514e10f521cf7
+  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+- id: src/solarlab/device/inputs.py
+  path: src/solarlab/device/inputs.py
+  sha256: f616d30f584930276635b8d099fafff736c9bf840e1d48a20eb9bbbb60debddf
+  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+- id: src/solarlab/device/resolved.py
+  path: src/solarlab/device/resolved.py
+  sha256: 168c6a5d28d3a649d290f7b06a7f69da35fe02201988099bc8b3a0b0deab93d9
+  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+- id: src/solarlab/experiments/jv/inputs.py
+  path: src/solarlab/experiments/jv/inputs.py
+  sha256: 1acc7e2616e47513c420df44d34cdd90969ac6a457d13674fd38276e5140594d
+  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+- id: src/solarlab/experiments/jv/declarations.py
+  path: src/solarlab/experiments/jv/declarations.py
+  sha256: d46d4ac8161c9e3192f5eb353a40df28e36fa3433e4db257188cd716602892f9
+  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+- id: tests/refactor/test_legacy_input_migration.py
+  path: tests/refactor/test_legacy_input_migration.py
+  sha256: 7453e0c5967e0e0c8b4740c315d6b527ed401c071bc3f792813fd4e7f608e155
+  source_commit: 74bfd300681afaddde01835d065077da4e1d265a
+- id: web/src/generated/configuration-schema.ts
+  path: web/src/generated/configuration-schema.ts
+  sha256: 83d3c3c7799599608a02b9fb505b8ccc4ac7456dce647024a56aa24c9eb9d57f
+  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+- id: web/src/generated/configuration-inputs.ts
+  path: web/src/generated/configuration-inputs.ts
+  sha256: 85d677ddf176463e0d64e29aba4ca46e6412f5287d105b7b8d289a98ecf60cef
+  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
 preparation_context:
   default_catalog_sha256: c916fb3e199c7da9018fbc19c686208a00e2b7f7e22215d63d91e893ee065a3f
   resource_library_sha256: 53951495632deb3dd4086840ee6421e2416a6f41eef34ba0087627433c25626b
@@ -1289,7 +1321,7 @@ entries:
   test_nodes: []
   executor: null
   executor_version: null
-  migration_status: blocked_input
+  migration_status: prepared_only
   migration_evidence: source_verified_preparation_only
   new_executor: null
   new_test_nodes: []
@@ -1303,7 +1335,7 @@ entries:
     - complete_protocol_preparation_and_initial_state_not_bound
     - qualified_migrated_executor_and_execution_source_not_available
   preparation:
-    status: blocked
+    status: prepared_only
     input_id: registry.tpv_physical_reference
     loader:
       source_id: src/solarlab/config/device_import.py
@@ -1311,24 +1343,21 @@ entries:
     resolver:
       source_id: src/solarlab/config/resolve_device.py
       symbol: resolve_device
-    content_sha256: null
-    issues:
-    - path: []
-      type: configuration_resolution
-      message: 'device: unknown=[''temperature''], missing=[]'
+    content_sha256: 726dbdd08320875773f6171c890e8e085ca5360a9d076c3bff5a328b6ee40eba
+    issues: []
   migration_notes:
   - source:
       source_id: perovskite-sim/perovskite_sim/models/config_loader.py
       symbol: load_device_from_yaml
-    note: The original reader uses dev.get("T", 300.0); temperature is ignored, not an established alias. Renaming it would
-      change the input contract. An explicit legacy behavior/migration decision remains required; this is not a permanent
-      exclusion.
+    note: The original reader uses dev.get("T", 300.0); temperature is ignored, not an established alias. Versioned retained
+      legacy_fields now preserve the raw value and source bytes while PreparedDevice diagnoses its non-effect and the separate
+      effective T authority. Any physical alias needs a distinct correction version; no executor qualification is implied.
   - source:
       source_id: perovskite-sim/backend/main.py
       symbol: stack_from_dict
-    note: The original reader uses dev.get("T", 300.0); temperature is ignored, not an established alias. Renaming it would
-      change the input contract. An explicit legacy behavior/migration decision remains required; this is not a permanent
-      exclusion.
+    note: The original reader uses dev.get("T", 300.0); temperature is ignored, not an established alias. Versioned retained
+      legacy_fields now preserve the raw value and source bytes while PreparedDevice diagnoses its non-effect and the separate
+      effective T authority. Any physical alias needs a distinct correction version; no executor qualification is implied.
 - id: config:tests/fixtures/configs/cigs_graded_optics.yaml
   section: configs
   original_key: tests/fixtures/configs/cigs_graded_optics.yaml
@@ -1460,7 +1489,7 @@ entries:
   test_nodes: []
   executor: null
   executor_version: null
-  migration_status: blocked_input
+  migration_status: prepared_only
   migration_evidence: source_verified_preparation_only
   new_executor: null
   new_test_nodes: []
@@ -1474,7 +1503,7 @@ entries:
     - complete_protocol_preparation_and_initial_state_not_bound
     - qualified_migrated_executor_and_execution_source_not_available
   preparation:
-    status: blocked
+    status: prepared_only
     input_id: registry.driftfusion_benchmark_tmm
     loader:
       source_id: src/solarlab/config/device_import.py
@@ -1482,18 +1511,16 @@ entries:
     resolver:
       source_id: src/solarlab/config/resolve_device.py
       symbol: resolve_device
-    content_sha256: null
-    issues:
-    - path: []
-      type: configuration_resolution
-      message: 'device.interfaces: expected one full-layer-aligned entry per adjacent interface'
+    content_sha256: 1675e5d40400ccd29525ff9f7d93cffa9a1b56f1db470f01a3d82091131eac73
+    issues: []
   migration_notes:
   - source:
       source_id: perovskite-sim/perovskite_sim/models/config_loader.py
       symbol: interfaces_from_device_dict
-    note: The original reader documents full-layer alignment, consumes the supplied short list by raw index, and pads remaining
-      slots with (0,0). It does not shift pairs onto electrical-only boundaries. Preserve this behavior explicitly before
-      migration; no automatic pair shift or permanent exclusion.
+    note: The original reader uses full raw index including substrate and pads remaining slots with (0,0) when a nonempty
+      list is supplied. Preparation now preserves this mapping and the original short list/source evidence, with no automatic
+      pair shift. Empty/null lists retain the empty-tuple behavior; electrical-only reindexing requires a distinct physical
+      correction.
 - id: config:tests/fixtures/configs/driftfusion_calado2016_repro.yaml
   section: configs
   original_key: tests/fixtures/configs/driftfusion_calado2016_repro.yaml
@@ -1586,7 +1613,7 @@ entries:
   test_nodes: []
   executor: null
   executor_version: null
-  migration_status: blocked_input
+  migration_status: prepared_only
   migration_evidence: source_verified_preparation_only
   new_executor: null
   new_test_nodes: []
@@ -1600,7 +1627,7 @@ entries:
     - complete_protocol_preparation_and_initial_state_not_bound
     - qualified_migrated_executor_and_execution_source_not_available
   preparation:
-    status: blocked
+    status: prepared_only
     input_id: registry.calado2016_ion_sweep
     loader:
       source_id: src/solarlab/config/device_import.py
@@ -1608,20 +1635,16 @@ entries:
     resolver:
       source_id: src/solarlab/config/resolve_device.py
       symbol: resolve_device
-    content_sha256: null
-    issues:
-    - path:
-      - simulation_hints
-      - jv_sweep
-      type: extra_forbidden
-      message: Extra inputs are not permitted
+    content_sha256: 8c4c3a3161dd091a5d001f968a96eb3b1debb12c67d02f2399d9de308ed45503
+    issues: []
   migration_notes:
   - source:
       source_id: perovskite-sim/perovskite_sim/models/config_loader.py
       symbol: load_simulation_hints
-    note: The original hint reader retains the complete simulation_hints mapping, including jv_sweep. The typed preparation
-      input cannot yet preserve/consume that declaration. A later lossless typed migration must keep the supplied protocol
-      hints; deleting them or using current protocol defaults is not equivalent.
+    note: The complete jv_sweep hints now have a lossless typed migration using shared J-V request/history DTOs. They remain
+      advisory with no implicit effect on pure library or explicit prepared experiment requests; only explicit composition
+      prepares their original ordered history and supplied tolerances, never by deleting them or substituting current defaults.
+      No physical initial state or qualified executor is created.
 - id: config:tests/fixtures/configs/distributed_defect_qf_dc_pn.yaml
   section: configs
   original_key: tests/fixtures/configs/distributed_defect_qf_dc_pn.yaml
@@ -2026,7 +2049,7 @@ entries:
   test_nodes: []
   executor: null
   executor_version: null
-  migration_status: blocked_input
+  migration_status: prepared_only
   migration_evidence: source_verified_preparation_only
   new_executor: null
   new_test_nodes: []
@@ -2040,7 +2063,7 @@ entries:
     - complete_protocol_preparation_and_initial_state_not_bound
     - qualified_migrated_executor_and_execution_source_not_available
   preparation:
-    status: blocked
+    status: prepared_only
     input_id: registry.ionmonger_benchmark_tmm
     loader:
       source_id: src/solarlab/config/device_import.py
@@ -2048,18 +2071,16 @@ entries:
     resolver:
       source_id: src/solarlab/config/resolve_device.py
       symbol: resolve_device
-    content_sha256: null
-    issues:
-    - path: []
-      type: configuration_resolution
-      message: 'device.interfaces: expected one full-layer-aligned entry per adjacent interface'
+    content_sha256: a4224688b21a5dc13c3044c62d2a8f6222269638fb5f6109b04c6ce109b8a332
+    issues: []
   migration_notes:
   - source:
       source_id: perovskite-sim/perovskite_sim/models/config_loader.py
       symbol: interfaces_from_device_dict
-    note: The original reader documents full-layer alignment, consumes the supplied short list by raw index, and pads remaining
-      slots with (0,0). It does not shift pairs onto electrical-only boundaries. Preserve this behavior explicitly before
-      migration; no automatic pair shift or permanent exclusion.
+    note: The original reader uses full raw index including substrate and pads remaining slots with (0,0) when a nonempty
+      list is supplied. Preparation now preserves this mapping and the original short list/source evidence, with no automatic
+      pair shift. Empty/null lists retain the empty-tuple behavior; electrical-only reindexing requires a distinct physical
+      correction.
 - id: config:tests/fixtures/configs/ionmonger_courtier2019_repro.yaml
   section: configs
   original_key: tests/fixtures/configs/ionmonger_courtier2019_repro.yaml

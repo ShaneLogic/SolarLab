@@ -106,12 +106,18 @@ def test_all_supported_configurations_reach_actual_public_preparation_without_nu
         input = value.to_input()
         resolver = resolve_tandem if input.schema_version == 'solarlab.tandem-preparation.v1' else resolve_device
         assert resolver(input, defaults, resources, sources=value.sources).content_sha256 == value.content_sha256
-    assert len(prepared) == 51
-    assert set(blocked) == {'tests/fixtures/configs/tpv_physical_reference.yaml',
-        'tests/fixtures/configs/driftfusion_benchmark_tmm.yaml', 'tests/fixtures/configs/ionmonger_benchmark_tmm.yaml', 'configs/calado2016_ion_sweep.yaml'}
-    assert 'temperature' in blocked['tests/fixtures/configs/tpv_physical_reference.yaml'][0]['message']
-    assert blocked['configs/calado2016_ion_sweep.yaml'][0]['path'] == ['simulation_hints', 'jv_sweep']
-    assert 'full-layer-aligned' in blocked['tests/fixtures/configs/ionmonger_benchmark_tmm.yaml'][0]['message']
+    assert len(prepared) == 55 and blocked == {}
+    tpv = prepared['tests/fixtures/configs/tpv_physical_reference.yaml']
+    assert tpv.to_mapping()['settings']['T'] == 300
+    assert tpv.to_input().legacy_fields.temperature == 300
+    for name in ('driftfusion_benchmark_tmm', 'ionmonger_benchmark_tmm'):
+        value = prepared[f'tests/fixtures/configs/{name}.yaml']
+        assert value.interfaces[0].electrical is False
+        assert value.interfaces[-1].values['v_n'] == 0
+        assert len(value.to_input().legacy_fields.interfaces) == 2
+    calado = prepared['configs/calado2016_ion_sweep.yaml']
+    assert calado.to_input().simulation_hints.jv_sweep.waveform.turnaround_s == 3
+    assert calado.to_input().simulation_hints.jv_sweep.waveform_controls.atol_m3 == 1
     scaps = prepared['configs/scaps_mirror_v2.yaml']
     assert scaps.layers[2].material.values['chi'] == 3.94
     assert scaps.to_mapping()['diagnostics']  # Historical effective behavior is retained, not repaired.
@@ -267,19 +273,21 @@ def test_export_and_input_source_byte_identities_are_independent(registries):
     assert source.sha256!=matrix.source.sha256
 
 
-def test_blocked_mappings_preserve_the_actual_legacy_behavior_and_future_obligation(registries):
+def test_migrated_input_mappings_preserve_actual_legacy_behavior_and_future_obligation(registries):
     matrix = registries[0]
     tpv = matrix.entry('config:tests/fixtures/configs/tpv_physical_reference.yaml')
-    assert tpv.migration_status == 'blocked_input'
+    assert tpv.migration_status == 'prepared_only'
     assert {item.source.symbol for item in tpv.migration_notes} == {'load_device_from_yaml', 'stack_from_dict'}
     assert all('temperature is ignored, not an established alias' in item.note for item in tpv.migration_notes)
     for name in ('driftfusion_benchmark_tmm', 'ionmonger_benchmark_tmm'):
         entry = matrix.entry(f'config:tests/fixtures/configs/{name}.yaml')
+        assert entry.migration_status == 'prepared_only'
         note, = entry.migration_notes
         assert note.source.symbol == 'interfaces_from_device_dict'
         assert 'raw index' in note.note and 'pads remaining slots with (0,0)' in note.note
-        assert 'no automatic pair shift or permanent exclusion' in note.note
+        assert 'no automatic pair shift' in note.note and 'distinct physical correction' in note.note
     hints = matrix.entry('config:configs/calado2016_ion_sweep.yaml')
+    assert hints.migration_status == 'prepared_only'
     note, = hints.migration_notes
     assert note.source.symbol == 'load_simulation_hints'
     assert 'lossless typed migration' in note.note and 'deleting them' in note.note
