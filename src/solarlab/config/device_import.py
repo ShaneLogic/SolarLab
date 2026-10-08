@@ -131,9 +131,11 @@ def _common_device(
                 if len(pair) != 2:
                     raise ValueError(f"device.interfaces[{i}]: expected [v_n,v_p]")
                 interface.update(v_n=pair[0], v_p=pair[1])
-            elif pairs or defects:
+            elif pairs or (defects and len(defects) < len(layers) - 1):
                 # interfaces_from_device_dict pads by the FULL raw layer
                 # index, including substrate boundaries. Never shift slots.
+                # Keep the established canonical omission for already complete
+                # defect-only inventories; their microscopic authority is intact.
                 interface.update(v_n=0.0, v_p=0.0)
             if i < len(defects):
                 interface["defect"] = None if defects[i] is None else _flat_defect(defects[i], f"interface_defect_{i}", defaults, f"device.interface_defects[{i}]")

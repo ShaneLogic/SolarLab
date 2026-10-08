@@ -216,6 +216,36 @@ def test_short_pairs_and_defect_override_retain_independent_raw_slots(defaults, 
     assert note["historical_effective"][1]["pair_before_defect_override"] == [0, 0]
 
 
+@pytest.mark.parametrize("path", [
+    "dynamic_interface_defect_ion_transient.yaml",
+    "dynamic_interface_defect_ion_transient_absorber_only.yaml",
+    "interface_charge_jv_research.yaml", "interface_charge_research.yaml",
+    "solarscale_nip_band_aligned_iface.yaml", "twod/combined_mobile_interface_research.yaml",
+])
+def test_full_defect_inventory_preserves_bare_pair_omission(path, defaults, resources):
+    file = ROOT / "perovskite-sim/tests/fixtures/configs" / path
+    source = SourceDocument(str(file.relative_to(ROOT)), file.read_bytes())
+    raw = load_yaml_mapping(source.content)
+    assert "interfaces" not in raw["device"]
+    assert len(raw["device"]["interface_defects"]) == len(raw["layers"]) - 1
+    input = import_standard_device(source, id="full_defects", defaults=defaults)
+    value = resolve_device(input, defaults, resources, sources=(source,))
+    assert all(not {"v_n", "v_p"} & row.model_fields_set for row in value.to_input().interfaces)
+    assert all("v_n" not in row.values and "v_p" not in row.values for row in value.interfaces)
+    original_capture = value.interfaces[0].values.get("microscopic_capture_velocities_m_s")
+    identities = {value.content_sha256}
+    for declared in (0, None):
+        edited = value.to_input()
+        edited.interfaces[0].v_n = declared
+        edited.interfaces[0].v_p = declared
+        prepared = resolve_device(edited, defaults, resources, sources=(source,))
+        assert {"v_n", "v_p"} <= prepared.to_input().interfaces[0].model_fields_set
+        assert prepared.interfaces[0].values["v_n"] == declared
+        assert prepared.interfaces[0].values.get("microscopic_capture_velocities_m_s") == original_capture
+        identities.add(prepared.content_sha256)
+    assert len(identities) == 3  # Omission, explicit zero and clearing stay distinct.
+
+
 def test_complete_calado_history_is_advisory_until_explicit_composition(defaults, resources):
     device = prepared("calado", defaults, resources)
     raw = load_yaml_mapping(device.sources[0].content)["simulation_hints"]["jv_sweep"]
