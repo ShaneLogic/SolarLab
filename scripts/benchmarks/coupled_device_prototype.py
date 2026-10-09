@@ -3854,7 +3854,7 @@ def _voltage_lift_guard_applied(raw_statistics, controls):
 
 
 def _voltage_lift_segment_startup(request, overrides):
-    """Bind the single hold-only candidate to its unchanged parent controls."""
+    """Bind automatic or the selected explicit hold step to parent controls."""
     controls = request["controls"]
     qualification_policy = request.get("qualification_policy")
     size = 45
@@ -3867,7 +3867,7 @@ def _voltage_lift_segment_startup(request, overrides):
             or set(overrides["slow_state_hold"]) != {"first_step"}):
         raise ContractError("voltage_lift_invalid_segment_startup")
     value = overrides["slow_state_hold"]["first_step"]
-    if (type(value) not in (int, float) or value != 0 or math.copysign(1, value) != 1
+    if (type(value) not in (int, float) or value not in (0, 2.0**-32) or math.copysign(1, value) != 1
             or request["case_id"] != "DynamicAcceptorIonPublicDeviceV1"
             or [s["id"] for s in request["segments"]] != [
                 "dark_equilibrium_hold", "voltage_ramp", "slow_state_hold"]
@@ -3883,7 +3883,7 @@ def _voltage_lift_segment_startup(request, overrides):
             "base_controls_sha256": digest(controls),
             "segments_sha256": digest(request["segments"]),
             "time_weight_policy_sha256": digest(request["time_weight_policy"]),
-            "overrides": {"slow_state_hold": {"first_step": 0.0}},
+            "overrides": {"slow_state_hold": {"first_step": float(value)}},
             "application": "fresh_segment_initialization_before_first_solve"}
     if qualification_policy is not None:
         policy.update(schema="solarlab.voltage-lift-segment-startup.v2",
@@ -3892,7 +3892,7 @@ def _voltage_lift_segment_startup(request, overrides):
 
 
 def _voltage_lift_initialization_controls(request, segment):
-    """Copy base controls; an explicit zero applies only to the named hold."""
+    """Copy base controls; the bound override applies only to the named hold."""
     controls = dict(request["controls"])
     if "segment_startup_policy" in request:
         policy = request["segment_startup_policy"]

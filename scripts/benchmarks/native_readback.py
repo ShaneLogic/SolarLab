@@ -323,7 +323,7 @@ def qualification_coordinate_count(request):
 
 
 def segment_startup_controls(request, segment):
-    """Independently bind the sole permitted override, without producer imports."""
+    """Independently bind the selected hold step, without producer imports."""
     controls = dict(request["controls"])
     _require("segment_startup_overrides" not in request, "segment_startup_unbound_override")
     qualified = "qualification_policy" in request
@@ -331,13 +331,21 @@ def segment_startup_controls(request, segment):
     if "segment_startup_policy" not in request:
         return controls
     policy = request["segment_startup_policy"]
+    _require(type(policy) is dict, "segment_startup_policy_binding")
+    overrides = policy.get("overrides")
+    _require(type(overrides) is dict and set(overrides) == {"slow_state_hold"}
+             and type(overrides["slow_state_hold"]) is dict
+             and set(overrides["slow_state_hold"]) == {"first_step"}, "segment_startup_policy_binding")
+    value = overrides["slow_state_hold"]["first_step"]
+    _require(type(value) in (int, float) and value in (0, 2.0**-32) and math.copysign(1, value) == 1,
+             "segment_startup_policy_binding")
     expected = {
         "schema": "solarlab.voltage-lift-segment-startup.v1",
         "ancestor_request_sha256": request["prior_request_sha256"],
         "base_controls_sha256": _digest(controls),
         "segments_sha256": _digest(request["segments"]),
         "time_weight_policy_sha256": _digest(request.get("time_weight_policy")),
-        "overrides": {"slow_state_hold": {"first_step": 0.0}},
+        "overrides": {"slow_state_hold": {"first_step": float(value)}},
         "application": "fresh_segment_initialization_before_first_solve",
     }
     if qualified:
@@ -356,7 +364,7 @@ def segment_startup_controls(request, segment):
              and request.get("time_weight_policy", {}).get("kappa") == 1024,
              "segment_startup_policy_binding")
     if segment["id"] == "slow_state_hold":
-        controls["first_step"] = 0.0
+        controls["first_step"] = float(value)
     return controls
 
 
