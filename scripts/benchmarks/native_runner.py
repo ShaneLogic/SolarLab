@@ -349,7 +349,7 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
       raise RuntimeError("controller_and_outer_output_cap_mismatch")
      timing=RuntimeTiming()
      result=run_recorded(folder,
-                         lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model),segments,request,admission,emit,timing=timing),
+                         lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model, mapped_input_profile=request.get("frame_input_policy", {}).get("profile")),segments,request,admission,emit,timing=timing),
                          total_output_bytes=request["budgets"]["total_output_bytes"],
                          input_names=freeze["watchdog"]["input_file_names"],
                           max_record_bytes=freeze.get("writer_limits", {}).get("max_record_bytes", 1048576),

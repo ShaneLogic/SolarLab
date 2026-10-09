@@ -24,6 +24,36 @@ class BoundaryContractError(ValueError):
     """Injected exception boundary; the extracted real save body is unchanged."""
 
 
+@pytest.mark.parametrize("policy", [None, {}, {"profile": "frame-input-expansion12-v1"}])
+def test_native_producer_binds_request_input_profile(policy):
+    tree = ast.parse(Path(native_runner.__file__).read_text())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    call = next(n for n in ast.walk(main) if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name) and n.func.id == "run_recorded")
+    request = {} if policy is None else {"frame_input_policy": policy}
+    expected_profile = None if policy is None else policy.get("profile")
+    model, segments, admission, timing, emitter = (object() for _ in range(5))
+    observed = []
+
+    def map_factory(actual_model, *, mapped_input_profile=None):
+        assert actual_model is model
+        observed.append(mapped_input_profile)
+        return object()
+
+    def controller(mapping, actual_segments, actual_request, actual_admission, emit, **kwargs):
+        assert observed == [expected_profile]
+        assert actual_segments is segments and actual_request is request
+        assert actual_admission is admission and emit is emitter
+        assert kwargs == {"timing": timing}
+        return mapping
+
+    env = {"AffineVoltageMap": map_factory, "run_voltage_lift_native_pilot": controller,
+           "model": model, "segments": segments, "request": request,
+           "admission": admission, "timing": timing}
+    producer = eval(compile(ast.Expression(call.args[1]), native_runner.__file__, "eval"), env)
+    assert producer(emitter) is not None
+
+
 def save_body(owner, emit, cap):
     path = ROOT / "scripts/benchmarks/coupled_device_prototype.py"
     tree = ast.parse(path.read_text())
