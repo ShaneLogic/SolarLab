@@ -3134,10 +3134,34 @@ class VoltageLiftAdapter:
         # the external map is affine, there are no missing map Hessian terms.
         inputs_part = physical.inputs+physical.y @ mapping.lift
         rates_part = physical.input_rate+physical.ydot @ mapping.lift
+        if mapping.frame is not None and any(np.any(word) for word in mapping.frame.v0.words):
+            # With raw z, zdot and inputs held fixed, the moving frame has
+            # dx/dt=S*V0 and d(xdot)/dt=0. Contract the declared tangent with
+            # every retained V0 word before the one scaled-output projection.
+            velocity = tuple(Fraction(float(scale))*sum(
+                (Fraction(float(word[j])) for word in mapping.frame.v0.words), Fraction(0))
+                for j, scale in enumerate(mapping.columns))
+            matrix = physical.y.tocsr()
+            partials = []
+            for i, (start, end) in enumerate(zip(matrix.indptr[:-1], matrix.indptr[1:])):
+                exact = Fraction(float(physical.time[i]))+sum(
+                    (Fraction(float(matrix.data[k]))*velocity[matrix.indices[k]]
+                     for k in range(start, end)), Fraction(0))
+                exact *= Fraction(float(mapping.rows[i]))
+                try:
+                    projected = float(exact)
+                except OverflowError as error:
+                    raise ContractError("segment_frame_time_partial_unrepresentable") from error
+                if not math.isfinite(projected) or (projected == 0.0 and exact != 0):
+                    raise ContractError("segment_frame_time_partial_unrepresentable")
+                partials.append(projected)
+            time_part = frozen_array(partials)
+        else:
+            time_part = mapping.rows*physical.time
         return SparseLinearization(
             scale(physical.y), scale(physical.ydot),
             mapping.rows[:, None]*inputs_part, mapping.rows[:, None]*rates_part,
-            mapping.rows*physical.time, structure, self.source_identity)
+            time_part, structure, self.source_identity)
 
     def jacobian(self, time, z, zdot, inputs, input_rate, cj):
         return self.linearize(time, z, zdot, inputs, input_rate).ida_matrix(cj)
