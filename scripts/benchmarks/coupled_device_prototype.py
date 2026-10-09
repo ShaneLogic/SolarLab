@@ -36,6 +36,7 @@ from scripts.benchmarks.contract_prototype import (
     Layout, LinearCoordinates, LinearFactor, LinearSourceSpec, LinearStorage,
     LinearTerm, PhysicalLinearForm, Point, RateView, StateIncrement, Support,
     TerminalPort, VariableSpec, frozen_array, _linear_arithmetic_identity,
+    _exact_product_matches,
 )
 from scripts.benchmarks.port_prototype import PortSample
 from scripts.benchmarks.sparse_prototype import SparseGraph, TermSupport, factorize
@@ -2756,8 +2757,7 @@ def _frame_scale(value, coefficient):
         # A finite DD product is not, by itself, proof against underflow.
         for a, b, hi, lo in zip(coefficient.flat, word.flat, product.high.flat,
                                 product.low.flat, strict=True):
-            if (Fraction(float(a))*Fraction(float(b))
-                    != Fraction(float(hi))+Fraction(float(lo))):
+            if not _exact_product_matches(float(a), float(b), float(hi), float(lo)):
                 raise ContractError("segment_frame_product_capacity")
         result = result.add(product)
     return result
@@ -2785,7 +2785,7 @@ def _frame_mapped_input(raw, columns, lift, inputs, reference_inputs=None):
     def product(a, b):
         a, b = np.broadcast_arrays(a, b)
         value = DoubleArray.from_dd(DD(a)*DD(b))
-        if any(Fraction(float(x))*Fraction(float(y)) != Fraction(float(hi))+Fraction(float(lo))
+        if any(not _exact_product_matches(float(x), float(y), float(hi), float(lo))
                for x, y, hi, lo in zip(a.flat, b.flat, value.high.flat, value.low.flat, strict=True)):
             raise ContractError("frame_input_product_capacity")
         terms.extend(value.words)
