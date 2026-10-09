@@ -3,6 +3,7 @@ import ast
 from collections.abc import Mapping
 import copy
 from hashlib import sha256
+from fractions import Fraction
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ from unittest.mock import patch
 
 from scripts.benchmarks import native_runner as runner
 from scripts.benchmarks.native_history import emit_record
-from scripts.benchmarks.runtime_timing import PHASES, RuntimeTiming
+from scripts.benchmarks.runtime_timing import PHASES, RuntimeTiming, reconcile_outer_timing
 
 ADMISSION_PREFIX_OUTCOMES = []
 
@@ -284,6 +285,127 @@ class RuntimeTimingTests(unittest.TestCase):
                 self.assertEqual(request, unchanged)
                 ADMISSION_PREFIX_OUTCOMES.append({"case": label, "expected_rejection": expected,
                                                   "full_controller_or_model_executed": False})
+
+
+class OuterTimingReconciliationTests(unittest.TestCase):
+    def arguments(self, **changes):
+        identity = {"request_sha256": "a" * 64, "freeze_sha256": "b" * 64,
+                    "tool_operation_sha256": "c" * 64}
+        values = dict(expected_identity=identity, actual_identity=dict(identity),
+                      clock_names=("time.perf_counter",) * 3,
+                      outer_started_s=100.0, inner_started_s=101.0,
+                      inner_elapsed_s=2.0, observed_interval_s=(103.5, 103.5),
+                      os_elapsed_s=1.9, whole_limit_s=10,
+                      primary_failure=None, prior_failures=(), inner_passed=True,
+                      cleanup_positive=True, returned_code=0)
+        values.update(changes)
+        return values
+
+    def test_shared_epoch_bounds_observer_without_using_OS_duration(self):
+        values = self.arguments()
+        self.assertGreater(values["inner_elapsed_s"], values["os_elapsed_s"] + .01)
+        result = reconcile_outer_timing(**values)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["elapsed_from_tool_epoch_upper_s"], 3.5)
+        self.assertEqual(result["elapsed_from_tool_epoch_upper_exact_s"], "7/2")
+        self.assertFalse(result["OS_comparison"]["OS_used_in_counter_bound"])
+        self.assertEqual(Fraction(result["OS_comparison"]["inner_elapsed_minus_OS_exact_s"]),
+                         Fraction(2.0) - Fraction(1.9))
+        self.assertFalse(result["scientific_qualification"])
+
+    def test_native_primary_failure_precedes_clock_and_return_diagnostics(self):
+        primary = {"phase": "native_return", "segment_id": "slow_state_hold",
+                   "status": -3, "success": False, "message": "retained native failure"}
+        unchanged = copy.deepcopy(primary)
+        result = reconcile_outer_timing(**self.arguments(
+            primary_failure=primary, prior_failures=("complete_protocol_not_verified",),
+            inner_passed=False, returned_code=1, observed_interval_s=(None, None)))
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["first_failure"], unchanged)
+        self.assertEqual(result["primary_failure"], unchanged)
+        self.assertEqual(primary, unchanged)
+        self.assertIn("counter_values", result["later_failures"])
+        self.assertIn("tool_returned_zero", result["later_failures"])
+        self.assertEqual(result["later_failures"][0], "complete_protocol_not_verified")
+
+    def test_incorrect_identity_or_clock_domain_cannot_pass(self):
+        for changes, check in (({"actual_identity": {"request_sha256": "wrong"}}, "invocation_identity"),
+                               ({"expected_identity": {}, "actual_identity": {}}, "invocation_identity"),
+                               ({"clock_names": ("time.time",) * 3}, "same_counter_clock")):
+            with self.subTest(check=check, changes=changes):
+                result = reconcile_outer_timing(**self.arguments(**changes))
+                self.assertFalse(result["passed"])
+                self.assertFalse(result["checks"][check])
+
+    def test_reversed_invalid_or_future_counter_is_rejected(self):
+        for changes in ({"outer_started_s": 102.0}, {"inner_elapsed_s": -1},
+                        {"observed_interval_s": (104., 103.)}, {"observed_interval_s": (102., 102.)},
+                        {"inner_started_s": 110.}, {"inner_elapsed_s": float("nan")},
+                        {"outer_started_s": float("inf")}, {"outer_started_s": True},
+                        {"observed_interval_s": (103.5,)}, {"observed_interval_s": ("103", "104")}):
+            with self.subTest(changes=changes):
+                result = reconcile_outer_timing(**self.arguments(**changes))
+                self.assertFalse(result["passed"])
+                json.dumps(result, allow_nan=False)
+
+    def test_matching_absent_empty_or_mistyped_identity_values_cannot_pass(self):
+        for invalid in (None, "", "   ", False, 0, [], {}, b"identity"):
+            with self.subTest(invalid=invalid):
+                identity = {"request_sha256": "a" * 64, "admission": invalid}
+                result = reconcile_outer_timing(**self.arguments(
+                    expected_identity=identity, actual_identity=dict(identity)))
+                self.assertFalse(result["passed"])
+                self.assertFalse(result["checks"]["invocation_identity"])
+        for identity in ({None: "value"}, {"": "value"}, {" ": "value"}):
+            with self.subTest(identity=identity):
+                result = reconcile_outer_timing(**self.arguments(
+                    expected_identity=identity, actual_identity=dict(identity)))
+                self.assertFalse(result["checks"]["invocation_identity"])
+
+    def test_expected_identity_field_cannot_be_missing_from_actual(self):
+        values = self.arguments()
+        values["expected_identity"] = {**values["expected_identity"], "start_message": "msg_required"}
+        result = reconcile_outer_timing(**values)
+        self.assertFalse(result["passed"])
+        self.assertIn("invocation_identity", result["failures"])
+
+    def test_strict_whole_cap_and_separate_OS_cap_remain_mandatory(self):
+        for changes, failed in (({"whole_limit_s": 3.5}, "whole_clock_limit"),
+                                ({"os_elapsed_s": 10}, "separate_OS_limit"),
+                                ({"os_elapsed_s": -1}, "closed_OS_receipt"),
+                                ({"os_elapsed_s": float("nan")}, "closed_OS_receipt")):
+            with self.subTest(failed=failed):
+                result = reconcile_outer_timing(**self.arguments(**changes))
+                self.assertFalse(result["passed"])
+                self.assertIn(failed, result["failures"])
+
+    def test_cleanup_and_actual_return_cannot_be_waived_by_clock_success(self):
+        for changes, failed in (({"cleanup_positive": False}, "positive_cleanup"),
+                                ({"returned_code": 1}, "tool_returned_zero"),
+                                ({"returned_code": False}, "tool_returned_zero"),
+                                ({"inner_passed": False}, "inner_pipeline_passed")):
+            with self.subTest(failed=failed):
+                result = reconcile_outer_timing(**self.arguments(**changes))
+                self.assertTrue(result["checks"]["whole_clock_limit"])
+                self.assertFalse(result["passed"])
+                self.assertIn(failed, result["failures"])
+
+    def test_rational_observation_enclosure_uses_upper_endpoint_without_rounding_down(self):
+        low, high = Fraction(310, 3), Fraction(311, 3)
+        result = reconcile_outer_timing(**self.arguments(observed_interval_s=(low, high)))
+        self.assertTrue(result["passed"])
+        exact = high - 100
+        self.assertEqual(Fraction(result["elapsed_from_tool_epoch_upper_exact_s"]), exact)
+        self.assertGreaterEqual(Fraction(result["elapsed_from_tool_epoch_upper_s"]), exact)
+
+    def test_existing_failure_order_and_no_clock_read_or_input_mutation(self):
+        values = self.arguments(prior_failures=("earlier_readback_failure",), returned_code=1)
+        unchanged = copy.deepcopy(values)
+        with patch("scripts.benchmarks.runtime_timing.perf_counter_ns", side_effect=AssertionError("clock read")):
+            result = reconcile_outer_timing(**values)
+        self.assertEqual(values, unchanged)
+        self.assertEqual(result["first_failure"], "earlier_readback_failure")
+        self.assertIn("tool_returned_zero", result["later_failures"])
 
 
 if __name__ == "__main__":

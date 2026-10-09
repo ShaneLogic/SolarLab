@@ -1,12 +1,15 @@
-"""Fixed-size diagnostic timing for one serial recorded controller call.
+"""Aggregate controller timing and separate outer-invocation clock checks.
 
-One monotonic clock supplies integer nanoseconds. Inclusive spans overlap by
-design; only exclusive totals form a partition. No timestamp enters a request,
-physical record, solver option or acceptance decision. Import has no clock call.
+RuntimeTiming uses one monotonic nanosecond clock. Inclusive spans overlap;
+only exclusive totals form a partition. Its timestamps never enter physical
+records, solver options or scientific decisions. Import has no clock call.
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
+from copy import deepcopy
+from fractions import Fraction
+import math
 from time import perf_counter_ns
 
 
@@ -77,3 +80,109 @@ class RuntimeTiming:
             "OS_whole_run_timing": "separate existing supervisor/RuntimeEnd receipts",
             "scientific_decisions_use_timing": False,
         }
+
+
+def reconcile_outer_timing(*, expected_identity, actual_identity, clock_names,
+                           outer_started_s, inner_started_s, inner_elapsed_s,
+                           observed_interval_s, os_elapsed_s, whole_limit_s,
+                           primary_failure=None, prior_failures=(),
+                           inner_passed, cleanup_positive, returned_code):
+    """Check a closed invocation without reading a clock or replacing failures.
+
+    All three counter sources must be the source-bound, same-host
+    time.perf_counter clock: the pre-invocation ToolClock, inner CloseRun, and
+    observer. observed_interval_s encloses an actual observer counter reading;
+    a new observer passes (now, now). Saved analysis may supply explicitly
+    derived rational endpoints, never a fabricated historical timestamp.
+
+    The ToolClock entry must precede RunOnce. The resulting upper bound covers
+    RunOnce through this observer checkpoint; bootstrap before that entry and
+    later tool-return/final-seal checks remain with the existing outer caller.
+    OS 'real' is mandatory separate evidence, not a subtractable clock sample.
+    This helper does not award scientific acceptance or alter RuntimeTiming.
+    """
+    def exact(value):
+        if type(value) not in (int, float, Fraction):
+            raise ValueError("invalid clock number")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("nonfinite clock number")
+        return Fraction(value)
+
+    checks = {
+        "invocation_identity": type(expected_identity) is dict and
+            type(actual_identity) is dict and bool(expected_identity) and
+            all(type(key) is str and bool(key.strip()) and
+                type(value) is str and bool(value.strip())
+                for identity in (expected_identity, actual_identity)
+                for key, value in identity.items()) and
+            expected_identity == actual_identity,
+        "same_counter_clock": type(clock_names) in (tuple, list) and
+            tuple(clock_names) == ("time.perf_counter",) * 3,
+        "counter_values": False, "event_order": False,
+        "whole_clock_limit": False, "closed_OS_receipt": False,
+        "separate_OS_limit": False,
+        "inner_pipeline_passed": inner_passed is True,
+        "positive_cleanup": cleanup_positive is True,
+        "tool_returned_zero": type(returned_code) is int and returned_code == 0,
+    }
+    upper = None
+    exact_upper = None
+    checkpoint = None
+    counter_error = None
+    discrepancy = None
+    os_exact = None
+    try:
+        if type(observed_interval_s) not in (tuple, list) or len(observed_interval_s) != 2:
+            raise ValueError("observer reading needs two enclosing endpoints")
+        origin, inner, elapsed, low, high, limit = map(exact, (
+            outer_started_s, inner_started_s, inner_elapsed_s,
+            *observed_interval_s, whole_limit_s))
+        checks["counter_values"] = min(origin, inner, elapsed, low, high) >= 0 and low <= high and limit > 0
+        # CloseRun stores fl(checkpoint - inner_epoch). Enclose that subtraction's
+        # rounding cell; no arbitrary time tolerance or change to the old record.
+        if type(inner_elapsed_s) is float:
+            elapsed_low = (exact(math.nextafter(inner_elapsed_s, -math.inf)) + elapsed) / 2
+            elapsed_high = (elapsed + exact(math.nextafter(inner_elapsed_s, math.inf))) / 2
+        else:
+            elapsed_low = elapsed_high = elapsed
+        checkpoint = [str(inner + elapsed_low), str(inner + elapsed_high)]
+        checks["event_order"] = checks["counter_values"] and origin <= inner and inner + elapsed_high <= low
+        if checks["counter_values"] and checks["event_order"] and checks["same_counter_clock"]:
+            bound = high - origin
+            upper = float(bound)
+            if exact(upper) < bound:
+                upper = math.nextafter(upper, math.inf)
+            exact_upper = str(bound)
+            checks["whole_clock_limit"] = exact(upper) < limit
+    except (ValueError, TypeError, OverflowError) as error:
+        counter_error = str(error)
+    try:
+        os_duration = exact(os_elapsed_s)
+        os_exact = str(os_duration)
+        checks["closed_OS_receipt"] = os_duration >= 0
+        checks["separate_OS_limit"] = checks["closed_OS_receipt"] and 0 < exact(whole_limit_s) and os_duration < exact(whole_limit_s)
+        discrepancy = str(exact(inner_elapsed_s) - os_duration)
+    except (ValueError, TypeError, OverflowError):
+        pass
+    failed_checks = [name for name, passed in checks.items() if not passed]
+    primary = deepcopy(primary_failure)
+    later = deepcopy(list(prior_failures)) + failed_checks
+    failures = ([primary] if primary is not None else []) + later
+    return {
+        "schema": "solarlab.outer-timing-reconciliation.v1",
+        "passed": not failures, "first_failure": failures[0] if failures else None,
+        "primary_failure": primary, "later_failures": later, "failures": failures,
+        "checks": checks, "counter_error": counter_error,
+        "elapsed_from_tool_epoch_upper_s": upper,
+        "elapsed_from_tool_epoch_upper_exact_s": exact_upper,
+        "inner_checkpoint_counter_interval_exact_s": checkpoint,
+        "OS_comparison": {
+            "elapsed_exact_s": os_exact,
+            "inner_elapsed_minus_OS_exact_s": discrepancy,
+            "status": "separate_clock_and_scope; no duration nesting assertion",
+            "OS_used_in_counter_bound": False,
+            "cause_of_disagreement": "not established by these receipts",
+        },
+        "scope": "closed invocation timing/status only; outer bootstrap and final tool-return/seal checks remain mandatory",
+        "scientific_qualification": False,
+    }
