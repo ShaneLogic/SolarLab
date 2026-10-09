@@ -877,7 +877,14 @@ class RateView(ImmutableArrays):
         values = values.immutable_copy()
         words = (values.values,) if type(values) is FloatArray else getattr(values, "words", ())
         words = tuple(_linear_array(word) for word in words)
-        if (not 1 <= len(words) <= 4 or values.shape != (point.state.layout.size,)
+        frame_words = False
+        validator = getattr(point.state.authority, "input_rate_word_count", None)
+        if callable(validator):
+            # The authority/provider owns its optional input profile. The core
+            # neither imports a research provider nor widens ordinary rates.
+            count = validator(values, origin)
+            frame_words = type(count) is int and count == len(words) == 12
+        if (not (1 <= len(words) <= 4 or frame_words) or values.shape != (point.state.layout.size,)
                 or any(word.shape != values.shape for word in words)):
             raise ContractError("linear_rate_word_shape_or_count")
         input_rate, raw_coordinates, raw_rate = map(_linear_array, (input_rate, raw_coordinates, raw_rate))
@@ -965,8 +972,10 @@ def _word_integer(words) -> int:
     Only verifies finite-word transforms and computes their error bounds. It
     does not replace the floating point physical action with rational physics.
     A binary64 input needs at most 2098 bits. Summing K submitted finite words
-    adds at most ceil(log2(K)) bits. The four-factor bound gives at most 128
-    product words per contribution (eight input words times sixteen products),
+    adds at most ceil(log2(K)) bits. Four factors give at most128 product
+    words for the original eight-word difference. The optional mapped-input
+    profile gives224 for an absolute state (2+12 inputs) or384 for a paired
+    difference (24 inputs). The same dynamic remainder bound retains them all,
     and each quotient remainder adds at most eight words. No grid-size limit
     or unbounded expression/history nesting is used to justify that bound.
     """
@@ -1186,7 +1195,7 @@ def _linear_context(form, operand, *, point=None, left=None, right=None, sources
 
 
 def _apply_linear_form(form, operand, *, point=None, left=None, right=None, sources=(),
-                       array_words, state_words, increment_words, output_words, finish):
+                       array_words, state_words, increment_words, output_words, finish, input_word_count=None):
     identity, sources = _linear_context(form, operand, point=point, left=left, right=right, sources=sources)
     external = {source.spec.id: source for source in sources}
     specs = {spec.id: spec for spec in form.layout.variables}
@@ -1203,7 +1212,15 @@ def _apply_linear_form(form, operand, *, point=None, left=None, right=None, sour
             else:
                 selection = form.layout.offsets[name]
                 parts = tuple(word[selection].reshape(shape) for word in operand.words)
-        if (not 1 <= len(parts) <= 8 or any(part.shape != shape or part.dtype != np.dtype(np.float64)
+        limit, exact_count = 8, None
+        if input_word_count is not None:
+            exact_count = input_word_count(operand, name, point=point, right=right, external=external)
+            if exact_count is not None:
+                if type(exact_count) is not int or exact_count not in (12, 14, 16, 24) or output_words != 2:
+                    raise ContractError("linear_input_word_contract")
+                limit = exact_count
+        if (not 1 <= len(parts) <= limit or exact_count is not None and len(parts) != exact_count
+                or any(part.shape != shape or part.dtype != np.dtype(np.float64)
                                          or not np.isfinite(part).all() for part in parts)):
             raise ContractError("linear_source_word_shape_or_count")
         components[name] = parts

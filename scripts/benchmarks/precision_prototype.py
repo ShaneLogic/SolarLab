@@ -187,7 +187,29 @@ class DoubleArithmetic:
             form, operand, point=point, left=left, right=right, sources=sources,
             array_words=_double_linear_words, state_words=_double_linear_state_words,
             increment_words=_double_linear_increment_words, output_words=2,
-            finish=DoubleArray)
+            finish=DoubleArray, input_word_count=_double_linear_input_word_count)
+
+
+def _double_linear_input_word_count(operand, name, *, point, right, external):
+    """Typed profile dispatch stays in the injected precision provider."""
+    subject = (right if isinstance(operand, StateIncrement) else
+               operand.point if isinstance(operand, RateView) else point)
+    authority = (operand.authority if isinstance(operand, StateView) else
+                 subject.state.authority if subject is not None else None)
+    if type(authority) is not MappedAuthority or not authority.frame_inputs:
+        return None
+    if name in external:
+        return 12 if type(external[name].value) is FrameInputExpansion else None
+    if isinstance(operand, StateView):
+        return 14  # two anchor words plus twelve mapped input words
+    if isinstance(operand, StateIncrement):
+        if operand.left_identity == operand.right_identity:
+            return 12  # the provider emits one canonical zero, not a past transition
+        local = authority.local_primitives[name]
+        if type(local) is not FrameInputDifference:
+            raise ContractError("linear_frame_input_difference")
+        return 12+len(local.previous.words)  # zero reference4 or endpoint12
+    return 12 if type(operand.values) is FrameInputExpansion else None
 
 
 def _double_linear_words(value) -> tuple[Vector, ...]:
@@ -195,7 +217,7 @@ def _double_linear_words(value) -> tuple[Vector, ...]:
         return (value.values,)
     if type(value) is DoubleArray:
         return value.words
-    if type(value) is PrimitiveExpansion:
+    if type(value) in (PrimitiveExpansion, FrameInputExpansion):
         return value.words
     raise ContractError("linear_unsupported_word_source")
 
@@ -229,7 +251,7 @@ def _double_linear_increment_words(left, right, name) -> tuple[Vector, ...]:
     # and keeps the bounded original operands; projected delta fields are not
     # authoritative inputs to a cross-species or spatial contraction.
     local = authority._temporal_primitives(left)[name]
-    if type(local) is PrimitiveDifference:
+    if type(local) in (PrimitiveDifference, FrameInputDifference):
         return local.current.words + tuple(-word for word in local.previous.words)
     return local.words
 
@@ -428,6 +450,136 @@ class PrimitiveDifference:
         raise TypeError("implicit primitive difference projection is forbidden")
 
 
+FRAME_INPUT_PROFILE = "frame-input-expansion12-v1"
+
+
+def _frame_input_words(components):
+    """Normalize bounded mapped SI inputs, retaining every exact source bit.
+
+    Four raw parent words times one binary64 column produce at most eight
+    product words. The one nonzero voltage lift adds at most four more.
+    This separate input profile never widens PrimitiveExpansion or its codec.
+    """
+    owned = []
+    for value in components:
+        if len(owned) == 24:
+            raise ContractError("frame_input_shape_or_arity")
+        raw = np.asarray(value)
+        if raw.dtype.kind not in {"i", "u", "f"} or raw.dtype.kind == "f" and raw.dtype.itemsize > 8:
+            raise ContractError("frame_input_word_dtype")
+        converted = frozen_array(raw)
+        if raw.dtype.kind in {"i", "u"} and any(int(a) != int(b) for a, b in zip(raw.flat, converted.flat)):
+            raise ContractError("inexact_frame_input_integer")
+        owned.append(converted)
+    components = tuple(owned)
+    if (not components or len(components) > 24
+            or any(value.shape != components[0].shape for value in components)):
+        raise ContractError("frame_input_shape_or_arity")
+    output = [np.zeros(components[0].size) for _ in range(12)]
+    for index in range(components[0].size):
+        source = [float(value.ravel()[index]) for value in components]
+        proposed = []
+        try:
+            for _ in range(12):
+                proposed.append(fsum([*source, *(-word for word in proposed)]))
+        except OverflowError as error:
+            raise ContractError("frame_input_sum_range") from error
+        if not _binary_sum_is_zero([*source, *(-word for word in proposed)]):
+            raise ContractError("frame_input_capacity_exceeded")
+        for target, word in zip(output, proposed, strict=True):
+            target[index] = word
+    return tuple(word.reshape(components[0].shape) for word in output)
+
+
+@dataclass(frozen=True, init=False)
+class FrameInputExpansion(PrimitiveExpansion):
+    """Explicit twelve-word mapped input; physical arithmetic remains DD."""
+
+    def __init__(self, words):
+        words = tuple(words)
+        if len(words) != 12:
+            raise ContractError("frame_input_word_count")
+        owned = []
+        for word in words:
+            raw = np.asarray(word)
+            if raw.dtype.kind not in {"i", "u", "f"} or raw.dtype.kind == "f" and raw.dtype.itemsize > 8:
+                raise ContractError("frame_input_word_dtype")
+            value = frozen_array(raw)
+            if raw.dtype.kind in {"i", "u"} and any(int(a) != int(b) for a, b in zip(raw.ravel(), value.ravel())):
+                raise ContractError("inexact_frame_input_integer")
+            owned.append(value)
+        normalized = _frame_input_words(owned)
+        if any(not np.array_equal(a, b) for a, b in zip(owned, normalized, strict=True)):
+            raise ContractError("unnormalized_frame_input_words")
+        object.__setattr__(self, "_words", tuple(owned))
+
+    @classmethod
+    def _owned(cls, words):
+        words = tuple(frozen_array(word) for word in words)
+        if len(words) != 12 or any(word.shape != words[0].shape for word in words):
+            raise ContractError("frame_input_word_count_or_shape")
+        value = object.__new__(cls)
+        object.__setattr__(value, "_words", words)
+        return value
+
+    @classmethod
+    def from_terms(cls, terms):
+        return cls._owned(_frame_input_words(terms))
+
+    @classmethod
+    def from_value(cls, value):
+        if type(value) is cls:
+            return value
+        if type(value) is PrimitiveExpansion:
+            return cls._owned((*value.words, *(np.zeros(value.shape) for _ in range(8))))
+        value = value if type(value) is DoubleArray else DoubleArray(value)
+        return cls._owned((value.high, value.low, *(np.zeros(value.shape) for _ in range(10))))
+
+    def add(self, other):
+        other = type(self).from_value(other)
+        if self.shape != other.shape:
+            raise ContractError("frame_input_shape_mismatch")
+        return type(self).from_terms((*self.words, *other.words))
+
+    def identity_bytes(self):
+        return (FRAME_INPUT_PROFILE.encode()+b":"+repr(self.shape).encode()
+                +b"".join(word.tobytes() for word in self._words))
+
+
+@dataclass(frozen=True)
+class FrameInputDifference(PrimitiveDifference):
+    """Two bound input endpoints, at most24 signed words; never a growing tree."""
+
+    def __post_init__(self):
+        allowed = (PrimitiveExpansion, FrameInputExpansion)
+        if (type(self.current) not in allowed or type(self.previous) not in allowed
+                or type(self.current) is not FrameInputExpansion
+                or type(self.previous) is PrimitiveExpansion and not self.previous.is_zero()
+                or self.current.shape != self.previous.shape):
+            raise ContractError("frame_difference_requires_two_endpoints")
+
+    def take_flat(self, indices):
+        return type(self)(self.current.take_flat(indices), self.previous.take_flat(indices))
+
+    def identity_bytes(self):
+        return (b"frame-input12-endpoint-difference-v1:"+self.current.identity_bytes()
+                +b":minus:"+self.previous.identity_bytes())
+
+
+def _exact_input_sum(left, right):
+    if type(left) is FrameInputExpansion or type(right) is FrameInputExpansion:
+        return FrameInputExpansion.from_value(left).add(right)
+    return _exact_primitive_sum(left, right)
+
+
+def _exact_input_difference(left, right):
+    if type(left) is FrameInputExpansion or type(right) is FrameInputExpansion:
+        right = FrameInputExpansion.from_value(right)
+        return FrameInputExpansion.from_value(left).add(
+            FrameInputExpansion._owned(tuple(-word for word in right.words)))
+    return _exact_primitive_difference(left, right)
+
+
 def _exact_primitive_sum(left, right) -> PrimitiveExpansion:
     left, right = PrimitiveExpansion.from_value(left), PrimitiveExpansion.from_value(right)
     if left.shape != right.shape:
@@ -494,7 +646,7 @@ class MappedAuthority:
     """Bounded root plus primitive map; projected words never replace the root.
 
     Only the relative linear/log/logit maps and the named R1 lift are supported.
-    Endpoint composition must be exact in four words; v5 affine transitions
+    Default endpoint composition must be exact in four words; v5 affine transitions
     retain two endpoints when their local difference is wider. Transcendental physical
     evaluations retain the existing DD domain and require observable-specific
     qualification; absolute projections carry no generic sign certificate.
@@ -537,11 +689,19 @@ class MappedAuthority:
         expected = self._primitive_shapes()
         if set(self.primitives) != set(expected):
             raise ContractError("authority_primitive_roles_mismatch")
+        framed = any(type(value) is FrameInputExpansion for value in self.primitives.values())
+        if framed and (not all(type(value) is FrameInputExpansion for value in self.primitives.values())
+                       or self.map_name != "relative-fields" or any(mode != "linear" for mode in modes.values())
+                       or self.coordinate_kind != "fixed-reference"):
+            raise ContractError("frame_input_requires_fixed_affine_authority")
         for name in ("primitives", "previous_primitives", "local_primitives"):
             values = getattr(self, name)
             if values is not None:
-                object.__setattr__(self, name, MappingProxyType({key: value if name == "local_primitives"
-                                                               and type(value) is PrimitiveDifference
+                object.__setattr__(self, name, MappingProxyType({key: value if (
+                                                               name == "local_primitives" and type(value) in (
+                                                                   PrimitiveDifference, FrameInputDifference)
+                                                               or framed and type(value) in (
+                                                                   PrimitiveExpansion, FrameInputExpansion))
                                                                else PrimitiveExpansion.from_value(value)
                                                                for key, value in sorted(values.items())}))
         parameters = dict(self.parameters)
@@ -552,7 +712,7 @@ class MappedAuthority:
               or not np.isfinite(parameters["thermal_voltage_V"]) or parameters["thermal_voltage_V"] <= 0):
             raise ContractError("invalid_thermal_voltage")
         for name, shape in expected.items():
-            if type(self.primitives[name]) is not PrimitiveExpansion or self.primitives[name].shape != shape:
+            if type(self.primitives[name]) is not (FrameInputExpansion if framed else PrimitiveExpansion) or self.primitives[name].shape != shape:
                 raise ContractError("authority_primitive_shape_or_type")
         for spec in self.layout.variables:
             value = self.anchor[spec.id]
@@ -592,9 +752,13 @@ class MappedAuthority:
             if (set(self.local_primitives) != set(expected) or set(self.previous_primitives) != set(expected)
                     or not self.previous_authority_identity or not self.previous_point_identity):
                 raise ContractError("incomplete_authority_transition")
-            paired = [type(value) is PrimitiveDifference for value in self.local_primitives.values()]
+            paired = [type(value) in (PrimitiveDifference, FrameInputDifference) for value in self.local_primitives.values()]
             if any(paired) and (not all(paired) or self.coordinate_kind != "fixed-reference"):
                 raise ContractError("paired_transition_requires_affine_endpoints")
+            if framed and not all(type(value) is FrameInputDifference for value in self.local_primitives.values()):
+                raise ContractError("frame_input_requires_paired_transition")
+            if not framed and any(type(value) is FrameInputDifference for value in self.local_primitives.values()):
+                raise ContractError("frame_difference_in_four_word_authority")
             for key in expected:
                 local = self.local_primitives[key]
                 if isinstance(local, PrimitiveDifference):
@@ -619,7 +783,9 @@ class MappedAuthority:
             if self.local_primitives is None:
                 raise ContractError("fixed_reference_transition_required")
             base = self._fixed_reference_primitives()
-            coordinate_primitives = {key: _exact_primitive_difference(self.primitives[key], base[key])
+            if framed and any(not value.is_zero() for value in base.values()):
+                raise ContractError("frame_input_reference_base_nonzero")
+            coordinate_primitives = {key: _exact_input_difference(self.primitives[key], base[key])
                                      for key in expected}
         expected_coordinates = (np.concatenate([coordinate_primitives[key].high.ravel() for key in order])
                                 if coordinate_primitives is not None and order else np.zeros(sum(int(np.prod(expected[key])) for key in order)))
@@ -653,6 +819,20 @@ class MappedAuthority:
     @property
     def layout_identity(self) -> str:
         return self.layout.identity
+
+    @property
+    def frame_inputs(self):
+        return bool(self.primitives) and all(type(value) is FrameInputExpansion
+                                            for value in self.primitives.values())
+
+    def input_rate_word_count(self, values, origin):
+        if type(values) is FrameInputExpansion:
+            if not self.frame_inputs:
+                raise ContractError("linear_rate_word_shape_or_count")
+            return 12
+        if self.frame_inputs and origin == "mapped-coordinate-rate":
+            raise ContractError("linear_rate_frame_input_profile")
+        return None
 
     def _fixed_reference_primitives(self) -> Mapping[str, PrimitiveExpansion]:
         reference = self.fixed_reference
@@ -767,7 +947,7 @@ class MappedAuthority:
 
     def _temporal_primitives(self, left: StateView) -> Mapping[str, PrimitiveExpansion | PrimitiveDifference]:
         if left.authority.identity == self.identity:
-            return {key: PrimitiveExpansion.from_value(np.zeros(value.shape))
+            return {key: type(value).from_value(np.zeros(value.shape))
                     for key, value in self.primitives.items()}
         if left.authority.identity != self.previous_authority_identity or self.local_primitives is None:
             raise ContractError("increment_transition_anchor_mismatch")
@@ -967,6 +1147,9 @@ class MappedAuthority:
                                              for value in self.local_primitives.values()):
                 payload["schema"] = "solarlab.state-authority.v5"
                 payload["composition_policy"] = "four-word-endpoints-paired-transition-v1"
+            if self.frame_inputs:
+                payload["schema"] = "solarlab.state-authority.v6"
+                payload["composition_policy"] = "frame-input12-endpoints-paired-transition-v1"
             payload["coordinate_contract"] = {"kind": "fixed-reference-affine-v1",
                                                "solver_projection": "first-word",
                                                "reference": encode_point(self.fixed_reference)}
@@ -1173,7 +1356,10 @@ class RelativeCoordinates:
             raise ContractError("affine_trial_requires_linear_reference")
         if not isinstance(reference, Point) or reference.state.layout.identity != self.layout.identity:
             raise ContractError("affine_trial_reference_layout")
-        cumulative = PrimitiveExpansion.from_value(cumulative_increment)
+        framed = type(cumulative_increment) is FrameInputExpansion
+        if framed and transition_representation != "paired-endpoints-v1":
+            raise ContractError("frame_input_requires_paired_transition")
+        cumulative = (FrameInputExpansion if framed else PrimitiveExpansion).from_value(cumulative_increment)
         if cumulative.shape != (self.layout.size,):
             raise ContractError("coordinate_layout_mismatch")
         source = reference.state.authority
@@ -1188,6 +1374,8 @@ class RelativeCoordinates:
             anchor, base = source.anchor, source.primitives
         else:
             raise ContractError("coordinate_authority_mismatch")
+        if framed and any(not value.is_zero() for value in base.values()):
+            raise ContractError("frame_input_reference_base_nonzero")
         previous = reference if predecessor is None else predecessor
         if not isinstance(previous, Point) or previous.state.layout.identity != self.layout.identity:
             raise ContractError("trial_predecessor_reference_mismatch")
@@ -1201,18 +1389,21 @@ class RelativeCoordinates:
             old = previous_authority.primitives
         else:
             raise ContractError("trial_predecessor_reference_mismatch")
+        if framed and previous.identity != reference.identity and not previous_authority.frame_inputs:
+            raise ContractError("frame_input_predecessor_profile")
         current, local = {}, {}
         for spec in self.layout.variables:
             offset = self.layout.offsets[spec.id]
             value = cumulative.take_flat(np.arange(offset.start, offset.stop, dtype=np.intp)).reshape(spec.shape)
-            current[spec.id] = _exact_primitive_sum(base[spec.id], value)
-            local[spec.id] = (PrimitiveDifference(current[spec.id], old[spec.id])
+            current[spec.id] = _exact_input_sum(base[spec.id], value)
+            difference = FrameInputDifference if framed else PrimitiveDifference
+            local[spec.id] = (difference(current[spec.id], old[spec.id])
                               if transition_representation == "paired-endpoints-v1" else
                               _exact_primitive_difference(current[spec.id], old[spec.id]))
         # Use the authority's canonical cumulative words for the solver view.
         # In particular, a valid input -0 has canonical physical remainder +0;
         # the exact byte binding below remains strict rather than using allclose.
-        coordinate_words = [_exact_primitive_difference(current[spec.id], base[spec.id])
+        coordinate_words = [_exact_input_difference(current[spec.id], base[spec.id])
                             for spec in self.layout.variables]
         y = np.concatenate([value.high.ravel() for value in coordinate_words]) if coordinate_words else np.empty(0)
         inputs = frozen_array(inputs)
@@ -1323,30 +1514,33 @@ def _word_payload(value: DoubleArray) -> dict[str, Any]:
 
 
 def _primitive_payload(value: PrimitiveExpansion) -> dict[str, Any]:
-    return {"shape": list(value.shape), "precision": "input-expansion4-v1",
+    return {"shape": list(value.shape), "precision": FRAME_INPUT_PROFILE if type(value) is FrameInputExpansion else "input-expansion4-v1",
             "words": [[float(x).hex() for x in word.ravel()] for word in value.words]}
 
 
 def _difference_payload(value: PrimitiveDifference) -> dict[str, Any]:
-    return {"shape": list(value.shape), "precision": "paired-endpoint-difference-v1",
+    return {"shape": list(value.shape), "precision": "frame-input12-endpoint-difference-v1" if type(value) is FrameInputDifference else "paired-endpoint-difference-v1",
             "current": _primitive_payload(value.current), "previous": _primitive_payload(value.previous)}
 
 
-def _decode_difference(payload: Mapping[str, Any], shape: tuple[int, ...]) -> PrimitiveDifference:
+def _decode_difference(payload: Mapping[str, Any], shape: tuple[int, ...], *, framed=False) -> PrimitiveDifference:
     if (set(payload) != {"shape", "precision", "current", "previous"}
             or payload["shape"] != list(shape)
-            or payload["precision"] != "paired-endpoint-difference-v1"):
+            or payload["precision"] != ("frame-input12-endpoint-difference-v1" if framed else "paired-endpoint-difference-v1")):
         raise ContractError("precision_codec_primitive_difference")
-    return PrimitiveDifference(_decode_primitive(payload["current"], shape),
-                               _decode_primitive(payload["previous"], shape))
+    return (FrameInputDifference if framed else PrimitiveDifference)(
+        _decode_primitive(payload["current"], shape, framed=framed),
+        _decode_primitive(payload["previous"], shape, framed=framed))
 
 
-def _decode_primitive(payload: Mapping[str, Any], shape: tuple[int, ...]) -> PrimitiveExpansion:
+def _decode_primitive(payload: Mapping[str, Any], shape: tuple[int, ...], *, framed=False) -> PrimitiveExpansion:
+    extended = framed and payload.get("precision") == FRAME_INPUT_PROFILE
+    kind, count = (FrameInputExpansion, 12) if extended else (PrimitiveExpansion, 4)
     if (set(payload) != {"shape", "precision", "words"} or payload["shape"] != list(shape)
-            or payload["precision"] != "input-expansion4-v1" or len(payload["words"]) != 4
+            or payload["precision"] != (FRAME_INPUT_PROFILE if extended else "input-expansion4-v1") or len(payload["words"]) != count
             or any(len(word) != int(np.prod(shape)) for word in payload["words"])):
         raise ContractError("precision_codec_primitive_shape")
-    return PrimitiveExpansion(tuple(np.asarray([float.fromhex(x) for x in word]).reshape(shape)
+    return kind(tuple(np.asarray([float.fromhex(x) for x in word]).reshape(shape)
                                     for word in payload["words"]))
 
 
@@ -1420,8 +1614,9 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
             "time", "inputs", "coordinates", "reference", "composition_policy", "transition"}
     fixed_reference = None
     kind = "local"
-    paired = payload.get("schema") == "solarlab.state-authority.v5"
-    if payload.get("schema") in {"solarlab.state-authority.v4", "solarlab.state-authority.v5"}:
+    framed = payload.get("schema") == "solarlab.state-authority.v6"
+    paired = framed or payload.get("schema") == "solarlab.state-authority.v5"
+    if payload.get("schema") in {"solarlab.state-authority.v4", "solarlab.state-authority.v5", "solarlab.state-authority.v6"}:
         keys.add("coordinate_contract")
         contract = payload.get("coordinate_contract", {})
         if (set(contract) != {"kind", "solver_projection", "reference"}
@@ -1431,7 +1626,9 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
         fixed_reference = decode_point(contract["reference"], layout)
         kind = "fixed-reference"
     policy = "four-word-endpoints-paired-transition-v1" if paired else "exact-four-word-primitives-v1"
-    if (set(payload) != keys or payload["schema"] not in {"solarlab.state-authority.v3", "solarlab.state-authority.v4", "solarlab.state-authority.v5"}
+    if framed:
+        policy = "frame-input12-endpoints-paired-transition-v1"
+    if (set(payload) != keys or payload["schema"] not in {"solarlab.state-authority.v3", "solarlab.state-authority.v4", "solarlab.state-authority.v5", "solarlab.state-authority.v6"}
             or payload["layout"] != layout.identity or payload["version"] != 1
             or payload["composition_policy"] != policy):
         raise ContractError("precision_codec_authority_schema")
@@ -1451,8 +1648,10 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
     def decode_primitives(values):
         if set(values) != set(primitive_shapes):
             raise ContractError("authority_primitive_roles_mismatch")
-        return {key: _decode_primitive(values[key], shape) for key, shape in primitive_shapes.items()}
+        return {key: _decode_primitive(values[key], shape, framed=framed) for key, shape in primitive_shapes.items()}
     primitives = decode_primitives(payload["primitives"])
+    if framed and not all(type(value) is FrameInputExpansion for value in primitives.values()):
+        raise ContractError("frame_input_codec_profile_mismatch")
     if paired and not primitives:
         raise ContractError("precision_codec_empty_paired_transition")
     previous, local, previous_identity, previous_point = None, None, None, None
@@ -1464,7 +1663,7 @@ def _decode_authority(payload: Mapping[str, Any], layout: Layout) -> MappedAutho
         if paired:
             if set(transition["local_primitives"]) != set(primitive_shapes):
                 raise ContractError("authority_primitive_roles_mismatch")
-            local = {key: _decode_difference(transition["local_primitives"][key], shape)
+            local = {key: _decode_difference(transition["local_primitives"][key], shape, framed=framed)
                      for key, shape in primitive_shapes.items()}
         else:
             local = decode_primitives(transition["local_primitives"])

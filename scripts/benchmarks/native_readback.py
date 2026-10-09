@@ -638,8 +638,69 @@ class _ChargeRefinement:
                 "slack_upper_bounds": tuple(n * self.quantum for n in self.rounded)}
 
 
-def _frame_word_values(words, size):
-    layers = tuple(_hex_vector(w, size) for w in _vector(words, 4))
+def _frame_input_parent(request):
+    """Check immutable failed-file binding without importing its producer."""
+    parent = request.get("frame_input_parent")
+    _require(type(parent) is dict and set(parent) == {"request_json", "native_result_json", "first_failure_json"}
+             and all(type(v) is str and len(v.encode()) <= 1024*1024 for v in parent.values()),
+             "frame_input_parent_evidence")
+    try:
+        old, result, failure = (json.loads(parent[k]) for k in ("request_json", "native_result_json", "first_failure_json"))
+    except (TypeError, ValueError) as error:
+        raise HistoryVerificationError("frame_input_parent_evidence") from error
+    _require(all(type(v) is dict for v in (old, result, failure)), "frame_input_parent_evidence")
+    old_id = _digest(old)
+    _require(old.get("schema") == "solarlab.voltage-lift-native-request.v1" and "frame_input_policy" not in old
+             and "segment_frame_policy" in old and result.get("request_sha256") == old_id
+             and result.get("complete_protocol") is False and result.get("reason") == "primitive_expansion_capacity_exceeded"
+             and failure.get("kind") == "first_callback_failure"
+             and _digest(failure.get("failure")) == _digest(result.get("first_failure")), "frame_input_parent_failure_binding")
+    for key in ("case_id", "prior_request_sha256", "controls", "previous_controls", "segments",
+                "observation_times", "quadrature", "original_budgets", "mandatory", "physical_domain_policy"):
+        _require(key in request and _digest(request[key]) == _digest(old.get(key)), "frame_input_parent_science_changed:"+key)
+    mapping, old_map = dict(request["voltage_lift_map"]), dict(old["voltage_lift_map"])
+    _require(mapping.pop("mapped_input_profile", None) == "frame-input-expansion12-v1"
+             and mapping.pop("mapped_input_words", None) == 12, "frame_input_parent_map_profile")
+    mapping.pop("physical_model"); old_map.pop("physical_model")
+    _require(_digest(mapping) == _digest(old_map), "frame_input_parent_map_changed")
+    current_packet, old_packet = (json.loads(json.dumps(v)) for v in (request["numeric_packet"], old["numeric_packet"]))
+    for packet in (current_packet, old_packet):
+        packet["definition"].pop("source_path", None)
+        packet.pop("definition_identity", None)
+    _require(_digest(current_packet) == _digest(old_packet), "frame_input_parent_physics_changed")
+    return {"request_sha256": old_id, **{
+        key.removesuffix("_json")+"_file_sha256": hashlib.sha256(value.encode()).hexdigest()
+        for key, value in parent.items()}}
+
+
+def frame_input_word_count(request):
+    """Independent request/profile check; raw native anchors always stay four."""
+    _require(not any(k in request for k in ("frame_input_profile", "frame_input_words", "mapped_input_profile")),
+             "frame_input_unbound_option")
+    if "frame_input_policy" not in request:
+        _require("frame_input_parent" not in request
+                 and not any(k in request.get("voltage_lift_map", {}) for k in ("mapped_input_profile", "mapped_input_words")),
+                 "frame_input_unbound_parent_or_map")
+        return 4
+    _require("segment_frame_policy" in request, "frame_input_requires_segment_frame")
+    expected = {"schema": "solarlab.frame-input-policy.v1", "profile": "frame-input-expansion12-v1",
+                "failed_parent": _frame_input_parent(request),
+                "ancestor_request_sha256": request["prior_request_sha256"],
+                "parent_map_identity": request["map_identity"],
+                "segment_frame_policy_sha256": _digest(request["segment_frame_policy"]),
+                "controls_sha256": _digest(request["controls"]), "segments_sha256": _digest(request["segments"]),
+                "sampling_sha256": _digest((request["observation_times"], request["quadrature"])),
+                "mapped_input_words": 12, "raw_parent_words": 4,
+                "bound": "four-parent-words_times_column_plus_voltage_and_reference_DD_products",
+                "physical_gates_changed": False}
+    _require(type(request["frame_input_policy"]) is dict
+             and _digest(request["frame_input_policy"]) == _digest(expected), "frame_input_policy_binding")
+    return 12
+
+
+def _frame_word_values(words, size, *, count=4):
+    _require(type(count) is int and count in (4, 12), "frame_input_word_count")
+    layers = tuple(_hex_vector(w, size) for w in _vector(words, count))
     values = tuple(sum((Fraction(w[i]) for w in layers), Fraction(0)) for i in range(size))
     for i, value in enumerate(values):
         for word in layers:
@@ -656,6 +717,7 @@ class SegmentFrameCheck:
     def __init__(self, request):
         self.request, self.request_id = request, _digest(request)
         self.enabled = "segment_frame_policy" in request
+        self.input_words = frame_input_word_count(request)
         self.size = len(request.get("z0", ()))
         self.base = request["voltage_lift_map"]
         self.active = self.current_map = self.latest_weights = None
@@ -715,6 +777,8 @@ class SegmentFrameCheck:
         expected_map = dict(self.base, segment_frame=frame,
             raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
             physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        if self.input_words == 12:
+            expected_map.update(mapped_input_profile="frame-input-expansion12-v1", mapped_input_words=12)
         _require(record["map"] == expected_map and record["map_identity"] == _digest(expected_map),
                  "segment_frame_map_binding")
         q0 = _frame_word_values(frame["q0_words_hex"], self.size)
@@ -746,8 +810,8 @@ class SegmentFrameCheck:
                       for values in (segment["voltage"], segment["photons"]))
         _require(_hex_vector(parent["inputs_hex"], 2) == inputs
                  and _hex_vector(parent["input_rates_hex"], 2) == rates
-                 and _frame_word_values(record["physical_handoff_words_hex"], self.size) == self.physical(q0, inputs)
-                 and _frame_word_values(record["physical_rate_handoff_words_hex"], self.size) == self.physical(v0, rates, rate=True)
+                 and _frame_word_values(record["physical_handoff_words_hex"], self.size, count=self.input_words) == self.physical(q0, inputs)
+                 and _frame_word_values(record["physical_rate_handoff_words_hex"], self.size, count=self.input_words) == self.physical(v0, rates, rate=True)
                  and record["physical_rate_handoff_words_hex"] == parent["mapped_physical_rate_words_hex"],
                  "segment_frame_right_sided_physical_map")
         self.active, self.current_map, self.segment = frame, expected_map, segment
@@ -801,12 +865,18 @@ class SegmentFrameCheck:
 
     def sample(self, history):
         _require(history["segment_frame_identity"] == _digest(self.active), "segment_frame_sample_identity")
+        if self.input_words == 12:
+            _require(history.get("mapped_input_profile") == "frame-input-expansion12-v1"
+                     and history.get("mapped_input_words") == 12, "frame_input_history_profile")
+        else:
+            _require("mapped_input_profile" not in history and "mapped_input_words" not in history,
+                     "frame_input_unbound_history_profile")
         t = _hex(history["time_hex"])
         q = self.parent(self.active, t, _hex_vector(history["raw_solver_z_hex"], self.size))
         v = self.parent(self.active, t, _hex_vector(history["raw_solver_zdot_hex"], self.size), rate=True)
-        _require(_frame_word_values(history["physical_cumulative_words_hex"], self.size) ==
+        _require(_frame_word_values(history["physical_cumulative_words_hex"], self.size, count=self.input_words) ==
                  self.physical(q, _hex_vector(history["inputs_hex"], 2))
-                 and _frame_word_values(history["physical_rate_words_hex"], self.size) ==
+                 and _frame_word_values(history["physical_rate_words_hex"], self.size, count=self.input_words) ==
                  self.physical(v, _hex_vector(history["input_rates_hex"], 2), rate=True), "segment_frame_sample_physical_words")
 
     def packet(self, packet):
@@ -895,11 +965,11 @@ class SegmentFrameCheck:
             states.append(sum((c*x**k for k, c in enumerate(row)), Fraction(0)))
             rates.append(sum((k*c*x**(k-1) for k, c in enumerate(row) if k), Fraction(0))/self.polynomial_h)
         actual = _enclosures(evidence["physical_state_enclosures"], self.size)
-        words = _frame_word_values(history["physical_cumulative_words_hex"], self.size)
+        words = _frame_word_values(history["physical_cumulative_words_hex"], self.size, count=self.input_words)
         _require(all(abs(item["center"]-root-q) <= item["absolute_error_bound"]
                      for item, root, q in zip(actual, self.reference_values, words)), "segment_frame_actual_state_enclosure")
         expected = tuple(abs(a["center"]-p)+a["absolute_error_bound"] for a, p in zip(actual, states))
-        actual_rates = _frame_word_values(history["physical_rate_words_hex"], self.size)
+        actual_rates = _frame_word_values(history["physical_rate_words_hex"], self.size, count=self.input_words)
         _require(tuple(evidence["physical_state_absolute_error"]) == expected
                  and tuple(evidence["physical_rate_absolute_error"]) ==
                  tuple(abs(a-p) for a, p in zip(actual_rates, rates)), "segment_frame_polynomial_readback_error")
@@ -1030,7 +1100,7 @@ class _Protocol:
                  "sample_history_binding")
         _require(type(h["point_identity"]) is str and len(h["point_identity"]) == 64, "point_identity_shape")
         for name in ("physical_cumulative_words_hex", "physical_rate_words_hex"):
-            for word in _vector(h[name], 4):
+            for word in _vector(h[name], self.segment_frame.input_words):
                 _hex_vector(word, self.size)
         for name in ("raw_solver_z_hex", "raw_solver_zdot_hex"):
             _hex_vector(h[name], self.size)
@@ -1511,7 +1581,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                             "container_complete": True, "partial_tail_bytes": 0},
                 "coverage": {"segments": protocol.coverage, "intervals": protocol.intervals,
                              "rate_pairs": protocol.samples, "quadrature_orders": [8, 16, 32], "ports": 2,
-                             "physical_word_layers": 4, "record_counts": dict(rows.counts)},
+                             "physical_word_layers": protocol.segment_frame.input_words, "record_counts": dict(rows.counts)},
                 "pointers": {"last_record": last, "last_accepted": accepted}, "elapsed_s": time.perf_counter() - started,
                 **({"segment_startup": protocol.startup.finish(complete=True)} if protocol.startup.enabled else {}),
                 **({"segment_frame": protocol.segment_frame.finish()} if protocol.segment_frame.enabled else {}),

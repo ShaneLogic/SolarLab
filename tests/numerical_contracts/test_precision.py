@@ -99,6 +99,151 @@ def density_layout(count=1):
                   (VariableSpec("n", "carrier", "cells", (count,), PARTICLE / VOLUME, lower=0),), ())
 
 
+def test_frame_input_old_codec_bytes_and_four_word_rejections_unchanged():
+    """Hashes were obtained from the frozen c214679 qualification capsule."""
+    from scripts.benchmarks.precision_prototype import FrameInputExpansion, PrimitiveDifference
+
+    layout = density_layout(2)
+    coordinates = RelativeCoordinates(layout, {"n": "linear"})
+    reference = coordinates.initial(StateView(layout, [("n", DoubleArray([3., 3.], [2.**-60]*2))]))
+    trial, _ = coordinates.trial(reference, PrimitiveExpansion.from_value([0.25, 0.5]), 1.0)
+    for point, expected in ((reference, "dd38ea2ea38fd36e5ca945b2497e7f8c4a23e64e57a9b86e44b8dd0ac558c0b5"),
+                            (trial, "b00dd60e645c7a7e6bcbac7c016cbaf5acea90b47c046522d37934724107ae52")):
+        raw = json.dumps(encode_point(point), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        assert hashlib.sha256(raw).hexdigest() == expected
+        assert encode_point(decode_point(encode_point(point), layout)) == encode_point(point)
+    extended = FrameInputExpansion.from_value([0.0, 0.0])
+    with pytest.raises(ContractError, match="primitive_word_count"):
+        PrimitiveExpansion(extended.words)
+    with pytest.raises(ContractError):
+        PrimitiveDifference(extended, PrimitiveExpansion.from_value([0.0, 0.0]))
+
+
+def test_frame_input_twelve_word_normalization_identity_and_capacity():
+    from dataclasses import FrozenInstanceError
+    from scripts.benchmarks.precision_prototype import FrameInputExpansion, FrameInputDifference
+
+    terms = tuple(np.array([2.**(-54*i)]) for i in range(12))
+    value = FrameInputExpansion(terms)
+    assert len(value.words) == 12
+    assert sum((Fraction(float(w[0])) for w in value.words), Fraction()) == sum(
+        (Fraction(float(w[0])) for w in terms), Fraction())
+    assert value.take_flat([0]).reshape((1,)).identity_bytes() == value.identity_bytes()
+    assert all(not word.flags.writeable for word in value.words)
+    for assignment in (lambda: setattr(value, "_words", ()), lambda: setattr(value, "other", 1)):
+        with pytest.raises(FrozenInstanceError):
+            assignment()
+    with pytest.raises(TypeError):
+        np.asarray(value)
+    with pytest.raises(ContractError, match="discard_remainder"):
+        value.as_dd()
+    with pytest.raises(ContractError, match="frame_input_capacity_exceeded"):
+        value.add([2.**-648])
+    with pytest.raises(ContractError, match="frame_input_sum_range"):
+        FrameInputExpansion.from_terms([np.array([np.finfo(float).max])]*2)
+    for malformed in (terms[:4], (*terms, terms[-1])):
+        with pytest.raises(ContractError, match="frame_input_word_count"):
+            FrameInputExpansion(malformed)
+    for malformed in ([np.array([2**53+1], dtype=np.int64)], [np.array([True])], [np.array(["1.0"]) ]):
+        with pytest.raises(ContractError):
+            FrameInputExpansion.from_terms(malformed)
+    with pytest.raises(ContractError, match="frame_difference_requires_two_endpoints"):
+        FrameInputDifference(value, FrameInputDifference(value, value))
+    with pytest.raises(ContractError, match="frame_difference_requires_two_endpoints"):
+        FrameInputDifference(value, PrimitiveExpansion.from_value([1.0]))
+
+
+def test_frame_input_state_source_and_paired_difference_retain_final_word():
+    from copy import deepcopy
+    from scripts.benchmarks.contract_prototype import BoundLinearSource, LinearFactor, LinearSourceSpec, LinearTerm, PhysicalLinearForm
+    from scripts.benchmarks.precision_prototype import FrameInputExpansion, _double_linear_increment_words, _double_linear_state_words
+
+    layout = density_layout(2)
+    coordinates = RelativeCoordinates(layout, {"n": "linear"})
+    reference = coordinates.initial(StateView(layout, [("n", DoubleArray([3., 3.], [2.**-60]*2))]))
+    identity = reference.identity
+    terms = [np.full(2, 2.**(-54*i)) for i in range(12)]
+    terms[-1] = np.array([2.**-594, 0.0])
+    current = FrameInputExpansion(terms)
+    point, _ = coordinates.trial(reference, current, 1.0)
+    factors = tuple(LinearFactor(str(i), 2.0, ONE, "manufactured") for i in range(4))
+    form = PhysicalLinearForm(layout, ("difference",), (PARTICLE/VOLUME,),
+        (LinearTerm(0, "n", 0, factors), LinearTerm(0, "n", 1, factors, -1)), "manufactured", "state", 2)
+    result = point.state.linear_form(form, arithmetic=DoubleArithmetic(), point=point)
+    assert result.value.high[0] == 2.**-590 and result.value.low[0] == 0
+    assert len(_double_linear_state_words(point.state, "n")) == 14
+    spec = LinearSourceSpec("input", "cells", (2,), PARTICLE/VOLUME, "manufactured")
+    source_form = PhysicalLinearForm(layout, ("difference",), (PARTICLE/VOLUME,),
+        (LinearTerm(0, "input", 0), LinearTerm(0, "input", 1, sign=-1)), "manufactured", "state", 2, (spec,))
+    result = point.state.linear_form(source_form, arithmetic=DoubleArithmetic(), point=point,
+        sources=BoundLinearSource.bind(point, [(spec, current)]))
+    assert result.value.high[0] == 2.**-594
+    terms[-1] = np.array([2.**-593, 0.0])
+    right, increment = coordinates.trial(reference, FrameInputExpansion(terms), 2.0, predecessor=point)
+    assert len(_double_linear_increment_words(point.state, right.state, "n")) == 24
+    delta_form = PhysicalLinearForm(layout, ("difference",), (PARTICLE/VOLUME,), form.terms, "manufactured", "increment", 2)
+    result = increment.linear_form(point, right, delta_form, arithmetic=DoubleArithmetic())
+    assert result.value.high[0] == 2.**-590 and result.value.low[0] == 0
+    payload = encode_point(right)
+    assert payload["payload"]["authority"]["schema"] == "solarlab.state-authority.v6"
+    restored = decode_point(payload, layout)
+    assert encode_point(restored) == payload and reference.identity == identity
+    for mutation in (lambda p: p["authority"].update(schema="solarlab.state-authority.v5"),
+                     lambda p: p["authority"]["primitives"]["n"]["words"].pop()):
+        bad = deepcopy(payload); mutation(bad["payload"])
+        bad["sha256"] = hashlib.sha256(json.dumps(bad["payload"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        with pytest.raises(ContractError):
+            decode_point(bad, layout)
+    with pytest.raises(ContractError, match="frame_input_requires_paired_transition"):
+        coordinates.trial(reference, current, 3.0, transition_representation="four-word-v1")
+    old, _ = coordinates.trial(reference, PrimitiveExpansion.from_value([0.0, 0.0]), 0.5)
+    with pytest.raises(ContractError, match="frame_input_predecessor_profile"):
+        coordinates.trial(reference, current, 3.0, predecessor=old)
+
+
+@pytest.mark.parametrize("framed", [False, True])
+def test_frame_input_standalone_state_linear_form(framed):
+    from scripts.benchmarks.contract_prototype import LinearTerm, PhysicalLinearForm, RateView
+    from scripts.benchmarks.precision_prototype import FrameInputExpansion
+
+    layout = density_layout()
+    coordinates = RelativeCoordinates(layout, {"n": "linear"})
+    reference = coordinates.initial(StateView(layout, [("n", DoubleArray([3.]))]))
+    kind = FrameInputExpansion if framed else PrimitiveExpansion
+    point, _ = coordinates.trial(reference, kind.from_value([0.25]), 1.)
+    form = PhysicalLinearForm(layout, ("n",), (PARTICLE/VOLUME,), (LinearTerm(0, "n", 0),),
+                              "manufactured-edge", "state", 1)
+    result = point.state.linear_form(form, arithmetic=DoubleArithmetic())
+    assert result.value.high[0] == 3.25 and result.value.low[0] == 0.
+    rate = RateView(point, kind.from_value([0.5]), [], source_identity="manufactured-edge",
+                    mapping_identity="manufactured-map", origin="mapped-coordinate-rate",
+                    raw_coordinates=[0.25], raw_rate=[0.5])
+    rate_form = PhysicalLinearForm(layout, ("dn",), (PARTICLE/VOLUME/SECOND,), form.terms,
+                                   "manufactured-edge", "rate", 1)
+    result = rate.linear_form(rate_form, arithmetic=DoubleArithmetic(), point=point)
+    assert result.value.high[0] == 0.5 and result.value.low[0] == 0.
+
+
+@pytest.mark.parametrize("framed", [False, True])
+def test_frame_input_same_point_zero_increment_ignores_past_transition(framed):
+    from scripts.benchmarks.contract_prototype import LinearTerm, PhysicalLinearForm, StateIncrement
+    from scripts.benchmarks.precision_prototype import FrameInputExpansion
+
+    layout = density_layout()
+    coordinates = RelativeCoordinates(layout, {"n": "linear"})
+    reference = coordinates.initial(StateView(layout, [("n", DoubleArray([3.]))]))
+    kind = FrameInputExpansion if framed else PrimitiveExpansion
+    first, _ = coordinates.trial(reference, kind.from_value([0.25]), 1.)
+    second, _ = coordinates.trial(reference, kind.from_value([0.5]), 2., predecessor=first)
+    form = PhysicalLinearForm(layout, ("dn",), (PARTICLE/VOLUME,), (LinearTerm(0, "n", 0),),
+                              "manufactured-edge", "increment", 1)
+    for point in (first, second):
+        increment = StateIncrement.from_points(point, point)
+        result = increment.linear_form(point, point, form, arithmetic=DoubleArithmetic())
+        assert result.value.high[0] == result.value.low[0] == 0.
+        assert result.absolute_error_bound.values[0] == 0.
+
+
 @pytest.mark.parametrize("text", GATE["decimal_inputs"]["delta_log_n"])
 def test_nc08_weak_density_survives_state_increment_and_codec(text):
     layout = density_layout()

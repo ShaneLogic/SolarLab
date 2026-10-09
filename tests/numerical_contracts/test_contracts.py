@@ -43,6 +43,37 @@ def linear_terms(rate, matrix, inputs=0):
                         np.empty((0, inputs)), np.empty(0))
 
 
+def test_frame_input_rate_retains_last_word_and_rejects_mixed_points():
+    from scripts.benchmarks.contract_prototype import LinearTerm, PhysicalLinearForm, RateView
+    from scripts.benchmarks.precision_prototype import DoubleArray, DoubleArithmetic, FrameInputExpansion, PrimitiveExpansion, RelativeCoordinates
+
+    layout = cell_layout()
+    coordinates = RelativeCoordinates(layout, {"ions.n": "linear"})
+    reference = coordinates.initial(StateView(layout, [("ions.n", DoubleArray([3., 3.]))]))
+    point, _ = coordinates.trial(reference, FrameInputExpansion.from_value([0., 0.]), 1.)
+    terms = [np.full(2, 2.**(-54*i)) for i in range(12)]
+    terms[-1] = np.array([2.**-594, 0.])
+    inputs = dict(source_identity="manufactured", mapping_identity="mapped12", origin="mapped-coordinate-rate",
+                  raw_coordinates=[0., 0.], raw_rate=[0., 0.])
+    values = FrameInputExpansion(terms)
+    rate = RateView(point, values, [], **inputs)
+    form = PhysicalLinearForm(layout, ("difference",), (ONE/SECOND,),
+        (LinearTerm(0, "ions.n", 0), LinearTerm(0, "ions.n", 1, sign=-1)), "manufactured", "rate", 2)
+    result = rate.linear_form(form, arithmetic=DoubleArithmetic(), point=point)
+    assert len(rate.words) == 12 and rate.field("ions.n").identity_bytes() == values.identity_bytes()
+    assert result.value.high[0] == 2.**-594 and result.value.low[0] == 0
+    terms[-1] = np.zeros(2)
+    other = RateView(point, FrameInputExpansion(terms), [], **inputs)
+    assert other.identity != rate.identity
+    with pytest.raises(ContractError, match="linear_rate_word_shape_or_count"):
+        RateView(reference, values, [], **inputs)
+    with pytest.raises(ContractError, match="linear_rate_frame_input_profile"):
+        RateView(point, PrimitiveExpansion.from_value([0., 0.]), [], **inputs)
+    # A named physical tangent is still an ordinary physical array.
+    tangent = RateView(point, DoubleArray([0., 0.]), [], **dict(inputs, origin="physical-rate"))
+    assert len(tangent.words) == 2
+
+
 def diffusion_system(case):
     volumes = np.array(case["volumes"], dtype=float)
     pairs = np.array(case["faces"], dtype=int)

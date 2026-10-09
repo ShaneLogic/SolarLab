@@ -73,6 +73,30 @@ def double(size):
 class SegmentFrameReadbackTests(unittest.TestCase):
     """Six-component invented data test the independent reader, not IDA."""
 
+    def test_mapped12_interval_enclosures_retain_fifth_and_final_words(self):
+        from scripts.benchmarks.native_readback import SegmentFrameCheck, _frame_word_values
+
+        layers = [[float(2.**(-54*i)).hex()] for i in range(12)]
+        exact = sum((Fraction(float.fromhex(w[0])) for w in layers), Fraction())
+        check = object.__new__(SegmentFrameCheck)
+        check.size, check.input_words = 1, 12
+        check.polynomial_tn, check.polynomial_h = Fraction(0), Fraction(1)
+        check.reference_values = (Fraction(3),)
+        check.physical_polynomials = ((Fraction(3)+exact, exact),)
+        pair = lambda v: [v.numerator, v.denominator]
+        evidence = {"physical_state_enclosures": [{"center": pair(Fraction(3)+exact), "absolute_error_bound": [0, 1]}],
+                    "physical_state_absolute_error": (Fraction(0),), "physical_rate_absolute_error": (Fraction(0),)}
+        history = {"time_hex": 0.0.hex(), "physical_cumulative_words_hex": deepcopy(layers), "physical_rate_words_hex": deepcopy(layers)}
+        check.readback(evidence, history)
+        self.assertEqual(_frame_word_values(layers, 1, count=12), (exact,))
+        with self.assertRaises(HistoryVerificationError):
+            _frame_word_values(layers, 1)  # raw Q0/V0 remains exactly four
+        for key in ("physical_cumulative_words_hex", "physical_rate_words_hex"):
+            for index in (4, 11):
+                bad = deepcopy(history); bad[key][index] = [0.0.hex()]
+                with self.assertRaises(HistoryVerificationError):
+                    check.readback(evidence, bad)
+
     def make(self):
         from scripts.benchmarks.native_readback import SegmentFrameCheck
 

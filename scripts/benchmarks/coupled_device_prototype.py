@@ -2736,7 +2736,10 @@ def run_affine_native_pilot(model: AffineCoupledSlab, segments: tuple[ProtocolSe
 def _frame_words(value):
     from scripts.benchmarks.precision_prototype import PrimitiveExpansion
 
-    return PrimitiveExpansion.from_value(value)
+    value = PrimitiveExpansion.from_value(value)
+    if len(value.words) != 4:
+        raise ContractError("segment_frame_raw_word_count")
+    return value
 
 
 def _frame_scale(value, coefficient):
@@ -2758,6 +2761,44 @@ def _frame_scale(value, coefficient):
                 raise ContractError("segment_frame_product_capacity")
         result = result.add(product)
     return result
+
+
+def _frame_mapped_input(raw, columns, lift, inputs, reference_inputs=None):
+    """Retain up to12 exact mapped-SI words without widening raw frame inputs.
+
+    Four parent words times a binary64 scale need at most eight DD words.
+    The sole voltage lift adds two input and two reference product words.
+    """
+    from scripts.benchmarks.precision_prototype import DD, DoubleArray, FrameInputExpansion
+
+    raw = _frame_words(raw)
+    columns, lift, inputs = map(frozen_array, (columns, lift, inputs))
+    if (raw.shape != columns.shape or columns.ndim != 1 or lift.shape != (columns.size, 2)
+            or inputs.shape != (2,) or not np.any(lift[:, 0]) or np.any(lift[:, 1])):
+        raise ContractError("frame_input_map_bound")
+    if reference_inputs is not None:
+        reference_inputs = frozen_array(reference_inputs)
+        if reference_inputs.shape != inputs.shape:
+            raise ContractError("frame_input_reference_shape")
+    terms = []
+
+    def product(a, b):
+        a, b = np.broadcast_arrays(a, b)
+        value = DoubleArray.from_dd(DD(a)*DD(b))
+        if any(Fraction(float(x))*Fraction(float(y)) != Fraction(float(hi))+Fraction(float(lo))
+               for x, y, hi, lo in zip(a.flat, b.flat, value.high.flat, value.low.flat, strict=True)):
+            raise ContractError("frame_input_product_capacity")
+        terms.extend(value.words)
+
+    for word in raw.words:
+        product(columns, word)
+    if np.any(lift[:, 0]):
+        product(lift[:, 0], inputs[0])
+        if reference_inputs is not None:
+            product(-lift[:, 0], reference_inputs[0])
+    if len(terms) > 12:
+        raise ContractError("frame_input_map_arity")
+    return FrameInputExpansion.from_terms(terms)
 
 
 @dataclass(frozen=True)
@@ -2835,11 +2876,13 @@ class AffineVoltageMap(ImmutableArrays):
 
     ``z`` is a solver coordinate. Point.y is the physical SI remainder
     ``S*z + L*(a-a_ref)`` and is never relabeled as z. The public primitive
-    addition retains every input word within its declared four-word capacity.
+    Default inputs retain four words. The explicit mapped profile retains up
+    to twelve SI input words; raw native/frame coordinates still use four.
     """
 
     model: AffineCoupledSlab = field(repr=False, compare=False)
     frame: SegmentAffineFrame | None = field(default=None, repr=False, compare=False)
+    mapped_input_profile: str | None = field(default=None, repr=False)
     columns: np.ndarray = field(init=False, repr=False)
     rows: np.ndarray = field(init=False, repr=False)
     lift: np.ndarray = field(init=False, repr=False)
@@ -2850,7 +2893,10 @@ class AffineVoltageMap(ImmutableArrays):
     relation_form: PhysicalLinearForm = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
-        from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+        from scripts.benchmarks.precision_prototype import PrimitiveExpansion, FRAME_INPUT_PROFILE
+
+        if self.mapped_input_profile is not None and self.mapped_input_profile != FRAME_INPUT_PROFILE:
+            raise ContractError("frame_input_unbound_mapping")
 
         if not isinstance(self.model, AffineCoupledSlab):
             raise ContractError("voltage_lift_requires_physical_affine_model")
@@ -2863,6 +2909,14 @@ class AffineVoltageMap(ImmutableArrays):
         # These binary64 coefficients define the map. We do not assume that
         # their discrete Poisson action is exactly zero on the physical mesh.
         lift[m.layout.offsets["phi_V"], 0] = -m.x/m.definition.length
+        if self.mapped_input_profile is not None:
+            from scripts.benchmarks.precision_prototype import MappedAuthority
+            authority = m.reference.state.authority
+            if (not np.any(lift[:, 0]) or np.any(lift[:, 1])
+                    or type(authority) is MappedAuthority and (
+                        authority.coordinate_kind != "local"
+                        or any(not value.is_zero() for value in authority.primitives.values()))):
+                raise ContractError("frame_input_reference_or_lift_bound")
         for name, value in (("columns", m.S), ("rows", m.Drow),
                             ("lift", lift), ("reference_inputs", m.reference.inputs)):
             object.__setattr__(self, name, frozen_array(value))
@@ -2912,6 +2966,8 @@ class AffineVoltageMap(ImmutableArrays):
             result.update(segment_frame=self.frame.payload(),
                           raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
                           physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        if self.mapped_input_profile is not None:
+            result.update(mapped_input_profile=self.mapped_input_profile, mapped_input_words=12)
         return result
 
     def _check(self):
@@ -2929,6 +2985,9 @@ class AffineVoltageMap(ImmutableArrays):
         from scripts.benchmarks.precision_prototype import PrimitiveExpansion
 
         inputs = frozen_array(inputs)
+        if self.mapped_input_profile is not None:
+            return _frame_mapped_input(raw, self.columns, self.lift, inputs,
+                                       self.reference_inputs if subtract_reference else None)
         if type(raw) is PrimitiveExpansion:
             if raw.shape != self.columns.shape or inputs.shape != self.reference_inputs.shape:
                 raise ContractError("voltage_lift_coordinate_shape")
@@ -3015,7 +3074,8 @@ def voltage_lift_rate_projection(model: AffineCoupledSlab, primitive) -> dict:
              conduction[1]-area*ddot[-1]-volumes[-1]*rho[-1]]
     body = sum((v*r for v, r in zip(volumes, rho, strict=True)), Fraction(0))
     return {
-        "projection": "first word of the normalized four-word physical rate",
+        "projection": ("first word of the normalized frame-input12 physical rate" if len(primitive.words) == 12
+                       else "first word of the normalized four-word physical rate"),
         "projected_rate_hex": [float(v).hex() for v in primitive.high],
         "component_error_exact": [str(v) for v in error],
         "conduction_error_A": [float(v) for v in conduction],
@@ -3186,6 +3246,8 @@ class VoltageLiftHistory:
         if self.mapping.frame is not None:
             record.update(raw_coordinate_frame="fixed-affine-state-rate-v1",
                           segment_frame_identity=self.mapping.frame.identity)
+        if self.mapping.mapped_input_profile is not None:
+            record.update(mapped_input_profile=self.mapping.mapped_input_profile, mapped_input_words=12)
         return point, increment, rate, record
 
     def restore(self, reference_record, record, predecessor):
@@ -3322,6 +3384,7 @@ class VoltageLiftSegmentAdapter:
             request = self.context.request_copy()
             _validate_segment_frame_policy(request)
             if ("segment_frame_policy" not in request or mapping.frame.segment_sha256 != segment_digest
+                    or mapping.mapped_input_profile != request.get("frame_input_policy", {}).get("profile")
                     or mapping.frame.t0 != self.segment.start
                     or mapping.frame.logical_initialization_index !=
                     next(i for i, s in enumerate(self.context.segments, 1) if s.id == self.segment.id)):
@@ -3438,6 +3501,8 @@ def voltage_lift_segment_initialization(mapping, context, segment, ordinal, pare
     """
     request = context.request_copy()
     _validate_segment_frame_policy(request)
+    if mapping.mapped_input_profile != request.get("frame_input_policy", {}).get("profile"):
+        raise ContractError("frame_input_initialization_mapping")
     if "segment_frame_policy" not in request:
         binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), context, segment)
         _, _, rate, proof = voltage_lift_initial_input(binding, parent_z, predecessor)
@@ -3451,20 +3516,23 @@ def voltage_lift_segment_initialization(mapping, context, segment, ordinal, pare
                 "q0_words_hex": [[float(x).hex() for x in word] for word in q0.words]}
     seed = SegmentAffineFrame(mapping.identity, digest(asdict(segment)), ordinal,
                              predecessor.identity, digest(ancestry), float(segment.start), q0, zero)
-    preparation = VoltageLiftSegmentAdapter(VoltageLiftAdapter(AffineVoltageMap(mapping.model, seed)),
+    profile = request.get("frame_input_policy", {}).get("profile")
+    preparation = VoltageLiftSegmentAdapter(VoltageLiftAdapter(AffineVoltageMap(mapping.model, seed, profile)),
                                            context, segment)
     point, _, supplied_v0, parent_proof = voltage_lift_initial_input(preparation, zero, predecessor)
     frame = SegmentAffineFrame(mapping.identity, seed.segment_sha256, ordinal, predecessor.identity,
                                parent_proof["record_sha256"], seed.t0, q0, supplied_v0)
-    framed = AffineVoltageMap(mapping.model, frame)
+    framed = AffineVoltageMap(mapping.model, frame, profile)
     binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(framed), context, segment)
     inputs, input_rate = segment.inputs(segment.start)
     same, _ = framed.trial(zero, segment.start, inputs, predecessor=predecessor)
     rate = framed.physical_rate(zero, input_rate)
     words = lambda v: [[float(x).hex() for x in word] for word in v.words]
+    parent_primitive = (_frame_mapped_input(q0, mapping.columns, mapping.lift, inputs, mapping.reference_inputs)
+                        if profile is not None else mapping.physical_primitive(q0, inputs, time=segment.start))
     if (same.identity != point.identity or words(rate) != parent_proof["mapped_physical_rate_words_hex"]
             or words(framed.physical_primitive(zero, inputs, time=segment.start)) !=
-            words(mapping.physical_primitive(q0, inputs, time=segment.start))):
+            words(parent_primitive)):
         raise ContractError("segment_frame_physical_handoff")
     proof = dict(parent_proof, schema="solarlab.voltage-lift-initial-input.v2",
                  source_identity=binding.source_identity, map_identity=framed.identity,
@@ -3840,6 +3908,78 @@ def _validate_segment_frame_policy(request):
             raise ContractError("invalid_segment_frame_policy")
         if digest(policy) != digest(_segment_frame_policy(request, policy.get("name"))):
             raise ContractError("segment_frame_policy_binding")
+    if any(key in request for key in ("frame_input_profile", "frame_input_words", "mapped_input_profile")):
+        raise ContractError("frame_input_unbound_option")
+    if "frame_input_policy" in request:
+        policy = request["frame_input_policy"]
+        if not isinstance(policy, Mapping) or digest(policy) != digest(
+                _frame_input_policy(request, policy.get("profile"))):
+            raise ContractError("frame_input_policy_binding")
+    elif ("frame_input_parent" in request or any(key in request.get("voltage_lift_map", {})
+                                               for key in ("mapped_input_profile", "mapped_input_words"))):
+        raise ContractError("frame_input_unbound_parent")
+
+
+def _frame_input_parent_binding(request):
+    """Bind exact failed-file contents, independent of mutable closeout prose."""
+    parent = request.get("frame_input_parent")
+    if (type(parent) is not dict or set(parent) != {"request_json", "native_result_json", "first_failure_json"}
+            or any(type(v) is not str or len(v.encode()) > 1024*1024 for v in parent.values())):
+        raise ContractError("frame_input_parent_evidence")
+    try:
+        old, result, failure = (json.loads(parent[k]) for k in (
+            "request_json", "native_result_json", "first_failure_json"))
+    except (ValueError, TypeError) as error:
+        raise ContractError("frame_input_parent_evidence") from error
+    if any(type(value) is not dict for value in (old, result, failure)):
+        raise ContractError("frame_input_parent_evidence")
+    old_id = digest(old)
+    if (old.get("schema") != "solarlab.voltage-lift-native-request.v1" or "frame_input_policy" in old
+            or "segment_frame_policy" not in old or result.get("request_sha256") != old_id
+            or result.get("complete_protocol") is not False
+            or result.get("reason") != "primitive_expansion_capacity_exceeded"
+            or failure.get("kind") != "first_callback_failure"
+            or digest(failure.get("failure")) != digest(result.get("first_failure"))):
+        raise ContractError("frame_input_parent_failure_binding")
+    for key in ("case_id", "prior_request_sha256", "controls", "previous_controls", "segments",
+                "observation_times", "quadrature", "original_budgets", "mandatory", "physical_domain_policy"):
+        if key not in request or digest(request[key]) != digest(old.get(key)):
+            raise ContractError("frame_input_parent_science_changed:"+key)
+    current_map = dict(request["voltage_lift_map"])
+    if (current_map.pop("mapped_input_profile", None) != "frame-input-expansion12-v1"
+            or current_map.pop("mapped_input_words", None) != 12):
+        raise ContractError("frame_input_parent_map_profile")
+    # Source identities are genuine and may change; the physical map does not.
+    prior_map = dict(old["voltage_lift_map"])
+    current_map.pop("physical_model"); prior_map.pop("physical_model")
+    if digest(current_map) != digest(prior_map):
+        raise ContractError("frame_input_parent_map_changed")
+    current_packet, prior_packet = (json.loads(json.dumps(x)) for x in (request["numeric_packet"], old["numeric_packet"]))
+    for packet in (current_packet, prior_packet):
+        packet["definition"].pop("source_path", None)
+        packet.pop("definition_identity", None)
+    if digest(current_packet) != digest(prior_packet):
+        raise ContractError("frame_input_parent_physics_changed")
+    return {"request_sha256": old_id, **{
+        key.removesuffix("_json")+"_file_sha256": sha256(value.encode()).hexdigest()
+        for key, value in parent.items()}}
+
+
+def _frame_input_policy(request, profile):
+    from scripts.benchmarks.precision_prototype import FRAME_INPUT_PROFILE
+
+    if type(profile) is not str or profile != FRAME_INPUT_PROFILE or "segment_frame_policy" not in request:
+        raise ContractError("frame_input_requires_bound_segment_frame")
+    return {"schema": "solarlab.frame-input-policy.v1", "profile": profile,
+            "failed_parent": _frame_input_parent_binding(request),
+            "ancestor_request_sha256": request["prior_request_sha256"],
+            "parent_map_identity": request["map_identity"],
+            "segment_frame_policy_sha256": digest(request["segment_frame_policy"]),
+            "controls_sha256": digest(request["controls"]), "segments_sha256": digest(request["segments"]),
+            "sampling_sha256": digest((request["observation_times"], request["quadrature"])),
+            "mapped_input_words": 12, "raw_parent_words": 4,
+            "bound": "four-parent-words_times_column_plus_voltage_and_reference_DD_products",
+            "physical_gates_changed": False}
 
 
 def _voltage_lift_frame_applied(statistics, frame, *, after_step=False):
@@ -3906,9 +4046,13 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         first_step: float | None = None,
                                         time_weight_kappa: int | None = None,
                                         segment_startup_overrides: Mapping | None = None,
-                                        segment_frame: str | None = None) -> dict:
+                                        segment_frame: str | None = None,
+                                        frame_input_profile: str | None = None,
+                                        frame_input_parent: Mapping | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
+    if mapping.mapped_input_profile != frame_input_profile or ((frame_input_profile is None) != (frame_input_parent is None)):
+        raise ContractError("frame_input_constructor_binding")
     qualification_policy = old.get("qualification_policy")
     if qualification_policy is not None:
         qualification_policy = _qualification_scope(model, segments, qualification_policy)
@@ -4004,6 +4148,9 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
             request, segment_startup_overrides)
     if segment_frame is not None:
         request["segment_frame_policy"] = _segment_frame_policy(request, segment_frame)
+    if frame_input_profile is not None:
+        request["frame_input_parent"] = json.loads(json.dumps(frame_input_parent, allow_nan=False))
+        request["frame_input_policy"] = _frame_input_policy(request, frame_input_profile)
     if qualification_policy is not None:
         from scripts.benchmarks.qualification_policy import check_applied_ceiling
         check_applied_ceiling(request)

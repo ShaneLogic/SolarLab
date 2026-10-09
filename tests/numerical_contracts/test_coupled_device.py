@@ -31,6 +31,150 @@ GATES = json.loads(PLAN.read_text())["readiness_contract"]
 CASES = GATES["cases"]
 
 
+def test_frame_input_saved_fifth_word_and_product_range_rejections():
+    """Exact component38 words from the closed B; no model is evaluated."""
+    from scripts.benchmarks import coupled_device_prototype as d
+    from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+
+    source = ("0x1.1580b973611f8p-59", "0x1.77b1fecbeee8cp-126", "0x1.99870a7229194p-180", "0x0.0p+0")
+    raw = PrimitiveExpansion(tuple(np.array([float.fromhex(w)]) for w in source))
+    scale = np.array([float.fromhex("0x1.a78f25679cb4ep-6")])
+    expected = ("0x1.cb22dde128652p-65", "-0x1.870ea2fa3cf36p-119", "0x1.7fa957bd3a0a3p-176",
+                "0x1.f056101dcecb7p-230", "0x1.8000000000000p-286")
+    lift = np.array([[1., 0.]])
+    mapped = d._frame_mapped_input(raw, scale, lift, [0., 0.], [0., 0.])
+    assert tuple(float(w[0]).hex() for w in mapped.words[:5]) == expected
+    assert all(not np.any(w) for w in mapped.words[5:])
+    exact = sum((Fraction(float(w[0])) for w in raw.words), Fraction())*Fraction(float(scale[0]))
+    assert sum((Fraction(float(w[0])) for w in mapped.words), Fraction()) == exact
+    with pytest.raises(ContractError, match="primitive_expansion_capacity_exceeded"):
+        d._frame_scale(raw, scale)
+    for bad in (np.zeros((1, 2)), np.array([[1., 1.]])):
+        with pytest.raises(ContractError, match="frame_input_map_bound"):
+            d._frame_mapped_input(raw, scale, bad, [0., 0.])
+    with pytest.raises(ArithmeticError, match="supported precision range"):
+        d._frame_mapped_input([np.nextafter(0., 1.)], [0.5], lift, [0., 0.])
+    assert tuple(float(w[0]).hex() for w in raw.words) == source
+
+
+def _frame_input_saved_parent():
+    keys = {"request_json": "FRAME_INPUT_PARENT_REQUEST", "native_result_json": "FRAME_INPUT_PARENT_RESULT",
+            "first_failure_json": "FRAME_INPUT_PARENT_FAILURE"}
+    if not all(os.environ.get(name) for name in keys.values()):
+        pytest.skip("exact failed-file metadata paths are required; no device evaluation")
+    return {key: Path(os.environ[name]).read_text() for key, name in keys.items()}
+
+
+def test_frame_input_exact_parent_policy_and_independent_tamper_rejection():
+    from copy import deepcopy
+    from scripts.benchmarks import coupled_device_prototype as d
+    from scripts.benchmarks.native_readback import frame_input_word_count, HistoryVerificationError
+
+    parent = _frame_input_saved_parent()
+    old = json.loads(parent["request_json"])
+    assert digest(old) == "3623f2eb62b95fcc4caddac29ddf07980ec9cdfe785f837cd56c4c06c70ae72a"
+    d._validate_segment_frame_policy(old)
+    assert frame_input_word_count(old) == 4
+    current = deepcopy(old)
+    current["voltage_lift_map"].update(mapped_input_profile="frame-input-expansion12-v1", mapped_input_words=12)
+    current["map_identity"] = digest(current["voltage_lift_map"])
+    current["segment_frame_policy"] = d._segment_frame_policy(current, "fixed-affine-state-rate-v1")
+    current["frame_input_parent"] = parent
+    current["frame_input_policy"] = d._frame_input_policy(current, "frame-input-expansion12-v1")
+    d._validate_segment_frame_policy(current)
+    assert frame_input_word_count(current) == 12
+    assert current["frame_input_policy"]["failed_parent"]["request_file_sha256"] == "3329902f6d81021bd641c54246963846a6bd0dc0f1c85b19c7f88fc0f0262604"
+    mutations = (lambda r: r["controls"].update(rtol=r["controls"]["rtol"]*2),
+                 lambda r: r["frame_input_policy"].update(raw_parent_words=12),
+                 lambda r: r["frame_input_policy"].update(profile="other"),
+                 lambda r: r["voltage_lift_map"]["columns_hex"].__setitem__(0, 1.0.hex()),
+                 lambda r: r["frame_input_parent"].update(native_result_json="{}"),
+                 lambda r: r.pop("frame_input_policy"),
+                 lambda r: r.update(frame_input_words=12))
+    for mutate in mutations:
+        bad = deepcopy(current); mutate(bad)
+        with pytest.raises(ContractError):
+            d._validate_segment_frame_policy(bad)
+        with pytest.raises(HistoryVerificationError):
+            frame_input_word_count(bad)
+    assert parent["request_json"] == _frame_input_saved_parent()["request_json"]
+
+
+def test_frame_input_unframed_seed_final_and_restored_handoffs(monkeypatch):
+    """Manufactured affine metadata/initializer only; physical F/J are absent."""
+    from scripts.benchmarks import coupled_device_prototype as d
+    from scripts.benchmarks.contract_prototype import Layout, Support, VariableSpec, StateView, VOLT
+    from scripts.benchmarks.precision_prototype import DoubleArray, DoubleArithmetic, RelativeCoordinates
+
+    class Model:
+        def __init__(self):
+            self.layout = Layout((Support("nodes", "cell", (2,)),),
+                (VariableSpec("phi_V", "potential", "nodes", (2,), VOLT),), ())
+            self.coordinates = RelativeCoordinates(self.layout, {"phi_V": "linear"})
+            self.reference = self.coordinates.initial(StateView(self.layout, [("phi_V", DoubleArray([0., 0.]))]), inputs=[0., 0.])
+            self.S, self.Drow, self.x = np.array([0.25, 0.25]), np.ones(2), np.array([0., 1.])
+            self.definition = SimpleNamespace(length=1., n_eq=0., p_eq=0., ion_initial=0., f_eq=0.)
+            self.source_identity, self.arithmetic = "a"*64, DoubleArithmetic()
+
+        def trial(self, value, time, inputs, **kwargs):
+            return self.coordinates.trial(self.reference, value, time, inputs, **kwargs)
+
+        def validate(self, point):
+            assert point.state.layout.identity == self.layout.identity
+
+        def public_problem(self, **kwargs):
+            return SimpleNamespace()  # no residual/Jacobian/model evaluator
+
+    monkeypatch.setattr(d, "AffineCoupledSlab", Model)
+    model = Model(); profile = "frame-input-expansion12-v1"
+    base, enabled = d.AffineVoltageMap(model), d.AffineVoltageMap(model, mapped_input_profile=profile)
+    assert len(base.physical_primitive([0., 0.], [0., 0.]).words) == 4
+    assert len(enabled.physical_primitive([0., 0.], [0., 0.]).words) == 12
+    assert {k: v for k, v in enabled.payload().items() if k not in ("mapped_input_profile", "mapped_input_words")} == base.payload()
+    with pytest.raises(ContractError):
+        d.AffineVoltageMap(model, mapped_input_profile="unknown")
+    segments = tuple(d.ProtocolSegment(name, float(i), float(i+1), (0., 0.), (0., 0.))
+                     for i, name in enumerate(("dark_equilibrium_hold", "voltage_ramp", "slow_state_hold")))
+    request = {"voltage_lift_map": enabled.payload(), "segment_frame_policy": {}, "frame_input_policy": {"profile": profile}}
+    context = SimpleNamespace(request_copy=lambda: json.loads(json.dumps(request)), request_sha256=digest(request),
+                              segments=segments, segment_digest=lambda model, segment: digest(asdict(segment)))
+    # Parent-policy validation is independently tested against exact saved files.
+    monkeypatch.setattr(d, "_validate_segment_frame_policy", lambda request: None)
+    seen = []
+
+    def initial_input(binding, raw, predecessor):
+        mapping, segment = binding.adapter.mapping, binding.segment
+        seen.append(mapping.mapped_input_profile)
+        inputs, rates = segment.inputs(segment.start)
+        point, increment = mapping.trial(raw, segment.start, inputs, predecessor=predecessor)
+        supplied = np.array([0.125, 0.25])
+        proof = {"raw_zdot_hex": [float(v).hex() for v in supplied],
+                 "mapped_physical_rate_words_hex": [[float(v).hex() for v in w] for w in mapping.physical_rate(supplied, rates).words]}
+        proof["record_sha256"] = digest(proof)
+        return point, increment, supplied, proof
+
+    monkeypatch.setattr(d, "voltage_lift_initial_input", initial_input)
+    monkeypatch.setattr(d, "voltage_lift_rate_projection", lambda model, value: {
+        "manufactured_history_metadata_only": True, "input_identity": value.identity_bytes().hex()})
+    previous, raw = model.reference, np.zeros(2)
+    parent_history = d.VoltageLiftHistory(enabled)
+    for ordinal, segment in enumerate(segments, 1):
+        binding, u, udot, proof, record = d.voltage_lift_segment_initialization(enabled, context, segment, ordinal, raw, previous)
+        mapping = binding.adapter.mapping
+        assert mapping.mapped_input_profile == profile and len(mapping.frame.q0.words) == len(mapping.frame.v0.words) == 4
+        assert len(record["physical_handoff_words_hex"]) == len(record["physical_rate_handoff_words_hex"]) == 12
+        history = d.VoltageLiftHistory(mapping, parent_reference=parent_history.reference_record)
+        end, _, _, sample = history.build_sample(u, segment.end, [0., 0.], previous, udot, [0., 0.], event_side="left")
+        restored, _, _, _ = history.restore(history.reference_record, sample, previous)
+        assert restored.identity == end.identity and sample["mapped_input_profile"] == profile
+        assert len(sample["physical_cumulative_words_hex"]) == 12
+        damaged = dict(sample, mapped_input_words=4)
+        with pytest.raises(ContractError):
+            history.restore(history.reference_record, damaged, previous)
+        raw, previous = mapping.frame.parent_state(segment.end, u), end
+    assert seen == [profile]*3
+
+
 def dec(value):
     return Decimal.from_float(float(value))
 
