@@ -102,6 +102,7 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_linear_forms.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_band_steps.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_framed_time_derivative.py -m 'not slow'
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_segment_startup.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_history.py tests/numerical_contracts/test_native_runner.py tests/numerical_contracts/test_runtime_timing.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_readback.py tests/numerical_contracts/test_qualification_bridge.py
           # This selection uses synthetic packets only and reads no device plan.
