@@ -35,6 +35,30 @@ def normal(request, context):
                                   artifacts=(("raw_words", artifact),))
 
 
+def supervised_client(request, context):
+    """Real durable-client fixture with an observed release/cancel boundary."""
+    forbidden = {"scipy", "sksundae", "flint", "perovskite_sim"} & set(sys.modules)
+    if forbidden:
+        raise AssertionError("unexpected scientific import: " + repr(forbidden))
+    # Intentionally report no cumulative counters. Unobserved values must remain
+    # null through the supervisor, store, HTTP client and panel.
+    context.progress({"stage": "ready", "pid": os.getpid(),
+                      "forbidden_modules_loaded": sorted(forbidden), "zero": 0,
+                      "negative_zero": -0.0, "unobserved": None,
+                      "large_integer": 18446744073709551617,
+                      "scientific_qualification": False})
+    while not Path("release").exists():
+        context.check_cancel()
+        time.sleep(0.005)
+    if json.loads(request.request.content)["outcome"] == "failed":
+        raise ValueError("supervised client infrastructure failure")
+    artifact = bytes_artifact(struct.pack("<2d", 0.0, -0.0) + b"\x00supervised",
+        metadata={"unit": "fixture_words", "missing_reason": None, "scientific_qualification": False})
+    return WorkerResult.from_dict({"zero": 0, "negative_zero": -0.0, "tau": None,
+        "large_integer": 18446744073709551617, "scientific_qualification": False},
+        artifacts=(("raw_words", artifact),))
+
+
 def cooperative(request, context):
     _ready(context)
     while True:
