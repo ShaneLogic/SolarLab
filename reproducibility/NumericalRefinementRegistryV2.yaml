@@ -873,8 +873,8 @@ sources:
   source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
 - id: tests/refactor/test_legacy_input_migration.py
   path: tests/refactor/test_legacy_input_migration.py
-  sha256: 7453e0c5967e0e0c8b4740c315d6b527ed401c071bc3f792813fd4e7f608e155
-  source_commit: 74bfd300681afaddde01835d065077da4e1d265a
+  sha256: fec3ba6c7dc3452d42698bee392632afa31732deeab4b47e105bbdb56b86f464
+  source_commit: 66b74118e4721154569c1dbf904425ca0ce16e2d
 - id: web/src/generated/configuration-schema.ts
   path: web/src/generated/configuration-schema.ts
   sha256: 83d3c3c7799599608a02b9fb505b8ccc4ac7456dce647024a56aa24c9eb9d57f
