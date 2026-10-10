@@ -11,6 +11,34 @@ import os
 import numpy as np
 import pytest
 
+
+def test_contained_observation_range_preserves_clock_and_polynomial_integral():
+    """Manufactured rational arithmetic only; no physical model or native call."""
+    from fractions import Fraction
+    from scripts.benchmarks.interval_observation import AcceptedClock, Polynomial, PolynomialPath, contained_subinterval
+    from scripts.benchmarks.contract_prototype import ContractError
+
+    clock = AcceptedClock(0,1,Fraction(3,2),1,1,2,0,1,"manufactured-observation-clock")
+    path = PolynomialPath(clock,{"manufactured":(Polynomial((1,2,3)),)},(),
+                          "manufactured-source","manufactured-layout","manufactured-coefficients",
+                          "declared_reconstruction")
+    polynomial = Polynomial((1,2,3))
+    original = clock.payload()
+    assert contained_subinterval(clock) == (Fraction(0),Fraction(1))
+    whole = path.integrate(polynomial)
+    partial = path.integrate(polynomial,subinterval=(0,Fraction(1,4)))
+    remaining = path.integrate(polynomial,subinterval=(Fraction(1,4),1))
+    assert partial+remaining == whole
+    assert partial == Fraction(3,2)*polynomial.integral(Fraction(-2,3),Fraction(-1,2))
+    assert clock.payload() == original
+    for interval in ((-1,1),(0,2),(1,1),(Fraction(1,2),Fraction(1,4))):
+        try:
+            contained_subinterval(clock,interval)
+        except ContractError:
+            pass
+        else:
+            raise AssertionError("invalid observation interval accepted")
+
 from scripts.benchmarks.contract_prototype import ContractError
 from scripts.benchmarks.coupled_device_prototype import AffineCoupledSlab, ProtocolSegment, SlabDefinition
 from scripts.benchmarks.interval_observation import (

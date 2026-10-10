@@ -3516,6 +3516,77 @@ def voltage_lift_initial_input(binding: VoltageLiftSegmentAdapter, z, predecesso
     return point, increment, zdot, record
 
 
+def diagnostic_interval_context(request):
+    """Validate an explicit child without weakening the historic parent path."""
+    from scripts.benchmarks.native_readback import diagnostic_interval_binding, HistoryVerificationError
+
+    try:
+        value = diagnostic_interval_binding(request)
+    except (HistoryVerificationError, KeyError, TypeError, ValueError, OSError) as error:
+        raise ContractError("diagnostic_interval_binding:"+str(error)) from error
+    return value
+
+
+def voltage_lift_diagnostic_initialization(mapping, context, segment, ordinal, predecessor):
+    """A new frame/owner seed retaining the complete public saved Point/rate.
+
+    This constructor performs no tangent, F, J, projection or time advance.
+    It neither decodes nor recovers an old native owner or multistep history.
+    """
+    from scripts.benchmarks.precision_prototype import PrimitiveExpansion, encode_point
+
+    request = context.request_copy()
+    data = diagnostic_interval_context(request)
+    seed, restore = data["accepted"], data["restore"]
+    model = mapping.model
+    if (ordinal != 1 or len(context.segments) != 1 or mapping.frame is not None
+            or encode_point(predecessor) != restore["Point"] or predecessor.time != segment.start
+            or mapping.identity != request["map_identity"]):
+        raise ContractError("diagnostic_initialization_ancestry")
+    primitive = lambda rows: PrimitiveExpansion(tuple(
+        np.asarray([float.fromhex(x) for x in word]) for word in rows))
+    q0, v0 = (primitive(seed["frame"][key]) for key in ("q0_words_hex", "v0_words_hex"))
+    z, zdot = frozen_array(request["z0"]), frozen_array(request["zdot0"])
+    ancestry = {"schema": "solarlab.native-interval-live-seed.v1", "request_sha256": context.request_sha256,
+                "descriptor_sha256": digest(request["diagnostic_interval"]),
+                "parent_map_identity": mapping.identity, "predecessor_identity": predecessor.identity,
+                "q0_words_hex": seed["frame"]["q0_words_hex"], "v0_words_hex": seed["frame"]["v0_words_hex"]}
+    frame = SegmentAffineFrame(mapping.identity, context.segment_digest(model, segment), ordinal,
+        predecessor.identity, digest(ancestry), float(segment.start), q0, v0)
+    framed = AffineVoltageMap(model, frame, request["frame_input_policy"]["profile"])
+    binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(framed), context, segment)
+    inputs, input_rate = segment.inputs(segment.start)
+    point, _ = framed.trial(z, segment.start, inputs, predecessor=predecessor)
+    words = lambda value: [[float(v).hex() for v in word] for word in value.words]
+    state_words = words(framed.physical_primitive(z, inputs, time=segment.start))
+    rate_words = words(framed.bind_rate(point, z, zdot, input_rate))
+    if (encode_point(point) != restore["Point"] or encode_point(predecessor) != restore["Point"]
+            or state_words != seed["physical_state_words_hex"] or rate_words != seed["physical_rate_words_hex"]
+            or [float(x).hex() for x in inputs] != seed["inputs_hex"]
+            or [float(x).hex() for x in input_rate] != seed["input_rates_hex"]):
+        raise ContractError("diagnostic_complete_physical_transfer")
+    proof = {"schema": "solarlab.voltage-lift-diagnostic-input.v1", "request_sha256": context.request_sha256,
+        "source_identity": binding.source_identity, "map_identity": framed.identity,
+        "segment_sha256": binding.segment_sha256, "predecessor_identity": predecessor.identity,
+        "point_identity": point.identity, "Point": encode_point(point), "time_hex": point.time.hex(),
+        "raw_z_hex": [float(x).hex() for x in z], "raw_zdot_hex": [float(x).hex() for x in zdot],
+        "inputs_hex": seed["inputs_hex"], "input_rates_hex": seed["input_rates_hex"],
+        "mapped_physical_rate_words_hex": rate_words, "state_changed": False,
+        "tangent_preparation_performed": False, "native_initialization_performed": False,
+        "original_native_authority_restored": False}
+    proof["record_sha256"] = digest(proof)
+    record = {"kind": "voltage_lift_segment_frame", "initialization_mode": "diagnostic_saved_seed",
+        "request_sha256": context.request_sha256, "parent_map_identity": mapping.identity,
+        "map_identity": framed.identity, "frame": frame.payload(), "frame_identity": frame.identity,
+        "map": framed.payload(), "ancestry": ancestry, "parent_input": proof,
+        "physical_handoff_words_hex": state_words, "physical_rate_handoff_words_hex": rate_words,
+        "native_initial_z_hex": proof["raw_z_hex"], "native_initial_zdot_hex": proof["raw_zdot_hex"],
+        "native_initialization_performed": False, "retained_physical_history": request["diagnostic_interval"]["saved_restore"],
+        "native_multistep_history_action": "new generation; retain its history throughout this window"}
+    record["record_sha256"] = digest(record)
+    return binding, z, zdot, proof, record
+
+
 def voltage_lift_segment_initialization(mapping, context, segment, ordinal, parent_z, predecessor):
     """Prepare exactly one native initialization; no solver is allocated here.
 
@@ -3527,6 +3598,8 @@ def voltage_lift_segment_initialization(mapping, context, segment, ordinal, pare
     _validate_segment_frame_policy(request)
     if mapping.mapped_input_profile != request.get("frame_input_policy", {}).get("profile"):
         raise ContractError("frame_input_initialization_mapping")
+    if "diagnostic_interval" in request:
+        return voltage_lift_diagnostic_initialization(mapping, context, segment, ordinal, predecessor)
     if "segment_frame_policy" not in request:
         binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), context, segment)
         _, _, rate, proof = voltage_lift_initial_input(binding, parent_z, predecessor)
@@ -4039,10 +4112,13 @@ def _frame_input_policy(request, profile):
 
     if type(profile) is not str or profile != FRAME_INPUT_PROFILE or "segment_frame_policy" not in request:
         raise ContractError("frame_input_requires_bound_segment_frame")
+    diagnostic = "diagnostic_interval" in request
     qualified = "qualification_policy" in request
-    authority = ({"qualified_context": _qualified_frame_input_context(request)} if qualified
+    authority = ({"diagnostic_context": diagnostic_interval_context(request)["summary"]} if diagnostic else
+                 {"qualified_context": _qualified_frame_input_context(request)} if qualified
                  else {"failed_parent": _frame_input_parent_binding(request)})
-    return {"schema": "solarlab.frame-input-policy.v2" if qualified else "solarlab.frame-input-policy.v1",
+    return {"schema": "solarlab.frame-input-policy.v3" if diagnostic else
+                      "solarlab.frame-input-policy.v2" if qualified else "solarlab.frame-input-policy.v1",
             "profile": profile, **authority,
             "ancestor_request_sha256": request["prior_request_sha256"],
             "parent_map_identity": request["map_identity"],
@@ -4246,6 +4322,18 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
 def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, request: Mapping):
     """Fail closed on request/physical/allocation changes before importing IDA."""
     model = mapping.model
+    if "diagnostic_interval" in request:
+        data = diagnostic_interval_context(request)
+        if (request["map_identity"] != mapping.identity or mapping.frame is not None
+                or digest(model.numeric_packet()) != digest(request["numeric_packet"])
+                or digest(mapping.payload()) != digest(request["voltage_lift_map"])
+                or digest([asdict(s) for s in segments]) != digest(request["segments"])
+                or model.source_identity != request["source_rebinding"]["physical_model_identity"]
+                or model.reference.identity != data["accepted"]["physical_reference_identity"]
+                or str(Path(__file__).resolve()) != str(Path(request["source_rebinding"]["numeric_kernel"]["path"]).resolve())):
+            raise ContractError("diagnostic_actual_model_binding")
+        _validate_segment_frame_policy(request)
+        return
     if (request.get("schema") != "solarlab.voltage-lift-native-request.v1"
             or request.get("case_id") != model.definition.id
             or request.get("map_identity") != mapping.identity
@@ -4414,6 +4502,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             or not str(admission.get("coordinator_message", "")).startswith("msg_")):
         raise ContractError("voltage_lift_native_pilot_not_admitted")
     validate_voltage_lift_native_request(mapping, segments, request)
+    diagnostic = "diagnostic_interval" in request
+    if diagnostic and (admission.get("diagnostic_interval_authorized") is not True
+                       or admission.get("diagnostic_interval_sha256") != digest(request["diagnostic_interval"])):
+        raise ContractError("diagnostic_interval_not_admitted")
     execution_wall = voltage_lift_execution_wall_policy(request, admission)
     bindings = admission.get("source_sha256", {})
     if str(Path(__file__).resolve()) not in bindings:
@@ -4452,10 +4544,15 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     for key in ("raw_polynomial", "same_state_affine_tangent")}
         charge_accumulator = prepare_charge_accumulator(request, observer_policy)
     previous_observer = None
+    signed_prefix = {key: (Fraction(0),)*3 for key in prefixes} if diagnostic else None
     first_failure = last_attempt = last_numerical = last_accepted = None
     history = VoltageLiftHistory(mapping)
     parent_reference = history.reference_record
     z, predecessor = frozen_array(request["z0"]), model.reference
+    if diagnostic:
+        from scripts.benchmarks.precision_prototype import decode_point
+        diagnostic_data = diagnostic_interval_context(request)
+        predecessor = decode_point(diagnostic_data["restore"]["Point"], model.layout)
     rows, columns = model.graph.edges().T
     sparsity = csc_matrix((np.ones(len(rows)), (rows, columns)), shape=model.graph.shape)
     differential = np.unique(model.mass.tocoo().col)
@@ -4481,6 +4578,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             raise ContractError("voltage_lift_residual_budget")
         if counts["native_steps"] > budgets["native_steps"]:
             raise ContractError("voltage_lift_step_budget")
+        if diagnostic and (counts["native_steps"] > request["diagnostic_limits"]["accepted_intervals"]
+                or counts["residual"] > request["diagnostic_limits"]["residual_callbacks"]
+                or counts["jacobian"] > request["diagnostic_limits"]["jacobian_callbacks"]
+                or counts["history_bytes"] > request["diagnostic_limits"]["logical_history_bytes"]):
+            raise ContractError("diagnostic_finite_work_budget")
         if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss > budgets["rss_bytes"]:
             raise ContractError("voltage_lift_rss_budget")
 
@@ -4533,6 +4635,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     try:
         save({"kind": "voltage_lift_reference", "request_sha256": request_id,
               "reference_digest": history.reference_digest, "reference": history.reference_record})
+        if diagnostic:
+            save({"kind": "voltage_lift_diagnostic_seed", "request_sha256": request_id,
+                  "descriptor_sha256": digest(request["diagnostic_interval"]),
+                  "Point": diagnostic_data["restore"]["Point"], "old_B_prefix_credit": False,
+                  "original_native_authority_restored": False})
         for segment_index, segment in enumerate(segments):
             binding, z, initial_zdot, initial_proof, frame_record = voltage_lift_segment_initialization(
                 mapping, sampling, segment, segment_index+1, z, predecessor)
@@ -4576,7 +4683,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                         save({"kind": "first_callback_failure", "failure": first_failure})
                     raise
 
-            if segment_index == 0:
+            if segment_index == 0 and not diagnostic:
                 # Preparation and runtime have different context hashes. All
                 # source physical data and supplied rate words must agree.
                 for key in ("point_identity", "raw_z_hex", "raw_zdot_hex", "inputs_hex", "input_rates_hex",
@@ -4618,10 +4725,17 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             cursor = 0
             while cursor < len(sample_times) and sample_times[cursor] == segment.start:
                 save({"kind": "requested_sample", **last_numerical})
+                if diagnostic:
+                    save({"kind": "native_interval_common_prefix", "time_hex": float(segment.start).hex(),
+                          "origin": "diagnostic_seed", "completed_intervals_before": 0,
+                          "signed_integral_centers_C": observation_record(signed_prefix),
+                          "reference_error_C": observation_record({key: (Fraction(0),)*3 for key in prefixes}),
+                          "old_B_prefix_credit": False})
                 cursor += 1
             while left.time < segment.end:
                 resource_check()
-                if counts["native_steps"] >= budgets["native_steps"]:
+                if counts["native_steps"] >= (request["diagnostic_limits"]["accepted_intervals"]
+                                               if diagnostic else budgets["native_steps"]):
                     raise ContractError("voltage_lift_step_budget")
                 last_attempt = {"phase": "native_step", "segment_id": segment.id,
                                 "target_time_hex": float(segment.end).hex(), "previous": last_numerical}
@@ -4632,6 +4746,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 try:
                     with timing.phase('ida_calls'):
                         native = snapshot_solver_result(solver.step(segment.end, method="onestep", tstop=segment.end))
+                    if diagnostic:
+                        last_attempt = snapshot_receipt("native_return", segment, native)
+                        save({"kind": "native_interval_return", "segment_id": segment.id,
+                              "receipt": last_attempt, "sequence": counts["onestep_returns"]+1})
                 except BaseException:
                     try:
                         with timing.phase('ida_calls'):
@@ -4651,6 +4769,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 save(after_stats)
                 counts["native_steps"] += after_stats["work_since_before"]["num_steps"]
                 counts["onestep_returns"] += 1
+                if diagnostic and (after_stats["work_since_before"]["num_steps"] != 1
+                        or native["time"] != after_stats["raw_statistics"]["current_time"]
+                        or after_stats["raw_statistics"]["observation_owner"] != initial_stats["raw_statistics"]["observation_owner"]
+                        or after_stats["raw_statistics"]["observation_generation"] != initial_stats["raw_statistics"]["observation_generation"]):
+                    raise ContractError("diagnostic_actual_onestep_clock_or_generation")
                 last_attempt = snapshot_receipt("native_return", segment, native)
                 if not native["success"]:
                     raise ContractError("voltage_lift_solver_failure:"+native["message"])
@@ -4713,13 +4836,50 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                         for node in table["nodes"]:
                             query(left.time+h*(float(node)+1)/2)
                     duration = observer.prepared.path.clock.tn-observer.prepared.path.clock.predecessor
-                    error_allocation = rational(budgets["charge_C"])/12*duration/rational(segments[-1].end)/32
+                    normalization = (float.fromhex(request["original_full_protocol_end_hex"])
+                                     if diagnostic else segments[-1].end)
+                    error_allocation = rational(budgets["charge_C"])/12*duration/rational(normalization)/32
+                    before_prefix = prefixes
+                    completed_before = charge_accumulator.count if diagnostic else None
                     with timing.phase('observation'):
                         prefixes, evidence = observer.charge_evidence(left_pair, right_pair, prefixes,
                             absolute_error=error_allocation, charge_budget=budgets["charge_C"],
                             charge_accumulator=charge_accumulator)
+                    if diagnostic and not evidence["passed"]:
+                        failed = {"kind": "native_interval_failed_charge", "segment_id": segment.id,
+                                  "left": pointer(left_pair), "right": pointer(right_pair),
+                                  "observation": observation_record(evidence), "arithmetic_calls": list(arithmetic.calls)}
+                        save(failed)
+                        first_failure = first_failure or failed
+                        raise ContractError("voltage_lift_interval_or_prefix_charge_budget")
                     while cursor < len(sample_times) and sample_times[cursor] <= t:
-                        save({"kind": "requested_sample", **pointer(query(float(sample_times[cursor])))})
+                        common_time = float(sample_times[cursor])
+                        common_pair = query(common_time)
+                        save({"kind": "requested_sample", **pointer(common_pair)})
+                        if diagnostic:
+                            common_evidence = evidence
+                            if common_time < t:
+                                allocation = rational(budgets["charge_C"])/12*(rational(common_time)-rational(left.time))/rational(normalization)/32
+                                with timing.phase('observation'):
+                                    _, common_evidence = observer.charge_evidence(left_pair, common_pair, before_prefix,
+                                        absolute_error=allocation, charge_budget=budgets["charge_C"],
+                                        subinterval=(left.time, common_time))
+                            centers = {key: tuple(a+b.center for a, b in zip(signed_prefix[key],
+                                common_evidence["ledgers"][key]["signed_integral_C"], strict=True)) for key in prefixes}
+                            save({"kind": "native_interval_common_prefix", "time_hex": common_time.hex(),
+                                "segment_id": segment.id, "left": pointer(left_pair), "right": pointer(common_pair),
+                                "coefficient_frame_identity": frame.identity, "completed_intervals_before": completed_before,
+                                "origin": "contained_observation" if common_time < t else "accepted_endpoint",
+                                "signed_integral_centers_C": observation_record(centers),
+                                "reference_error_C": observation_record({key: common_evidence["ledgers"][key]["prefix_reference_error_C"]
+                                                                         for key in prefixes}),
+                                "observation": observation_record(common_evidence), "arithmetic_calls": list(arithmetic.calls),
+                                "endpoint_restore": None, "normal_query_performed": False, "states_projected": False,
+                                "reference_estimates_are_continuum_certificates": False, "old_B_prefix_credit": False})
+                            if not common_evidence["passed"]:
+                                first_failure = first_failure or {"phase": "common_clock_prefix", "time_hex": common_time.hex(),
+                                                                  "observation": observation_record(common_evidence)}
+                                raise ContractError("diagnostic_common_prefix_budget")
                         cursor += 1
                     interval = {"kind": ("voltage_lift_interval_charge_v2" if charge_accumulator is not None
                                          else "voltage_lift_interval_charge"), "segment_id": segment.id,
@@ -4733,6 +4893,9 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     if not evidence["passed"]:
                         first_failure = first_failure or interval
                         raise ContractError("voltage_lift_interval_or_prefix_charge_budget")
+                    if diagnostic:
+                        signed_prefix = {key: tuple(a+b.center for a, b in zip(signed_prefix[key],
+                            evidence["ledgers"][key]["signed_integral_C"], strict=True)) for key in prefixes}
                     last_accepted = last_numerical
                     previous_observer = observer
                 finally:
@@ -4744,7 +4907,9 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             if frame_record is not None:
                 z = binding.adapter.mapping.frame.parent_state(segment.end, z)
             predecessor = left
-        result = {"status": "completed_bounded_voltage_lift_native_pilot", "complete_protocol": True}
+        result = ({"status": "completed_bounded_native_interval", "complete_protocol": False,
+                   "complete_diagnostic_window": True} if diagnostic else
+                  {"status": "completed_bounded_voltage_lift_native_pilot", "complete_protocol": True})
     except BaseException as error:
         result = {"status": "failed_bounded_voltage_lift_native_pilot", "complete_protocol": False,
                   "reason": str(error), "exception": type(error).__name__, "traceback": traceback.format_exc(),
@@ -4760,6 +4925,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         cumulative_scope="includes the fully evaluated first failed interval; no prefix reset at a protocol event",
         scientific_or_G2_qualification=False, DAE_time_accuracy_certified=False, continuum_space_accuracy_certified=False,
     )
+    if diagnostic:
+        result.update(complete_diagnostic_window=result.get("complete_diagnostic_window", False),
+                      old_B_prefix_credit=False, in_window_reinitializations=0,
+                      original_native_authority_restored=False,
+                      signed_integral_prefix_C=observation_record(signed_prefix))
     if charge_accumulator is not None:
         with timing.phase('observation'):
             result["cumulative_representation"] = observation_record(charge_upper_summary(charge_accumulator))

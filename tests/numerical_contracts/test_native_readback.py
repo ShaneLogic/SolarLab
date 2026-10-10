@@ -9,6 +9,8 @@ from copy import deepcopy
 from fractions import Fraction
 import hashlib
 import json
+
+
 import os
 from pathlib import Path
 import struct
@@ -1113,3 +1115,130 @@ class PartitionReadbackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _diagnostic_metadata_case(tmp_path):
+    """Opaque manufactured metadata only; it is not a decodable physical case."""
+    import hashlib
+    from copy import deepcopy
+    from scripts.benchmarks.native_readback import _digest
+    from scripts.benchmarks import coupled_device_prototype as kernel
+
+    def put(name, value, raw=False):
+        path = tmp_path/name
+        data = value.encode() if raw else (json.dumps(value,indent=2)+"\n").encode()
+        path.write_bytes(data)
+        return {"path":str(path),"bytes":len(data),"sha256":hashlib.sha256(data).hexdigest()}
+    zero = [0.0.hex()]*45
+    model, reference, layout, point_id = (_digest({"manufactured":name}) for name in ("model","reference","layout","point"))
+    mapping = {"physical_model":model,"physical_reference":reference,"layout":layout,
+        "columns_hex":[1.0.hex()]*45,"rows_hex":[1.0.hex()]*45,
+        "lift_hex":[[0.0.hex(),0.0.hex()] for _ in range(45)],"reference_inputs_hex":[0.0.hex()]*2,
+        "mapped_input_profile":"frame-input-expansion12-v1","mapped_input_words":12,
+        "raw_coordinate_meaning":"manufactured parent","physical_coordinate_meaning":"manufactured SI"}
+    controls = {"rtol":1e-6,"atol":[1e-8]*45,"max_step":1.0,"first_step":2.0**-8}
+    hold = {"id":"slow_state_hold","start":0.5,"end":4.0,"voltage":[0.0,0.0],"photons":[0.0,0.0]}
+    parent = {"schema":"solarlab.voltage-lift-native-request.v1","case_id":"manufactured-metadata-only",
+        "numeric_packet":{"layout_identity":layout,"definition":{"mu_n":1.0}},
+        "voltage_lift_map":mapping,"map_identity":_digest(mapping),"segments":[hold],"controls":controls,
+        "previous_controls":deepcopy(controls),"weight_certificate":{"manufactured":True},
+        "budgets":{"charge_C":1e-6},"original_budgets":{"charge_C":1e-6},
+        "quadrature":{"8":{},"16":{},"32":{}},"physical_domain_policy":{"manufactured":True},
+        "segment_startup_policy":{"overrides":{"slow_state_hold":{"first_step":2.0**-8}}},
+        "frame_input_policy":{"profile":"frame-input-expansion12-v1"}}
+    payload = {"schema":"solarlab.precision-point.v2","identity":point_id,"layout":layout,
+               "time":1.0.hex(),"inputs":[0.0.hex()]*2,"manufactured_opaque_payload":True}
+    point = {"payload":payload,"sha256":_digest(payload)}
+    frame = {"size":45,"t0_hex":1.0.hex(),"parent_map_identity":_digest(mapping),
+             "q0_words_hex":[zero[:] for _ in range(4)],"v0_words_hex":[zero[:] for _ in range(4)]}
+    accepted = {"Point_identity":point_id,"physical_reference_identity":reference,"physical_source_identity":model,
+        "original_native_history_recovered":False,"frame":frame,"map":dict(mapping,segment_frame=frame),
+        "public_return":{"raw_state_hex":zero,"raw_rate_hex":zero},
+        "physical_state_words_hex":[zero[:] for _ in range(12)],"physical_rate_words_hex":[zero[:] for _ in range(12)],
+        "inputs_hex":[0.0.hex()]*2,"input_rates_hex":[0.0.hex()]*2}
+    restore = {"Point":point,"base_Point_identity":point_id,"original_native_authority_restored":False,
+               "raw_v_hex":zero,"input_rates_hex":[0.0.hex()]*2}
+    clocks = [float(1+i/4).hex() for i in range(5)]
+    gates = {"base_Point_identity":point_id,"common_clocks":[{"hex":t} for t in clocks],
+             "charge":{"original_full_protocol_end_hex":4.0.hex()},"manufactured":True,
+             "refinement":{"coarse_max_step_hex":0.25.hex(),"fine_max_step_hex":0.125.hex()}}
+    window = {"segment_id":"manufactured_window","start_hex":1.0.hex(),"end_hex":2.0.hex(),
+              "common_clocks_hex":clocks,"maximum_step_choices_hex":[0.25.hex(),0.125.hex()],
+              "selected_max_step_hex":0.25.hex(),"first_step_hex":(2.0**-8).hex()}
+    descriptor = {"schema":"solarlab.native-interval-descriptor.v1","parent_request":put("Parent.json",parent),
+        "accepted_transfer":put("Accepted.json",accepted),"saved_restore":put("Restore.json",restore),
+        "GateSpec":put("Gates.json",gates),"window":window}
+    fields = ("case_id","numeric_packet","voltage_lift_map","map_identity","previous_controls","weight_certificate",
+              "budgets","original_budgets","quadrature","physical_domain_policy")
+    request = {key:deepcopy(parent[key]) for key in fields}
+    request.update(schema="solarlab.native-interval-child-request.v1",diagnostic_interval=descriptor,
+        controls=dict(controls,max_step=0.25),segments=[dict(hold,id="manufactured_window",start=1.0,end=2.0)],
+        observation_times={"manufactured_window":[float.fromhex(t) for t in clocks]},
+        prior_request_sha256=_digest(parent),original_full_protocol_end_hex=4.0.hex(),
+        source_rebinding={"physical_model_identity":model,"numeric_kernel":put("Kernel.txt","manufactured metadata; never import",raw=True)},
+        z0=[0.0]*45,zdot0=[0.0]*45,starting_Point_identity=point_id,
+        center_once=True,in_window_reinitializations=0,old_B_prefix_credit=False,original_native_Point_authority_restored=False)
+    request["segment_frame_policy"] = kernel._segment_frame_policy(request,"fixed-affine-state-rate-v1")
+    request["frame_input_policy"] = kernel._frame_input_policy(request,"frame-input-expansion12-v1")
+    return request, accepted, put
+
+
+def test_diagnostic_metadata_authenticates_map_body_and_seed(tmp_path):
+    from copy import deepcopy
+    from scripts.benchmarks.native_readback import diagnostic_interval_binding, frame_input_word_count, HistoryVerificationError
+    from scripts.benchmarks import coupled_device_prototype as kernel
+    from scripts.benchmarks.contract_prototype import ContractError
+
+    request, accepted, put = _diagnostic_metadata_case(tmp_path)
+    assert frame_input_word_count(request) == 12
+    kernel.diagnostic_interval_context(request)
+    mutations = (
+        lambda r: r["voltage_lift_map"]["columns_hex"].__setitem__(0,2.0.hex()),
+        lambda r: r["voltage_lift_map"]["lift_hex"][0].__setitem__(0,1.0.hex()),
+        lambda r: r["diagnostic_interval"]["parent_request"].update(sha256="bad"),
+        lambda r: r.update(starting_Point_identity="unrelated"),
+        lambda r: r["controls"].update(rtol=2*r["controls"]["rtol"]),
+        lambda r: r["numeric_packet"]["definition"].update(mu_n=2.0),
+        lambda r: r.update(original_full_protocol_end_hex=2.0.hex()),
+        lambda r: r["diagnostic_interval"]["window"].update(start_hex=0.0.hex()),
+        lambda r: r["zdot0"].__setitem__(0,1.0),
+        lambda r: r["z0"].__setitem__(0,1.0))
+    for mutate in mutations:
+        bad = deepcopy(request)
+        mutate(bad)
+        try:
+            diagnostic_interval_binding(bad)
+        except HistoryVerificationError:
+            pass
+        else:
+            raise AssertionError("forged descriptor accepted")
+    bad = deepcopy(request)
+    bad["diagnostic_interval"]["window"]["maximum_step_choices_hex"] = [0.125.hex(),0.0625.hex()]
+    bad["diagnostic_interval"]["window"]["selected_max_step_hex"] = 0.125.hex()
+    bad["controls"]["max_step"] = 0.125
+    try:
+        diagnostic_interval_binding(bad)
+    except HistoryVerificationError as error:
+        assert error.code == "diagnostic_step_controls"
+    else:
+        raise AssertionError("coordinated descriptor/control change escaped the frozen GateSpec")
+    # Alter the actual accepted map but retain its claimed parent map identity;
+    # re-pin the changed fixture so this tests coefficients, not only file SHA.
+    bad = deepcopy(request)
+    changed = deepcopy(accepted)
+    changed["map"]["rows_hex"][0] = 2.0.hex()
+    bad["diagnostic_interval"]["accepted_transfer"] = put("AcceptedChanged.json",changed)
+    try:
+        diagnostic_interval_binding(bad)
+    except HistoryVerificationError as error:
+        assert error.code == "diagnostic_accepted_unframed_map_body"
+    else:
+        raise AssertionError("same claimed parent ID concealed changed coefficients")
+    legacy = deepcopy(request)
+    legacy.pop("diagnostic_interval")
+    try:
+        kernel._validate_segment_frame_policy(legacy)
+    except (ContractError,KeyError):
+        pass
+    else:
+        raise AssertionError("new child was silently accepted by the legacy branch")

@@ -557,10 +557,20 @@ class _ChargeRefinement:
         clock = evidence["clock"]
         before, now, h = (_exact_ratio(clock[k]) for k in ("predecessor", "tn", "hused"))
         _require(now > before and h > 0, "partition_clock")
-        left, right = (before - now) / h, Fraction(0)
+        first, last = before, now
+        if "observation_subinterval" in evidence:
+            sub = evidence["observation_subinterval"]
+            first, last = sub["left"], sub["right"]
+            _require(self.request.get("diagnostic_interval") is not None and before == first < last < now
+                     and sub == {"left": first, "right": last, "native_clock_unchanged": True,
+                                 "accepted_native_step": False, "completed_prefix_mutated": False},
+                     "partial_prefix_clock_provenance")
+        left, right = (first-now)/h, (last-now)/h
         _require(part["normalized_interval"] == (left, right), "partition_clock_coverage")
-        allocation = Fraction(self.request["budgets"]["charge_C"]) / 12 * (now - before)
-        allocation /= Fraction(self.request["segments"][-1]["end"]) * 32
+        allocation = Fraction(self.request["budgets"]["charge_C"]) / 12 * (last-first)
+        normalization = (_hex(self.request["original_full_protocol_end_hex"])
+                         if "diagnostic_interval" in self.request else self.request["segments"][-1]["end"])
+        allocation /= Fraction(normalization) * 32
         ports = _vector(part["ports"], 2)
         originals = _vector(evidence["raw_tangent_L1_current_bounds"], 2)
         self.call_end = 0
@@ -726,6 +736,123 @@ def _qualified_frame_input_context_check(request):
             "weight_certificate_sha256": _digest(request["weight_certificate"])}
 
 
+def diagnostic_interval_binding(request):
+    """Read bounded saved metadata for the explicit diagnostic child contract.
+
+    This is shared metadata validation, with no model or native imports. The
+    normal reader still independently checks every physical word and gate.
+    The original full-protocol schema cannot opt into this path accidentally.
+    """
+    descriptor = request.get("diagnostic_interval")
+    _require(request.get("schema") == "solarlab.native-interval-child-request.v1"
+             and type(descriptor) is dict
+             and descriptor.get("schema") == "solarlab.native-interval-descriptor.v1",
+             "diagnostic_interval_descriptor")
+
+    def bound(name):
+        item = descriptor[name]
+        _require(type(item) is dict and set(item) == {"path", "bytes", "sha256"}
+                 and type(item["bytes"]) is int and 0 < item["bytes"] <= 2*1024*1024,
+                 "diagnostic_metadata_pin")
+        with Path(item["path"]).open("rb") as stream:
+            data = stream.read(item["bytes"]+1)
+        _require(len(data) == item["bytes"] and hashlib.sha256(data).hexdigest() == item["sha256"],
+                 "diagnostic_metadata_changed:"+name)
+        return json.loads(data, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_finite)
+
+    parent, accepted, restore, gates = (bound(k) for k in
+        ("parent_request", "accepted_transfer", "saved_restore", "GateSpec"))
+    _require(parent.get("schema") == "solarlab.voltage-lift-native-request.v1"
+             and "diagnostic_interval" not in parent
+             and parent.get("frame_input_policy", {}).get("profile") == "frame-input-expansion12-v1"
+             and not any(k in request for k in ("frame_input_parent", "qualification_policy", "qualification_ancestor")),
+             "diagnostic_original_parent_schema")
+    point = restore["Point"]
+    _require(point["sha256"] == _digest(point["payload"])
+             and point["payload"]["identity"] == restore["base_Point_identity"] == accepted["Point_identity"]
+             == request.get("starting_Point_identity") == gates["base_Point_identity"]
+             and point["payload"]["layout"] == parent["numeric_packet"]["layout_identity"]
+             and accepted["physical_reference_identity"] == parent["voltage_lift_map"]["physical_reference"]
+             and accepted["physical_source_identity"] == parent["voltage_lift_map"]["physical_model"]
+             and accepted["original_native_history_recovered"] is False
+             and restore["original_native_authority_restored"] is False,
+             "diagnostic_complete_saved_Point")
+    _require(len(request["segments"]) == 1, "diagnostic_single_window")
+    segment, window = request["segments"][0], descriptor["window"]
+    start, end = _hex(window["start_hex"]), _hex(window["end_hex"])
+    hold = next((s for s in parent["segments"] if s["id"] == "slow_state_hold"), None)
+    _require(hold is not None and hold["start"] <= start < end <= hold["end"]
+             and start == _hex(point["payload"]["time"]) == _hex(accepted["frame"]["t0_hex"])
+             and segment == {"id": window["segment_id"], "start": start, "end": end,
+                             "voltage": hold["voltage"], "photons": hold["photons"]}
+             and all(v[0] == v[1] for v in (hold["voltage"], hold["photons"])),
+             "diagnostic_window_or_forcing")
+    clocks = [float(Fraction(start)+i*(Fraction(end)-Fraction(start))/4) for i in range(5)]
+    _require(all(Fraction(t) == Fraction(start)+i*(Fraction(end)-Fraction(start))/4
+                 for i, t in enumerate(clocks))
+             and window["common_clocks_hex"] == [t.hex() for t in clocks]
+             and request["observation_times"] == {segment["id"]: clocks}
+             and [row["hex"] for row in gates["common_clocks"]] == window["common_clocks_hex"],
+             "diagnostic_common_clocks")
+    controls = dict(parent["controls"])
+    controls.update(parent["segment_startup_policy"]["overrides"][hold["id"]])
+    choices = _hex_vector(window["maximum_step_choices_hex"], 2)
+    selected = _hex(window["selected_max_step_hex"])
+    _require(window["maximum_step_choices_hex"] == [gates["refinement"]["coarse_max_step_hex"],
+                                                     gates["refinement"]["fine_max_step_hex"]]
+             and 0 < min(choices) and max(choices) == 2*min(choices) <= controls["max_step"]
+             and selected in choices and controls["first_step"].hex() == window["first_step_hex"],
+             "diagnostic_step_controls")
+    controls["max_step"] = selected
+    _require(request["controls"] == controls and "segment_startup_policy" not in request,
+             "diagnostic_only_declared_control_delta")
+    for key in ("case_id", "numeric_packet", "previous_controls", "weight_certificate", "budgets",
+                "original_budgets", "quadrature", "physical_domain_policy"):
+        _require(request[key] == parent[key], "diagnostic_physics_or_gate_changed:"+key)
+    _require(request["prior_request_sha256"] == _digest(parent)
+             and request["original_full_protocol_end_hex"] == float(parent["segments"][-1]["end"]).hex()
+             == gates["charge"]["original_full_protocol_end_hex"], "diagnostic_original_normalization")
+    old_map, new_map = dict(parent["voltage_lift_map"]), dict(request["voltage_lift_map"])
+    accepted_map = dict(accepted["map"])
+    _require(accepted_map.pop("segment_frame", None) == accepted["frame"]
+             and accepted["frame"]["parent_map_identity"] == _digest(old_map),
+             "diagnostic_accepted_parent_map_identity")
+    for name in ("raw_coordinate_meaning", "physical_coordinate_meaning"):
+        accepted_map[name] = old_map[name]
+    _require(accepted_map == old_map, "diagnostic_accepted_unframed_map_body")
+    old_map.pop("physical_model")
+    source = new_map.pop("physical_model")
+    _require(old_map == new_map and request["map_identity"] == _digest(request["voltage_lift_map"])
+             and type(source) is str and len(source) == 64
+             and request["source_rebinding"]["physical_model_identity"] == source,
+             "diagnostic_physical_map_changed")
+    kernel = request["source_rebinding"]["numeric_kernel"]
+    _require(Path(kernel["path"]).stat().st_size == kernel["bytes"] <= 2*1024*1024
+             and hashlib.sha256(Path(kernel["path"]).read_bytes()).hexdigest() == kernel["sha256"],
+             "diagnostic_numeric_source_changed")
+    n = len(controls["atol"])
+    _require(n == len(request["z0"]) == len(request["zdot0"]) == accepted["frame"]["size"] == 45
+             and request["z0"] == [0.0]*n
+             and [float(v).hex() for v in request["zdot0"]] == restore["raw_v_hex"]
+             == accepted["public_return"]["raw_rate_hex"]
+             and accepted["public_return"]["raw_state_hex"] == [0.0.hex()]*n,
+             "diagnostic_initial_raw_words")
+    for name in ("physical_state_words_hex", "physical_rate_words_hex"):
+        for word in _vector(accepted[name], 12):
+            _hex_vector(word, n)
+    _require(accepted["inputs_hex"] == point["payload"]["inputs"]
+             and accepted["input_rates_hex"] == restore["input_rates_hex"] == [0.0.hex(), 0.0.hex()]
+             and request["center_once"] is True and request["in_window_reinitializations"] == 0
+             and request["old_B_prefix_credit"] is False
+             and request["original_native_Point_authority_restored"] is False,
+             "diagnostic_seed_input_or_history")
+    summary = {"schema": "solarlab.native-interval-context.v1", "descriptor_sha256": _digest(descriptor),
+        "parent_request_sha256": _digest(parent), "saved_Point_sha256": point["sha256"],
+        "seed_Point_identity": accepted["Point_identity"], "window": window,
+        "source_rebinding": request["source_rebinding"], "GateSpec": descriptor["GateSpec"]}
+    return {"parent": parent, "accepted": accepted, "restore": restore, "summary": summary}
+
+
 def frame_input_word_count(request):
     """Independent request/profile check; raw native anchors always stay four."""
     _require(not any(k in request for k in ("frame_input_profile", "frame_input_words", "mapped_input_profile")),
@@ -736,10 +863,13 @@ def frame_input_word_count(request):
                  "frame_input_unbound_parent_or_map")
         return 4
     _require("segment_frame_policy" in request, "frame_input_requires_segment_frame")
+    diagnostic = "diagnostic_interval" in request
     qualified = "qualification_policy" in request
-    authority = ({"qualified_context": _qualified_frame_input_context_check(request)} if qualified
+    authority = ({"diagnostic_context": diagnostic_interval_binding(request)["summary"]} if diagnostic else
+                 {"qualified_context": _qualified_frame_input_context_check(request)} if qualified
                  else {"failed_parent": _frame_input_parent(request)})
-    expected = {"schema": "solarlab.frame-input-policy.v2" if qualified else "solarlab.frame-input-policy.v1",
+    expected = {"schema": "solarlab.frame-input-policy.v3" if diagnostic else
+                         "solarlab.frame-input-policy.v2" if qualified else "solarlab.frame-input-policy.v1",
                 "profile": "frame-input-expansion12-v1", **authority,
                 "ancestor_request_sha256": request["prior_request_sha256"],
                 "parent_map_identity": request["map_identity"],
@@ -821,6 +951,8 @@ class SegmentFrameCheck:
                  and record["record_sha256"] == _digest({k: v for k, v in record.items() if k != "record_sha256"})
                  and record["request_sha256"] == self.request_id
                  and record["parent_map_identity"] == self.request["map_identity"], "segment_frame_record_binding")
+        if "diagnostic_interval" in self.request:
+            return self.begin_diagnostic(record, segment, ordinal, predecessor, previous_history)
         frame, parent, seed = record["frame"], record["parent_input"], record["preparation_frame"]
         _require(frame["schema"] == "solarlab.segment-affine-frame.v1" and _digest(frame) == record["frame_identity"]
                  and frame["parent_map_identity"] == self.request["map_identity"] and frame["size"] == self.size
@@ -874,6 +1006,60 @@ class SegmentFrameCheck:
         self.prior_phi0 = _word_bytes(zero, self.size)
         self.frames.append({"frame_identity": record["frame_identity"], "map_identity": record["map_identity"],
                             "ordinal": ordinal, "weight_packets": 0})
+        return expected_map
+
+    def begin_diagnostic(self, record, segment, ordinal, predecessor, previous_history):
+        """A complete externally saved seed, distinct from a cold reference."""
+        data = diagnostic_interval_binding(self.request)
+        accepted, restore = data["accepted"], data["restore"]
+        frame, proof = record["frame"], record["parent_input"]
+        ancestry = {"schema": "solarlab.native-interval-live-seed.v1", "request_sha256": self.request_id,
+                    "descriptor_sha256": _digest(self.request["diagnostic_interval"]),
+                    "parent_map_identity": self.request["map_identity"], "predecessor_identity": predecessor,
+                    "q0_words_hex": accepted["frame"]["q0_words_hex"],
+                    "v0_words_hex": accepted["frame"]["v0_words_hex"]}
+        expected_frame = dict(accepted["frame"], parent_map_identity=self.request["map_identity"],
+            segment_sha256=_digest(segment), logical_initialization_index=1,
+            predecessor_identity=predecessor, parent_input_sha256=_digest(ancestry))
+        expected_map = dict(self.base, segment_frame=expected_frame,
+            raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+            physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        _require(record["initialization_mode"] == "diagnostic_saved_seed" and ordinal == 1
+                 and previous_history is None and predecessor == accepted["Point_identity"]
+                 and frame == expected_frame and record["frame_identity"] == _digest(frame)
+                 and record["ancestry"] == ancestry and record["map"] == expected_map
+                 and record["map_identity"] == _digest(expected_map)
+                 and record["native_initialization_performed"] is False,
+                 "diagnostic_frame_ancestry")
+        _require(proof["schema"] == "solarlab.voltage-lift-diagnostic-input.v1"
+                 and proof["record_sha256"] == _digest({k: v for k, v in proof.items() if k != "record_sha256"})
+                 and proof["request_sha256"] == self.request_id and proof["map_identity"] == _digest(expected_map)
+                 and proof["predecessor_identity"] == proof["point_identity"] == predecessor
+                 and proof["Point"] == restore["Point"] and proof["time_hex"] == frame["t0_hex"]
+                 and proof["segment_sha256"] == _digest(segment)
+                 and all(proof[k] is False for k in ("state_changed", "tangent_preparation_performed",
+                           "native_initialization_performed", "original_native_authority_restored")),
+                 "diagnostic_initial_Point_proof")
+        zero = [0.0.hex()]*self.size
+        raw_rate = restore["raw_v_hex"]
+        _require(record["native_initial_z_hex"] == proof["raw_z_hex"] == zero
+                 and record["native_initial_zdot_hex"] == proof["raw_zdot_hex"] == raw_rate
+                 and proof["inputs_hex"] == accepted["inputs_hex"]
+                 and proof["input_rates_hex"] == accepted["input_rates_hex"]
+                 and record["physical_handoff_words_hex"] == accepted["physical_state_words_hex"]
+                 and record["physical_rate_handoff_words_hex"] == proof["mapped_physical_rate_words_hex"]
+                 == accepted["physical_rate_words_hex"], "diagnostic_all_saved_words")
+        state = self.parent(frame, segment["start"], (0.0,)*self.size)
+        rate = self.parent(frame, segment["start"], _hex_vector(raw_rate, self.size), rate=True)
+        _require(_frame_word_values(accepted["physical_state_words_hex"], self.size, count=12)
+                 == self.physical(state, _hex_vector(accepted["inputs_hex"], 2))
+                 and _frame_word_values(accepted["physical_rate_words_hex"], self.size, count=12)
+                 == self.physical(rate, _hex_vector(accepted["input_rates_hex"], 2), rate=True),
+                 "diagnostic_independent_physical_transfer")
+        self.active, self.current_map, self.segment = frame, expected_map, segment
+        self.prior_phi0 = _word_bytes(zero, self.size)
+        self.frames.append({"frame_identity": record["frame_identity"], "map_identity": record["map_identity"],
+                            "ordinal": 1, "weight_packets": 0, "initialization_mode": "diagnostic_saved_seed"})
         return expected_map
 
     def constructor(self, row):
@@ -1048,7 +1234,9 @@ class _Protocol:
         self.size, self.nodes = len(request["z0"]), request["numeric_packet"]["nodes"]
         qualified_size = (qualification_coordinate_count(request)
                           if "qualification_policy" in request else None)
-        _require(request["schema"] == "solarlab.voltage-lift-native-request.v1"
+        self.diagnostic = diagnostic_interval_binding(request) if "diagnostic_interval" in request else None
+        _require(request["schema"] == ("solarlab.native-interval-child-request.v1" if self.diagnostic is not None
+                                       else "solarlab.voltage-lift-native-request.v1")
                  and self.size >= 1
                  and (self.size <= 45 if qualified_size is None else self.size == qualified_size)
                  and type(self.nodes) is int and 2 <= self.nodes <= self.size
@@ -1080,6 +1268,10 @@ class _Protocol:
         self.native_owner = None
         self.startup = SegmentStartupCheck(request)
         self.segment_frame = SegmentFrameCheck(request)
+        self.common_clocks = []
+        self.diagnostic_grid = []
+        self._sample_cache, self._pending_common = {}, []
+        self.signed_integrals = {key: (Fraction(0),)*3 for key in _LEDGERS} if self.diagnostic is not None else None
 
     def _context(self, row):
         _require(row["request_sha256"] == self.request_id and row["map_identity"] == self.map_id,
@@ -1099,6 +1291,17 @@ class _Protocol:
             _hex_vector(row["z_hex"], self.size)
             _hex_vector(row["zdot_hex"], self.size)
             row = self.rows.take()
+        returned_receipt = None
+        if row["kind"] == "native_interval_return":
+            _require(self.diagnostic is not None and phase == "after_onestep"
+                     and row["segment_id"] == self.segment["id"] and row["sequence"] == self.steps+1,
+                     "diagnostic_return_sequence")
+            returned_receipt = row["receipt"]
+            _require(returned_receipt["phase"] == "native_return" and returned_receipt["success"] is True
+                     and returned_receipt["segment_id"] == self.segment["id"], "diagnostic_raw_return")
+            _hex_vector(returned_receipt["z_hex"], self.size)
+            _hex_vector(returned_receipt["zdot_hex"], self.size)
+            row = self.rows.take()
         _require(row["kind"] == "native_statistics" and row["phase"] == phase
                  and row["segment_id"] == self.segment["id"]
                  and row["logical_initialization_index"] == self.ordinal, "statistics_order_or_context")
@@ -1115,6 +1318,10 @@ class _Protocol:
             _require(row["returned_time_hex"] is None, "statistics_before_return")
         if phase == "after_onestep":
             _require(_hex(row["returned_time_hex"]) == raw["current_time"], "statistics_after_return")
+            if self.diagnostic is not None:
+                _require(returned_receipt is not None
+                         and returned_receipt["time_hex"] == row["returned_time_hex"], "diagnostic_return_clock")
+                self.last_raw_return = returned_receipt
         owner = raw["observation_owner"], raw["observation_generation"]
         _require(type(owner[0]) is str and bool(owner[0]) and type(owner[1]) is int and owner[1] > 0,
                  "statistics_native_owner")
@@ -1210,6 +1417,11 @@ class _Protocol:
                      and row["native_getter_used"] is False and row["native_output"] is False,
                      "polynomial_sample_binding")
         self.samples += 1
+        if self.diagnostic is not None:
+            _require(h["inputs_hex"] == self.diagnostic["accepted"]["inputs_hex"]
+                     and h["input_rates_hex"] == self.diagnostic["accepted"]["input_rates_hex"],
+                     "diagnostic_same_exact_forcing_words")
+            self._sample_cache[row["record_sha256"]] = {"sample": row, "certificate": None}
         return row
 
     @staticmethod
@@ -1260,11 +1472,31 @@ class _Protocol:
         _require(evidence["source_and_readback_error_A"] == errors
                  and evidence["combined_current_bound_A"] == combined and evidence["original_allocation_A"] == limit
                  and all(v <= limit for v in combined), "current_bound_consistency")
+        if self.diagnostic is not None:
+            key = sample["record_sha256"]
+            self._sample_cache[key]["certificate"] = row
+            for common in self.common_clocks:
+                if common["sample"]["record_sha256"] == key and common["certificate"] is None:
+                    common["certificate"] = row
 
-    def _interval(self, left, right, frame):
+    def _interval(self, left, right, frame, *, supplied_row=None, commit=True):
         kind = "voltage_lift_interval_charge_v2" if self.charge_refinement is not None else "voltage_lift_interval_charge"
-        row = self.rows.take(kind)
+        if supplied_row is None and self.diagnostic is not None:
+            for common in self._pending_common:
+                self._interval(left, common["sample"], frame, supplied_row=common["prefix"], commit=False)
+            self._pending_common.clear()
+        row = self.rows.take(kind) if supplied_row is None else supplied_row
         evidence = _decode(row["observation"])
+        partial = "observation_subinterval" in evidence
+        if not commit:
+            _require(self.diagnostic is not None and row["kind"] == "native_interval_common_prefix"
+                     and row["completed_intervals_before"] == self.intervals
+                     and row["old_B_prefix_credit"] is False
+                     and _hex(row["time_hex"]) == _hex(right["history"]["time_hex"]), "common_prefix_ancestry")
+            _require(partial is (_hex(row["time_hex"]) < frame["endpoint"]["internal_t"]),
+                     "common_prefix_exact_bound")
+        else:
+            _require(not partial, "partial_evidence_cannot_commit_native_interval")
         _require(row["segment_id"] == self.segment["id"] and row["left"] == self._pointer(left)
                  and row["right"] == self._pointer(right) and row["coefficient_frame_identity"] == self.frame_id
                  and evidence["frame_identity"] == self.frame_id and evidence["path_identity"] == self.path_id
@@ -1299,7 +1531,10 @@ class _Protocol:
         upper_step = None
         if self.charge_refinement is not None:
             self.charge_refinement.partition(evidence, calls, self.path_id)
-            upper_step = self.charge_refinement.step(row["observation"], evidence, self.intervals + 1)
+            if not partial:
+                upper_step = self.charge_refinement.step(row["observation"], evidence, self.intervals + 1)
+            else:
+                _require("upper_sum" not in evidence, "partial_prefix_cannot_mutate_upper_accumulator")
         else:
             _require("terminal_partition" not in evidence and "upper_sum" not in evidence, "legacy_record_refinement_metadata")
         for key in _LEDGERS:
@@ -1342,7 +1577,16 @@ class _Protocol:
                 offset = _LEDGERS.index(key) * 6
                 _require(absolute == upper_step[3][offset:offset + 6:2]
                          and cumulative == upper_step[3][offset + 1:offset + 6:2], "charge_upper_ledger_prefix")
-            self.prefix[key] = absolute, cumulative
+            next_signed = (tuple(a+b["center"] for a, b in zip(self.signed_integrals[key], integrals))
+                           if self.diagnostic is not None else None)
+            if not commit:
+                _require(_decode(row["signed_integral_centers_C"])[key] == next_signed
+                         and _decode(row["reference_error_C"])[key] == cumulative,
+                         "common_signed_prefix_or_error")
+            if commit:
+                self.prefix[key] = absolute, cumulative
+                if self.diagnostic is not None:
+                    self.signed_integrals[key] = next_signed
         for call in calls:
             if call.get("purpose") == "full-real-interval-precheck":
                 # BallIntegrator.absolute_bound first checks a real enclosure;
@@ -1354,9 +1598,10 @@ class _Protocol:
             actual, requested = Fraction(*call["actual_error"]), Fraction(*call["requested_error"])
             _require(type(call["evaluations"]) is int and call["evaluations"] > 0
                      and 0 <= actual <= requested, "arithmetic_receipt_error")
-        if upper_step is not None:
+        if upper_step is not None and commit:
             self.charge_refinement.commit(upper_step)
-        self.intervals += 1
+        if commit:
+            self.intervals += 1
 
     def run(self):
         row = self.rows.take("voltage_lift_reference")
@@ -1370,6 +1615,15 @@ class _Protocol:
                  "reference_binding")
         predecessor = ref["physical_reference_identity"]
         last_time = _hex(ref["physical_reference"]["payload"]["time"])
+        if self.diagnostic is not None:
+            seed = self.rows.take("voltage_lift_diagnostic_seed")
+            restore = self.diagnostic["restore"]
+            _require(seed == {"kind": "voltage_lift_diagnostic_seed", "request_sha256": self.request_id,
+                              "descriptor_sha256": _digest(self.request["diagnostic_interval"]),
+                              "Point": restore["Point"], "old_B_prefix_credit": False,
+                              "original_native_authority_restored": False}, "diagnostic_seed_record")
+            predecessor = restore["base_Point_identity"]
+            last_time = _hex(restore["Point"]["payload"]["time"])
         last_right = None
         previous_native = None
         for self.ordinal, self.segment in enumerate(self.request["segments"], 1):
@@ -1391,7 +1645,7 @@ class _Protocol:
                      and proof["predecessor_identity"] == predecessor
                      and proof["record_sha256"] == _digest({k: v for k, v in proof.items() if k != "record_sha256"}),
                      "initialization_binding")
-            if self.ordinal == 1:
+            if self.ordinal == 1 and self.diagnostic is None:
                 for key in ("point_identity", "raw_z_hex", "raw_zdot_hex", "inputs_hex", "input_rates_hex",
                             "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
                             "desired_tangent_residual_SI", "represented_rate_residual_SI"):
@@ -1417,6 +1671,8 @@ class _Protocol:
                 cursor += 1
             now = start
             while now < end:
+                if self.diagnostic is not None:
+                    self._sample_cache = {left["record_sha256"]: {"sample": left, "certificate": None}}
                 before = self._statistics("before_onestep")
                 _require(all(before[k] >= stats[k] for k in _COUNTERS)
                          and before["num_steps"] == stats["num_steps"], "statistics_between_steps")
@@ -1453,7 +1709,15 @@ class _Protocol:
                          and stats["num_steps"] == frame["native_before"]["nsteps"]
                          and stats["current_time"] == then
                          and stats["observation_owner"] == frame["owner"]
-                         and stats["observation_generation"] == frame["generation"], "frame_chronology_or_statistics")
+                                 and stats["observation_generation"] == frame["generation"], "frame_chronology_or_statistics")
+                if self.diagnostic is not None:
+                    _require(frame["native_before"]["hused"] <= self.request["controls"]["max_step"]
+                             and self.steps <= self.request["diagnostic_limits"]["accepted_intervals"],
+                             "diagnostic_applied_grid_cap")
+                    self.diagnostic_grid.append({"left_hex": float(now).hex(), "right_hex": float(then).hex(),
+                        "hused_hex": float(frame["native_before"]["hused"]).hex(), "order": frame["native_before"]["kused"],
+                        "owner": frame["owner"], "generation": frame["generation"], "step": self.steps,
+                        "strip_exact": [max(Fraction(0), strip).numerator, max(Fraction(0), strip).denominator]})
                 for name, field in (("raw_y", "raw_solver_z_hex"), ("raw_yp", "raw_solver_zdot_hex")):
                     _require(previous[name] == _word_bytes(left["history"][field], self.size), "predecessor_word_binding")
                 domain = _decode(self.rows.take("voltage_lift_polynomial_domain")["evidence"])
@@ -1475,6 +1739,11 @@ class _Protocol:
                 _require(right["snapshot_status"] == endpoint["native_status"], "endpoint_status")
                 for name, field in (("raw_y", "raw_solver_z_hex"), ("raw_yp", "raw_solver_zdot_hex")):
                     _require(endpoint[name] == _word_bytes(right["history"][field], self.size), "endpoint_word_binding")
+                if self.diagnostic is not None:
+                    _require(endpoint["raw_y"] == _word_bytes(self.last_raw_return["z_hex"], self.size)
+                             and endpoint["raw_yp"] == _word_bytes(self.last_raw_return["zdot_hex"], self.size)
+                             and endpoint["native_status"] == self.last_raw_return["status"],
+                             "diagnostic_retained_raw_return_matches_native_snapshot")
                 self._certificate(right)
                 cache = {now: self._pointer(left), then: self._pointer(right)}
 
@@ -1508,11 +1777,28 @@ class _Protocol:
                                   "requested_samples": cursor, "start_s": start, "end_s": end})
         _require(self.coverage and self.intervals > 0, "empty_protocol")
         self.startup.finish(complete=True)
+        if self.diagnostic is not None:
+            _require(len(self.common_clocks) == 5 and all(c["certificate"] is not None for c in self.common_clocks)
+                     and not self._pending_common, "complete_diagnostic_common_evidence")
         self.rows.take(eof=True)
 
     def _requested(self, pointer):
         row = self.rows.take("requested_sample")
         _require(row == {"kind": "requested_sample", **pointer}, "requested_sample_pointer")
+        if self.diagnostic is not None:
+            prefix = self.rows.take("native_interval_common_prefix")
+            sample = self._sample_cache[pointer["record_sha256"]]
+            common = {**sample, "prefix": prefix}
+            _require(_hex(prefix["time_hex"]) == pointer["time_s"], "common_prefix_sample_clock")
+            if not self.common_clocks:
+                zero = {key: (Fraction(0),)*3 for key in _LEDGERS}
+                _require(prefix["origin"] == "diagnostic_seed" and prefix["completed_intervals_before"] == 0
+                         and prefix["old_B_prefix_credit"] is False
+                         and _decode(prefix["signed_integral_centers_C"]) == zero
+                         and _decode(prefix["reference_error_C"]) == zero, "diagnostic_zero_prefix_origin")
+            else:
+                self._pending_common.append(common)
+            self.common_clocks.append(common)
 
 
 def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: int,
@@ -1542,6 +1828,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                  "failure_or_incomplete_publication")
         request = _read_json(folder / "NativeRequest.json", max_record_bytes, checkpoint)
         result = _read_json(folder / "NativeResult.json", max_record_bytes, checkpoint, integer_io_policy)
+        diagnostic = "diagnostic_interval" in request
         history = result["history"]
         _require(history.get("integer_io") == integer_observed, "integer_io_policy_or_applied_limit_mismatch")
         if integer_observed is not None:
@@ -1552,7 +1839,11 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                      "producer_integer_io_observation_mismatch")
         else:
             _require(not (folder / "IntegerIOObserved.json").exists(), "unbound_integer_io_observation")
-        _require(result["status"] == "completed_bounded_voltage_lift_native_pilot" and result["complete_protocol"] is True
+        completed = (result["status"] == "completed_bounded_native_interval"
+                     and result.get("complete_diagnostic_window") is True and result["complete_protocol"] is False
+                     if diagnostic else result["status"] == "completed_bounded_voltage_lift_native_pilot"
+                     and result["complete_protocol"] is True)
+        _require(completed
                  and result.get("first_failure") is None and history["closed"] is True
                  and history["container_complete"] is True and history["error"] is None
                  and history["encoding"] == "gzip" and history["path"] == "NativeHistory.jsonl.gz", "incomplete_native_result")
@@ -1628,7 +1919,9 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                  (before_stat.st_dev, before_stat.st_ino, before_stat.st_size, before_stat.st_mtime_ns) ==
                  (after_stat.st_dev, after_stat.st_ino, after_stat.st_size, after_stat.st_mtime_ns), "container_changed")
         checkpoint()
-        return {"schema": "solarlab.native-history-verification.v1", "verified": True, "complete_protocol": True,
+        return {"schema": "solarlab.native-history-verification.v1", "verified": True, "complete_protocol": not diagnostic,
+                **({"complete_diagnostic_window": True, "common_clocks": protocol.common_clocks,
+                    "diagnostic_grid": protocol.diagnostic_grid} if diagnostic else {}),
                 "status": "verified_complete_native_history", "request_sha256": protocol.request_id,
                 "map_identity": protocol.root_map_id, "observation_policy_sha256": protocol.policy_id,
                 "history": {"path": history["path"], "logical_bytes": history["logical_bytes"],

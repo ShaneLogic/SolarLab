@@ -116,6 +116,31 @@ def _synthetic_charge_observer(monkeypatch, source='a'*64):
     return observer, calls
 
 
+def test_partial_charge_observation_cannot_commit_completed_prefix():
+    """Exercise the early range/commit guard with explicit manufactured data."""
+    from types import SimpleNamespace
+    from scripts.benchmarks.interval_observation import ChargePrefix
+    from scripts.benchmarks.bounded_observation import UpperAccumulator
+    from scripts.benchmarks.native_observation import charge_upper_policy
+
+    clock = AcceptedClock(0,1,1,1,1,1,0,1,"manufactured-prefix-clock")
+    path = SimpleNamespace(clock=clock)
+    observer = SimpleNamespace(observer=SimpleNamespace(model=None),prepared=SimpleNamespace(path=path))
+    left, right = SimpleNamespace(time=0.0), SimpleNamespace(time=0.5)
+    prefixes = {key:ChargePrefix.start((1,)*3) for key in ("raw_polynomial","same_state_affine_tangent")}
+    accumulator = UpperAccumulator(charge_upper_policy(sha256(b"manufactured-source").hexdigest()))
+    before = (accumulator.count,accumulator.upper_numerators,accumulator.rounded_terms,dict(prefixes))
+    try:
+        AcceptedIntervalObserver.charge_evidence(observer,(left,),(right,None),prefixes,
+            absolute_error=Fraction(1,10000),charge_budget=1,charge_accumulator=accumulator,
+            subinterval=(0,Fraction(1,2)))
+    except ContractError as error:
+        assert "partial_prefix_cannot_commit" in str(error)
+    else:
+        raise AssertionError("partial observation committed the completed prefix")
+    assert (accumulator.count,accumulator.upper_numerators,accumulator.rounded_terms,dict(prefixes)) == before
+
+
 def test_charge_refinement_actual_routing_signed_evidence_and_nonresetting_prefix(monkeypatch):
     from scripts.benchmarks.interval_observation import ChargePrefix
     from scripts.benchmarks.bounded_observation import UpperAccumulator, verify_upper_prefix, UpperStepCertificate

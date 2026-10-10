@@ -268,9 +268,10 @@ class PolynomialPath:
             rows[term.row] += coefficient*operand
         return tuple(rows)
 
-    def integrate(self, polynomial):
+    def integrate(self, polynomial, *, subinterval=None):
         self.require_covered()
-        return self.clock.hused*polynomial.integral(self.clock.coordinate(self.clock.predecessor), 0)
+        left, right = contained_subinterval(self.clock, subinterval)
+        return self.clock.hused*polynomial.integral(self.clock.coordinate(left), self.clock.coordinate(right))
 
     def require_covered(self):
         if self.clock_policy == "reject_uncovered":
@@ -396,10 +397,23 @@ def public_action_enclosures(result):
                  for i in range(result.value.shape[0]))
 
 
-def affine_interval_actions(model, path: PolynomialPath):
+def contained_subinterval(clock, subinterval=None):
+    """An observation range in an unchanged native clock; never a new step."""
+    if subinterval is None:
+        return clock.predecessor, clock.tn
+    if not isinstance(subinterval, (tuple, list)) or len(subinterval) != 2:
+        raise ContractError("observation_subinterval_shape")
+    left, right = map(rational, subinterval)
+    if not clock.predecessor <= left < right <= clock.tn:
+        raise ContractError("observation_subinterval_outside_native_frame")
+    return left, right
+
+
+def affine_interval_actions(model, path: PolynomialPath, *, subinterval=None):
     """Exact affine endpoint/integral actions; no endpoint state is changed."""
     path.require_covered()
-    left = path.clock.coordinate(path.clock.predecessor)
+    first, last = contained_subinterval(path.clock, subinterval)
+    left, right = path.clock.coordinate(first), path.clock.coordinate(last)
     names = ["storage", "body_charge", "metal_charge", "gauss_defect", "displacement"]
     if model.definition.dynamic:
         names.append("ion_inventory")
@@ -407,18 +421,21 @@ def affine_interval_actions(model, path: PolynomialPath):
     for name in names:
         state = path.action(model.linear_forms["state"][name])
         rates = path.action(model.linear_forms["rate"][name])
-        result[name] = {"left": tuple(p.at(left) for p in state), "right": tuple(p.at(0) for p in state),
-                        "rate_integral": tuple(path.integrate(p) for p in rates),
+        result[name] = {"left": tuple(p.at(left) for p in state), "right": tuple(p.at(right) for p in state),
+                        "rate_integral": tuple(path.integrate(p) if subinterval is None
+                                               else path.integrate(p, subinterval=subinterval) for p in rates),
                         "form_identity": model.linear_forms["state"][name].identity,
                         "rate_form_identity": model.linear_forms["rate"][name].identity}
     return result
 
 
-def endpoint_charge_mismatch(model, path, left, right):
+def endpoint_charge_mismatch(model, path, left, right, *, subinterval=None):
     """Absolute endpoint mismatch to immutable full-word accepted Points."""
-    if rational(left.time) != path.clock.predecessor or rational(right.time) != path.clock.tn:
+    first, last = contained_subinterval(path.clock, subinterval)
+    if rational(left.time) != first or rational(right.time) != last:
         raise ContractError("observation_endpoint_time_mismatch")
-    actions = affine_interval_actions(model, path)
+    actions = (affine_interval_actions(model, path) if subinterval is None
+               else affine_interval_actions(model, path, subinterval=subinterval))
     result = []
     for name in ("body_charge", "metal_charge"):
         actual_left = public_action_enclosures(model.linear_action(name, left))
@@ -738,7 +755,7 @@ class SlabPathObserver:
             tangent.append(reservoir+a.polynomial(self.tangent_metal_polynomial[side], coordinate)+tangent_flux[side])
         return {"raw_polynomial_current": tuple(raw), "same_state_affine_tangent_current": tuple(tangent)}
 
-    def integrate(self, arithmetic: BallIntegrator, absolute_error, *, partition_cells=None):
+    def integrate(self, arithmetic: BallIntegrator, absolute_error, *, partition_cells=None, subinterval=None):
         """Signed charge integrals and conservative absolute raw/tangent gaps.
 
         ``absolute_error`` is an observation allocation supplied by the caller,
@@ -749,31 +766,33 @@ class SlabPathObserver:
             raise ContractError("observation_unsupported_partition")
         a, path = arithmetic, self.path
         path.require_covered()
-        lower, h = path.clock.coordinate(path.clock.predecessor), path.clock.hused
+        first, last = contained_subinterval(path.clock, subinterval)
+        lower, upper, h = path.clock.coordinate(first), path.clock.coordinate(last), path.clock.hused
+        integrate_polynomial = path.integrate if subinterval is None else lambda p: path.integrate(p, subinterval=subinterval)
         raw_conduction, tangent_conduction, tangent_metal, gaps = [], [], [], []
         partitions = []
         for side, node, face, sign in ((0, 0, 0, 1), (1, self.model.count-1, self.model.count-2, -1)):
             nonlinear = a.integrate(
                 lambda u, analytic: a.number(sign*self.area*h)*self.fluxes(a, u, analytic)[0][face],
-                lower, 0, absolute_error)
-            tangent_conduction.append(nonlinear+path.integrate(self.capture_charge_rate[node]))
-            raw_conduction.append(tangent_conduction[-1]+path.integrate(self.endpoint_carrier_rate[side]))
+                lower, upper, absolute_error)
+            tangent_conduction.append(nonlinear+integrate_polynomial(self.capture_charge_rate[node]))
+            raw_conduction.append(tangent_conduction[-1]+integrate_polynomial(self.endpoint_carrier_rate[side]))
             flux_integral = a.integrate(
                 lambda u, analytic: a.number(h)*self.tangent_metal_flux(a, u, analytic)[side],
-                lower, 0, absolute_error)
-            tangent_metal.append(flux_integral+path.integrate(self.tangent_metal_polynomial[side]))
+                lower, upper, absolute_error)
+            tangent_metal.append(flux_integral+integrate_polynomial(self.tangent_metal_polynomial[side]))
             difference = self.endpoint_carrier_rate[side]+self.raw_metal[side]-self.tangent_metal_polynomial[side]
             def departure(u, analytic):
                 return a.number(h)*(a.polynomial(difference, u)
                                      -self.tangent_metal_flux(a, u, analytic)[side])
 
             first_call = len(a.calls)
-            gaps.append(a.absolute_bound(departure, lower, 0, absolute_error))
+            gaps.append(a.absolute_bound(departure, lower, upper, absolute_error))
             if partition_cells is not None:
                 original_calls = (first_call, len(a.calls))
                 cells = []
                 for i in range(4):
-                    left, right = lower*(1-Fraction(i, 4)), lower*(1-Fraction(i+1, 4))
+                    left, right = lower+(upper-lower)*Fraction(i, 4), lower+(upper-lower)*Fraction(i+1, 4)
                     allocation = rational(absolute_error)/4
                     first_call = len(a.calls)
                     bound = a.absolute_bound(departure, left, right, allocation)
@@ -786,15 +805,15 @@ class SlabPathObserver:
                         "formula": "hused*(endpoint_carrier_rate+raw_metal-tangent_metal_polynomial-tangent_metal_flux)"}),
                     "absolute_error_C": rational(absolute_error), "original": gaps[-1],
                     "original_call_range": original_calls,
-                    **certify_fixed4_partition(lower, 0, absolute_error, gaps[-1], tuple(cells))})
+                    **certify_fixed4_partition(lower, upper, absolute_error, gaps[-1], tuple(cells))})
         # Total-current and body/metal charge rows are different quantities.
         # A terminal L1 bound alone cannot bound its two charge contributions.
         # The endpoint-carrier terms are polynomials, so their second moments
         # are exact and need no further nonlinear quadrature.
         def polynomial_l1(polynomial):
             integrand = h*polynomial
-            moment = (integrand*integrand).integral(lower, 0)
-            return rational_sqrt_upper(-lower*moment, rational(absolute_error)/2)
+            moment = (integrand*integrand).integral(lower, upper)
+            return rational_sqrt_upper((upper-lower)*moment, rational(absolute_error)/2)
 
         endpoint_l1 = tuple(polynomial_l1(p) for p in self.endpoint_carrier_rate)
         body_l1 = polynomial_l1(sum(self.endpoint_carrier_rate, Polynomial()))
@@ -802,7 +821,7 @@ class SlabPathObserver:
                           else tuple(gap.upper for gap in gaps))
         charge_gap = (body_l1, *(gap+endpoint for gap, endpoint in zip(terminal_upper, endpoint_l1, strict=True)))
         result = {"raw_polynomial": (sum(raw_conduction, Enclosure(0)),
-                                    *(Enclosure(path.integrate(p)) for p in self.raw_metal)),
+                                    *(Enclosure(integrate_polynomial(p)) for p in self.raw_metal)),
                 "same_state_affine_tangent": (sum(tangent_conduction, Enclosure(0)), *tangent_metal),
                 "raw_tangent_L1_upper_bounds": tuple(gaps),
                 "raw_tangent_charge_L1_upper_C": charge_gap,
@@ -812,26 +831,28 @@ class SlabPathObserver:
                 "DAE_time_accuracy_certified": False, "continuum_space_accuracy_certified": False}
         if partition_cells is not None:
             result["terminal_partition"] = {"schema": "solarlab.terminal-partition.v1",
-                "path_identity": path.identity, "normalized_interval": (lower, Fraction(0)),
+                "path_identity": path.identity, "normalized_interval": (lower, upper),
                 "cells_per_port": 4, "ports": tuple(partitions),
                 "endpoint_carrier_L1_upper_C": endpoint_l1, "body_L1_upper_C": body_l1}
         return result
 
-    def strip_current_debit(self, arithmetic: BallIntegrator):
+    def strip_current_debit(self, arithmetic: BallIntegrator, *, subinterval=None):
         """Conservative absolute current-charge debit on a declared extension.
 
         The output is separate from the signed integral and endpoint mismatch.
         A future native packet also needs actual same-snapshot getter success
         at the true predecessor. A synthetic path cannot supply that evidence.
         """
-        width = self.path.clock.strip
+        first, last = contained_subinterval(self.path.clock, subinterval)
+        strip_end = min(last, self.path.clock.native_left)
+        width = max(Fraction(0), strip_end-first)
         if not width:
             return {"raw_polynomial": (Fraction(0),)*3,
                     "same_state_affine_tangent": (Fraction(0),)*3}
         if self.path.clock_policy != "declared_polynomial_extension":
             raise ContractError("observation_strip_not_declared")
         a, path = arithmetic, self.path
-        left, right = path.clock.coordinate(path.clock.predecessor), Fraction(-1)
+        left, right = path.clock.coordinate(first), path.clock.coordinate(strip_end)
         with a.flint.ctx.workprec(a.bits):
             midpoint, radius = (left+right)/2, (right-left)/2
             ball = a.flint.arb(a.flint.fmpq(midpoint.numerator, midpoint.denominator),

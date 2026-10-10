@@ -28,7 +28,7 @@ from scripts.benchmarks.coupled_device_prototype import (
 from scripts.benchmarks.interval_observation import (
     AcceptedClock, BallIntegrator, ChargePrefix, Enclosure, Polynomial, PolynomialPath, SlabPathObserver,
     endpoint_charge_mismatch, identity, newton_polynomials, public_action_enclosures,
-    rational, segment_input_roundoff,
+    rational, segment_input_roundoff, contained_subinterval, affine_interval_actions,
 )
 from scripts.benchmarks.bounded_observation import (
     BoundChannel, ExactBoundTerm, UpperAccumulator, UpperSumPolicy,
@@ -242,7 +242,7 @@ def voltage_current_sensitivity(mapping, observer: SlabPathObserver):
     return tuple(carrier), tuple(ion)
 
 
-def propagated_input_error(binding, prepared: MappedPolynomial):
+def propagated_input_error(binding, prepared: MappedPolynomial, *, subinterval=None):
     """Potential/input evaluation error propagated to physical observations.
 
     On the real axis -1 <= B'(x) <= 0: the upper inequality follows from
@@ -276,7 +276,8 @@ def propagated_input_error(binding, prepared: MappedPolynomial):
                               for c, row in zip(coefficients, prepared.input_errors, strict=True)), Fraction(0))
                          for coefficients in zip(*(_input_direction(model.linear_forms["state"][name], mapping, j)
                                                    for j in range(2)), strict=True)) for name in names}
-    duration = path.clock.tn-path.clock.predecessor
+    first, last = contained_subinterval(path.clock, subinterval)
+    duration = last-first
     return {"path_identity": path.identity, "mapping_identity": mapping.identity,
             "scope": "input evaluation at the same stored time; native readback/time/state errors remain separate",
             "voltage_error_V": ev, "photon_flux_error_m2_s": el,
@@ -791,7 +792,7 @@ class AcceptedIntervalObserver:
                 "scope": "declared polynomial domain only; actual sample state/affine-constraint gates also remain required"}
 
     def charge_evidence(self, left_pair, right_pair, prefixes, *, absolute_error, charge_budget,
-                        charge_accumulator=None):
+                        charge_accumulator=None, subinterval=None):
         """Each body/metal row carries disjoint positive error debits.
 
         The nominal-path defect plus an absolute endpoint mismatch bounds the
@@ -800,7 +801,12 @@ class AcceptedIntervalObserver:
         """
         model, path = self.observer.model, self.prepared.path
         left, right, increment = left_pair[0], right_pair[0], right_pair[1]
-        inputs = propagated_input_error(self.binding, self.prepared)
+        if subinterval is not None:
+            first, last = contained_subinterval(path.clock, subinterval)
+            if (rational(left.time) != first or rational(right.time) != last or charge_accumulator is not None):
+                raise ContractError("native_observation_partial_prefix_cannot_commit_or_change_endpoints")
+        inputs = (propagated_input_error(self.binding, self.prepared) if subinterval is None else
+                  propagated_input_error(self.binding, self.prepared, subinterval=subinterval))
         for name in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C"):
             row = inputs.get(name)
             if (not isinstance(row, tuple) or len(row) != 3 or any(value is None or rational(value) < 0 for value in row)):
@@ -816,15 +822,25 @@ class AcceptedIntervalObserver:
                         or prefixes[key].absolute_defects != old[j*6:j*6+6:2]
                         or prefixes[key].reference_errors != old[j*6+1:j*6+6:2]):
                     raise ContractError("native_observation_upper_prefix_reset")
-        integral = (self.observer.integrate(self.arithmetic, absolute_error, partition_cells=4)
-                    if charge_accumulator is not None else self.observer.integrate(self.arithmetic, absolute_error))
-        strip = self.observer.strip_current_debit(self.arithmetic)
+        fixed4 = charge_accumulator is not None or (subinterval is not None and
+            self.binding.context.request_copy()["interval_observation"].get("charge_refinement", {}).get("name") == CHARGE_REFINEMENT)
+        if subinterval is None:
+            integral = (self.observer.integrate(self.arithmetic, absolute_error, partition_cells=4)
+                        if fixed4 else self.observer.integrate(self.arithmetic, absolute_error))
+            strip = self.observer.strip_current_debit(self.arithmetic)
+        else:
+            integral = self.observer.integrate(self.arithmetic, absolute_error,
+                partition_cells=4 if fixed4 else None, subinterval=subinterval)
+            strip = self.observer.strip_current_debit(self.arithmetic, subinterval=subinterval)
         actual = (*public_action_enclosures(model.linear_action("body_charge", right, increment=increment, left=left)),
                   *public_action_enclosures(model.linear_action("metal_charge", right, increment=increment, left=left)))
+        affine = self.observer.affine if subinterval is None else affine_interval_actions(model, path, subinterval=subinterval)
         nominal = tuple(Enclosure(b-a) for name in ("body_charge", "metal_charge") for a, b in
-                        zip(self.observer.affine[name]["left"], self.observer.affine[name]["right"], strict=True))
+                        zip(affine[name]["left"], affine[name]["right"], strict=True))
+        endpoint_bounds = (endpoint_charge_mismatch(model, path, left, right) if subinterval is None else
+                           endpoint_charge_mismatch(model, path, left, right, subinterval=subinterval))
         endpoint = tuple(max(bound, (observed-reference).absolute_upper) for bound, observed, reference in
-                         zip(endpoint_charge_mismatch(model, path, left, right), actual, nominal, strict=True))
+                         zip(endpoint_bounds, actual, nominal, strict=True))
         gap = integral["raw_tangent_charge_L1_upper_C"]
         # This is a disclosed departure-to-tangent debit, not the obsolete
         # first-word projection. Input perturbations also reach that bound.
@@ -866,6 +882,10 @@ class AcceptedIntervalObserver:
                             "raw_rate_projection_role": "retained counterfactual, not charged as if still used",
                             "source_arithmetic_scope": "the bound ball integrals evaluate the physical sources with the frozen coefficients; no projected nodal source is an integral input",
                             "DAE_time_accuracy_certified": False, "continuum_space_accuracy_certified": False}
+        if subinterval is not None:
+            evidence.update(observation_subinterval={"left": first, "right": last,
+                "native_clock_unchanged": True, "accepted_native_step": False,
+                "completed_prefix_mutated": False}, terminal_partition=integral.get("terminal_partition"))
         if charge_accumulator is not None:
             certificate = charge_accumulator.append(charge_upper_term(self.binding.context.request_sha256,
                 self.frame.identity, path.identity, path.clock.payload(), ledgers))
@@ -944,6 +964,8 @@ def validate_interval_observation_admission(request, admission):
         raise ContractError("native_observation_policy_changed")
     source_pins = admission.get("source_sha256", {})
     names = ("native_observation.py", "interval_observation.py", "coupled_device_prototype.py")
+    if "diagnostic_interval" in request:
+        names += ("native_readback.py",)
     if "charge_refinement" in policy:
         names += ("bounded_observation.py", "native_history.py")
     required = tuple(str(Path(__file__).with_name(name).resolve()) for name in names)
@@ -956,8 +978,10 @@ def validate_interval_observation_admission(request, admission):
         review = json.loads(review_bytes)
     except (KeyError, OSError, ValueError, TypeError) as exc:
         raise ContractError("native_observation_independent_review_missing") from exc
+    expected_verdict = ("accepted_for_bounded_diagnostic_interval_observation" if "diagnostic_interval" in request
+                        else "accepted_for_bounded_full_protocol_observation")
     if (sha256(review_bytes).hexdigest() != review_receipt.get("sha256")
-            or review.get("verdict") != "accepted_for_bounded_full_protocol_observation"
+            or review.get("verdict") != expected_verdict
             or review.get("policy_sha256") != digest(policy)
             or any(review.get("source_sha256", {}).get(path) != source_pins[path] for path in required)):
         raise ContractError("native_observation_independent_review_mismatch")
