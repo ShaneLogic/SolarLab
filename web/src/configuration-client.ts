@@ -3,7 +3,7 @@ import type { DeviceInput, TandemInput, SpatialExperimentInput, JVExperimentInpu
 import { configurationSchemaSha256 } from './generated/configuration-schema';
 
 type Kind = 'device' | 'tandem' | 'experiment' | 'sweep';
-type ErrorCode = 'input' | 'http' | 'malformed' | 'protocol' | 'precision_unavailable';
+type ErrorCode = 'input' | 'http' | 'malformed' | 'protocol' | 'precision_unavailable' | 'verification_unavailable' | 'integrity';
 
 export class ConfigurationPreviewError extends Error {
   readonly code: ErrorCode;
@@ -44,6 +44,46 @@ export interface ConfigurationPreview {
 export interface ConfigurationPreviewDocument {
   readonly value: ConfigurationPreview;
   readonly json: string;
+}
+
+export interface LegacyWireSourceIdentity {
+  readonly id: string;
+  readonly sha256: string;
+}
+
+export interface LegacyWirePreviewRequest {
+  readonly schema_version: 'solarlab.legacy-wire-preview-request.v1';
+  readonly input: DeviceInput | TandemInput;
+  readonly source: LegacyWireSourceIdentity;
+  readonly references?: Readonly<Record<string, LegacyWireSourceIdentity>>;
+}
+
+export interface LegacyWireContent {
+  readonly role: 'source' | 'reference';
+  readonly reference: string | null;
+  readonly source_id: string;
+  readonly sha256: string;
+  readonly size_bytes: number;
+  readonly media_type: 'application/yaml';
+  /** Exact UTF-8 text; no parse/reformat step occurs before download. */
+  readonly utf8: string;
+}
+
+export interface LegacyWirePreviewDocument {
+  readonly json: string;
+  readonly value: {
+    readonly schema: 'solarlab.legacy-wire-preview.v1';
+    readonly kind: 'legacy-wire';
+    readonly status: 'prepared_data_only' | 'unsupported';
+    readonly can_execute: false;
+    readonly input: Readonly<Record<string, unknown>>;
+    readonly identity: Readonly<Record<string, unknown>>;
+    readonly report: Readonly<Record<string, unknown>> & {
+      readonly supported: boolean;
+      readonly unsupported: readonly { readonly path: string; readonly code: string; readonly message: string }[];
+    };
+    readonly documents: readonly LegacyWireContent[];
+  };
 }
 
 function requireValue(value: unknown, message: string, code: ErrorCode = 'protocol'): asserts value {
@@ -103,16 +143,12 @@ function freeze(value: unknown): void {
   }
 }
 
-async function preview(
-  endpoint: string | URL, kind: Kind, input: DeviceInput | TandemInput | SpatialExperimentInput | JVExperimentInput | SweepInput, signal?: AbortSignal,
-): Promise<ConfigurationPreviewDocument> {
-  const body = encode(input);
-  const requestedId = input.id;
-  const experimentKind = 'experiment' in input ? input.experiment.kind : undefined;
-  const resolvedKind = kind === 'experiment' ? ['jv', 'dark_jv'].includes(experimentKind!) ? 'jv-experiment' : 'spatial-experiment' : kind;
+async function requestPreview(
+  endpoint: string | URL, body: string, withSchema: boolean, signal?: AbortSignal,
+): Promise<{ value: unknown; json: string }> {
   const response = await fetch(endpoint, {
     method: 'POST', headers: { 'Content-Type': 'application/json',
-      ...(['experiment', 'sweep'].includes(kind) ? { 'X-Solarlab-Configuration-Schema': configurationSchemaSha256 } : {}) }, body, signal,
+      ...(withSchema ? { 'X-Solarlab-Configuration-Schema': configurationSchemaSha256 } : {}) }, body, signal,
   });
   const bytes = await response.arrayBuffer();
   let json: string;
@@ -131,7 +167,17 @@ async function preview(
   requireValue(response.status === 200
     && response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'application/json',
   'Expected a configuration preview JSON response');
-  const value = parse(json);
+  return { value: parse(json), json };
+}
+
+async function preview(
+  endpoint: string | URL, kind: Kind, input: DeviceInput | TandemInput | SpatialExperimentInput | JVExperimentInput | SweepInput, signal?: AbortSignal,
+): Promise<ConfigurationPreviewDocument> {
+  const body = encode(input);
+  const requestedId = input.id;
+  const experimentKind = 'experiment' in input ? input.experiment.kind : undefined;
+  const resolvedKind = kind === 'experiment' ? ['jv', 'dark_jv'].includes(experimentKind!) ? 'jv-experiment' : 'spatial-experiment' : kind;
+  const { value, json } = await requestPreview(endpoint, body, ['experiment', 'sweep'].includes(kind), signal);
   requireValue(object(value) && value.schema === 'solarlab.configuration-preview.v1'
     && value.kind === kind && value.status === 'prepared_pending_dependencies' && value.can_execute === false,
   'Unexpected configuration preview kind or execution status');
@@ -151,6 +197,87 @@ async function preview(
     'Experiment preview branch does not match the submitted input');
   freeze(value);
   return Object.freeze({ value: value as unknown as ConfigurationPreview, json });
+}
+
+/** Use the existing lossless JSON transport and verify every downloadable byte
+ * snapshot. Source IDs refer only to documents supplied to the server context. */
+export async function previewLegacyWire(
+  endpoint: string | URL, request: LegacyWirePreviewRequest, signal?: AbortSignal,
+): Promise<LegacyWirePreviewDocument> {
+  const body = encode(request);
+  const requestedId = request.input.id, requestedSchema = request.input.schema_version;
+  const source = { ...request.source };
+  const references = Object.fromEntries(Object.entries(request.references ?? {}).map(([name, binding]) => [name, { ...binding }]));
+  const subcells = request.input.schema_version === 'solarlab.tandem-preparation.v1'
+    ? { top_cell: request.input.top_cell.id, bottom_cell: request.input.bottom_cell.id } : {};
+  const matches = (value: unknown, expected: LegacyWireSourceIdentity) => object(value)
+    && value.id === expected.id && value.sha256 === expected.sha256;
+  const referenceBindingsMatch = (value: unknown) => object(value)
+    && Object.keys(value).length === Object.keys(references).length
+    && Object.entries(references).every(([name, binding]) => matches(value[name], binding));
+  const { value, json } = await requestPreview(endpoint, body, true, signal);
+  requireValue(object(value) && value.schema === 'solarlab.legacy-wire-preview.v1' && value.kind === 'legacy-wire'
+    && value.can_execute === false, 'Unexpected legacy export preview or execution status');
+  requireValue(object(value.input) && value.input.id === requestedId && value.input.schema_version === requestedSchema,
+    'Legacy preview input identity mismatch');
+  for (const [side, id] of Object.entries(subcells)) requireValue(object(value.input[side]) && value.input[side].id === id,
+    'Legacy preview subcell instance identity mismatch');
+  requireValue(object(value.identity) && value.identity.scope === 'legacy_wire_preparation'
+    && matches(value.identity.source, source) && referenceBindingsMatch(value.identity.references), 'Legacy preview source identity mismatch');
+  for (const key of ['default_catalog_sha256', 'resource_library_sha256']) requireValue(
+    typeof value.identity[key] === 'string' && /^[a-f0-9]{64}$/.test(value.identity[key]), `Invalid legacy preview ${key}`);
+  requireValue(value.identity.configuration_schema_sha256 === configurationSchemaSha256, 'Legacy preview schema identity mismatch');
+  requireValue(object(value.report) && value.report.schema === 'solarlab.legacy-wire-preparation.v1'
+    && value.report.can_execute === false && typeof value.report.supported === 'boolean'
+    && value.report.status === value.status && matches(value.report.source, source)
+    && referenceBindingsMatch(value.report.reference_sources)
+    && value.report.default_catalog_sha256 === value.identity.default_catalog_sha256
+    && Array.isArray(value.report.unsupported) && Array.isArray(value.documents), 'Invalid legacy dry-run report');
+  for (const issue of value.report.unsupported) requireValue(object(issue) && typeof issue.path === 'string'
+    && typeof issue.code === 'string' && typeof issue.message === 'string', 'Invalid unsupported field diagnostic');
+  if (!value.report.supported) {
+    requireValue(value.status === 'unsupported' && value.documents.length === 0 && value.report.unsupported.length > 0,
+      'A rejected legacy edit must not publish partial documents');
+  } else {
+    requireValue(value.status === 'prepared_data_only' && value.report.strict_roundtrip_passed === true
+      && value.report.unsupported.length === 0 && value.documents.length === 1 + Object.keys(references).length,
+    'Legacy export is not a complete lossless preparation');
+    const emittedReferences = value.report.emitted_references;
+    requireValue(object(value.report.emitted) && object(emittedReferences)
+      && Object.keys(emittedReferences).length === Object.keys(references).length,
+    'Missing emitted document provenance');
+    const subtle = globalThis.crypto?.subtle;
+    requireValue(subtle, 'Content hashing is unavailable', 'verification_unavailable');
+    const seen = new Set<string>();
+    for (const document of value.documents) {
+      requireValue(object(document) && (document.role === 'source' || document.role === 'reference')
+        && typeof document.utf8 === 'string' && document.media_type === 'application/yaml'
+        && typeof document.sha256 === 'string' && /^[a-f0-9]{64}$/.test(document.sha256)
+        && Number.isSafeInteger(document.size_bytes) && Number(document.size_bytes) >= 0, 'Invalid legacy document');
+      const main = document.role === 'source';
+      const reference = document.reference;
+      requireValue(main ? reference === null : typeof reference === 'string' && Object.hasOwn(references, reference),
+        'Unexpected legacy document reference');
+      const binding = main ? source : references[reference as string];
+      const key = main ? 'source' : `reference:${reference}`;
+      requireValue(!seen.has(key) && document.source_id === binding.id, 'Duplicate or foreign legacy document');
+      seen.add(key);
+      const emitted = main ? value.report.emitted : emittedReferences[reference as string];
+      requireValue(object(emitted) && emitted.id === document.source_id && emitted.sha256 === document.sha256
+        && emitted.bytes === document.size_bytes, 'Download disagrees with the migration report provenance');
+      const bytes = new TextEncoder().encode(document.utf8);
+      let digest: ArrayBuffer;
+      try { digest = await subtle.digest('SHA-256', bytes); }
+      catch (cause) { throw new ConfigurationPreviewError('verification_unavailable', 'Content hashing failed', { cause }); }
+      const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      requireValue(bytes.byteLength === document.size_bytes && hash === document.sha256, 'Legacy YAML content integrity mismatch', 'integrity');
+      signal?.throwIfAborted();
+    }
+    requireValue(seen.has('source'), 'Missing main legacy document');
+  }
+  signal?.throwIfAborted();
+  freeze(value);
+  return Object.freeze({ value: value as unknown as LegacyWirePreviewDocument['value'], json });
 }
 
 export function previewDeviceConfiguration(

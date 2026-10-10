@@ -48,9 +48,10 @@
         }
         /** @param {EditorInput} input */
         function apply(input) {
+          const legacyWire = 'legacyWire' in current ? current.legacyWire : undefined
           current = input.schema_version === 'solarlab.device-preparation.v1'
-            ? { name: current.name, endpoint: current.endpoint, kind: 'device', input }
-            : { name: current.name, endpoint: current.endpoint, kind: 'tandem', input }
+            ? { name: current.name, endpoint: current.endpoint, kind: 'device', input, legacyWire }
+            : { name: current.name, endpoint: current.endpoint, kind: 'tandem', input, legacyWire }
           void fixture.panel.select(selection())
         }
         node('preview').addEventListener('click', () => { fixture.editor.apply() })

@@ -1,11 +1,13 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceInput, TandemInput, JVExperimentInput } from './generated/configuration-inputs';
 import { configurationSchemaSha256 } from './generated/configuration-schema';
 import {
   ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, spatialExperimentInputFromPreview,
-  previewJVExperiment, jvExperimentInputFromPreview,
+  previewJVExperiment, jvExperimentInputFromPreview, previewLegacyWire,
 } from './configuration-client';
+import type { LegacyWirePreviewRequest } from './configuration-client';
+import { webcrypto } from './test-helpers/schema-fixture.mjs';
 
 const endpoint = 'http://127.0.0.1:9000/configuration-preview/device';
 
@@ -76,6 +78,129 @@ function respond(json = JSON.stringify(envelope()), status = 200, type = 'applic
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
+
+describe('source-bound legacy YAML preview transport', () => {
+  beforeEach(() => { vi.stubGlobal('crypto', webcrypto); });
+  const legacyEndpoint = 'http://127.0.0.1:9000/configuration-preview/legacy-wire';
+  function wireRequest(): LegacyWirePreviewRequest {
+    return { schema_version: 'solarlab.legacy-wire-preview-request.v1', input: device(),
+      source: { id: 'source.yaml', sha256: 'd'.repeat(64) }, references: {} };
+  }
+  async function wireEnvelope(request = wireRequest(), text = '\uFEFF# constructed UTF-8 transport fixture\r\nvalue: -0.0\r\n') {
+    const bytes = new TextEncoder().encode(text);
+    const sha256 = Array.from(new Uint8Array(await webcrypto.subtle.digest('SHA-256', bytes)),
+      byte => byte.toString(16).padStart(2, '0')).join('');
+    return {
+      schema: 'solarlab.legacy-wire-preview.v1', kind: 'legacy-wire', status: 'prepared_data_only', can_execute: false,
+      input: request.input,
+      identity: { scope: 'legacy_wire_preparation', source: { ...request.source }, references: { ...request.references },
+        default_catalog_sha256: 'b'.repeat(64), resource_library_sha256: 'c'.repeat(64),
+        configuration_schema_sha256: configurationSchemaSha256 },
+      report: { schema: 'solarlab.legacy-wire-preparation.v1', status: 'prepared_data_only', supported: true,
+        can_execute: false, strict_roundtrip_passed: true, source: { ...request.source },
+        reference_sources: { ...request.references }, emitted_references: {},
+        emitted: { id: request.source.id, sha256, bytes: bytes.byteLength },
+        default_catalog_sha256: 'b'.repeat(64), unsupported: [] as { path: string; code: string; message: string }[] },
+      documents: [{ role: 'source', reference: null as string | null, source_id: request.source.id,
+        sha256, size_bytes: bytes.byteLength, media_type: 'application/yaml', utf8: text }],
+    };
+  }
+
+  it('sends canonical input and exact source bindings without normalizing -0, null or omission', async () => {
+    const request = wireRequest();
+    const envelope = await wireEnvelope(request);
+    const fetch = respond(JSON.stringify(envelope));
+    const abort = new AbortController();
+    const result = await previewLegacyWire(legacyEndpoint, request, abort.signal);
+    const [url, options] = fetch.mock.calls[0];
+    expect(url).toBe(legacyEndpoint);
+    expect(options.signal).toBe(abort.signal);
+    expect(options.headers['X-Solarlab-Configuration-Schema']).toBe(configurationSchemaSha256);
+    const sent = JSON.parse(options.body);
+    expect(Object.is(sent.input.settings.phi_left, -0)).toBe(true);
+    expect(sent.input.settings.work_function_left_eV).toBeNull();
+    expect(sent.input).not.toHaveProperty('description');
+    expect(sent.source).toEqual(request.source);
+    expect(result.value.documents[0].utf8).toBe(envelope.documents[0].utf8);
+    expect(Object.isFrozen(result.value.report)).toBe(true);
+  });
+
+  it('uses the submitted identity snapshot when the caller later changes its selection', async () => {
+    const request = { ...wireRequest(), source: { ...wireRequest().source }, input: device() };
+    const envelope = await wireEnvelope(request);
+    let release!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { release = resolve; })));
+    const pending = previewLegacyWire(legacyEndpoint, request);
+    request.source.id = 'changed-after-send';
+    request.input.id = 'changed-after-send';
+    // The response represents the earlier submitted input, not the mutated object.
+    envelope.input = { ...device() };
+    release(response(JSON.stringify(envelope)));
+    await expect(pending).resolves.toMatchObject({ value: { input: { id: 'wire-device' } } });
+  });
+
+  it.each(['utf8', 'sha256', 'size_bytes'])('rejects changed downloadable %s', async key => {
+    const envelope = await wireEnvelope();
+    const document = envelope.documents[0] as Record<string, unknown>;
+    document[key] = key === 'utf8' ? 'different bytes' : key === 'sha256' ? 'f'.repeat(64) : 0;
+    envelope.report.emitted = { id: document.source_id as string, sha256: document.sha256 as string, bytes: document.size_bytes as number };
+    respond(JSON.stringify(envelope));
+    await expect(previewLegacyWire(legacyEndpoint, wireRequest())).rejects.toMatchObject({ code: 'integrity' });
+  });
+
+  it.each(['source', 'schema', 'input', 'execution', 'missing', 'reference'])('rejects incorrect %s response binding', async problem => {
+    const envelope = await wireEnvelope();
+    if (problem === 'source') envelope.identity.source.sha256 = 'e'.repeat(64);
+    else if (problem === 'schema') envelope.identity.configuration_schema_sha256 = 'e'.repeat(64);
+    else if (problem === 'input') envelope.input.id = 'foreign';
+    else if (problem === 'execution') envelope.can_execute = true;
+    else if (problem === 'missing') envelope.documents = [];
+    else { envelope.documents[0].role = 'reference'; envelope.documents[0].reference = 'foreign.yaml'; }
+    respond(JSON.stringify(envelope));
+    await expect(previewLegacyWire(legacyEndpoint, wireRequest())).rejects.toMatchObject({ code: 'protocol' });
+  });
+
+  it('retains unsupported field diagnostics and refuses any partial YAML', async () => {
+    const envelope = await wireEnvelope(), original = envelope.documents;
+    envelope.status = envelope.report.status = 'unsupported';
+    envelope.report.supported = false;
+    envelope.report.unsupported = [{ path: '$.materials', code: 'material_inheritance', message: 'Named material graph cannot be flattened' }];
+    envelope.documents = [];
+    respond(JSON.stringify(envelope));
+    const result = await previewLegacyWire(legacyEndpoint, wireRequest());
+    expect(result.value.report.unsupported[0].path).toBe('$.materials');
+    expect(result.value.documents).toEqual([]);
+    envelope.documents = original;
+    respond(JSON.stringify(envelope));
+    await expect(previewLegacyWire(legacyEndpoint, wireRequest())).rejects.toMatchObject({ code: 'protocol' });
+  });
+
+  it.each(['id', 'sha256', 'bytes', 'reference_sources'])('rejects self-consistent bytes with mismatched report %s', async key => {
+    const envelope = await wireEnvelope();
+    if (key === 'reference_sources') envelope.report.reference_sources = { unexpected: { id: 'foreign', sha256: 'a'.repeat(64) } };
+    else (envelope.report.emitted as Record<string, unknown>)[key] = key === 'bytes' ? 0 : 'f'.repeat(64);
+    respond(JSON.stringify(envelope));
+    await expect(previewLegacyWire(legacyEndpoint, wireRequest())).rejects.toMatchObject({ code: 'protocol' });
+  });
+
+  it('does not accept a download when hashing is unavailable or fails', async () => {
+    respond(JSON.stringify(await wireEnvelope()));
+    vi.stubGlobal('crypto', undefined);
+    await expect(previewLegacyWire(legacyEndpoint, wireRequest())).rejects.toMatchObject({ code: 'verification_unavailable' });
+    const cause = new Error('digest failed');
+    respond(JSON.stringify(await wireEnvelope()));
+    vi.stubGlobal('crypto', { subtle: { digest: () => Promise.reject(cause) } });
+    await expect(previewLegacyWire(legacyEndpoint, wireRequest())).rejects.toMatchObject({ code: 'verification_unavailable', cause });
+  });
+
+  it('retains a source-binding HTTP error without publishing a candidate', async () => {
+    respond('{"detail":{"status":"unresolved","can_execute":false,"field_errors":[{"loc":["source","sha256"],"msg":"wrong source"}]}}', 409);
+    await expect(previewLegacyWire(legacyEndpoint, wireRequest())).rejects.toMatchObject({
+      code: 'http', status: 409, data: { detail: { field_errors: [{ loc: ['source', 'sha256'] }] } },
+    });
+  });
+});
+
 
 describe('discriminated J-V preparation transport', () => {
   function jv(input: JVExperimentInput) {

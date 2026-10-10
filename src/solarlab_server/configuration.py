@@ -8,11 +8,12 @@ import math
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
 from solarlab.config.resolve_device import resolve_device, resolve_tandem
+from solarlab.config.legacy_wire import prepare_legacy_wire
 from solarlab.config.schema import configuration_schema_representation
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.inputs import DeviceInput, TandemInput
@@ -29,7 +30,7 @@ from solarlab.materials.resources import ResourceLibrary
 from solarlab.materials.source import SourceDocument
 
 router = APIRouter()
-Kind = Literal["device", "tandem", "experiment", "sweep"]
+Kind = Literal["device", "tandem", "experiment", "sweep", "legacy-wire"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,8 +90,69 @@ def _constant(text: str) -> Any:
     raise ValueError(f"non-JSON numeric constant: {text}")
 
 
+class _SourceIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class _LegacyWireRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    schema_version: Literal["solarlab.legacy-wire-preview-request.v1"]
+    # Both existing models validate their own literal schema version with a
+    # before-validator, which Pydantic's field discriminator cannot wrap.
+    input: DeviceInput | TandemInput
+    source: _SourceIdentity
+    references: dict[str, _SourceIdentity] = Field(default_factory=dict)
+
+
+def _legacy_wire(data: Any, context: ConfigurationPreviewContext) -> dict[str, Any]:
+    declaration = _LegacyWireRequest.model_validate(data)
+    trusted = {source.id: source for source in context.sources}
+
+    def source(binding: _SourceIdentity, path: list[str]) -> SourceDocument:
+        original = trusted.get(binding.id)
+        if original is None:
+            raise _error(422, "configuration_source_unknown", "Choose an explicitly supplied source ID", [
+                {"loc": [*path, "id"], "type": "source_unknown", "msg": "Unknown trusted source ID"}])
+        if original.sha256 != binding.sha256:
+            raise _error(409, "configuration_source_mismatch", "Original source content identity changed", [
+                {"loc": [*path, "sha256"], "type": "source_mismatch", "msg": "SHA-256 does not match the selected trusted source"}])
+        return original
+
+    original = source(declaration.source, ["source"])
+    expected = ({declaration.input.top_cell_reference, declaration.input.bottom_cell_reference}
+                if isinstance(declaration.input, TandemInput) else set())
+    if set(declaration.references) != expected:
+        raise _error(422, "configuration_source_references", "Supply exactly the declared tandem reference bindings", [
+            {"loc": ["references"], "type": "reference_identity", "msg": "Reference names must match the declared subcells; device exports use no references"}])
+    references = {name: source(binding, ["references", name]) for name, binding in declaration.references.items()}
+    result = prepare_legacy_wire(declaration.input, source=original, defaults=context.defaults, references=references)
+    report = result.export()
+    documents = []
+    if result.document is not None:
+        for name, document in [(None, result.document), *result.references]:
+            documents.append({
+                "role": "source" if name is None else "reference", "reference": name,
+                "source_id": document.id, "sha256": document.sha256, "size_bytes": len(document.content),
+                "media_type": "application/yaml", "utf8": document.content.decode("utf-8"),
+            })
+    return {
+        "schema": "solarlab.legacy-wire-preview.v1", "kind": "legacy-wire",
+        "status": report["status"], "can_execute": False,
+        "input": report["input_declaration"], "report": report, "documents": documents,
+        "identity": {"scope": "legacy_wire_preparation", "source": declaration.source.model_dump(),
+            "references": {name: binding.model_dump() for name, binding in declaration.references.items()},
+            "default_catalog_sha256": context.defaults.content_sha256,
+            "resource_library_sha256": context.resources.content_sha256,
+            "configuration_schema_sha256": configuration_schema_representation()[1]},
+    }
+
+
 def _resolve(kind: Kind, data: Any, context: ConfigurationPreviewContext) -> dict[str, Any]:
     try:
+        if kind == "legacy-wire":
+            return _legacy_wire(data, context)
         prepared: PreparedDevice | PreparedTandem | PreparedSpatialExperiment | PreparedJVExperiment | PreparedSweep
         if kind == "device":
             prepared = resolve_device(DeviceInput.model_validate(data), context.defaults,
@@ -144,7 +206,7 @@ async def _preview(request: Request, kind: Kind) -> JSONResponse:
     if context is None:
         raise _error(503, "configuration_context_missing",
                      "Configuration preview requires an explicitly supplied trusted catalog and resource library")
-    if kind in {"experiment", "sweep"}:
+    if kind in {"experiment", "sweep", "legacy-wire"}:
         if kind == "experiment" and not context.defaults.experiment_defaults:
             raise _error(503, "configuration_experiment_context_missing", "Experiment preview requires explicit source-bound experiment defaults")
         declared_schema = request.headers.get("x-solarlab-configuration-schema")
@@ -191,3 +253,9 @@ async def preview_experiment(request: Request) -> JSONResponse:
 async def preview_sweep(request: Request) -> JSONResponse:
     """Expand bounded serial declarations; no numerical work, reuse or run submission."""
     return await _preview(request, "sweep")
+
+
+@router.post("/configuration-preview/legacy-wire")
+async def preview_legacy_wire(request: Request) -> JSONResponse:
+    """Prepare exact UTF-8 wire documents from selected trusted source bytes."""
+    return await _preview(request, "legacy-wire")

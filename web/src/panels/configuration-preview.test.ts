@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration } from '../configuration-client'
-import type { ConfigurationPreviewDocument } from '../configuration-client'
+import { ConfigurationPreviewError, previewDeviceConfiguration, previewTandemConfiguration, previewLegacyWire } from '../configuration-client'
+import type { ConfigurationPreviewDocument, LegacyWirePreviewDocument } from '../configuration-client'
 import { mountConfigurationPreviewPanel } from './configuration-preview'
 import type { ConfigurationPreviewPanel, ConfigurationPreviewSelection } from './configuration-preview'
 
 vi.mock('../configuration-client', async importOriginal => ({
   ...await importOriginal<typeof import('../configuration-client')>(),
-  previewDeviceConfiguration: vi.fn(), previewTandemConfiguration: vi.fn(),
+  previewDeviceConfiguration: vi.fn(), previewTandemConfiguration: vi.fn(), previewLegacyWire: vi.fn(),
 }))
 
 const panels: ConfigurationPreviewPanel[] = []
@@ -79,6 +79,29 @@ function blobText(blob: Blob): Promise<string> {
   })
 }
 
+
+function wireSelection() {
+  return { ...selection(), legacyWire: {
+    endpoint: 'http://127.0.0.1:8123/configuration-preview/legacy-wire',
+    source: { id: 'original.yaml', sha256: 'd'.repeat(64) }, references: {},
+  } }
+}
+
+// Controlled interaction fixture. Actual API/client/panel bytes are covered by
+// test_legacy_wire_preview.py against the loopback service.
+function wireDocument(text = '\uFEFF# original\r\nphi_left: -0.0\r\n', supported = true): LegacyWirePreviewDocument {
+  const value: LegacyWirePreviewDocument['value'] = {
+    schema: 'solarlab.legacy-wire-preview.v1', kind: 'legacy-wire',
+    status: supported ? 'prepared_data_only' : 'unsupported', can_execute: false,
+    input: { id: 'device-a', schema_version: 'solarlab.device-preparation.v1' }, identity: {},
+    report: { supported, differences: [{ path: '$.settings.phi_left', after: -0, before: null }],
+      unsupported: supported ? [] : [{ path: '$.materials', code: 'material_inheritance', message: '<b>Graph cannot be flattened</b>' }] },
+    documents: supported ? [{ role: 'source', reference: null, source_id: 'original.yaml',
+      sha256: 'e'.repeat(64), size_bytes: text.length, media_type: 'application/yaml', utf8: text }] : [],
+  }
+  return { value, json: JSON.stringify(value) }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   blobs = new Map(); downloads = []
@@ -93,12 +116,142 @@ beforeEach(() => {
   })
   vi.mocked(previewDeviceConfiguration).mockImplementation(async (_url, input) => documentOf(input.id))
   vi.mocked(previewTandemConfiguration).mockImplementation(async (_url, input) => documentOf(input.id, 'tandem'))
+  vi.mocked(previewLegacyWire).mockResolvedValue(wireDocument())
 })
 
 afterEach(() => {
   for (const panel of panels.splice(0)) panel.dispose()
   document.body.replaceChildren()
   vi.restoreAllMocks(); vi.unstubAllGlobals()
+})
+
+
+describe('legacy YAML export in the existing configuration panel', () => {
+  it('snapshots the displayed DTO and source binding before a later export click', async () => {
+    const selected = wireSelection()
+    selected.input.description = null
+    Reflect.set(selected.input, 'constructed_unknown_integer', 18446744073709551617n)
+    const expected = structuredClone(selected)
+    const { root, panel } = mount(selected); await panel.ready
+    selected.input.id = 'mutated-after-display'; selected.input.settings!.phi_left = 7
+    selected.legacyWire.source.id = 'mutated.yaml'; selected.legacyWire.endpoint = 'http://127.0.0.1:9999/changed'
+    Reflect.deleteProperty(selected.input, 'constructed_unknown_integer')
+    Reflect.set(selected.legacyWire.references, 'new.yaml', { id: 'new', sha256: 'c'.repeat(64) })
+    button(root, 'Preview legacy YAML').click(); await panel.wireReady
+    expect(previewLegacyWire).toHaveBeenCalledWith(expected.legacyWire.endpoint, {
+      schema_version: 'solarlab.legacy-wire-preview-request.v1', input: expected.input,
+      source: expected.legacyWire.source, references: expected.legacyWire.references,
+    }, expect.any(AbortSignal))
+    const sent = vi.mocked(previewLegacyWire).mock.calls[0][1]
+    expect(Object.is((sent.input as typeof selected.input).settings!.phi_left, -0)).toBe(true)
+    expect(Reflect.get(sent.input, 'constructed_unknown_integer')).toBe(18446744073709551617n)
+    expect(root.textContent).toContain('Original source: original.yaml')
+    expect(root.textContent).not.toContain('mutated-after-display')
+  })
+
+  it('previews the explicit binding and downloads the verified UTF-8 text without reformatting', async () => {
+    const selected = wireSelection(), doc = wireDocument();
+    vi.mocked(previewLegacyWire).mockResolvedValueOnce(doc)
+    const { root, panel } = mount(selected); await panel.ready
+    expect(root.querySelector('[data-section=legacy-wire]')?.getAttribute('data-state')).toBe('idle')
+    expect(previewLegacyWire).not.toHaveBeenCalled()
+    button(root, 'Preview legacy YAML').click(); await panel.wireReady
+    expect(previewLegacyWire).toHaveBeenCalledWith(selected.legacyWire.endpoint, {
+      schema_version: 'solarlab.legacy-wire-preview-request.v1', input: selected.input,
+      source: selected.legacyWire.source, references: {},
+    }, expect.any(AbortSignal))
+    expect(phase(root)).toBe('ready')
+    expect(root.textContent).toContain('Legacy YAML ready to download')
+    expect(root.textContent).toContain('Original source: original.yaml')
+    expect(root.textContent).toContain('Declared changes')
+    button(root, 'Download legacy YAML').click()
+    const blob = blobs.get(downloads[0].url)!
+    // FileReader text drops a leading BOM; verify the actual byte sequence.
+    const bytes = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(blob)
+    })
+    expect([...new Uint8Array(bytes)]).toEqual([...new TextEncoder().encode(doc.value.documents[0].utf8)])
+    expect(downloads[0].name).toBe('original.yaml')
+    button(root, 'Download migration report').click()
+    expect(await blobText(blobs.get(downloads[1].url)!)).toBe(doc.json)
+    expect(panel.document?.json).toBe(documentOf().json)
+    expect(panel.wireDocument?.value.can_execute).toBe(false)
+  })
+
+  it('shows field-specific unsupported edits with no YAML download or unsafe markup', async () => {
+    vi.mocked(previewLegacyWire).mockResolvedValueOnce(wireDocument('', false))
+    const { root, panel } = mount(wireSelection()); await panel.ready
+    button(root, 'Preview legacy YAML').click(); await panel.wireReady
+    expect(root.querySelector('[data-role=legacy-unsupported]')?.textContent).toContain('$.materials')
+    expect(root.textContent).toContain('<b>Graph cannot be flattened</b>')
+    expect(root.querySelector('b')).toBeNull()
+    expect([...root.querySelectorAll('button')].some(node => node.textContent === 'Download legacy YAML')).toBe(false)
+    expect(panel.wireDocument?.value.documents).toEqual([])
+    expect(phase(root)).toBe('ready')
+  })
+
+  it('fences an earlier preview and its detached downloads when refreshing the same selection', async () => {
+    const pending = deferred<LegacyWirePreviewDocument>()
+    const { root, panel } = mount(wireSelection()); await panel.ready
+    button(root, 'Preview legacy YAML').click(); await panel.wireReady
+    const oldDownload = button(root, 'Download legacy YAML')
+    vi.mocked(previewLegacyWire).mockReturnValueOnce(pending.promise)
+    button(root, 'Preview legacy YAML').click(); const obsolete = panel.wireReady
+    const oldSignal = vi.mocked(previewLegacyWire).mock.calls.at(-1)![2]!
+    vi.mocked(previewLegacyWire).mockResolvedValueOnce(wireDocument('latest: true\n'))
+    button(root, 'Preview legacy YAML').click(); await panel.wireReady
+    expect(oldSignal.aborted).toBe(true)
+    pending.resolve(wireDocument('obsolete: true\n')); await obsolete
+    oldDownload.click()
+    expect(downloads).toHaveLength(0)
+    expect(panel.wireDocument?.value.documents[0].utf8).toBe('latest: true\n')
+  })
+
+  it('cancels only a pending export and ignores its late success', async () => {
+    const pending = deferred<LegacyWirePreviewDocument>()
+    vi.mocked(previewLegacyWire).mockReturnValueOnce(pending.promise)
+    const { root, panel } = mount(wireSelection()); await panel.ready
+    button(root, 'Preview legacy YAML').click(); const oldReady = panel.wireReady
+    button(root, 'Cancel legacy preview').click()
+    expect(vi.mocked(previewLegacyWire).mock.calls[0][2]!.aborted).toBe(true)
+    pending.resolve(wireDocument()); await oldReady
+    expect(root.textContent).toContain('Legacy preview request cancelled')
+    expect(panel.wireDocument).toBeUndefined()
+    expect(panel.document).toBeDefined()
+    expect(phase(root)).toBe('ready')
+    button(root, 'Preview legacy YAML').click(); await panel.wireReady
+    expect(panel.wireDocument).toBeDefined()
+  })
+
+  it('does not carry an old source result or error into a new endpoint/input selection', async () => {
+    const pending = deferred<LegacyWirePreviewDocument>()
+    vi.mocked(previewLegacyWire).mockReturnValueOnce(pending.promise)
+    const { root, panel } = mount(wireSelection()); await panel.ready
+    button(root, 'Preview legacy YAML').click(); const oldReady = panel.wireReady
+    const staleControl = button(root, 'Preview legacy YAML')
+    await panel.select({ ...wireSelection(), input: { ...selection('new-device').input },
+      legacyWire: { endpoint: 'http://127.0.0.1:9001/legacy', source: { id: 'new.yaml', sha256: 'c'.repeat(64) } } })
+    pending.reject(new Error('stale source failure')); await oldReady
+    staleControl.click()
+    expect(previewLegacyWire).toHaveBeenCalledTimes(1)
+    expect(root.textContent).not.toContain('stale source failure')
+    expect(root.textContent).toContain('Original source: new.yaml')
+    expect(panel.wireDocument).toBeUndefined()
+  })
+
+  it('keeps source-binding API field errors visible without any candidate', async () => {
+    vi.mocked(previewLegacyWire).mockRejectedValueOnce(new ConfigurationPreviewError('http', 'HTTP 409', {
+      status: 409, data: { detail: { field_errors: [{ loc: ['source', 'sha256'], msg: 'original source changed' }] } },
+    }))
+    const { root, panel } = mount(wireSelection()); await panel.ready
+    button(root, 'Preview legacy YAML').click(); await panel.wireReady
+    expect(root.textContent).toContain('original source changed')
+    expect(root.textContent).toContain('sha256')
+    expect(root.querySelectorAll('[data-role=legacy-document]')).toHaveLength(0)
+    expect(panel.wireDocument).toBeUndefined()
+  })
 })
 
 describe('configuration preview panel', () => {
@@ -117,7 +270,7 @@ describe('configuration preview panel', () => {
   it('displays effective settings, material/interface values and origins without losing unknown values', async () => {
     const { root, panel } = mount(); await panel.ready
     expect(root.textContent).toContain('prepared_pending_dependencies')
-    expect(root.textContent).toContain('can_execute: false')
+    expect(root.textContent).toContain('Execution is unavailable in this preview.')
     expect(root.querySelector('[data-field=settings]')?.textContent).toContain('300')
     expect(root.querySelector('[data-field=material_parameters]')?.textContent).toContain('optical_material')
     expect(root.querySelector('[data-field=provenance]')?.textContent).toContain('effective_value')
