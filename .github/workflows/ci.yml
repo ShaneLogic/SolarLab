@@ -256,6 +256,7 @@ jobs:
           --confcutdir=tests/runtime -o addopts=
           tests/runtime/test_run_client_contract.py
           tests/runtime/test_configuration_preview.py
+          tests/runtime/test_legacy_wire_preview.py
       - run: SOLARLAB_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python" npm run test:run
       - run: npm run build
 
