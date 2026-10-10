@@ -3989,13 +3989,61 @@ def _frame_input_parent_binding(request):
         for key, value in parent.items()}}
 
 
+def _qualified_frame_input_context(request):
+    """Bind the qualified arithmetic profile without a fabricated failed run."""
+    from scripts.benchmarks.qualification_policy import check_applied_ceiling
+
+    outputs = {"z0", "zdot0", "actual_initial_identity", "initial_preparation",
+               "preparation_context_sha256", "initial_segment_frame", "interval_observation",
+               "frame_input_policy"}
+    context = {k: v for k, v in request.items() if k not in outputs}
+    if "frame_input_parent" in request or "qualification_policy" not in request:
+        raise ContractError("qualified_frame_input_authority")
+    try:
+        size = check_applied_ceiling(context)
+    except (ValueError, KeyError, TypeError, OverflowError) as error:
+        raise ContractError("qualified_frame_input_context") from error
+    policy, packet, mapping = request["qualification_policy"], request["numeric_packet"], request["voltage_lift_map"]
+    lift = [[0.0.hex(), 0.0.hex()] for _ in range(size)]
+    lo, hi = packet["variable_offsets"]["phi_V"]
+    for i, x in enumerate(packet["x_m"], lo):
+        lift[i][0] = (-x/packet["definition"]["length"]).hex()
+    first = request["segments"][0]
+    references = [float(first["voltage"][0]).hex(), float(first["photons"][0]).hex()]
+    if (digest(mapping) != request["map_identity"]
+            or mapping.get("mapped_input_profile") != "frame-input-expansion12-v1"
+            or mapping.get("mapped_input_words") != 12
+            or mapping.get("columns_hex") != [float(v).hex() for v in packet["column_scaling"]]
+            or mapping.get("rows_hex") != [float(v).hex() for v in packet["row_scaling"]]
+            or mapping.get("lift_hex") != lift or mapping.get("reference_inputs_hex") != references
+            or mapping.get("physical_reference") != packet.get("initial_identity")
+            or mapping.get("layout") != packet.get("layout_identity")
+            or "segment_frame" in mapping or hi-lo != policy["nodes"]
+            or not isinstance(mapping.get("physical_model"), str)
+            or len(mapping["physical_model"]) != 64):
+        raise ContractError("qualified_frame_input_map")
+    return {"authority": "original-two-case-qualified-request",
+            "qualification_policy_sha256": digest(policy),
+            "origin_sha256": digest(policy["origin"]),
+            "prepared_inputs_sha256": digest(context),
+            "numeric_packet_sha256": digest(packet),
+            "definition_identity": packet["definition_identity"],
+            "physical_model_identity": mapping["physical_model"],
+            "physical_reference_identity": mapping["physical_reference"],
+            "layout_identity": mapping["layout"],
+            "weight_certificate_sha256": digest(request["weight_certificate"])}
+
+
 def _frame_input_policy(request, profile):
     from scripts.benchmarks.precision_prototype import FRAME_INPUT_PROFILE
 
     if type(profile) is not str or profile != FRAME_INPUT_PROFILE or "segment_frame_policy" not in request:
         raise ContractError("frame_input_requires_bound_segment_frame")
-    return {"schema": "solarlab.frame-input-policy.v1", "profile": profile,
-            "failed_parent": _frame_input_parent_binding(request),
+    qualified = "qualification_policy" in request
+    authority = ({"qualified_context": _qualified_frame_input_context(request)} if qualified
+                 else {"failed_parent": _frame_input_parent_binding(request)})
+    return {"schema": "solarlab.frame-input-policy.v2" if qualified else "solarlab.frame-input-policy.v1",
+            "profile": profile, **authority,
             "ancestor_request_sha256": request["prior_request_sha256"],
             "parent_map_identity": request["map_identity"],
             "segment_frame_policy_sha256": digest(request["segment_frame_policy"]),
@@ -4075,17 +4123,20 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         frame_input_parent: Mapping | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
-    if mapping.mapped_input_profile != frame_input_profile or ((frame_input_profile is None) != (frame_input_parent is None)):
-        raise ContractError("frame_input_constructor_binding")
     qualification_policy = old.get("qualification_policy")
+    if (mapping.mapped_input_profile != frame_input_profile
+            or frame_input_profile is None and frame_input_parent is not None
+            or frame_input_profile is not None and qualification_policy is None and frame_input_parent is None
+            or qualification_policy is not None and frame_input_parent is not None):
+        raise ContractError("frame_input_constructor_binding")
     if qualification_policy is not None:
         qualification_policy = _qualification_scope(model, segments, qualification_policy)
-        from scripts.benchmarks.qualification_policy import options
+        from scripts.benchmarks.qualification_policy import matches_options
         chosen = dict(nonlin_conv_coef=nonlin_conv_coef, nonlin_guard=nonlin_guard,
                       nonlin_trace_capacity=nonlin_trace_capacity, first_step=first_step,
                       time_weight_kappa=time_weight_kappa,
                       segment_startup_overrides=segment_startup_overrides)
-        if chosen != options(qualification_policy):
+        if not matches_options(qualification_policy, chosen):
             raise ContractError("qualification_unbound_control_options")
     if ((qualification_policy is None and (model.intervals != 8 or model.layout.size > 45)) or len(segments) != 3
             or old["schema"] != "solarlab.affine-native-request.v1"
@@ -4173,7 +4224,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
     if segment_frame is not None:
         request["segment_frame_policy"] = _segment_frame_policy(request, segment_frame)
     if frame_input_profile is not None:
-        request["frame_input_parent"] = json.loads(json.dumps(frame_input_parent, allow_nan=False))
+        if frame_input_parent is not None:
+            request["frame_input_parent"] = json.loads(json.dumps(frame_input_parent, allow_nan=False))
         request["frame_input_policy"] = _frame_input_policy(request, frame_input_profile)
     if qualification_policy is not None:
         from scripts.benchmarks.qualification_policy import check_applied_ceiling
@@ -4206,7 +4258,7 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
         raise ContractError("voltage_lift_native_scope")
     if qualification_policy is not None:
         qualification_policy = _qualification_scope(model, segments, qualification_policy)
-        from scripts.benchmarks.qualification_policy import check_applied_ceiling, options
+        from scripts.benchmarks.qualification_policy import check_applied_ceiling, matches_options
         check_applied_ceiling(request)
         chosen = dict(nonlin_conv_coef=request.get("nonlinear_control_refinement", {}).get("value"),
                       nonlin_guard=request.get("nonlinear_guard_policy", {}).get("policy"),
@@ -4214,7 +4266,7 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
                       first_step=request.get("startup_step_policy", {}).get("value"),
                       time_weight_kappa=request.get("time_weight_policy", {}).get("kappa"),
                       segment_startup_overrides=request.get("segment_startup_policy", {}).get("overrides"))
-        if chosen != options(qualification_policy):
+        if not matches_options(qualification_policy, chosen):
             raise ContractError("qualification_unbound_control_options")
     proof = voltage_lift_wrms_policy(mapping, request["previous_controls"], tuple(segments))
     controls = dict(request["previous_controls"], rtol=proof["rtol"], atol=proof["atol"])

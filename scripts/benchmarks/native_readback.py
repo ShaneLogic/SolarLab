@@ -681,6 +681,51 @@ def _frame_input_parent(request):
         for key, value in parent.items()}}
 
 
+def _qualified_frame_input_context_check(request):
+    """Bind the qualified arithmetic profile without a fabricated failed run."""
+    from scripts.benchmarks.qualification_policy import check_applied_ceiling
+
+    outputs = {"z0", "zdot0", "actual_initial_identity", "initial_preparation",
+               "preparation_context_sha256", "initial_segment_frame", "interval_observation",
+               "frame_input_policy"}
+    context = {k: v for k, v in request.items() if k not in outputs}
+    if "frame_input_parent" in request or "qualification_policy" not in request:
+        raise HistoryVerificationError("qualified_frame_input_authority")
+    try:
+        size = check_applied_ceiling(context)
+    except (ValueError, KeyError, TypeError, OverflowError) as error:
+        raise HistoryVerificationError("qualified_frame_input_context") from error
+    policy, packet, mapping = request["qualification_policy"], request["numeric_packet"], request["voltage_lift_map"]
+    lift = [[0.0.hex(), 0.0.hex()] for _ in range(size)]
+    lo, hi = packet["variable_offsets"]["phi_V"]
+    for i, x in enumerate(packet["x_m"], lo):
+        lift[i][0] = (-x/packet["definition"]["length"]).hex()
+    first = request["segments"][0]
+    references = [float(first["voltage"][0]).hex(), float(first["photons"][0]).hex()]
+    if (_digest(mapping) != request["map_identity"]
+            or mapping.get("mapped_input_profile") != "frame-input-expansion12-v1"
+            or mapping.get("mapped_input_words") != 12
+            or mapping.get("columns_hex") != [float(v).hex() for v in packet["column_scaling"]]
+            or mapping.get("rows_hex") != [float(v).hex() for v in packet["row_scaling"]]
+            or mapping.get("lift_hex") != lift or mapping.get("reference_inputs_hex") != references
+            or mapping.get("physical_reference") != packet.get("initial_identity")
+            or mapping.get("layout") != packet.get("layout_identity")
+            or "segment_frame" in mapping or hi-lo != policy["nodes"]
+            or not isinstance(mapping.get("physical_model"), str)
+            or len(mapping["physical_model"]) != 64):
+        raise HistoryVerificationError("qualified_frame_input_map")
+    return {"authority": "original-two-case-qualified-request",
+            "qualification_policy_sha256": _digest(policy),
+            "origin_sha256": _digest(policy["origin"]),
+            "prepared_inputs_sha256": _digest(context),
+            "numeric_packet_sha256": _digest(packet),
+            "definition_identity": packet["definition_identity"],
+            "physical_model_identity": mapping["physical_model"],
+            "physical_reference_identity": mapping["physical_reference"],
+            "layout_identity": mapping["layout"],
+            "weight_certificate_sha256": _digest(request["weight_certificate"])}
+
+
 def frame_input_word_count(request):
     """Independent request/profile check; raw native anchors always stay four."""
     _require(not any(k in request for k in ("frame_input_profile", "frame_input_words", "mapped_input_profile")),
@@ -691,8 +736,11 @@ def frame_input_word_count(request):
                  "frame_input_unbound_parent_or_map")
         return 4
     _require("segment_frame_policy" in request, "frame_input_requires_segment_frame")
-    expected = {"schema": "solarlab.frame-input-policy.v1", "profile": "frame-input-expansion12-v1",
-                "failed_parent": _frame_input_parent(request),
+    qualified = "qualification_policy" in request
+    authority = ({"qualified_context": _qualified_frame_input_context_check(request)} if qualified
+                 else {"failed_parent": _frame_input_parent(request)})
+    expected = {"schema": "solarlab.frame-input-policy.v2" if qualified else "solarlab.frame-input-policy.v1",
+                "profile": "frame-input-expansion12-v1", **authority,
                 "ancestor_request_sha256": request["prior_request_sha256"],
                 "parent_map_identity": request["map_identity"],
                 "segment_frame_policy_sha256": _digest(request["segment_frame_policy"]),

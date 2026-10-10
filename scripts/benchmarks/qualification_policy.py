@@ -7,6 +7,7 @@ rtol/atol numbers are provenance, never replacements for those applied weights.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from fractions import Fraction
 from hashlib import sha256
 import json
@@ -246,6 +247,126 @@ def check_applied_ceiling(request):
     return policy["coordinates"]
 
 
+
+def _initial_hex_vector(values, size):
+    require(type(values) is list and len(values) == size
+            and all(type(v) is str for v in values), "initial_frame_vector_shape")
+    try:
+        decoded = tuple(float.fromhex(v) for v in values)
+    except (ValueError, OverflowError) as error:
+        raise ValueError("qualification_initial_frame_invalid_hex") from error
+    require(all(math.isfinite(v) for v in decoded), "initial_frame_nonfinite_word")
+    return decoded
+
+
+def _initial_words(words, size, *, count=4):
+    require(type(words) is list and len(words) == count, "initial_frame_word_shape")
+    layers = tuple(_initial_hex_vector(row, size) for row in words)
+    values = tuple(sum((Fraction(row[i]) for row in layers), Fraction(0)) for i in range(size))
+    for i, value in enumerate(values):
+        for row in layers:
+            try:
+                rounded = float(value)
+            except OverflowError as error:
+                raise ValueError("qualification_initial_frame_nonfinite_word") from error
+            require(rounded == row[i], "initial_frame_noncanonical_word")
+            value -= Fraction(row[i])
+        require(value == 0, "initial_frame_word_capacity")
+    return values
+
+
+def _initial_framed_map(request, record, size):
+    """Verify the post-context frame and return its distinct framed-map ID."""
+    initial = request.get("initial_segment_frame")
+    require(type(initial) is dict and type(initial.get("frame")) is dict
+            and type(initial.get("map")) is dict and type(initial.get("parent_input")) is dict,
+            "initial_frame_shape")
+    frame, parent = initial["frame"], initial["parent_input"]
+    first = request["segments"][0]
+    parent_id = request["map_identity"]
+    expected_map = dict(request["voltage_lift_map"], segment_frame=frame,
+                        raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+                        physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+    require(initial.get("kind") == "voltage_lift_segment_frame"
+            and initial.get("record_sha256") == digest({k: v for k, v in initial.items() if k != "record_sha256"})
+            and initial.get("request_sha256") == request["preparation_context_sha256"]
+            and initial.get("parent_map_identity") == parent_id
+            and initial.get("frame_identity") == digest(frame)
+            and initial.get("map_identity") == digest(expected_map)
+            and digest(initial["map"]) == digest(expected_map)
+            and frame.get("schema") == "solarlab.segment-affine-frame.v1"
+            and set(frame) == {"schema", "parent_map_identity", "segment_sha256", "logical_initialization_index",
+                               "predecessor_identity", "parent_input_sha256", "t0_hex", "size", "q0_words_hex",
+                               "v0_words_hex", "law", "weight_rounding"}
+            and frame.get("law") == "q=Q0+(t-t0)*V0+u;qdot=V0+udot"
+            and frame.get("weight_rounding") == "RN-exact-parent-q_then-unfused-SV-v1"
+            and frame.get("parent_map_identity") == parent_id
+            and frame.get("segment_sha256") == digest(first)
+            and type(frame.get("size")) is int and frame["size"] == size
+            and type(frame.get("logical_initialization_index")) is int
+            and frame["logical_initialization_index"] == 1
+            and frame.get("t0_hex") == float(first["start"]).hex()
+            and frame.get("predecessor_identity") == record["predecessor_identity"]
+            and initial.get("native_initialization_performed") is False,
+            "initial_frame_binding")
+    require(parent.get("record_sha256") == digest({k: v for k, v in parent.items() if k != "record_sha256"})
+            and parent.get("request_sha256") == request["preparation_context_sha256"]
+            and parent.get("point_identity") == record["point_identity"]
+            and parent.get("predecessor_identity") == record["predecessor_identity"]
+            and parent.get("segment_sha256") == digest(first)
+            and parent.get("state_changed") is False
+            and parent.get("native_initialization_performed") is False
+            and parent.get("native_steps") == 0
+            and frame.get("parent_input_sha256") == parent["record_sha256"]
+            and record.get("schema") == "solarlab.voltage-lift-initial-input.v2"
+            and record.get("segment_frame_identity") == initial["frame_identity"]
+            and record.get("parent_coordinate_rate_hex") == parent.get("raw_zdot_hex")
+            and initial.get("native_initial_z_hex") == record["raw_z_hex"]
+            and initial.get("native_initial_zdot_hex") == record["raw_zdot_hex"]
+            and record["raw_zdot_hex"] == [0.0.hex()]*size
+            and parent.get("raw_z_hex") == [0.0.hex()]*size,
+            "initial_frame_handoff")
+    # Preserve the supplied parent state/rate and independently verify the
+    # physical handoff using exact dyadic arithmetic, without model evaluation.
+    q0 = _initial_words(frame.get("q0_words_hex"), size)
+    v0 = _initial_words(frame.get("v0_words_hex"), size)
+    supplied = _initial_hex_vector(parent.get("raw_zdot_hex"), size)
+    require(q0 == (Fraction(0),)*size and v0 == tuple(Fraction(v) for v in supplied),
+            "initial_frame_parent_words")
+    base = request["voltage_lift_map"]
+    count = base.get("mapped_input_words", 4)
+    require((count == 4 and "mapped_input_words" not in base and "mapped_input_profile" not in base)
+            or (type(count) is int and count == 12
+                and base.get("mapped_input_profile") == "frame-input-expansion12-v1"),
+            "initial_frame_mapped_profile")
+    columns = _initial_hex_vector(base.get("columns_hex"), size)
+    lift = base.get("lift_hex")
+    require(type(lift) is list and len(lift) == size, "initial_frame_lift_shape")
+    lift = tuple(_initial_hex_vector(row, 2) for row in lift)
+    reference = _initial_hex_vector(base.get("reference_inputs_hex"), 2)
+    inputs = (first["voltage"][0], first["photons"][0])
+    rates = tuple((pair[1]-pair[0])/(first["end"]-first["start"])
+                  for pair in (first["voltage"], first["photons"]))
+    require(parent.get("time_hex") == record.get("time_hex") == frame["t0_hex"]
+            and _initial_hex_vector(parent.get("inputs_hex"), 2) == inputs
+            and _initial_hex_vector(record.get("inputs_hex"), 2) == inputs
+            and _initial_hex_vector(parent.get("input_rates_hex"), 2) == rates
+            and _initial_hex_vector(record.get("input_rates_hex"), 2) == rates,
+            "initial_frame_input_binding")
+    state = _initial_words(initial.get("physical_handoff_words_hex"), size, count=count)
+    rate = _initial_words(initial.get("physical_rate_handoff_words_hex"), size, count=count)
+    for proof in (parent, record):
+        _initial_words(proof.get("mapped_physical_rate_words_hex"), size, count=count)
+        require(proof["mapped_physical_rate_words_hex"] == initial["physical_rate_handoff_words_hex"],
+                "initial_frame_rate_handoff")
+    physical = tuple(Fraction(scale)*value + sum((Fraction(row[j])*(Fraction(inputs[j])-Fraction(reference[j]))
+                     for j in range(2)), Fraction(0)) for scale, value, row in zip(columns, q0, lift))
+    physical_rate = tuple(Fraction(scale)*value + sum((Fraction(row[j])*Fraction(rates[j])
+                          for j in range(2)), Fraction(0)) for scale, value, row in zip(columns, v0, lift))
+    require(state == physical and rate == physical_rate, "initial_frame_physical_handoff")
+    return initial["map_identity"]
+
+
 def check_initialization(request, size):
     names = ("z0", "zdot0", "actual_initial_identity", "initial_preparation", "preparation_context_sha256")
     require(all(name in request for name in names), "initial_input_missing")
@@ -257,11 +378,15 @@ def check_initialization(request, size):
         key = "raw_z_hex" if name == "z0" else "raw_zdot_hex"
         require(record[key] == [v.hex() for v in vector], "initial_vector_words")
     require(record["raw_z_hex"] == [0.0.hex()]*size, "initial_state_reference_changed")
-    context = {k: v for k, v in request.items() if k not in (*names, "interval_observation")}
+    framed = "segment_frame_policy" in request
+    require(framed or "initial_segment_frame" not in request, "unbound_initial_frame")
+    outputs = (*names, "interval_observation") + (("initial_segment_frame",) if framed else ())
+    context = {k: v for k, v in request.items() if k not in outputs}
     require(digest(context) == request["preparation_context_sha256"] == record["request_sha256"],
             "initial_context_binding")
+    map_id = _initial_framed_map(request, record, size) if framed else request["map_identity"]
     require(record["record_sha256"] == digest({k: v for k, v in record.items() if k != "record_sha256"})
-            and record["map_identity"] == request["map_identity"]
+            and record["map_identity"] == map_id
             and record["point_identity"] == request["actual_initial_identity"]
             and record["predecessor_identity"] == request["voltage_lift_map"]["physical_reference"]
             and record["segment_id"] == request["segments"][0]["id"]
@@ -289,3 +414,22 @@ def options(policy):
                 "segment_startup_overrides": {"slow_state_hold": {"first_step": 0.0}}}
     return {"nonlin_conv_coef": None, "nonlin_guard": None, "nonlin_trace_capacity": 4096,
             "first_step": None, "time_weight_kappa": None, "segment_startup_overrides": None}
+
+
+def matches_options(policy, chosen):
+    """Match fixed qualified controls, allowing only the existing hold choice."""
+    expected = options(policy)
+    if not isinstance(chosen, Mapping):
+        return False
+    if policy["origin"]["case_id"] == "DynamicAcceptorIonPublicDeviceV1":
+        selected = chosen.get("segment_startup_overrides")
+        if (not isinstance(selected, Mapping) or set(selected) != {"slow_state_hold"}
+                or not isinstance(selected["slow_state_hold"], Mapping)
+                or set(selected["slow_state_hold"]) != {"first_step"}):
+            return False
+        value = selected["slow_state_hold"]["first_step"]
+        if (type(value) not in (int, float) or value not in (0, 2.0**-32)
+                or math.copysign(1, value) != 1):
+            return False
+        expected["segment_startup_overrides"] = {"slow_state_hold": {"first_step": float(value)}}
+    return chosen == expected
