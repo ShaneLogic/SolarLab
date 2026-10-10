@@ -4308,6 +4308,40 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
             raise ContractError("voltage_lift_native_quadrature")
 
 
+def voltage_lift_execution_wall_policy(request: Mapping, admission: Mapping) -> dict:
+    """Bind an execution wall limit without changing historical problem budgets."""
+    original = request["budgets"]["wall_s"]
+    field = "execution_wall_limit"
+    if field not in admission:
+        return {"schema": "solarlab.native-execution-wall-observed.v1",
+                "original_wall_s": original, "effective_wall_s": original,
+                "admission_binding": None}
+    grant = admission[field]
+    keys = {"schema", "request_sha256", "original_wall_s", "wall_s",
+            "operation_id", "coordinator_message"}
+    if type(grant) is not dict or set(grant) != keys:
+        raise ContractError("voltage_lift_execution_wall_binding")
+    value = grant["wall_s"]
+    try:
+        finite_positive = type(value) in (int, float) and math.isfinite(value) and value > 0
+    except (OverflowError, TypeError, ValueError):
+        finite_positive = False
+    if (not finite_positive or grant["schema"] != "solarlab.native-execution-wall.v1"
+            or grant["request_sha256"] != digest(dict(request))
+            or type(grant["original_wall_s"]) is not type(original) or grant["original_wall_s"] != original
+            or admission.get("authority") != "Root"
+            or admission.get("voltage_lift_native_authorized") is not True
+            or not isinstance(grant["operation_id"], str) or not grant["operation_id"]
+            or grant["operation_id"] != admission.get("operation_id")
+            or not isinstance(grant["coordinator_message"], str)
+            or not grant["coordinator_message"].startswith("msg_")
+            or grant["coordinator_message"] != admission.get("coordinator_message")):
+        raise ContractError("voltage_lift_execution_wall_binding")
+    return {"schema": "solarlab.native-execution-wall-observed.v1",
+            "original_wall_s": original, "effective_wall_s": value,
+            "admission_binding": dict(grant)}
+
+
 def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[ProtocolSegment, ...],
                                   request: Mapping, admission: Mapping, emit, *,
                                   timing: RuntimeTiming | None = None) -> dict:
@@ -4328,6 +4362,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             or not str(admission.get("coordinator_message", "")).startswith("msg_")):
         raise ContractError("voltage_lift_native_pilot_not_admitted")
     validate_voltage_lift_native_request(mapping, segments, request)
+    execution_wall = voltage_lift_execution_wall_policy(request, admission)
     bindings = admission.get("source_sha256", {})
     if str(Path(__file__).resolve()) not in bindings:
         raise ContractError("voltage_lift_native_executing_kernel_not_bound")
@@ -4388,7 +4423,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     def resource_check():
         if cancellation is not None and cancellation.exists():
             raise ContractError("voltage_lift_cancelled")
-        if time.perf_counter()-started > budgets["wall_s"]:
+        if time.perf_counter()-started > execution_wall["effective_wall_s"]:
             raise ContractError("voltage_lift_wall_budget")
         if counts["residual"] > budgets["residual_calls"]:
             raise ContractError("voltage_lift_residual_budget")
@@ -4664,6 +4699,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                   "first_failure": first_failure or last_attempt}
     result.update(
         request_sha256=request_id, map_identity=mapping.identity, counts=counts,
+        execution_wall_policy=execution_wall,
         elapsed_s=time.perf_counter()-started, last_numerical=last_numerical,
         last_physically_accepted=last_accepted, last_attempt=last_attempt,
         cumulative_absolute_charge_bounds_C={k: observation_record(v.absolute_defects) for k, v in prefixes.items()},
