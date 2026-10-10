@@ -223,7 +223,8 @@ def _scaps_layer(raw: dict[str, Any], before: dict[str, Any], after: dict[str, A
         if name not in b:
             target.pop(old, None)
         else:
-            target[old] = _wire_quantity(b[name], unit, wire_unit) if unit else b[name]
+            target[old] = (_wire_quantity(b[name], unit, wire_unit)
+                           if unit is not None and wire_unit is not None else b[name])
     if not _same(before.get("bulk_defects", []), after.get("bulk_defects", [])):
         singular = "bulk_defect" in raw
         old_blocks = [raw["bulk_defect"]] if singular and raw["bulk_defect"] is not None else raw.get("bulk_defects", [])
