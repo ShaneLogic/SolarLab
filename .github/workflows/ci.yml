@@ -109,7 +109,8 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_error_weights.py::TestInitialWeightSource::test_pins_and_real_callback_route
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_readback.py tests/numerical_contracts/test_qualification_bridge.py
           # This selection uses synthetic packets only and reads no device plan.
-          REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_observation.py -k packet_extended_size_requires_matching_qualification_policy
+          REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_observation.py -k 'charge_refinement or partial_charge_observation or packet_extended_size_requires_matching_qualification_policy'
+          REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_interval_observation.py -k 'contained_observation_range or fixed4'
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_device.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_ports.py -k 'not test_rc_ida_trajectory_and_every_native_interval'
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/refactor/test_hysteresis_current_bounds.py tests/refactor/test_hysteresis_mobile_bounds.py
