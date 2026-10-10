@@ -1,16 +1,21 @@
-"""Four real legacy gaps: retained evidence, actual loader effect, no solving."""
+"""Legacy input history and data-only reverse wire/dry-run preparation."""
 from __future__ import annotations
 
 from decimal import Decimal
+import builtins
 import hashlib
 import json
 import math
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
+import posixpath
+import subprocess
 
 import pytest
 
 from solarlab.config.device_import import import_standard_device
 from solarlab.config.legacy_defaults import read_legacy_default_catalog
+from solarlab.config.legacy_wire import LEGACY_WIRE_VERSION, prepare_legacy_wire
 from solarlab.config.legacy_fields import (
     INLINE_LOADER_BINDING, JV_HINT_CONSUMER_BINDINGS, STANDARD_LOADER_BINDING,
 )
@@ -335,3 +340,387 @@ def test_source_bindings_and_generated_hints_metadata_have_actual_authorities():
     assert "kind" not in fields and "request_api" not in fields
     assert "temperature" not in device["$defs"]["DeviceSettingsInput"]["properties"]
     assert device["$defs"]["LegacyDeviceFieldsInput"]["properties"]["schema_version"]["const"] == "solarlab.standard-loader-fields.v1"
+
+
+@pytest.fixture
+def wire_guard(monkeypatch):
+    """Only new data-only tests use this guard; old loader tests stay intact."""
+    original = builtins.__import__
+    def guarded(name, *args, **kwargs):
+        assert not name.startswith(("perovskite_sim", "backend", "scipy", "sksundae")), name
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded)
+
+
+@pytest.fixture(scope="module")
+def wire_catalog():
+    from solarlab.reproducibility.preparation import prepare_configuration, read_preparation_context
+    from solarlab.reproducibility.registry import RegistryDocument, load_registry, mapping
+    from solarlab.reproducibility.sources import SourceSet, read_sources
+    path = ROOT / "reproducibility/ConfigBenchmarkMatrixV2.yaml"
+    matrix_source = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
+    specification = RegistryDocument.model_validate(mapping(matrix_source))
+    documentary_path = "tests/refactor/test_legacy_input_migration.py"
+    historical, = (ref for ref in specification.sources if ref.path == documentary_path)
+    # This ONE source is documentary input, selected before unchanged SHA
+    # verification. Matching current bytes also work in shallow CI checkouts;
+    # development edits use the explicitly declared historical Git object.
+    blob = (ROOT / historical.path).read_bytes()
+    if hashlib.sha256(blob).hexdigest() != historical.sha256:
+        blob = subprocess.run(["git", "show", historical.source_commit + ":" + historical.path],
+                              cwd=ROOT, capture_output=True, check=True, timeout=5).stdout
+    current = read_sources(ROOT, tuple(ref for ref in specification.sources if ref != historical))
+    bundle = SourceSet(specification.sources, (*current.documents, SourceDocument(historical.id, blob)))
+    matrix = load_registry(matrix_source, bundle.documents)
+    catalog, tables = read_preparation_context(matrix)
+    cases = []
+    for entry in matrix.spec.entries:
+        if entry.section != "configs":
+            continue
+        prepared = prepare_configuration(matrix, entry.id, defaults=catalog, resources=tables).prepared
+        assert prepared is not None and not prepared.can_execute
+        original = matrix.sources.at_path(matrix.spec.original_path_root + "/" + entry.original_key)
+        references = {}
+        if prepared.to_input().schema_version == "solarlab.tandem-preparation.v1":
+            parent = PurePosixPath(matrix.sources.reference(original.id).path).parent
+            raw = load_yaml_mapping(original.content)
+            for side in ("top_cell", "bottom_cell"):
+                ref = raw["tandem"][side]
+                references[ref] = matrix.sources.at_path(posixpath.normpath(str(parent / ref)))
+        cases.append((entry.original_key, prepared, original, references))
+    return catalog, cases
+
+
+def test_wire_all_55_catalog_sources_roundtrip_without_changing_originals(wire_catalog, wire_guard, record_property):
+    from solarlab.config.scaps_input import import_scaps_device
+    from solarlab.config.tandem_input import import_tandem
+    catalog, cases = wire_catalog
+    assert len(cases) == 55
+    formats = {}
+    environment = dict(os.environ)
+    def public_data(value):
+        data = value.normalized_data()
+        if isinstance(value, DeviceInput):
+            if value.legacy_fields is not None:
+                # Original wire bytes are checked above. Retained evidence uses
+                # its established JSON serializer across preparation/reopen.
+                data["legacy_fields"] = value.legacy_fields.model_dump(mode="json", exclude_unset=True)
+        else:
+            for side in ("top_cell", "bottom_cell"):
+                data[side] = public_data(getattr(value, side))
+        return data
+    for name, prepared, original, references in cases:
+        declaration = prepared.to_input()
+        snapshot = declaration.model_dump_json(exclude_unset=True)
+        result = prepare_legacy_wire(declaration, source=original, defaults=catalog, references=references)
+        assert result.supported, (name, result.export()["unsupported"])
+        assert result.document.content == original.content, (name, result.export()["differences"][:8], result.export()["wire_differences"][:8])
+        assert result.original_sources[0] == original and not result.can_execute
+        assert declaration.model_dump_json(exclude_unset=True) == snapshot
+        if declaration.schema_version == "solarlab.tandem-preparation.v1":
+            assert dict(result.references) == references
+            reopened = import_tandem(result.document, id=declaration.id, references=dict(result.references), defaults=catalog)
+            kind = "tandem"
+        else:
+            importer = import_standard_device if declaration.source_format == "standard" else import_scaps_device
+            reopened = importer(result.document, id=declaration.id, defaults=catalog)
+            kind = declaration.source_format
+        assert public_data(reopened) == public_data(declaration)
+        report = result.export()
+        assert report["schema"] == LEGACY_WIRE_VERSION and report["strict_roundtrip_passed"]
+        assert report["default_catalog_sha256"] == catalog.content_sha256
+        assert report["differences"] == [] and report["wire_differences"] == []
+        assert report["behavior"]["binding"] == "not_supplied"
+        formats[kind] = formats.get(kind, 0) + 1
+    assert dict(os.environ) == environment
+    record_property("source_catalog_roundtrips", len(cases))
+    record_property("wire_formats", json.dumps(formats, sort_keys=True))
+
+
+def test_wire_material_device_ion_units_presence_and_inheritance_edits(defaults, wire_guard):
+    original = source("calado")
+    declaration = import_standard_device(original, id="wire_edit", defaults=defaults)
+    before = original.content
+    declaration.layers[1].parameters.mu_n = "3 cm^2/(V s)"
+    declaration.layers[1].parameters.D_ion = -0.0
+    declaration.layers[1].parameters.P0 = 0
+    declaration.layers[1].parameters.optical_material = None
+    declaration.layers[1].parameters.incoherent = False
+    declaration.layers[1].thickness = "750 nm"
+    parameters = declaration.layers[1].parameters.editing_data()
+    parameters.pop("mu_p", None)
+    declaration.layers[1].parameters = type(declaration.layers[1].parameters).model_validate(parameters)
+    declaration.settings.phi_left = "-0 V"
+    declaration.settings.T = "315 K"
+    declaration.settings.dos_band_potentials = False
+    snapshot = declaration.model_dump_json(exclude_unset=True)
+    environment = dict(os.environ)
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    raw = load_yaml_mapping(result.document.content)
+    assert raw["layers"][1]["mu_n"] == Decimal("0.0003")
+    assert raw["layers"][1]["thickness"] == Decimal("7.5e-7")
+    assert raw["layers"][1]["D_ion"].is_signed() and raw["layers"][1]["D_ion"] == 0
+    assert raw["layers"][1]["P0"] == 0 and not raw["layers"][1]["P0"].is_signed()
+    assert raw["layers"][1]["optical_material"] is None and raw["layers"][1]["incoherent"] is False
+    assert "mu_p" not in raw["layers"][1]
+    assert raw["device"]["T"] == 315 and raw["device"]["phi_left"].is_signed()
+    assert raw["device"]["dos_band_potentials"] is False
+    assert result.document.content != before and original.content == before
+    assert declaration.model_dump_json(exclude_unset=True) == snapshot and dict(os.environ) == environment
+    report = result.export()
+    assert "mu_p" in report["inheritance"][declaration.id]["undeclared_layer_parameters"][declaration.layers[1].id]
+    assert report["differences"] and report["wire_differences"]
+    report["differences"].clear()
+    assert result.export()["differences"]  # Detached report mutation cannot alter the result.
+
+    # Quantity vectors also cross the editing/prepared JSON boundary. A real
+    # vector edit must reach the wire after unchanged vectors retain their bytes.
+    path = ROOT / "perovskite-sim/tests/fixtures/configs/scaps_defect_m1_double_donor_p.yaml"
+    vector_source = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
+    vector_input = import_standard_device(vector_source, id="wire_vector", defaults=defaults)
+    energy = vector_input.layers[0].bulk_defects[0].configuration.energy_levels
+    energy.correlation_energies_eV = ("0.2 eV",)
+    vector_result = prepare_legacy_wire(vector_input, source=vector_source, defaults=defaults)
+    assert vector_result.supported, vector_result.export()["unsupported"]
+    emitted = load_yaml_mapping(vector_result.document.content)["layers"][0]["bulk_defects"][0]
+    assert emitted["configuration"]["energy_levels"]["correlation_energies_eV"] == [Decimal("0.2")]
+    original_vector = load_yaml_mapping(vector_source.content)["layers"][0]["bulk_defects"][0]
+    assert original_vector["configuration"]["energy_levels"]["correlation_energies_eV"] == [Decimal("0.15")]
+
+
+@pytest.mark.parametrize("ignored", [0, -0.0, False, None, "not a temperature"])
+def test_wire_ignored_temperature_keeps_raw_type_and_word(ignored, defaults, wire_guard):
+    original = source("tpv", lambda raw: raw["device"].update(temperature=ignored))
+    declaration = import_standard_device(original, id="wire_temperature", defaults=defaults)
+    declaration.settings.T = "310 K"
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    raw = load_yaml_mapping(result.document.content)
+    if type(ignored) is float:
+        assert float(raw["device"]["temperature"]).hex() == ignored.hex()
+    else:
+        assert type(raw["device"]["temperature"]) is type(ignored)
+        assert raw["device"]["temperature"] == ignored
+    assert raw["device"]["T"] == 310
+    assert result.export()["retained_legacy_evidence"]["source_sha256"] == original.sha256
+    assert result.original_sources[0].content == original.content
+
+
+@pytest.mark.parametrize("case", ["driftfusion", "ionmonger"])
+def test_wire_interface_edit_preserves_substrate_slot_and_original_short_list(case, defaults, wire_guard):
+    original = source(case)
+    declaration = import_standard_device(original, id="wire_interfaces", defaults=defaults)
+    retained = declaration.legacy_fields.model_dump(mode="json", exclude_unset=True)
+    original_pairs = load_yaml_mapping(original.content)["device"]["interfaces"]
+    declaration.interfaces[1].v_n = "2 cm/s"
+    declaration.interfaces[1].v_p = -0.0
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    raw = load_yaml_mapping(result.document.content)
+    assert len(raw["device"]["interfaces"]) == len(original_pairs) == 2
+    assert raw["device"]["interfaces"][0] == original_pairs[0]
+    assert raw["device"]["interfaces"][1][0] == Decimal("0.02")
+    assert raw["device"]["interfaces"][1][1].is_signed()
+    assert declaration.legacy_fields.model_dump(mode="json", exclude_unset=True) == retained
+    reopened = import_standard_device(result.document, id=declaration.id, defaults=defaults)
+    assert reopened.interfaces[0].left == declaration.layers[0].id
+    assert reopened.interfaces[-1].v_n == 0  # Original full-layer trailing padding.
+
+
+def test_wire_contact_aliases_and_manual_potential_edits(defaults, wire_guard):
+    def setup(raw):
+        raw["device"].pop("V_bi", None)
+        raw["device"]["built_in_potential_mode"] = "legacy_manual"
+        raw["device"]["V_bi_override"] = .5
+        raw["device"]["S_n_left"] = 4
+        raw["device"]["contacts"] = {"left": {"S_n": 4}}
+    original = source("tpv", setup)
+    declaration = import_standard_device(original, id="wire_aliases", defaults=defaults)
+    declaration.settings.V_bi = "600 mV"
+    declaration.contacts[0].S_n = None
+    declaration.contacts[1].S_p = 0
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    dev = load_yaml_mapping(result.document.content)["device"]
+    assert dev["V_bi_override"] == Decimal("0.6") and "V_bi" not in dev
+    assert dev["S_n_left"] is None and dev["contacts"]["left"]["S_n"] is None
+    assert dev["S_p_right"] == 0
+
+
+def test_wire_interface_defect_edit_keeps_independent_bare_pair(defaults, wire_guard):
+    def setup(raw):
+        raw["device"]["interfaces"] = [[4, 5]]
+        raw["device"]["interface_defects"] = [None, {
+            "sigma_n_cm2": 1e-15, "sigma_p_cm2": 2e-15, "v_th_cm_s": 1e7,
+            "N_t_cm2": 1e10, "E_t_eV_below_cb": .4}]
+    original = source("tpv", setup)
+    declaration = import_standard_device(original, id="wire_defect", defaults=defaults)
+    declaration.interfaces[1].defect.kinetics.sigma_n_m2 = "2e-15 cm^2"
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    raw = load_yaml_mapping(result.document.content)["device"]
+    assert raw["interfaces"] == [[4, 5]] and raw["interface_defects"][0] is None
+    assert raw["interface_defects"][1]["sigma_n_cm2"] == Decimal("2e-15")
+    reopened = import_standard_device(result.document, id=declaration.id, defaults=defaults)
+    assert reopened.interfaces[1].defect.kinetics.normalized_data()["sigma_n_m2"] == 2e-19
+    declaration.interfaces[1].defect.kinetics.thermal_velocity_p_m_s = "2e7 cm/s"
+    rejected = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert not rejected.supported
+    assert rejected.export()["unsupported"][0]["code"] == "single_thermal_velocity"
+
+
+def test_wire_scaps_unit_and_signed_zero_edits_report_existing_normalization(defaults, wire_guard):
+    from solarlab.config.scaps_input import import_scaps_device
+    path = ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"
+    original = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
+    declaration = import_scaps_device(original, id="wire_scaps", defaults=defaults)
+    declaration.layers[2].parameters.mu_n = "3 cm^2/(V s)"
+    declaration.layers[2].parameters.D_ion = -0.0
+    declaration.layers[2].thickness = "500 nm"
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    raw = load_yaml_mapping(result.document.content)
+    assert raw["layers"][2]["mu_n_cm2"] == 3 and raw["layers"][2]["thickness_nm"] == 500
+    assert raw["layers"][2]["D_ion_m2_s"].is_signed()
+    reopened = import_scaps_device(result.document, id=declaration.id, defaults=defaults)
+    assert reopened.layers[2].parameters.mu_n == .0003
+    assert math.copysign(1, reopened.layers[2].parameters.D_ion) == 1
+    assert any(row["path"].endswith("parameters.D_ion") for row in result.export()["existing_import_normalization"])
+
+
+def test_wire_protocol_hints_retain_complete_history_and_explicit_values(defaults, wire_guard):
+    original = source("calado")
+    declaration = import_standard_device(original, id="wire_protocol", defaults=defaults)
+    hints = declaration.simulation_hints.jv_sweep
+    hints.v_rate = "20 mV/s"
+    hints.waveform.dark_seed_s = 0
+    hints.waveform.dark_prep_s = -0.0
+    hints.waveform.turnaround_dark = False
+    hints.waveform.uniform_generation_rate_m3_s = None
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    raw = load_yaml_mapping(result.document.content)["simulation_hints"]["jv_sweep"]
+    assert raw["n_points"] == 111 and raw["v_rate"] == Decimal("0.02")
+    assert raw["waveform"]["dark_seed_s"] == 0
+    assert raw["waveform"]["dark_prep_s"].is_signed()
+    assert raw["waveform"]["turnaround_dark"] is False
+    assert raw["waveform"]["uniform_generation_rate_m3_s"] is None
+    original_hints = load_yaml_mapping(original.content)["simulation_hints"]["jv_sweep"]
+    assert raw["waveform"]["turnaround_s"] == original_hints["waveform"]["turnaround_s"]
+    assert raw["waveform_controls"] == original_hints["waveform_controls"]
+    assert not result.can_execute
+
+
+def test_wire_tandem_edit_reaches_referenced_document(wire_catalog, wire_guard):
+    from solarlab.config.tandem_input import import_tandem
+    catalog, cases = wire_catalog
+    _, prepared, original, references = next(row for row in cases if row[1].to_input().schema_version == "solarlab.tandem-preparation.v1")
+    declaration = prepared.to_input()
+    declaration.top_cell.layers[1].parameters.D_ion = 0
+    declaration.top_cell.layers[1].thickness = "900 nm"
+    result = prepare_legacy_wire(declaration, source=original, defaults=catalog, references=references)
+    assert result.supported, result.export()["unsupported"]
+    emitted = dict(result.references)
+    assert emitted[declaration.top_cell_reference].content != references[declaration.top_cell_reference].content
+    assert emitted[declaration.bottom_cell_reference] == references[declaration.bottom_cell_reference]
+    reopened = import_tandem(result.document, id=declaration.id, references=emitted, defaults=catalog)
+    assert reopened.top_cell.layers[1].parameters.D_ion == 0
+    assert reopened.top_cell.layers[1].normalized_data()["thickness"] == 9e-7
+    assert result.export()["reference_differences"][declaration.top_cell_reference]
+
+
+def test_wire_canonical_flat_input_uses_strict_source_family(defaults, wire_guard):
+    original = source("calado")
+    declaration = import_standard_device(original, id="wire_canonical", defaults=defaults)
+    declaration.source_format = "canonical"
+    declaration.layers[1].parameters.D_ion = 0
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert result.supported, result.export()["unsupported"]
+    assert result.export()["source_format_mapping"]["declared"] == "canonical"
+    assert result.export()["source_format_mapping"]["wire"] == "standard"
+    assert load_yaml_mapping(result.document.content)["layers"][1]["D_ion"] == 0
+
+
+def test_wire_shared_tandem_reference_cannot_flatten_distinct_instances(wire_catalog, wire_guard):
+    from solarlab.config.tandem_input import import_tandem
+    catalog, cases = wire_catalog
+    _, prepared, original, references = next(row for row in cases if row[1].to_input().schema_version == "solarlab.tandem-preparation.v1")
+    raw = raw_json(load_yaml_mapping(original.content))
+    raw["tandem"]["bottom_cell"] = raw["tandem"]["top_cell"]
+    shared_source = SourceDocument("shared-tandem-reference", json.dumps(raw).encode())
+    declaration = import_tandem(shared_source, id="shared_tandem", references=references, defaults=catalog)
+    declaration.top_cell.layers[1].parameters.mu_n = "17 cm^2/(V s)"
+    result = prepare_legacy_wire(declaration, source=shared_source, references=references, defaults=catalog)
+    assert not result.supported and result.references == ()
+    assert result.export()["unsupported"][0]["code"] == "shared_reference_conflict"
+
+
+@pytest.mark.parametrize("change,code", [
+    ("named_material", "material_inheritance"), ("extra_layer", "source_topology_changed"),
+    ("reindexed_interface", "interface_identity"), ("unpaired_velocity", "velocity_pair_representation"),
+    ("spectrum", "roundtrip_loss"), ("retained_temperature", "retained_evidence_changed"),
+    ("grid", "grid_layer_identity"),
+])
+def test_wire_rejects_unrepresentable_edits_with_concrete_differences(change, code, defaults, wire_guard):
+    from solarlab.device.inputs import GridLayerInput, NamedMaterialInput
+    original = source("tpv")
+    declaration = import_standard_device(original, id="wire_reject", defaults=defaults)
+    if change == "named_material":
+        declaration.materials = (NamedMaterialInput.model_validate({"id": "shared", "name": "Shared", "parameters": {"mu_n": 0}}),)
+        declaration.layers[1].material = "shared"
+    elif change == "extra_layer":
+        declaration.layers = (*declaration.layers, declaration.layers[-1].validated_update({"id": "extra"}))
+    elif change == "reindexed_interface":
+        declaration.interfaces[0].left = declaration.layers[-1].id
+    elif change == "unpaired_velocity":
+        declaration.interfaces[0].v_n = None
+    elif change == "spectrum":
+        declaration.spectrum = "unencoded-external-spectrum"
+    elif change == "grid":
+        declaration.electrical_grid = (GridLayerInput.model_validate({"layer": "unknown", "interval_weight": 1, "alpha": 1}),)
+    else:
+        declaration.legacy_fields.temperature = 999
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert not result.supported and result.document is None and result.references == ()
+    assert result.export()["unsupported"][0]["code"] == code
+    assert result.export()["differences"] and result.original_sources[0] == original
+
+
+def test_wire_scaps_rejects_missing_negative_ion_field(defaults, wire_guard):
+    from solarlab.config.scaps_input import import_scaps_device
+    path = ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"
+    original = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
+    declaration = import_scaps_device(original, id="wire_scaps_gap", defaults=defaults)
+    declaration.layers[2].parameters.D_ion_neg = 1e-18
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults)
+    assert not result.supported
+    assert result.export()["unsupported"][0]["code"] == "scaps_parameter_not_encodable"
+    assert result.export()["unsupported"][0]["path"].endswith("parameters.D_ion_neg")
+
+
+def test_wire_behavior_context_stays_source_bound_and_never_mutates_environment(defaults, resources, wire_guard):
+    from solarlab.config.behavior import behavior_source_requirements
+    from solarlab.config.scaps_input import import_scaps_device
+    from test_behavior_context import context
+    path = ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"
+    original = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
+    declaration = import_scaps_device(original, id="wire_behavior", defaults=defaults)
+    device = resolve_device(declaration, defaults, resources, sources=(original,))
+    sources = tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name, _ in behavior_source_requirements())
+    historical = context(device, sources, environment=(("SOLARLAB_DOS_BAND", "0"), ("PEROVSKITE_RHS_FINITE_CHECK", "1")))
+    before, environment = historical.export(), dict(os.environ)
+    result = prepare_legacy_wire(declaration, source=original, defaults=defaults, behavior=historical)
+    assert result.supported, result.export()["unsupported"]
+    assert result.export()["behavior"]["context"] == before
+    assert result.export()["behavior"]["binding"] == "edited_declaration"
+    assert result.export()["behavior"]["selected_models_encoded_as_legacy_controls"] is False
+    declaration.settings.Phi = 0
+    changed = prepare_legacy_wire(declaration, source=original, defaults=defaults, behavior=historical)
+    assert changed.supported, changed.export()["unsupported"]
+    assert changed.export()["behavior"]["binding"] == "original_only_requires_reinspection"
+    assert changed.export()["unsupported_execution"] and not changed.can_execute
+    assert historical.export() == before and dict(os.environ) == environment
+    wrong_source = SourceDocument(original.id, original.content + b"\n")
+    wrong = prepare_legacy_wire(declaration, source=wrong_source, defaults=defaults, behavior=historical)
+    assert not wrong.supported and wrong.export()["unsupported"][0]["code"] == "behavior_source_binding"
