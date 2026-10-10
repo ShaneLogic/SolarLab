@@ -20,6 +20,68 @@ ROOT = Path(__file__).resolve().parents[2]
 OWNERS = ("run_affine_native_pilot", "run_voltage_lift_native_pilot")
 
 
+def test_exact_external_integer_helper_origin(tmp_path):
+    """Manufactured metadata/files only; no native payload is loaded or built."""
+    import copy
+    tmp_path = tmp_path.resolve()
+    owner = tmp_path / "original"; owner.mkdir()
+    capsule = tmp_path / "capsule"
+    copied = capsule / "integer_product_helper"; copied.mkdir(parents=True)
+    binary = owner / "integer-helper.fixture"
+    snapshot = copied / binary.name
+    payload = b"manufactured metadata payload, never executable"
+    binary.write_bytes(payload); snapshot.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest_path = owner / "Manifest.json"
+    manifest = {"schema": "solarlab.integer-product-build.v1", "build_id": "fixture-build",
+        "build": {"source_sha256": "fixture-source"}, "binary_path": str(binary), "binary_sha256": digest}
+    manifest_path.write_text(json.dumps(manifest))
+    info = {"schema": "solarlab.integer-product-backend.v1", "backend": "integer128", "selection": "required",
+        "binary_path": str(binary), "binary_sha256": digest, "manifest_path": str(manifest_path),
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "build_id": "fixture-build", "c_source_sha256": "fixture-source", "abi": {"supported": True, "integer_bits": 128}}
+    freeze = {"isolated_root": str(capsule), "integer_product_backend": info,
+        "source_sha256": {str(binary): digest, str(snapshot): digest}, "external_source_sha256": {}}
+    observed = {"path": str(binary), "origin": str(binary), "build_id": info["build_id"],
+        "c_source_sha256": info["c_source_sha256"], "abi": info["abi"]}
+    check = native_runner.validated_integer_helper_origin
+    name = "scripts.benchmarks._integer_product_native"
+    original = copy.deepcopy((freeze, observed))
+    assert check(name, observed, freeze) is True
+    assert not Path(observed["path"]).is_relative_to(capsule)  # the original failure condition
+    assert (freeze, observed) == original
+    assert check("scripts.benchmarks.foreign", observed, freeze) is False
+    assert check("perovskite_sim.foreign", observed, freeze) is False
+    for field, value in (("path", str(snapshot)), ("origin", str(snapshot)),
+                         ("build_id", "stale"), ("c_source_sha256", "stale"), ("abi", {"supported": False})):
+        assert check(name, {**observed, field: value}, freeze) is False
+    for path in (str(binary), str(snapshot)):
+        changed = copy.deepcopy(freeze); changed["source_sha256"][path] = "0" * 64
+        assert check(name, observed, changed) is False
+    changed = copy.deepcopy(freeze); changed["integer_product_backend"]["manifest_sha256"] = "0" * 64
+    assert check(name, observed, changed) is False
+    snapshot.write_bytes(payload + b"stale")
+    assert check(name, observed, freeze) is False
+    snapshot.write_bytes(payload); binary.write_bytes(payload + b"stale")
+    assert check(name, observed, freeze) is False
+    binary.write_bytes(payload); manifest_path.write_text("{}")
+    assert check(name, observed, freeze) is False
+
+
+def test_native_import_keeps_ordinary_guards():
+    tree = ast.parse(Path(native_runner.__file__).read_text())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    messages = {value.value for n in ast.walk(main) if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name) and n.func.id == "RuntimeError" and n.args
+        for value in ast.walk(n.args[0]) if isinstance(value, ast.Constant) and isinstance(value.value, str)}
+    assert "actual_local_import_outside_frozen_code:" in messages
+    assert "actual_binding_outside_composed_installation:" in messages
+    assert "actual_import_not_bound:" in messages
+    calls = [n for n in ast.walk(main) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+             and n.func.id == "validated_integer_helper_origin"]
+    assert len(calls) == 1
+
+
 class BoundaryContractError(ValueError):
     """Injected exception boundary; the extracted real save body is unchanged."""
 

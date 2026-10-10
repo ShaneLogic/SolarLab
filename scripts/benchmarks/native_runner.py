@@ -29,6 +29,51 @@ from scripts.benchmarks.native_history import (
 
 COMPLETED_STATUS = "completed_bounded_voltage_lift_native_pilot"
 
+def validated_integer_helper_origin(name, observed, freeze):
+    """Recognize only the pinned helper's real owner and identical capsule copy.
+
+    ``observed`` contains metadata read from the imported module, never rewritten
+    module attributes. Ordinary repository and native-binding guards still apply.
+    """
+    if name != "scripts.benchmarks._integer_product_native":
+        return False
+    try:
+        info = freeze["integer_product_backend"]
+        owner = Path(info["binary_path"]).resolve()
+        manifest_path = Path(info["manifest_path"]).resolve()
+        root = Path(freeze["isolated_root"]).resolve()
+        snapshot = (root / "integer_product_helper" / owner.name).resolve()
+        pins = dict(freeze.get("external_source_sha256", {}), **freeze["source_sha256"])
+        if (info["schema"] != "solarlab.integer-product-backend.v1" or
+                info["backend"] != "integer128" or info["selection"] != "required" or
+                info["abi"]["supported"] is not True or
+                Path(observed["path"]).resolve() != owner or
+                Path(observed["origin"]).resolve() != owner or
+                observed["build_id"] != info["build_id"] or
+                observed["c_source_sha256"] != info["c_source_sha256"] or
+                dict(observed["abi"]) != info["abi"] or not snapshot.is_relative_to(root) or
+                pins.get(str(owner)) != info["binary_sha256"] or
+                pins.get(str(snapshot)) != info["binary_sha256"]):
+            return False
+        def data(path, limit):
+            with path.open("rb") as stream:
+                value = stream.read(limit + 1)
+            if len(value) > limit:
+                raise ValueError("helper origin input bound")
+            return value
+        raw = data(manifest_path, 2 * 1024 * 1024)
+        manifest = json.loads(raw)
+        return (hashlib.sha256(raw).hexdigest() == info["manifest_sha256"] and
+                manifest["schema"] == "solarlab.integer-product-build.v1" and
+                manifest["build_id"] == info["build_id"] and
+                manifest["build"]["source_sha256"] == info["c_source_sha256"] and
+                Path(manifest["binary_path"]).resolve() == owner and
+                manifest["binary_sha256"] == info["binary_sha256"] and
+                hashlib.sha256(data(owner, 16 * 1024 * 1024)).hexdigest() == info["binary_sha256"] and
+                hashlib.sha256(data(snapshot, 16 * 1024 * 1024)).hexdigest() == info["binary_sha256"])
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+
 def output_bytes(folder, input_names):
     """Sample files once; on disappearance, reobserve once and keep the larger sum.
 
@@ -313,8 +358,14 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
      for name,module in list(sys.modules.items()):
       if name.startswith(("perovskite_sim","scripts.benchmarks","sksundae","flint")) and getattr(module,"__file__",None):
        path=str(Path(module.__file__).resolve());actual=hashed(path)
-       if name.startswith(("perovskite_sim","scripts.benchmarks")) and not Path(path).is_relative_to(Path(freeze["isolated_root"])):
-        raise RuntimeError("actual_local_import_outside_frozen_code:"+name)
+       if (name.startswith(("perovskite_sim","scripts.benchmarks")) and
+           not Path(path).is_relative_to(Path(freeze["isolated_root"]))):
+        if name != "scripts.benchmarks._integer_product_native" or not validated_integer_helper_origin(
+         name, {"path": path, "origin": getattr(getattr(module, "__spec__", None), "origin", None),
+                "build_id": getattr(module, "BUILD_ID", None),
+                "c_source_sha256": getattr(module, "SOURCE_SHA256", None),
+                "abi": getattr(module, "ABI", None)}, freeze):
+         raise RuntimeError("actual_local_import_outside_frozen_code:"+name)
        if name.startswith("sksundae") and not Path(path).is_relative_to(Path(freeze["binding_installation"])):
         raise RuntimeError("actual_binding_outside_composed_installation:"+name)
        expected=freeze["source_sha256"].get(path,freeze["external_source_sha256"].get(path))
