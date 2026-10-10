@@ -5,6 +5,7 @@ import copy
 from hashlib import sha256
 from fractions import Fraction
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -227,6 +228,8 @@ class RuntimeTimingTests(unittest.TestCase):
         timing_path = Path(sys.modules[RuntimeTiming.__module__].__file__).resolve()
         controller = next(node for node in ast.parse(controller_path.read_text()).body
                           if isinstance(node, ast.FunctionDef) and node.name == "run_voltage_lift_native_pilot")
+        wall_policy = next(node for node in ast.parse(controller_path.read_text()).body
+                           if isinstance(node, ast.FunctionDef) and node.name == "voltage_lift_execution_wall_policy")
         stop = next(i for i, node in enumerate(controller.body)
                     if isinstance(node, ast.ImportFrom) and node.module == "scripts.benchmarks.native_observation")
         controller.body = controller.body[:stop] + ast.parse("return metadata_policy(request, admission)").body
@@ -246,12 +249,13 @@ class RuntimeTimingTests(unittest.TestCase):
                      "<timing-policy-metadata-only>", "exec"), policy_scope)
         scope = {"__file__": str(controller_path), "RuntimeTiming": RuntimeTiming,
                  "Path": Path, "sys": sys, "sha256": sha256, "digest": digest,
+                 "Mapping": Mapping, "math": math,
                  "ContractError": MetadataRejection,
                  "validate_voltage_lift_native_request": lambda *args: None,
                  "AffineSamplingContext": lambda model, request: SimpleNamespace(
                      request_sha256=digest(request), request_copy=lambda: copy.deepcopy(request), segments=()),
                  "metadata_policy": policy_scope["validate_interval_observation_admission"]}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[controller], type_ignores=[])),
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[wall_policy, controller], type_ignores=[])),
                      "<timing-controller-admission-prefix-only>", "exec"), scope)
         paths = {controller_path.resolve(), timing_path,
                  *(policy_path.with_name(name).resolve() for name in
@@ -265,7 +269,7 @@ class RuntimeTimingTests(unittest.TestCase):
         ]
         for label, bound, with_policy, expected in cases:
             with self.subTest(case=label):
-                request = {"synthetic_metadata_only": True, "segments": []}
+                request = {"synthetic_metadata_only": True, "segments": [], "budgets": {"wall_s": 4200}}
                 admission = {"map_identity": "synthetic-map", "voltage_lift_native_authorized": True,
                              "coordinator_message": "msg_unit_metadata_no_native_authority", "source_sha256": dict(pins)}
                 if not bound:
