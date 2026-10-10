@@ -408,4 +408,87 @@ static uint64_t sl_ida75_guard_word(sunrealtype value)
     memcpy(&word, &value, sizeof(word));
     return word;
 }
+
+/* Explicit zero-step evaluation of the installed parent callback. This is not
+ * IDAInitialSetup and never writes solver ewt. The callback may update only its
+ * diagnostic context and the disjoint output. O((maxord_alloc+2)*n) temporary
+ * bytes verify the native memory record, all allocated-order phi columns and
+ * solver ewt unchanged. Uninitialized higher phi/ewt bytes are compared only;
+ * no value is interpreted or exported from those buffers.
+ */
+static int sl_ida75_evaluate_initial_weights(void *memory, sunindextype n,
+        sunrealtype t0, IDAEwtFn expected_callback, void *expected_user,
+        N_Vector output, sunrealtype *initial_basis, size_t basis_count,
+        int *callback_status, int *phi_columns)
+{
+    IDAMem m;
+    int major, minor, patch, count, i, unchanged;
+    long steps;
+    sunrealtype now, *rows[MXORDP1 + 1], *out;
+    size_t row_bytes, saved_bytes;
+    unsigned char *saved;
+    unsigned char record[sizeof(struct IDAMemRec)];
+    char label[128];
+    if (!memory || n <= 0 || !expected_callback || !expected_user || !output
+        || !initial_basis || !callback_status || !phi_columns
+        || basis_count != 2 * (size_t)n || !isfinite(t0)
+        || (size_t)n > SIZE_MAX / sizeof(sunrealtype) / (MXORDP1 + 1))
+        return SL_OBS_ARGUMENT;
+    *callback_status = 0;
+    *phi_columns = 0;
+    if (SUNDIALSGetVersionNumber(&major, &minor, &patch, label, sizeof(label)) != 0
+        || major != 7 || minor != 5 || patch != 0) return SL_OBS_VERSION;
+    if (IDAGetNumSteps(memory, &steps) != 0
+        || IDAGetCurrentTime(memory, &now) != 0) return SL_OBS_GETTER;
+    if (steps != 0 || !sl_ida75_same_word(now, t0)) return SL_OBS_STAMP;
+    m = (IDAMem)memory;
+    if (!m->ida_MallocDone || m->ida_nst != 0
+        || !sl_ida75_same_word(m->ida_tn, t0)
+        || m->ida_maxord_alloc < 1 || m->ida_maxord_alloc >= MXORDP1
+        || !m->ida_user_efun
+        || m->ida_efun != expected_callback || m->ida_user_data != expected_user)
+        return SL_OBS_STAMP;
+    count = m->ida_maxord_alloc + 1;
+    row_bytes = (size_t)n * sizeof(sunrealtype);
+    saved_bytes = (size_t)(count + 1) * row_bytes;
+    if (N_VGetVectorID(output) != SUNDIALS_NVEC_SERIAL
+        || N_VGetLength_Serial(output) != n) return SL_OBS_VECTOR;
+    out = N_VGetArrayPointer(output);
+    if (!out) return SL_OBS_VECTOR;
+    if (sl_ida75_overlap(out, row_bytes, m, sizeof(*m))
+        || sl_ida75_overlap(initial_basis, 2 * row_bytes, m, sizeof(*m))
+        || sl_ida75_overlap(initial_basis, 2 * row_bytes, out, row_bytes))
+        return SL_OBS_ALIAS;
+    for (i = 0; i <= count; ++i) {
+        N_Vector v = i < count ? m->ida_phi[i] : m->ida_ewt;
+        if (!v || N_VGetVectorID(v) != SUNDIALS_NVEC_SERIAL
+            || N_VGetLength_Serial(v) != n) return SL_OBS_VECTOR;
+        rows[i] = N_VGetArrayPointer(v);
+        if (!rows[i]) return SL_OBS_VECTOR;
+        if (sl_ida75_overlap(out, row_bytes, rows[i], row_bytes)
+            || sl_ida75_overlap(initial_basis, 2 * row_bytes, rows[i], row_bytes))
+            return SL_OBS_ALIAS;
+    }
+    saved = malloc(saved_bytes);
+    if (!saved) return -7008; /* observation allocation failure */
+    memcpy(record, m, sizeof(*m));
+    for (i = 0; i <= count; ++i) memcpy(saved + (size_t)i * row_bytes, rows[i], row_bytes);
+    memcpy(initial_basis, rows[0], row_bytes);
+    memcpy(initial_basis + n, rows[1], row_bytes);
+    /* IDAWFtolerances leaves edata NULL before InitialSetup. Use the same
+     * registered user_data that InitialSetup selects, without assigning edata.
+     */
+    *callback_status = m->ida_efun(m->ida_phi[0], output, m->ida_user_data);
+    unchanged = memcmp(record, m, sizeof(*m)) == 0;
+    for (i = 0; i <= count; ++i)
+        unchanged = (memcmp(saved + (size_t)i * row_bytes, rows[i], row_bytes) == 0) && unchanged;
+    free(saved);
+    if (!unchanged) return -7009; /* never restore or hide native mutation */
+    *phi_columns = count;
+    if (*callback_status != 0) return -7014;
+    for (sunindextype j = 0; j < n; ++j)
+        if (!isfinite(out[j]) || out[j] <= 0) return SL_OBS_NONFINITE;
+    return 0;
+}
+
 #endif

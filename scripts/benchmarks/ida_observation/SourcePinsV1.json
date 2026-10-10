@@ -11,18 +11,18 @@
   "files": {
     "src/sksundae/c_ida.pxd": {
       "original_sha256": "7f1443a261d3e65aecc57dafd2e5632a474f750822ded8867bb68ada55078236",
-      "patched_sha256": "a089671d93a5b46462a5d50c325f1660a234c1d1541cf4d2c953b11d0799dc2e"
+      "patched_sha256": "a12527faf2d79662ec5ff7c02ed41314bbb9c7d98d4e369ab2d66ef13747463b"
     },
     "src/sksundae/_cy_ida.pyx": {
       "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
-      "patched_sha256": "8e713995fdf7a79a3f2affdc79894988208aab8df904e1a1e3e92a7367123677"
+      "patched_sha256": "ad2aa3f6c443061511af6e61ff9733742bcd9a29e55b8de4f1798456799d5900"
     },
     "src/sksundae/ida/_solver.py": {
       "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
-      "patched_sha256": "83bcd4d96a7eeef9212b49250dbbde51f91bcfaec5cf46d9d09025c2fe87b72c"
+      "patched_sha256": "e3bccc19ec1fe078ecdc860f56c17e09f3d0b2bbda20f4d67514b98f855bad65"
     }
   },
-  "patch_sha256": "1df6b6c7b80a4579e06228f5c4c2326522e7fe53d9bd9af01148dede5e04d57f",
+  "patch_sha256": "18ccb2ef10a934121ff57d1cb14557c582587a2eaabc2ee63cbdeb8850bc7610",
   "build_binding_token": "_OBSERVATION_BUILD_ID = None",
   "required_config": {
     "SUNDIALS_VERSION": "7.5.0",
@@ -50,7 +50,7 @@
     "sundials_cvode",
     "sundials_ida"
   ],
-  "copy_header_sha256": "072b44cca65413a0274c812096f294885e621a876a49e334999b2e6b28579b7d",
+  "copy_header_sha256": "500287323cf654c4087e8f4770c6e5f0234d6cdb9c5583a6ff7c49de3c01db24",
   "private_header_sha256": "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce",
   "composed_controls_patch_sha256": "7841508829e5226cc4de3aa0808aaf9a16ef7217cbbfc99e57f8c8955dbfd44b",
   "native_cleanup": {
@@ -119,5 +119,18 @@
     "lifetime": "C-owned context through existing AuxData; refresh on same-size and size-changing reinit; release after IDAFree",
     "upstream_algorithm_or_header_changed": false,
     "actual_application_requires_separate_native_fixture": true
+  },
+  "initial_parent_weight_evaluation": {
+    "schema": "sksundae.ida.initial-parent-weight-evaluation.v1",
+    "public_method": "evaluate_initial_parent_weights",
+    "allowed_native_steps": 0,
+    "argument": "actual native phi[0] at bound initial time",
+    "callback": "actual registered ida_efun verified as parent callback; registered user_data without modifying edata",
+    "output": "separate serial vector; copied bytes",
+    "preservation": "native memory record, allocated-order phi columns and stored ewt byte-checked unchanged",
+    "side_effect": "one parent-weight diagnostic cache evaluation; not solver-applied weights",
+    "native_validation_pending": true,
+    "successful_init_phase": "current successful zero-step initialization endpoint, no prior step attempt; failed-first-step and later endpoints reject; explicit evaluations preserve eligibility",
+    "weight_mode_guard": "ida_user_efun plus exact registered callback/user_data under pinned public tolerance setters; no unavailable ida.c macro dependency"
   }
 }

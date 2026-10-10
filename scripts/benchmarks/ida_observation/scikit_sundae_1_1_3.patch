@@ -47,7 +47,7 @@
      
      # free functions
      void IDAFree(void** mem)
-@@ -103,3 +122,47 @@
+@@ -103,3 +122,50 @@
  
      # optional outputs from LS interface
      int IDAGetNumJacEvals(void* mem, long int* njevals)
@@ -64,6 +64,9 @@
 +                      sunrealtype* phi, size_t phi_count,
 +                      sunrealtype* psi, size_t psi_count,
 +                      sunrealtype* uround)
++    int sl_ida75_evaluate_initial_weights(void* memory, sunindextype n, sunrealtype t0,
++        IDAEwtFn expected_callback, void* expected_user, N_Vector output,
++        sunrealtype* initial_basis, size_t basis_count, int* callback_status, int* phi_columns)
 +    int sl_ida75_nls_state(void* memory, long ns, long nni,
 +                           sunrealtype tn, sunrealtype hu, int qu,
 +                           sunrealtype hn, int qn, int read_step,
@@ -641,7 +644,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1111,49 +1425,544 @@
+@@ -1111,49 +1425,616 @@
  
          return result
  
@@ -800,6 +803,78 @@
 +                "build_recipe_sha256": _OBSERVATION_BUILD_ID,
 +                "native_library_path": str(library_path), "libraries": libraries})
 +        return self._obs_binding
++
++    def evaluate_initial_parent_weights(self):
++        """Evaluate the installed callback at native phi0/time, before any step.
++
++        This updates the parent diagnostic cache, not solver ewt or history.
++        Returned weights are explicitly evaluated, not solver-applied weights.
++        """
++        cdef N_Vector scratch = NULL
++        cdef int status, callback_status = 0, phi_columns = 0
++        cdef sunrealtype t0
++        cdef np.ndarray basis, values
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            if not self._initialized or self.mem == NULL:
++                raise RuntimeError("IDA must be initialized before evaluating parent weights.")
++            if self._options["parent_weight_frame"] is None:
++                raise IDAObservationError("parent_weight_evaluation_requires_opt_in")
++            endpoint = self._obs_endpoint
++            if (self._obs_reason != ("no_accepted_step", None) or self._obs_previous is not None
++                    or endpoint is None or endpoint["owner"] != self._obs_instance
++                    or endpoint["generation"] != self._obs_generation
++                    or endpoint["nsteps"] != 0 or endpoint["native_status"] < 0
++                    or endpoint["internal_t"].hex() != self._options["parent_weight_frame"]["t0_hex"]
++                    or endpoint["output_t"].hex() != endpoint["internal_t"].hex()):
++                raise IDAObservationError("initial_parent_weight_phase_unavailable")
++            self._obs_busy = True
++            try:
++                binding = self._obs_bind_source()
++                before = self._frame_snapshot()
++                if before is None or not before["installed"]:
++                    raise IDAObservationError("parent_weight_context_unavailable")
++                t0 = float.fromhex(before["t0_hex"])
++                scratch = N_VNew_Serial(self.NEQ, self.ctx)
++                if scratch is NULL:
++                    raise MemoryError("parent weight evaluation output allocation failed")
++                basis = np.empty((2, int(self.NEQ)), dtype=DTYPE, order="C")
++                status = sl_ida75_evaluate_initial_weights(self.mem, self.NEQ, t0,
++                    _parent_weight_wrapper, <void*>self.aux, scratch,
++                    <sunrealtype*>basis.data, 2 * <size_t>self.NEQ,
++                    &callback_status, &phi_columns)
++                if status != 0:
++                    raise IDAObservationError("initial_parent_weight_evaluation_failed",
++                        "sl_ida75_evaluate_initial_weights", int(status))
++                values = np.empty(self.NEQ, dtype=DTYPE)
++                svec2np(scratch, values)
++                after = self._frame_snapshot()
++                if (after["callback_calls"] != before["callback_calls"] + 1
++                        or after["computed_weights"] != values.tobytes()
++                        or after["basis_u"] != basis[0].tobytes()
++                        or after["basis_time_hex"] != before["t0_hex"]
++                        or basis[0].tobytes() != endpoint["raw_y"]
++                        or basis[1].tobytes() != endpoint["raw_yp"]):
++                    raise IDAObservationError("initial_parent_weight_evaluation_readback")
++                return {"schema": "sksundae.ida.initial-parent-weight-evaluation.v1",
++                    "binding": binding, "owner": self._obs_instance,
++                    "generation": self._obs_generation, "size": int(self.NEQ),
++                    "native_steps": 0, "time_hex": before["t0_hex"],
++                    "frame_identity": after["frame_identity"],
++                    "weights": values.tobytes(), "native_initial_state": basis[0].tobytes(),
++                    "native_initial_rate": basis[1].tobytes(),
++                    "native_memory_phi_and_ewt_unchanged": True,
++                    "preserved_phi_columns": int(phi_columns),
++                    "callback_status": int(callback_status),
++                    "parent_weight_state": after,
++                    "diagnostic_cache_updated": True,
++                    "solver_applied_weights": False,
++                    "role": "explicit installed-callback evaluation before first native step"}
++            finally:
++                if scratch is not NULL:
++                    N_VDestroy(scratch)
++                self._obs_busy = False
 +
 +    @staticmethod
 +    def parent_weight_capability():
@@ -1222,7 +1297,7 @@
  
      def __dealloc__(self):
          self._free_memory()
-@@ -1293,6 +2102,13 @@
+@@ -1293,6 +2174,13 @@
  
  
  def _check_options(options: dict) -> None:
@@ -1236,7 +1311,7 @@
  
      # resfn
      if not isinstance(options["resfn"], Callable):
-@@ -1484,6 +2300,26 @@
+@@ -1484,6 +2372,26 @@
      elif not options["max_nonlin_iters"] > 0:
          raise ValueError("'max_nonlin_iters' must be > 0.")
  
@@ -1283,7 +1358,7 @@
          max_conv_fails : int, optional
              Specifies the max number of nonlinear solver convergence failures
              in one step. The default is 10.
-@@ -282,7 +293,31 @@
+@@ -282,7 +293,41 @@
          """
          self._IDA = _IDA(resfn, **options)
  
@@ -1296,6 +1371,16 @@
 +    def parent_weight_capability() -> dict:
 +        """Compiled optional public-WF bridge metadata; does not initialize IDA."""
 +        return _IDA.parent_weight_capability()
++
++    def evaluate_initial_parent_weights(self) -> dict:
++        """Evaluate installed parent weights on the actual zero-step native state.
++
++        Requires an initialized idle owner with parent_weight_frame enabled.
++        Updates that callback's diagnostic cache; solver ewt/history/time and
++        counters are preserved. This is not a getter for solver-applied weights.
++        A state with nonzero native steps is rejected.
++        """
++        return self._IDA.evaluate_initial_parent_weights()
 +
 +    def statistics(self) -> dict:
 +        """Read actual native counters and cj after init_step/step.
@@ -1316,7 +1401,7 @@
          """
          Initialize the solver.
  
-@@ -318,7 +353,7 @@
+@@ -318,7 +363,7 @@
              'y0' and 'yp0' must be the same length.
  
          """
@@ -1325,7 +1410,7 @@
  
      def step(self, t: float, method='normal', tstop=None) -> IDAResult:
          """
-@@ -406,6 +441,30 @@
+@@ -406,6 +451,30 @@
  
          """
          return self._IDA.solve(tspan, y0, yp0)

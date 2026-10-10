@@ -87,6 +87,39 @@ true DAE/global error, early high derivatives, or nonlinear SG/capture/port
 integrals. The prior exact 2^-55 clock gap and early second-derivative failure
 remain open evidence for their respective proofs.
 
+## Explicit initial parent-weight evaluation
+
+`IDA.evaluate_initial_parent_weights()` requires an initialized, idle,
+source-bound owner with `parent_weight_frame` enabled, zero native steps and
+its bound initial time and the current successful-initialization endpoint.
+Any first solve attempt retires this eligibility, including a failed attempt
+with zero accepted steps; a successful reinit restores it. Repeated explicit
+evaluations do not retire it. It calls the actual registered callback on native
+`phi[0]` into a separate output vector. Before InitialSetup the native `edata`
+is null; the evaluator supplies the same registered `user_data` that
+InitialSetup selects, without assigning `edata` or running InitialSetup.
+
+This is an evaluation, not a getter or a solver-applied weight observation.
+It updates the callback diagnostic cache once. The return explicitly marks
+`solver_applied_weights=False`; subsequent `statistics()` can contain that
+cache until another actual callback overwrites it. Existing controller entry
+and initial-cache readback rules are unchanged.
+
+The pinned header checks version, time, step count, dimensions, callback and
+owner identity and disjoint buffers. Native memory/scalars/counters, all phi
+columns through the allocated order, and stored solver ewt are byte-compared
+before and after; a mutation is an error and is never restored or hidden.
+Only initialized phi0/phi1 and newly evaluated weight bytes are exported.
+Uninitialized higher-column/ewt bytes are compared opaquely, not interpreted
+or returned. Temporary storage is linear in the current vector length.
+Unsupported, uninitialized, busy and nonzero-step use is rejected. The method
+holds the existing owner lock and always destroys its separate output vector.
+No solve, time advance, tolerance change or convergence decision occurs.
+
+The focused source/native tests are in `test_error_weights.py`; native tests
+require a new immutable reviewed build and separate explicit admission.
+Existing installed bindings and frozen capsules are not modified.
+
 ## Offline build steps
 
 The optional `nonlin_guard="first-correction-wrms-v1"` wraps the existing
