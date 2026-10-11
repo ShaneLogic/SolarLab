@@ -38,6 +38,32 @@ def expm1_series(value):
     return sum(value ** k / Decimal(math.factorial(k)) for k in range(1, 6))
 
 
+@pytest.mark.parametrize("high,low,error", [
+    ([1.0], [1.0], ContractError),
+    ([np.nan], [0.0], ArithmeticError),
+])
+def test_double_copy_revalidates_forged_instance_metadata(high, low, error):
+    value = object.__new__(DoubleArray)
+    words = [np.frombuffer(np.asarray(word, dtype=np.float64).tobytes(), dtype=np.float64)
+             .reshape(-1) for word in (high, low)]
+    object.__setattr__(value, "_high", words[0])
+    object.__setattr__(value, "_low", words[1])
+    object.__setattr__(value, "_validated_words",
+                       (*words, words[0].shape, words[0].strides, words[1].strides))
+    with pytest.raises(error):
+        value.immutable_copy()
+
+
+def test_double_copy_ignores_malformed_instance_validation_metadata():
+    value = DoubleArray(np.ones((2, 2)), np.zeros((2, 2)))
+    object.__setattr__(value, "_validated_words",
+                       (value.high, value.low, np.array([2, 2]), value.high.strides, value.low.strides))
+    copied = value.immutable_copy()
+    assert copied is not value
+    assert copied.high.tobytes() == value.high.tobytes()
+    assert copied.low.tobytes() == value.low.tobytes()
+
+
 def test_primitive_add_preserves_exact_voltage_product_and_remainder():
     theta = [0.00855663413738028, 0.8191527652292634]
     voltage = 0.010463084503981271
