@@ -3556,15 +3556,37 @@ def voltage_lift_diagnostic_initialization(mapping, context, segment, ordinal, p
     framed = AffineVoltageMap(model, frame, request["frame_input_policy"]["profile"])
     binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(framed), context, segment)
     inputs, input_rate = segment.inputs(segment.start)
-    point, _ = framed.trial(z, segment.start, inputs, predecessor=predecessor)
+    # A new trial would add a transition and change the saved Point's full
+    # identity. Bind the new raw frame to the actual restored Point instead;
+    # bind_rate independently proves its complete physical state relation.
+    point = predecessor
     words = lambda value: [[float(v).hex() for v in word] for word in value.words]
     state_words = words(framed.physical_primitive(z, inputs, time=segment.start))
-    rate_words = words(framed.bind_rate(point, z, zdot, input_rate))
-    if (encode_point(point) != restore["Point"] or encode_point(predecessor) != restore["Point"]
-            or state_words != seed["physical_state_words_hex"] or rate_words != seed["physical_rate_words_hex"]
-            or [float(x).hex() for x in inputs] != seed["inputs_hex"]
-            or [float(x).hex() for x in input_rate] != seed["input_rates_hex"]):
-        raise ContractError("diagnostic_complete_physical_transfer")
+    transfer = {"schema": "solarlab.diagnostic-transfer-check.v1", "Point": encode_point(point),
+        "map_identity": framed.identity, "frame_identity": frame.identity,
+        "mapped_physical_state_words_hex": state_words,
+        "expected_physical_state_words_hex": seed["physical_state_words_hex"],
+        "expected_physical_rate_words_hex": seed["physical_rate_words_hex"],
+        "inputs_hex": [float(x).hex() for x in inputs],
+        "input_rates_hex": [float(x).hex() for x in input_rate],
+        "checks": {"original_Point_codec": encode_point(point) == restore["Point"],
+            "state_words": state_words == seed["physical_state_words_hex"],
+            "inputs": [float(x).hex() for x in inputs] == seed["inputs_hex"],
+            "input_rates": [float(x).hex() for x in input_rate] == seed["input_rates_hex"]}}
+    try:
+        rate_words = words(framed.bind_rate(point, z, zdot, input_rate))
+    except ContractError as error:
+        transfer["checks"]["raw_Point_relation"] = False
+        transfer["binding_failure"] = error.reason
+        error.diagnostic_transfer_evidence = transfer
+        raise
+    transfer["mapped_physical_rate_words_hex"] = rate_words
+    transfer["checks"].update(raw_Point_relation=True,
+                              rate_words=rate_words == seed["physical_rate_words_hex"])
+    if not all(transfer["checks"].values()):
+        error = ContractError("diagnostic_complete_physical_transfer")
+        error.diagnostic_transfer_evidence = transfer
+        raise error
     proof = {"schema": "solarlab.voltage-lift-diagnostic-input.v1", "request_sha256": context.request_sha256,
         "source_identity": binding.source_identity, "map_identity": framed.identity,
         "segment_sha256": binding.segment_sha256, "predecessor_identity": predecessor.identity,
@@ -3573,7 +3595,7 @@ def voltage_lift_diagnostic_initialization(mapping, context, segment, ordinal, p
         "inputs_hex": seed["inputs_hex"], "input_rates_hex": seed["input_rates_hex"],
         "mapped_physical_rate_words_hex": rate_words, "state_changed": False,
         "tangent_preparation_performed": False, "native_initialization_performed": False,
-        "original_native_authority_restored": False}
+        "original_native_authority_restored": False, "transfer_checks": transfer["checks"]}
     proof["record_sha256"] = digest(proof)
     record = {"kind": "voltage_lift_segment_frame", "initialization_mode": "diagnostic_saved_seed",
         "request_sha256": context.request_sha256, "parent_map_identity": mapping.identity,
@@ -4641,8 +4663,15 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                   "Point": diagnostic_data["restore"]["Point"], "old_B_prefix_credit": False,
                   "original_native_authority_restored": False})
         for segment_index, segment in enumerate(segments):
-            binding, z, initial_zdot, initial_proof, frame_record = voltage_lift_segment_initialization(
-                mapping, sampling, segment, segment_index+1, z, predecessor)
+            try:
+                binding, z, initial_zdot, initial_proof, frame_record = voltage_lift_segment_initialization(
+                    mapping, sampling, segment, segment_index+1, z, predecessor)
+            except ContractError as error:
+                if hasattr(error, "diagnostic_transfer_evidence"):
+                    first_failure = {"phase": "diagnostic_initialization", "reason": error.reason,
+                                     "evidence": error.diagnostic_transfer_evidence}
+                    save({"kind": "diagnostic_transfer_failure", "failure": first_failure})
+                raise
             if frame_record is not None:
                 save(frame_record)
                 history = VoltageLiftHistory(binding.adapter.mapping, parent_reference=parent_reference)

@@ -175,6 +175,113 @@ def test_frame_input_unframed_seed_final_and_restored_handoffs(monkeypatch):
     assert seen == [profile]*3
 
 
+@pytest.fixture
+def diagnostic_transfer_case(monkeypatch):
+    """Manufactured five-field Point; no device constructor or F/J/native call."""
+    from scripts.benchmarks import coupled_device_prototype as d
+    from scripts.benchmarks.contract_prototype import Layout, Support, VariableSpec, StateView, VOLT, ONE, PARTICLE, VOLUME
+    from scripts.benchmarks.precision_prototype import DoubleArray, DoubleArithmetic, RelativeCoordinates, PrimitiveExpansion, encode_point
+
+    class Model:
+        def __init__(self):
+            roots = {"n_m3": 8., "p_m3": 4., "phi_V": 0., "c_m3": 2., "f": 0.25}
+            self.layout = Layout((Support("nodes", "cell", (2,)),), tuple(
+                VariableSpec(name, name, "nodes", (2,), VOLT if name == "phi_V" else
+                             ONE if name == "f" else PARTICLE/VOLUME) for name in roots), ())
+            self.coordinates = RelativeCoordinates(self.layout, {name: "linear" for name in roots})
+            self.reference = self.coordinates.initial(StateView(self.layout, [
+                (name, DoubleArray([value, value])) for name, value in roots.items()]), inputs=[0., 0.])
+            self.S, self.Drow, self.x = np.full(10, 0.25), np.ones(10), np.array([0., 1.])
+            self.definition = SimpleNamespace(length=1., n_eq=8., p_eq=4., ion_initial=2., f_eq=0.25)
+            self.source_identity, self.arithmetic = "a"*64, DoubleArithmetic()
+
+        def trial(self, value, time, inputs, **kwargs):
+            return self.coordinates.trial(self.reference, value, time, inputs, **kwargs)
+
+        def validate(self, point):
+            if point.state.layout.identity != self.layout.identity or point.inputs.shape != (2,):
+                raise ContractError("manufactured_reference_mismatch")
+            for variable in self.layout.variables:
+                self.reference.state.field(variable.id).difference(point.state.field(variable.id))
+
+        def public_problem(self, **kwargs):
+            return SimpleNamespace()  # No residual, tangent, Poisson or Jacobian method.
+
+    monkeypatch.setattr(d, "AffineCoupledSlab", Model)
+    model = Model()
+    mapping = d.AffineVoltageMap(model, mapped_input_profile="frame-input-expansion12-v1")
+    segment = d.ProtocolSegment("saved_hold", 0.5, 0.75, (0.125, 0.25), (3., 4.))
+    inputs, input_rate = segment.inputs(segment.start)
+    q0 = PrimitiveExpansion(tuple(np.full(10, x) for x in (0.25, 2.**-60, -2.**-120, 2.**-180)))
+    v0 = PrimitiveExpansion(tuple(np.full(10, x) for x in (0.125, -2.**-62, 2.**-123, -2.**-185)))
+    prior, _ = mapping.trial(np.zeros(10), 0.25, [0., 0.], predecessor=model.reference)
+    saved, _ = mapping.trial(q0, segment.start, inputs, predecessor=prior)
+    words = lambda value: [[float(x).hex() for x in word] for word in value.words]
+    seed = {"frame": {"q0_words_hex": words(q0), "v0_words_hex": words(v0)},
+            "physical_state_words_hex": words(mapping.physical_primitive(q0, inputs)),
+            "physical_rate_words_hex": words(mapping.physical_rate(v0, input_rate)),
+            "inputs_hex": [float(x).hex() for x in inputs],
+            "input_rates_hex": [float(x).hex() for x in input_rate]}
+    restore = {"Point": encode_point(saved)}
+    request = {"voltage_lift_map": mapping.payload(), "map_identity": mapping.identity,
+        "segment_frame_policy": {}, "frame_input_policy": {"profile": "frame-input-expansion12-v1"},
+        "z0": [0.]*10, "zdot0": [0.]*10, "diagnostic_interval": {"saved_restore": {"manufactured": True}}}
+    context = SimpleNamespace(request_copy=lambda: json.loads(json.dumps(request)), request_sha256=digest(request),
+        segments=(segment,), segment_digest=lambda model, segment: digest(asdict(segment)))
+    # Pin/schema metadata validation has separate tests; this fixture exercises
+    # the real frame, map, Point codec, full-word relation and rate binding.
+    monkeypatch.setattr(d, "diagnostic_interval_context", lambda request: {"accepted": seed, "restore": restore})
+    monkeypatch.setattr(d, "_validate_segment_frame_policy", lambda request: None)
+    return SimpleNamespace(d=d, model=model, mapping=mapping, segment=segment, context=context,
+                           saved=saved, prior=prior, seed=seed, request=request, restore=restore)
+
+
+def test_diagnostic_initialization_preserves_saved_transition_and_full_words(diagnostic_transfer_case, monkeypatch):
+    from scripts.benchmarks.precision_prototype import encode_point
+    c = diagnostic_transfer_case
+    original = encode_point(c.saved)
+    # The previous implementation necessarily built another transition here.
+    def forbidden_trial(*args, **kwargs):
+        raise AssertionError("initialization must bind the complete saved Point, not construct a new trial")
+    monkeypatch.setattr(c.d.AffineVoltageMap, "trial", forbidden_trial)
+    binding, z, zdot, proof, record = c.d.voltage_lift_segment_initialization(
+        c.mapping, c.context, c.segment, 1, np.zeros(10), c.saved)
+    assert proof["Point"] == original == encode_point(c.saved)
+    assert original["payload"]["authority"]["transition"]["previous_point"] == c.prior.identity
+    assert c.prior.identity != c.saved.identity == proof["point_identity"]
+    assert all(proof["transfer_checks"].values())
+    assert record["physical_handoff_words_hex"] == c.seed["physical_state_words_hex"]
+    assert record["physical_rate_handoff_words_hex"] == c.seed["physical_rate_words_hex"]
+    assert len(record["physical_handoff_words_hex"]) == len(record["physical_rate_handoff_words_hex"]) == 12
+    assert proof["inputs_hex"] == c.seed["inputs_hex"] and proof["input_rates_hex"] == c.seed["input_rates_hex"]
+    rate = binding.adapter.mapping.bind_rate(c.saved, z, zdot, c.segment.inputs(c.segment.start)[1])
+    assert rate.point.identity == c.saved.identity and rate.mapping_identity == binding.adapter.mapping.identity
+    assert not proof["native_initialization_performed"] and not proof["original_native_authority_restored"]
+
+
+@pytest.mark.parametrize("damage", ["raw", "state_word", "rate_word", "slope", "point", "source"])
+def test_diagnostic_initialization_rejects_changed_transfer(diagnostic_transfer_case, damage):
+    c = diagnostic_transfer_case
+    if damage == "raw": c.request["z0"][0] = 2.**-40
+    if damage == "state_word": c.seed["physical_state_words_hex"][3][0] = (2.**-170).hex()
+    if damage == "rate_word": c.seed["physical_rate_words_hex"][3][0] = (2.**-170).hex()
+    if damage == "slope": c.seed["input_rates_hex"][0] = 0.0.hex()
+    if damage == "point": c.restore["Point"] = __import__("copy").deepcopy(c.restore["Point"]); c.restore["Point"]["sha256"] = "b"*64
+    if damage == "source": c.model.source_identity = "b"*64
+    with pytest.raises(ContractError) as caught:
+        c.d.voltage_lift_segment_initialization(c.mapping, c.context, c.segment, 1, np.zeros(10), c.saved)
+    if damage in {"raw", "state_word", "rate_word", "slope"}:
+        evidence = caught.value.diagnostic_transfer_evidence
+        assert evidence["Point"] == c.restore["Point"]
+        assert not all(evidence["checks"].values())
+        assert evidence["mapped_physical_state_words_hex"]
+    if damage == "raw":
+        assert caught.value.reason == "voltage_lift_point_raw_coordinate_mismatch"
+        assert caught.value.diagnostic_transfer_evidence["checks"]["raw_Point_relation"] is False
+    elif damage in {"state_word", "rate_word", "slope"}:
+        assert caught.value.reason == "diagnostic_complete_physical_transfer"
+
+
 def dec(value):
     return Decimal.from_float(float(value))
 
