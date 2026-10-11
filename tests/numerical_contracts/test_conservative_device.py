@@ -8,12 +8,13 @@ import numpy as np
 import pytest
 from scipy.sparse import csc_matrix
 
+import scripts.benchmarks.conservative_device as conservative
 from scripts.benchmarks.contract_prototype import (
     PARTICLE, SECOND, VOLT, AcceptedStep, ContractError, EquationSpec, Layout,
     PhysicalScaling, PhysicalStorage, SparseStructure, StateView, Support,
     ValidatedProblem, VariableSpec,
 )
-from scripts.benchmarks.conservative_device import EquationBudget, conservative_be_step
+from scripts.benchmarks.conservative_device import EquationBudget, NewtonRecord, conservative_be_step
 from scripts.benchmarks.precision_prototype import (
     DoubleArithmetic, DoubleArray, FrameInputExpansion,
     RelativeCoordinates, encode_point,
@@ -131,7 +132,14 @@ def test_sub_ulp_increment_and_discrete_history_are_retained():
     assert step.source_identity == problem.source_identity
     assert step.history_kind == "finite-storage-difference-and-secant"
     assert not isinstance(step, AcceptedStep) and not step.scientific_qualified
-    assert calls["instantaneous"] == 0 and calls["jacobian"] == 1
+    assert calls == {"delta": 3, "conservative": 2, "jacobian": 1, "instantaneous": 0}
+    assert step.residual_evaluations == 2 and step.line_search_evaluations == 1
+    record, = step.iterations
+    assert (record.merit_before, record.merit_after, record.damping) == (2**99, 0, 1.)
+    assert record.point_identity_after == step.right.identity
+    assert record.point_identity_before not in (left.identity, step.right.identity)
+    # Four-argument construction remains compatible with existing consumers.
+    assert NewtonRecord(0, (), 0., 1.).merit_before is None
     with pytest.raises((TypeError, ValueError), match="init=False"):
         replace(step, history_kind="native-continuous-tangent")
 
@@ -277,9 +285,19 @@ def test_failures_do_not_rebase_clip_or_invoke_dense_fallback(failure):
         problem = replace(problem, conservative_derivative=lambda *args: csc_matrix(np.eye(2)))
     else:
         options['feasible'] = lambda point: False
-    with pytest.raises(ContractError):
+    with pytest.raises(ContractError) as caught:
         conservative_be_step(problem, coordinates, left, .5, scaling=scaling, budgets=budgets, **options)
     assert encode_point(left) == before
+    diagnostic = caught.value.conservative_diagnostics
+    if failure == "singular":
+        assert isinstance(caught.value.__cause__, RuntimeError)
+        assert diagnostic.phase == "linear_solve" and diagnostic.linear_iteration == 0
+        assert diagnostic.rhs_projection_error is diagnostic.linear_residual_inf is None
+        assert diagnostic.residual_point_identity == diagnostic.point.identity
+    elif failure == "infeasible":
+        assert diagnostic.feasible is False and diagnostic.point is not None
+        assert diagnostic.last_accepted_point_identity is diagnostic.residual is None
+        assert diagnostic.residual_point_identity is None
 
 
 def test_nonphysical_coordinate_chain_is_not_assumed():
@@ -288,3 +306,144 @@ def test_nonphysical_coordinate_chain_is_not_assumed():
     with pytest.raises(ContractError, match="linear_physical"):
         conservative_be_step(problem, logarithmic, left, .5, scaling=scaling, budgets=budgets)
     assert calls["conservative"] == 0
+
+
+def test_iteration_exhaustion_retains_scalar_history_and_final_full_word_trial():
+    fixture = manufactured(force=(1., -1.))
+    problem, _, left, _, budgets, calls = fixture
+    before = encode_point(left)
+    derivative, values = problem.conservative_derivative, problem.conservative_values
+    observed = []
+
+    def observe(a, b, increment):
+        result = values(a, b, increment)
+        observed.append((b.identity, exact(result)))
+        return result
+
+    problem = replace(problem, conservative_values=observe,
+                      conservative_derivative=lambda *args: 2*derivative(*args))
+    with pytest.raises(ContractError, match="conservative_iteration_budget_exhausted") as caught:
+        run_fixture((problem, *fixture[1:]), max_iterations=2)
+    error = caught.value
+    diagnostic = error.conservative_diagnostics
+    assert error.reason == str(error) == "conservative_iteration_budget_exhausted"
+    assert diagnostic.phase == "iteration_limit"
+    assert calls == {"delta": 3, "conservative": 3, "jacobian": 2, "instantaneous": 0}
+    assert (diagnostic.residual_evaluations, diagnostic.line_search_evaluations) == (3, 2)
+    assert exact(diagnostic.local_coordinates) == (Fraction(3, 8), -Fraction(3, 8))
+    assert exact(diagnostic.point.state.field("n")) == (Fraction(27, 8), Fraction(21, 8))
+    assert exact(diagnostic.residual) == observed[-1][1] == (-Fraction(1, 8), Fraction(1, 8))
+    assert diagnostic.point.identity == diagnostic.residual_point_identity == observed[-1][0]
+    assert diagnostic.last_accepted_point_identity == diagnostic.point.identity
+    assert diagnostic.last_accepted_merit == diagnostic.merit
+    assert diagnostic.linear_iteration is diagnostic.linear_point_identity is None
+    assert diagnostic.rhs_projection_error is diagnostic.linear_residual_inf is None
+    assert diagnostic.rejected_searches == ()
+    allowance = Fraction(float(budgets["balance"].absolute[0]))
+    assert len(diagnostic.iterations) == 2
+    for i, record in enumerate(diagnostic.iterations):
+        assert record.iteration == i and record.damping == 1.
+        assert record.rhs_projection_error == (0, 0) and record.linear_residual_inf == 0.
+        assert record.merit_before == Fraction(1, 2**(i+1))/allowance
+        assert record.merit_after == Fraction(1, 2**(i+2))/allowance
+        assert (record.point_identity_before, record.point_identity_after) == (observed[i][0], observed[i+1][0])
+    assert encode_point(left) == before
+
+
+@pytest.mark.parametrize("infeasible", [False, True])
+def test_failed_search_distinguishes_rejected_trial_from_newton_iterate(infeasible):
+    fixture = manufactured(force=(1., -1.))
+    problem, _, left, _, _, calls = fixture
+    derivative = problem.conservative_derivative
+    if not infeasible:
+        problem = replace(problem, conservative_derivative=lambda *args: -derivative(*args))
+    visited = []
+
+    def feasible(point):
+        visited.append(point.identity)
+        return not infeasible or len(visited) == 1
+
+    with pytest.raises(ContractError, match="conservative_line_search_budget_exhausted") as caught:
+        run_fixture((problem, *fixture[1:]), feasible=feasible, max_line_search=2)
+    diagnostic = caught.value.conservative_diagnostics
+    assert diagnostic.phase == "line_search_limit"
+    assert diagnostic.point.identity == visited[-1] != visited[0]
+    assert diagnostic.last_accepted_point_identity == diagnostic.linear_point_identity == visited[0]
+    assert diagnostic.linear_iteration == 0 and diagnostic.iterations == ()
+    assert diagnostic.rhs_projection_error == (0, 0) and diagnostic.linear_residual_inf == 0.
+    assert diagnostic.line_search_evaluations == 2
+    assert [s.damping for s in diagnostic.rejected_searches] == [1., .5]
+    assert [s.point_identity for s in diagnostic.rejected_searches] == visited[1:]
+    if infeasible:
+        assert exact(diagnostic.local_coordinates) == (Fraction(1, 4), -Fraction(1, 4))
+        assert diagnostic.residual is diagnostic.residual_point_identity is diagnostic.merit is None
+        assert diagnostic.feasible is False
+        assert all(s.feasible is False and s.merit is None for s in diagnostic.rejected_searches)
+        assert calls == {"delta": 1, "conservative": 1, "jacobian": 1, "instantaneous": 0}
+        assert diagnostic.residual_evaluations == 1
+    else:
+        assert exact(diagnostic.local_coordinates) == (-Fraction(1, 4), Fraction(1, 4))
+        assert exact(diagnostic.residual) == (-Fraction(3, 4), Fraction(3, 4))
+        assert diagnostic.residual_point_identity == diagnostic.point.identity
+        assert diagnostic.feasible is True
+        assert [s.merit/diagnostic.last_accepted_merit for s in diagnostic.rejected_searches] == [2, Fraction(3, 2)]
+        assert calls == {"delta": 3, "conservative": 3, "jacobian": 1, "instantaneous": 0}
+        assert diagnostic.residual_evaluations == 3
+    assert exact(left.state.field("n")) == (3, 3)
+
+
+@pytest.mark.parametrize("failure_phase", ["trial", "feasibility", "residual"])
+def test_callback_failure_never_reuses_the_previous_trial_residual(monkeypatch, failure_phase):
+    fixture = manufactured(force=(1., -1.))
+    problem, _, left, _, _, calls = fixture
+    original_trial, values = conservative._trial, problem.conservative_values
+    failure, cause = ContractError("manufactured_trial_failure"), RuntimeError("manufactured_cause")
+    points, feasibility_calls, residual_attempts = [], [], []
+    trial_attempts = 0
+
+    def trial(*args):
+        nonlocal trial_attempts
+        trial_attempts += 1
+        if failure_phase == "trial" and trial_attempts == 2:
+            raise failure from cause
+        result = original_trial(*args)
+        points.append(result[0])
+        return result
+
+    def feasible(point):
+        feasibility_calls.append(point.identity)
+        if failure_phase == "feasibility" and len(feasibility_calls) == 2:
+            raise failure from cause
+        return True
+
+    def residual(a, b, increment):
+        residual_attempts.append(b.identity)
+        if failure_phase == "residual" and len(residual_attempts) == 2:
+            raise failure from cause
+        return values(a, b, increment)
+
+    monkeypatch.setattr(conservative, "_trial", trial)
+    problem = replace(problem, conservative_values=residual)
+    before = encode_point(left)
+    with pytest.raises(ContractError, match="manufactured_trial_failure") as caught:
+        run_fixture((problem, *fixture[1:]), feasible=feasible)
+    assert caught.value is failure and failure.__cause__ is cause
+    diagnostic = failure.conservative_diagnostics
+    assert diagnostic.phase == failure_phase
+    assert diagnostic.residual is diagnostic.residual_point_identity is diagnostic.merit is None
+    assert exact(diagnostic.local_coordinates) == (Fraction(1, 2), -Fraction(1, 2))
+    assert diagnostic.last_accepted_point_identity == diagnostic.linear_point_identity == points[0].identity
+    if failure_phase == "trial":
+        assert diagnostic.point is None
+    else:
+        assert diagnostic.point is points[-1] and diagnostic.point.identity != points[0].identity
+    assert diagnostic.feasible is (True if failure_phase == "residual" else None)
+    search, = diagnostic.rejected_searches
+    assert search.point_identity == (None if diagnostic.point is None else diagnostic.point.identity)
+    assert search.merit is None and search.damping == 1.
+    assert diagnostic.iterations == () and diagnostic.linear_iteration == 0
+    assert diagnostic.rhs_projection_error == (0, 0) and diagnostic.linear_residual_inf == 0.
+    assert (diagnostic.residual_evaluations, diagnostic.line_search_evaluations) == (1, 1)
+    assert trial_attempts == 2 and len(residual_attempts) == (2 if failure_phase == "residual" else 1)
+    assert calls == {"delta": 1, "conservative": 1, "jacobian": 1, "instantaneous": 0}
+    assert encode_point(left) == before

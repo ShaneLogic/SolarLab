@@ -47,6 +47,51 @@ class NewtonRecord:
     rhs_projection_error: tuple[Fraction, ...]
     linear_residual_inf: float
     damping: float
+    merit_before: Fraction | None = None
+    merit_after: Fraction | None = None
+    point_identity_before: str | None = None
+    point_identity_after: str | None = None
+
+
+@dataclass(frozen=True)
+class RejectedSearch:
+    damping: float
+    point_identity: str | None
+    feasible: bool | None
+    merit: Fraction | None
+
+
+@dataclass(frozen=True)
+class ConservativeFailureDiagnostics:
+    """Bounded data attached as ``error.conservative_diagnostics`` on failure.
+
+    Only the latest requested trial retains a full Point/residual. A residual
+    is present only after its public call returns for that exact Point; trial
+    construction, feasibility and residual-call failures leave it absent.
+    The last accepted identity denotes the Newton working iterate (initially
+    the feasible initial guess), never an accepted integration step. Pending
+    linear data belongs to ``linear_point_identity``, not a rejected trial.
+    Records are bounded by max_iterations and the final max_line_search;
+    residual_evaluations counts completed public calls, as on success.
+    """
+
+    phase: str
+    local_coordinates: PrimitiveExpansion | None
+    point: Point | None
+    residual: object | None
+    residual_point_identity: str | None
+    feasible: bool | None
+    merit: Fraction | None
+    last_accepted_point_identity: str | None
+    last_accepted_merit: Fraction | None
+    iterations: tuple[NewtonRecord, ...]
+    linear_iteration: int | None
+    linear_point_identity: str | None
+    rhs_projection_error: tuple[Fraction, ...] | None
+    linear_residual_inf: float | None
+    rejected_searches: tuple[RejectedSearch, ...]
+    residual_evaluations: int
+    line_search_evaluations: int
 
 
 @dataclass(frozen=True)
@@ -151,7 +196,8 @@ def conservative_be_step(
     Only linear physical RelativeCoordinates are admitted. Each trial is a
     cumulative full-word physical increment from left; no absolute-state
     subtraction occurs. Time must advance exactly in the Point's binary64
-    time representation. Capacity/domain/contract failures propagate.
+    time representation. Runtime failures propagate unchanged, with bounded
+    ``conservative_diagnostics`` attached; pre-entry validation is unchanged.
     """
     if not isinstance(problem, ValidatedProblem) or type(coordinates) is not RelativeCoordinates:
         raise ContractError("conservative_public_problem_and_coordinates_required")
@@ -178,61 +224,116 @@ def conservative_be_step(
         raise ContractError("conservative_increment_shape_mismatch")
     arithmetic = problem.arithmetic if problem.arithmetic is not None else FloatArithmetic()
     records, evaluations, searches = [], 0, 0
+    current, phase = None, "initial_trial"
+    requested = requested_point = requested_residual = requested_merit = requested_feasible = None
+    linear_iteration = linear_point_identity = projection = linear_error = None
+    rejected = []
+
+    def clear_trial(candidate=None):
+        nonlocal requested, requested_point, requested_residual, requested_merit, requested_feasible
+        requested = candidate
+        requested_point = requested_residual = requested_merit = requested_feasible = None
 
     def evaluate(candidate):
-        nonlocal evaluations
+        nonlocal evaluations, phase, requested_point, requested_residual, requested_merit, requested_feasible
+        clear_trial(candidate)
+        phase = "trial"
         point, increment = _trial(coordinates, left, candidate, time, inputs)
+        requested_point = point
+        phase = "increment_validation"
         increment.validate(left, point)
+        phase = "feasibility"
         if not feasible(point):
+            requested_feasible = False
             return None
+        requested_feasible = True
+        phase = "residual"
         residual = problem.conservative_residual(left, point, increment)
         evaluations += 1
+        requested_residual = residual
+        phase = "residual_merit"
         exact = _exact_words(residual, n)
         ratios = tuple(abs(x)/a for x, a in zip(exact, limits, strict=True))
-        return point, increment, residual, exact, ratios, max(ratios)
+        requested_merit = max(ratios)
+        return point, increment, residual, exact, ratios, requested_merit
 
-    current = evaluate(local)
-    if current is None:
-        raise ContractError("infeasible_conservative_initial_trial")
-    for iteration in range(max_iterations + 1):
-        right, increment, residual, exact, ratios, merit = current
-        if all(x <= 1 for x in ratios):
-            delta = problem.storage.delta(left, right, increment)
-            _exact_words(delta, problem.storage_count)
-            secant = arithmetic.freeze(arithmetic.divide(arithmetic.array(delta),
-                                         arithmetic.array(np.full(problem.storage_count, h))))
-            _exact_words(secant, problem.storage_count)
-            return ConservativeStep(left, right, increment, local, delta, secant, residual,
-                                    units, limits, ratios, scaling, problem.source_identity,
-                                    tuple(records), evaluations, searches)
-        if iteration == max_iterations:
-            raise ContractError("conservative_iteration_budget_exhausted")
-        matrix = problem.conservative_jacobian(left, right)
-        try:
-            with np.errstate(over="raise", invalid="raise", divide="raise"):
-                scaled = scaling.jacobian(matrix)
-            exact_rhs = tuple(-r/Fraction(float(s)) for r, s in zip(exact, scaling.rows, strict=True))
-            rhs = np.array([float(x) for x in exact_rhs])
-            if not np.isfinite(scaled.data).all() or not np.isfinite(rhs).all():
-                raise ArithmeticError("nonfinite scaled system")
-            solution = splu(scaled).solve(rhs)
-            if not np.isfinite(solution).all():
-                raise ArithmeticError("nonfinite sparse correction")
-        except (RuntimeError, ArithmeticError) as error:
-            raise ContractError("conservative_sparse_solve_failed") from error
-        projection = tuple(x-Fraction(float(y)) for x, y in zip(exact_rhs, rhs, strict=True))
-        linear_error = float(np.max(np.abs(scaled @ solution-rhs), initial=0.0))
-        if not np.isfinite(linear_error):
-            raise ContractError("nonfinite_conservative_linear_residual")
-        for slot in range(max_line_search):
-            searches += 1
-            damping = 2.0**(-slot)
-            proposed = local.add(_correction(solution, scaling.columns, damping))
-            trial = evaluate(proposed)
-            if trial is not None and trial[-1] < merit:
-                local, current = proposed, trial
-                records.append(NewtonRecord(iteration, projection, linear_error, damping))
-                break
-        else:
-            raise ContractError("conservative_line_search_budget_exhausted")
-    raise AssertionError("unreachable")
+    def rejected_trial(damping):
+        return RejectedSearch(damping, None if requested_point is None else requested_point.identity,
+                              requested_feasible, requested_merit)
+
+    try:
+        current = evaluate(local)
+        if current is None:
+            raise ContractError("infeasible_conservative_initial_trial")
+        for iteration in range(max_iterations + 1):
+            right, increment, residual, exact, ratios, merit = current
+            if all(x <= 1 for x in ratios):
+                phase = "accepted_storage"
+                delta = problem.storage.delta(left, right, increment)
+                _exact_words(delta, problem.storage_count)
+                secant = arithmetic.freeze(arithmetic.divide(arithmetic.array(delta),
+                                             arithmetic.array(np.full(problem.storage_count, h))))
+                _exact_words(secant, problem.storage_count)
+                return ConservativeStep(left, right, increment, local, delta, secant, residual,
+                                        units, limits, ratios, scaling, problem.source_identity,
+                                        tuple(records), evaluations, searches)
+            if iteration == max_iterations:
+                phase = "iteration_limit"
+                raise ContractError("conservative_iteration_budget_exhausted")
+            linear_iteration, linear_point_identity = iteration, right.identity
+            phase = "jacobian"
+            matrix = problem.conservative_jacobian(left, right)
+            try:
+                phase = "linear_solve"
+                with np.errstate(over="raise", invalid="raise", divide="raise"):
+                    scaled = scaling.jacobian(matrix)
+                exact_rhs = tuple(-r/Fraction(float(s)) for r, s in zip(exact, scaling.rows, strict=True))
+                rhs = np.array([float(x) for x in exact_rhs])
+                if not np.isfinite(scaled.data).all() or not np.isfinite(rhs).all():
+                    raise ArithmeticError("nonfinite scaled system")
+                solution = splu(scaled).solve(rhs)
+                if not np.isfinite(solution).all():
+                    raise ArithmeticError("nonfinite sparse correction")
+            except (RuntimeError, ArithmeticError) as error:
+                raise ContractError("conservative_sparse_solve_failed") from error
+            phase = "linear_residual"
+            projection = tuple(x-Fraction(float(y)) for x, y in zip(exact_rhs, rhs, strict=True))
+            linear_error = float(np.max(np.abs(scaled @ solution-rhs), initial=0.0))
+            if not np.isfinite(linear_error):
+                raise ContractError("nonfinite_conservative_linear_residual")
+            for slot in range(max_line_search):
+                searches += 1
+                damping = 2.0**(-slot)
+                clear_trial()
+                phase = "correction"
+                try:
+                    proposed = local.add(_correction(solution, scaling.columns, damping))
+                    trial = evaluate(proposed)
+                except Exception:
+                    rejected.append(rejected_trial(damping))
+                    raise
+                if trial is not None and trial[-1] < merit:
+                    local, current = proposed, trial
+                    records.append(NewtonRecord(iteration, projection, linear_error, damping,
+                                                merit, trial[-1], right.identity, trial[0].identity))
+                    linear_iteration = linear_point_identity = projection = linear_error = None
+                    rejected.clear()
+                    break
+                rejected.append(rejected_trial(damping))
+            else:
+                phase = "line_search_limit"
+                raise ContractError("conservative_line_search_budget_exhausted")
+        raise AssertionError("unreachable")
+    except Exception as error:
+        error.conservative_diagnostics = ConservativeFailureDiagnostics(
+            phase=phase, local_coordinates=requested, point=requested_point,
+            residual=requested_residual,
+            residual_point_identity=None if requested_residual is None else requested_point.identity,
+            feasible=requested_feasible, merit=requested_merit,
+            last_accepted_point_identity=None if current is None else current[0].identity,
+            last_accepted_merit=None if current is None else current[-1], iterations=tuple(records),
+            linear_iteration=linear_iteration, linear_point_identity=linear_point_identity,
+            rhs_projection_error=projection, linear_residual_inf=linear_error,
+            rejected_searches=tuple(rejected), residual_evaluations=evaluations,
+            line_search_evaluations=searches)
+        raise
