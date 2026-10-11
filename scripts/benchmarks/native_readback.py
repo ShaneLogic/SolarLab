@@ -746,7 +746,8 @@ def diagnostic_interval_binding(request):
     descriptor = request.get("diagnostic_interval")
     _require(request.get("schema") == "solarlab.native-interval-child-request.v1"
              and type(descriptor) is dict
-             and descriptor.get("schema") == "solarlab.native-interval-descriptor.v1",
+             and descriptor.get("schema") in ("solarlab.native-interval-descriptor.v1",
+                                               "solarlab.native-interval-descriptor.v2"),
              "diagnostic_interval_descriptor")
 
     def bound(name):
@@ -801,8 +802,29 @@ def diagnostic_interval_binding(request):
     _require(window["maximum_step_choices_hex"] == [gates["refinement"]["coarse_max_step_hex"],
                                                      gates["refinement"]["fine_max_step_hex"]]
              and 0 < min(choices) and max(choices) == 2*min(choices) <= controls["max_step"]
-             and selected in choices and controls["first_step"].hex() == window["first_step_hex"],
+             and controls["first_step"].hex() == window["first_step_hex"],
              "diagnostic_step_controls")
+    if descriptor["schema"] == "solarlab.native-interval-descriptor.v1":
+        _require(selected in choices and "refinement_selection" not in descriptor,
+                 "diagnostic_step_controls")
+    else:
+        # A stronger fine ceiling is a separately frozen numerical selection.
+        # Keep the original GateSpec and coarse request identities unchanged.
+        selection = bound("refinement_selection")
+        coarse_max = _hex(selection["observed_coarse_max_step_hex"])
+        _require(selection.get("schema") == "solarlab.native-interval-refinement.v1"
+                 and selection.get("authority") == "Root" and selection.get("accepted") is True
+                 and selection.get("case") == "fine"
+                 and selection["GateSpec"] == descriptor["GateSpec"]
+                 and selection["base_Point_identity"] == gates["base_Point_identity"]
+                 and selection["window_start_hex"] == window["start_hex"]
+                 and selection["window_end_hex"] == window["end_hex"]
+                 and selection["original_fine_max_step_hex"] == gates["refinement"]["fine_max_step_hex"]
+                 and selection["selected_max_step_hex"] == window["selected_max_step_hex"]
+                 and selection.get("effective_refinement_required") is True
+                 and selection.get("original_scientific_thresholds_unchanged") is True
+                 and 0 < selected < min(choices) and selected < coarse_max <= max(choices),
+                 "diagnostic_explicit_refinement_selection")
     controls["max_step"] = selected
     _require(request["controls"] == controls and "segment_startup_policy" not in request,
              "diagnostic_only_declared_control_delta")

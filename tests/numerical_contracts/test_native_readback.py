@@ -1315,3 +1315,68 @@ def test_diagnostic_metadata_authenticates_map_body_and_seed(tmp_path):
         pass
     else:
         raise AssertionError("new child was silently accepted by the legacy branch")
+
+
+def test_explicit_refinement_preserves_original_gates_and_physical_input(tmp_path):
+    from scripts.benchmarks.native_readback import diagnostic_interval_binding
+
+    request, _, put = _diagnostic_metadata_case(tmp_path)
+    original = deepcopy(request)
+    descriptor = request["diagnostic_interval"]
+    gate_bytes = Path(descriptor["GateSpec"]["path"]).read_bytes()
+    selection = {
+        "schema": "solarlab.native-interval-refinement.v1", "authority": "Root",
+        "accepted": True, "case": "fine", "GateSpec": descriptor["GateSpec"],
+        "base_Point_identity": request["starting_Point_identity"],
+        "window_start_hex": 1.0.hex(), "window_end_hex": 2.0.hex(),
+        "original_fine_max_step_hex": 0.125.hex(), "selected_max_step_hex": 0.0625.hex(),
+        "observed_coarse_max_step_hex": 0.1.hex(),
+        "effective_refinement_required": True, "original_scientific_thresholds_unchanged": True,
+    }
+    descriptor["schema"] = "solarlab.native-interval-descriptor.v2"
+    descriptor["refinement_selection"] = put("Selection.json", selection)
+    descriptor["window"]["selected_max_step_hex"] = 0.0625.hex()
+    request["controls"]["max_step"] = 0.0625
+    result = diagnostic_interval_binding(request)
+    assert result["summary"]["GateSpec"] == original["diagnostic_interval"]["GateSpec"]
+    assert Path(descriptor["GateSpec"]["path"]).read_bytes() == gate_bytes
+    for key in ("numeric_packet", "voltage_lift_map", "map_identity", "z0", "zdot0",
+                "budgets", "original_budgets", "weight_certificate", "segments", "observation_times"):
+        assert request[key] == original[key]
+    assert diagnostic_interval_binding(original)["summary"]["window"]["selected_max_step_hex"] == 0.25.hex()
+
+    def rejected(candidate):
+        with unittest.TestCase().assertRaises((HistoryVerificationError, KeyError)):
+            diagnostic_interval_binding(candidate)
+
+    # The new path cannot silently change the legacy pair, tolerance or input.
+    for mutate in (
+        lambda r: r["diagnostic_interval"].update(schema="solarlab.native-interval-descriptor.v1"),
+        lambda r: r["diagnostic_interval"].pop("refinement_selection"),
+        lambda r: r["diagnostic_interval"]["refinement_selection"].update(sha256="0"*64),
+        lambda r: r["diagnostic_interval"]["window"].update(maximum_step_choices_hex=[0.125.hex(), 0.0625.hex()]),
+        lambda r: r["controls"].update(rtol=2e-6),
+        lambda r: r["numeric_packet"]["definition"].update(mu_n=2.0),
+    ):
+        changed = deepcopy(request)
+        mutate(changed)
+        rejected(changed)
+    # Re-pin mutations so rejection tests semantics, not only a stale hash.
+    for index, edit in enumerate((
+        {"accepted": False}, {"authority": "other"}, {"case": "coarse"},
+        {"GateSpec": {"sha256": "foreign"}}, {"base_Point_identity": "foreign"},
+        {"window_end_hex": 3.0.hex()}, {"original_fine_max_step_hex": 0.25.hex()},
+        {"selected_max_step_hex": 0.03125.hex()}, {"observed_coarse_max_step_hex": 0.0625.hex()},
+        {"observed_coarse_max_step_hex": 0.5.hex()}, {"effective_refinement_required": False},
+        {"original_scientific_thresholds_unchanged": False},
+    )):
+        changed = deepcopy(request)
+        changed["diagnostic_interval"]["refinement_selection"] = put(
+            "BadSelection%d.json" % index, dict(selection, **edit))
+        rejected(changed)
+    changed = deepcopy(request)
+    changed["controls"]["max_step"] = 0.125
+    changed["diagnostic_interval"]["window"]["selected_max_step_hex"] = 0.125.hex()
+    changed["diagnostic_interval"]["refinement_selection"] = put(
+        "UnrefinedSelection.json", dict(selection, selected_max_step_hex=0.125.hex()))
+    rejected(changed)
