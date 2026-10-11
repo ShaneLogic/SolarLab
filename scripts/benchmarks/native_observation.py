@@ -166,7 +166,14 @@ def prepare_physical_polynomial(binding, raw_polynomials, clock: AcceptedClock, 
     parent = raw
     if mapping.frame is not None:
         frame = mapping.frame
-        if (frame.segment_sha256 != binding.segment_sha256 or frame.t0 != binding.segment.start
+        numeric = getattr(binding, "numeric_handoff_json", None)
+        anchored = frame.t0 == binding.segment.start
+        if numeric is not None:
+            handoff = json.loads(numeric)
+            anchored = (handoff["phase"] == "complete" and handoff["transfer"]["new_frame_identity"] == frame.identity
+                        and frame.t0 == float.fromhex(handoff["transfer"]["time_hex"])
+                        and rational(frame.t0) <= clock.predecessor)
+        if (frame.segment_sha256 != binding.segment_sha256 or not anchored
                 or frame.parent_map_identity != digest(mapping.payload(include_frame=False))):
             raise ContractError("native_observation_segment_frame_binding")
         q0 = tuple(sum((rational(w[i]) for w in frame.q0.words), Fraction(0)) for i in range(len(raw)))
@@ -551,7 +558,8 @@ def prepare_native_frame_map(binding, frame: NativeBasisFrame):
 
 
 def require_frame_successor(previous: NativeBasisFrame, current: NativeBasisFrame, *,
-                            previous_segment, current_segment, previous_mapping=None, current_mapping=None):
+                            previous_segment, current_segment, previous_mapping=None, current_mapping=None,
+                            numeric_handoff=None):
     """Keep native owner/generation distinct from the controller segment index."""
     left, right = previous.snapshot["endpoint"], current.snapshot["predecessor"]
     if previous.binding_identity != current.binding_identity:
@@ -559,6 +567,44 @@ def require_frame_successor(previous: NativeBasisFrame, current: NativeBasisFram
     if left["internal_t"].hex() != right["internal_t"].hex():
         raise ContractError("native_observation_frame_time_gap")
     same_epoch = previous.owner == current.owner and previous.generation == current.generation
+    if numeric_handoff is not None:
+        h = numeric_handoff
+        if (not isinstance(h, Mapping) or h.get("schema") != "solarlab.accepted-reference-handoff.v1"
+                or h.get("kind") != "voltage_lift_numeric_handoff"
+                or h.get("phase") != "complete" or same_epoch or previous_segment != current_segment
+                or h["record_sha256"] != digest({k: v for k, v in h.items() if k != "record_sha256"})
+                or h["acceptance"].get("schema") != "solarlab.full-interval-refresh-acceptance.v1"
+                or h["transfer"]["acceptance_sha256"] != digest(h["acceptance"])
+                or h["acceptance"]["coefficient_frame_identity"] != previous.identity
+                or h["acceptance"]["point_identity"] != h["transfer"]["point_identity"]
+                or h["ledger_sha256"] != digest(h["ledger"])
+                or previous_mapping is None or current_mapping is None
+                or h["transfer"]["old_map_identity"] != previous_mapping.identity
+                or h["transfer"]["new_map_identity"] != current_mapping.identity
+                or h["old_epoch"] != {"owner": previous.owner, "generation": previous.generation,
+                    "nsteps": previous.snapshot["native_before"]["nsteps"], "endpoint_identity": left["identity"],
+                    "coefficient_frame_identity": previous.identity}
+                or h["new_epoch"] != {"owner": current.owner, "generation": current.generation, "nsteps": 0}
+                or previous.owner != current.owner or current.generation != previous.generation+1
+                or current.snapshot["native_before"]["nsteps"] != 1 or right["nsteps"] != 0
+                or current_mapping.frame.identity != h["transfer"]["new_frame_identity"]
+                or not current_mapping.frame.t0.hex() == left["internal_t"].hex() == h["transfer"]["time_hex"]):
+            raise ContractError("native_observation_invalid_numeric_handoff")
+        for side, source, mapping, state_key, rate_key in (
+                (left, previous_segment, previous_mapping, "old_raw_state_hex", "old_raw_rate_hex"),
+                (right, current_segment, current_mapping, "new_raw_state_hex", "new_raw_rate_hex")):
+            state = np.frombuffer(side["raw_y"], dtype="<f8")
+            rate = np.frombuffer(side["raw_yp"], dtype="<f8")
+            inputs, input_rate = source.inputs(side["internal_t"])
+            words = lambda value: [[float(v).hex() for v in word] for word in value.words]
+            if ([float(v).hex() for v in state] != h["transfer"][state_key]
+                    or [float(v).hex() for v in rate] != h["transfer"][rate_key]
+                    or [float(v).hex() for v in inputs] != h["transfer"]["inputs_hex"]
+                    or [float(v).hex() for v in input_rate] != h["transfer"]["input_rates_hex"]
+                    or words(mapping.physical_primitive(state, inputs, time=side["internal_t"])) != h["transfer"]["physical_state_words_hex"]
+                    or words(mapping.physical_rate(rate, input_rate)) != h["transfer"]["physical_rate_words_hex"]):
+                raise ContractError("native_observation_numeric_handoff_words")
+        return
     if same_epoch:
         if (previous_segment.id != current_segment.id or left["identity"] != right["identity"]
                 or previous_mapping is not None and current_mapping is not None
@@ -734,11 +780,16 @@ class AcceptedIntervalObserver:
         self.binding, self.frame, self.arithmetic = binding, frame, arithmetic
         self.prepared = prepare_native_frame_map(binding, frame)
         if previous is not None:
+            handoff = None
+            if ((previous.frame.owner, previous.frame.generation) != (frame.owner, frame.generation)
+                    and previous.binding.segment.id == binding.segment.id
+                    and getattr(binding, "numeric_handoff_json", None) is not None):
+                handoff = json.loads(binding.numeric_handoff_json)
             require_frame_successor(previous.frame, frame, previous_segment=previous.binding.segment,
                                     current_segment=binding.segment,
                                     previous_mapping=previous.binding.adapter.mapping,
-                                    current_mapping=binding.adapter.mapping)
-            previous.prepared.path.clock.require_successor(self.prepared.path.clock)
+                                    current_mapping=binding.adapter.mapping, numeric_handoff=handoff)
+            previous.prepared.path.clock.require_successor(self.prepared.path.clock, numeric_handoff=handoff)
         self.observer = SlabPathObserver(binding.adapter.mapping.model, self.prepared.path)
 
     def require_endpoint(self, native, *, predecessor=False):

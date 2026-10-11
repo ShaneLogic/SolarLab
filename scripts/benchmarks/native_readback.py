@@ -1082,6 +1082,189 @@ def _frame_word_values(words, size, *, count=4):
     return values
 
 
+def reference_refresh_policy(request):
+    """Independently bind the one-refresh policy without importing its producer."""
+    policy = request.get("reference_refresh_policy")
+    if policy is None:
+        return None
+    _require(type(policy) is dict, "reference_refresh_policy_type")
+    when = _hex(policy["time_hex"])
+    segment = request["segments"][-1]
+    _require(segment["start"] < when < segment["end"] and "diagnostic_interval" not in request
+             and "segment_frame_policy" in request and request["controls"].get("calc_initcond") is None
+             and request["voltage_lift_map"].get("mapped_input_profile") == "frame-input-expansion12-v1",
+             "reference_refresh_scope")
+    expected = {"schema": "solarlab.accepted-reference-refresh-policy.v1", "time_hex": when.hex(),
+        "physical_segment_ordinal": len(request["segments"]), "segment_sha256": _digest(segment), "max_refreshes": 1,
+        "parent_map_identity": request["map_identity"], "controls_sha256": _digest(request["controls"]),
+        "budgets_sha256": _digest(request["budgets"]), "segments_sha256": _digest(request["segments"]),
+        "sampling_sha256": _digest((request["observation_times"], request["quadrature"])),
+        "trigger": "exact_fully_accepted_native_endpoint", "native_api": "init_step",
+        "same_owner_generation_increment": 1, "preserve_original_segment_inputs": True,
+        "discard_native_multistep_history": True, "restored_seed_prefix_credit": False}
+    _require(policy == expected, "reference_refresh_policy_binding")
+    return policy
+
+
+def _reference_refresh_point(record, history, request):
+    """Check the fixed-reference Point codec against already consumed history.
+
+    This is deliberately limited to the refresh policy's affine v6 authority
+    and its original zero-primitive v3 reference. No Point, model, numerical
+    provider or producer validator is imported. Field projections use exact
+    dyadic sums followed by the codec's two binary64 words; they are not new
+    physical evaluations. The consumed Point identity binds the complete
+    transition, including its previous authority and every predecessor word.
+    """
+    packet = request["numeric_packet"]
+    reference = packet["initial_reference"]
+    root = reference["payload"]
+    layout = packet["layout_identity"]
+    size = len(request["controls"]["atol"])
+    offsets = packet["variable_offsets"]
+    _require(type(offsets) is dict and set(offsets) == set(root["fields"])
+             and layout == request["voltage_lift_map"]["layout"] == root["layout"],
+             "reference_refresh_Point_layout")
+    for bounds in offsets.values():
+        _require(type(bounds) is list and len(bounds) == 2
+                 and all(type(v) is int for v in bounds) and 0 <= bounds[0] < bounds[1] <= size,
+                 "reference_refresh_Point_offsets")
+    names = sorted(offsets, key=lambda name: offsets[name][0])
+    cursor, shapes = 0, {}
+    for name in names:
+        start, stop = offsets[name]
+        shape = root["fields"][name]["shape"]
+        _require(start == cursor and type(shape) is list
+                 and all(type(v) is int and v > 0 for v in shape) and math.prod(shape) == stop-start,
+                 "reference_refresh_Point_field_layout")
+        cursor, shapes[name] = stop, shape
+    _require(cursor == size, "reference_refresh_Point_layout_coverage")
+
+    def primitive(value, shape):
+        _require(type(value) is dict and set(value) == {"shape", "precision", "words"}
+                 and type(value["shape"]) is list and all(type(v) is int for v in value["shape"])
+                 and value["shape"] == shape
+                 and value["precision"] in {"input-expansion4-v1", "frame-input-expansion12-v1"},
+                 "reference_refresh_Point_primitive_schema")
+        count = 12 if value["precision"] == "frame-input-expansion12-v1" else 4
+        values = _frame_word_values(value["words"], math.prod(shape), count=count)
+        # The codec normalizes primitive zero signs, unlike retained Point
+        # input words. Compare canonical strings here, not float equality.
+        remaining = list(values)
+        for layer in value["words"]:
+            for i, word in enumerate(layer):
+                rounded = float(remaining[i])
+                _require(word == rounded.hex(), "reference_refresh_Point_primitive_encoding")
+                remaining[i] -= Fraction(rounded)
+        return values
+
+    def projection(anchor, values, shape):
+        _require(type(anchor) is dict and set(anchor) == {"shape", "high", "low"}
+                 and anchor["shape"] == shape, "reference_refresh_Point_field_schema")
+        high, low = (_hex_vector(anchor[key], math.prod(shape)) for key in ("high", "low"))
+        result = {"shape": shape, "high": [], "low": []}
+        for a, b, value in zip(high, low, values):
+            s = a+b
+            z = s-a
+            _require(s == a and (a-(s-z))+(b-z) == b
+                     and (a == 0 or 2.**-970 <= abs(a) <= 2.**970),
+                     "reference_refresh_Point_anchor_normalization")
+            total = Fraction(a)+Fraction(b)+value
+            hi = float(total)
+            lo = float(total-Fraction(hi))
+            # The final DD constructor normalizes its two rounded words.
+            summed = hi+lo
+            z = summed-hi
+            remainder = (hi-(summed-z))+(lo-z)
+            _require(math.isfinite(summed) and math.isfinite(remainder)
+                     and (summed == 0 or 2.**-970 <= abs(summed) <= 2.**970),
+                     "reference_refresh_Point_projection_range")
+            result["high"].append(summed.hex())
+            result["low"].append(remainder.hex())
+        return result
+
+    point_keys = {"schema", "layout", "coordinate_reference", "identity", "time", "y", "inputs",
+                  "fields", "authority_identity", "authority", "field_role"}
+    authority_keys = {"schema", "layout", "map", "version", "modes", "parameters", "anchor", "primitives",
+                      "time", "inputs", "coordinates", "reference", "composition_policy", "transition"}
+    modes = {name: "linear" for name in names}
+    map_id = _digest({"layout": layout, "name": "relative-fields", "version": 1,
+                      "modes": modes, "parameters": {}})
+
+    def check_point(encoded, expected_authority):
+        _require(type(encoded) is dict and set(encoded) == {"payload", "sha256"},
+                 "reference_refresh_Point_outer_schema")
+        p = encoded["payload"]
+        _require(type(p) is dict and set(p) == point_keys and p["schema"] == "solarlab.precision-point.v2"
+                 and p["layout"] == layout and p["field_role"] == "projection"
+                 and _digest(p["authority"]) == _digest(expected_authority) and set(p["fields"]) == set(names)
+                 and encoded["sha256"] == _digest(p), "reference_refresh_Point_codec")
+        a = p["authority"]
+        aid = _digest(a)
+        _require(p["authority_identity"] == aid and p["time"] == a["time"]
+                 and p["inputs"] == a["inputs"] and p["y"] == a["coordinates"]
+                 and p["coordinate_reference"] == a["reference"], "reference_refresh_Point_authority")
+        digest = hashlib.sha256(repr((_hex(p["time"]), p["coordinate_reference"], layout)).encode())
+        digest.update(aid.encode())
+        digest.update(_word_bytes(p["y"], size)+_word_bytes(p["inputs"], 2))
+        for name in names:
+            shape = shapes[name]
+            values = primitive(a["primitives"][name], shape)
+            _require(_digest(p["fields"][name]) == _digest(projection(a["anchor"][name], values, shape)),
+                     "reference_refresh_Point_field_projection")
+            # MappedArray identities retain authority and the complete field
+            # selection, not the rounded projection bytes.
+            count = math.prod(shape)
+            digest.update(name.encode()+b"authority-field-v1:"+aid.encode()+name.encode()
+                          +repr(tuple(shape)).encode()+struct.pack(f"{count}n", *range(count)))
+        _require(p["identity"] == digest.hexdigest(), "reference_refresh_Point_full_identity")
+
+    base = root["authority"]
+    _require(type(base) is dict and set(base) == authority_keys and set(base["anchor"]) == set(names),
+             "reference_refresh_Point_reference_schema")
+    zero = {name: {"shape": shapes[name], "precision": "input-expansion4-v1",
+                   "words": [[0.0.hex()] * math.prod(shapes[name]) for _ in range(4)]} for name in names}
+    expected_base = {"schema": "solarlab.state-authority.v3", "layout": layout, "map": "relative-fields",
+        "version": 1, "modes": modes, "parameters": {}, "anchor": base["anchor"], "primitives": zero,
+        "time": root["time"], "inputs": root["inputs"], "coordinates": [0.0.hex()]*size,
+        "reference": f"relative:{map_id}:initial", "composition_policy": "exact-four-word-primitives-v1",
+        "transition": None}
+    check_point(reference, expected_base)
+    _require(root["identity"] == request["voltage_lift_map"]["physical_reference"],
+             "reference_refresh_Point_reference_identity")
+
+    p = record["payload"]
+    authority = p["authority"]
+    _require(type(authority) is dict and set(authority) == authority_keys | {"coordinate_contract"},
+             "reference_refresh_Point_authority_schema")
+    transition = authority["transition"]
+    _require(type(transition) is dict and set(transition) == {
+        "previous_authority", "previous_point", "previous_primitives", "local_primitives"}
+        and transition["previous_point"] == history["predecessor_identity"]
+        and type(transition["previous_authority"]) is str and len(transition["previous_authority"]) == 64
+        and all(v in "0123456789abcdef" for v in transition["previous_authority"])
+        and set(transition["previous_primitives"]) == set(transition["local_primitives"]) == set(names),
+        "reference_refresh_Point_predecessor")
+    _frame_word_values(history["physical_cumulative_words_hex"], size, count=12)
+    current = {}
+    for name in names:
+        start, stop = offsets[name]
+        current[name] = {"shape": shapes[name], "precision": "frame-input-expansion12-v1",
+                         "words": [layer[start:stop] for layer in history["physical_cumulative_words_hex"]]}
+        previous = transition["previous_primitives"][name]
+        primitive(previous, shapes[name])
+        _require(_digest(transition["local_primitives"][name]) == _digest({"shape": shapes[name],
+            "precision": "frame-input12-endpoint-difference-v1", "current": current[name], "previous": previous}),
+            "reference_refresh_Point_paired_transition")
+    expected = dict(expected_base, schema="solarlab.state-authority.v6", primitives=current,
+        time=history["time_hex"], inputs=history["inputs_hex"], coordinates=history["physical_cumulative_words_hex"][0],
+        reference=f"affine-trial:{map_id}:{root['identity']}",
+        composition_policy="frame-input12-endpoints-paired-transition-v1", transition=transition,
+        coordinate_contract={"kind": "fixed-reference-affine-v1", "solver_projection": "first-word", "reference": reference})
+    check_point(record, expected)
+    _require(p["identity"] == history["point_identity"], "reference_refresh_Point_history_identity")
+
+
 class SegmentFrameCheck:
     """Independent dyadic frame/weight checks; no model or native imports."""
 
@@ -1095,6 +1278,8 @@ class SegmentFrameCheck:
         self.prior_phi0 = None
         self.frames, self.polynomials = [], 0
         self.polynomial_hash = hashlib.sha256()
+        self.refresh_policy = reference_refresh_policy(request)
+        self.refreshes = []
         _require(not any(k in request for k in ("segment_frame", "frame_overrides", "parent_weight_frame")),
                  "segment_frame_unbound_option")
         if not self.enabled:
@@ -1260,6 +1445,127 @@ class SegmentFrameCheck:
                  and row["constructor_controls_sha256"] == _digest(row["constructor_controls"]),
                  "segment_frame_constructor_weight_binding")
 
+    def prepare_refresh(self, record, segment, ordinal, sample, interval, domain, certificate, ledger):
+        """Require the already verified acceptance and exact dyadic transfer."""
+        policy, h = self.refresh_policy, sample["history"]
+        _require(policy is not None and not self.refreshes and record["phase"] == "prepared"
+                 and record["schema"] == "solarlab.accepted-reference-handoff.v1"
+                 and record["kind"] == "voltage_lift_numeric_handoff"
+                 and record["record_sha256"] == _digest({k: v for k, v in record.items() if k != "record_sha256"})
+                 and record["request_sha256"] == self.request_id and record["policy_sha256"] == _digest(policy)
+                 and record["physical_segment_ordinal"] == ordinal == policy["physical_segment_ordinal"]
+                 and record["segment_sha256"] == _digest(segment) == policy["segment_sha256"]
+                 and record["new_epoch"] is None and record["state_or_rate_projected"] is False
+                 and record["native_multistep_history_discarded"] is True, "reference_refresh_record")
+        accepted = {"schema": "solarlab.full-interval-refresh-acceptance.v1", "request_sha256": self.request_id,
+            "point_identity": h["point_identity"], "time_hex": h["time_hex"],
+            "sample_record_sha256": sample["record_sha256"], "history_sha256": _digest(h),
+            "interval_record_sha256": _digest(interval), "domain_record_sha256": _digest(domain),
+            "current_certificate_sha256": _digest(certificate), "state_checks_sha256": _digest(sample["state_checks"]),
+            "coefficient_frame_identity": interval["coefficient_frame_identity"]}
+        _require(record["acceptance"] == accepted and sample["state_checks"]["passed"] is True
+                 and _decode(interval["observation"])["passed"] is True
+                 and _decode(domain["evidence"])["passed"] is True
+                 and _decode(certificate["evidence"])["passed"] is True
+                 and certificate["sample_record_sha256"] == sample["record_sha256"]
+                 and interval["right"]["record_sha256"] == sample["record_sha256"]
+                 and _decode(record["ledger"]) == ledger and record["ledger_sha256"] == _digest(record["ledger"]),
+                 "reference_refresh_full_acceptance_or_ledger")
+        t = record["transfer"]; old, new = t["old_frame"], t["new_frame"]
+        _require(old == self.active and t["old_map"] == self.current_map
+                 and t["old_frame_identity"] == _digest(old) and t["old_map_identity"] == _digest(self.current_map)
+                 and t["time_hex"] == h["time_hex"] == policy["time_hex"]
+                 and t["point_identity"] == h["point_identity"]
+                 and t["inputs_hex"] == h["inputs_hex"]
+                 and t["acceptance_sha256"] == _digest(accepted), "reference_refresh_original_Point")
+        try:
+            _reference_refresh_point(t["Point"], h, self.request)
+        except HistoryVerificationError:
+            raise
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise HistoryVerificationError("reference_refresh_Point_malformed_codec") from error
+        self.sample(h)
+        zero = [0.0.hex()]*self.size
+        _require(t["old_raw_state_hex"] == h["raw_solver_z_hex"] and t["old_raw_rate_hex"] == h["raw_solver_zdot_hex"]
+                 and t["new_raw_state_hex"] == t["new_raw_rate_hex"] == zero
+                 and t["physical_state_words_hex"] == h["physical_cumulative_words_hex"]
+                 and t["physical_rate_words_hex"] == h["physical_rate_words_hex"]
+                 and t["input_rates_hex"] == h["input_rates_hex"], "reference_refresh_exact_words")
+        when = _hex(t["time_hex"])
+        rates = tuple((v[1]-v[0])/(segment["end"]-segment["start"]) for v in (segment["voltage"], segment["photons"]))
+        inputs = tuple(v[0]+rate*(when-segment["start"]) for v, rate in zip((segment["voltage"], segment["photons"]), rates))
+        _require(t["inputs_hex"] == [float(v).hex() for v in inputs]
+                 and t["input_rates_hex"] == [float(v).hex() for v in rates], "reference_refresh_original_input_function")
+        expected_frame = dict(old, t0_hex=t["time_hex"], predecessor_identity=h["point_identity"],
+            logical_initialization_index=old["logical_initialization_index"]+1,
+            parent_input_sha256=_digest(accepted), q0_words_hex=new["q0_words_hex"], v0_words_hex=new["v0_words_hex"])
+        expected_map = dict(self.current_map, segment_frame=expected_frame)
+        _require(new == expected_frame and t["new_frame_identity"] == _digest(new)
+                 and t["new_map"] == expected_map and t["new_map_identity"] == _digest(expected_map)
+                 and t["old_numeric_initialization_ordinal"] == old["logical_initialization_index"]
+                 and t["new_numeric_initialization_ordinal"] == new["logical_initialization_index"], "reference_refresh_new_frame")
+        q = self.parent(old, when, _hex_vector(t["old_raw_state_hex"], self.size))
+        v = self.parent(old, when, _hex_vector(t["old_raw_rate_hex"], self.size), rate=True)
+        _require(q == _frame_word_values(new["q0_words_hex"], self.size)
+                 and v == _frame_word_values(new["v0_words_hex"], self.size)
+                 and self.physical(q, inputs) == _frame_word_values(t["physical_state_words_hex"], self.size, count=12)
+                 and self.physical(v, rates, rate=True) == _frame_word_values(t["physical_rate_words_hex"], self.size, count=12),
+                 "reference_refresh_independent_parent_composition")
+        raw_words = b"".join(_word_bytes(w, self.size) for w in t["physical_rate_words_hex"])
+        rate_id = hashlib.sha256(repr(("physical-rate-view-v1", h["point_identity"], self.base["layout"],
+            self.base["physical_model"], t["new_map_identity"], "mapped-coordinate-rate")).encode())
+        rate_id.update(b"frame-input-expansion12-v1:"+repr((self.size,)).encode()+raw_words+raw_words)
+        rate_id.update(_word_bytes(t["input_rates_hex"], 2)+_word_bytes(zero, self.size)*2)
+        _require(rate_id.hexdigest() == t["new_rate_identity"], "reference_refresh_rate_identity")
+        self.active, self.current_map = new, expected_map
+        self.latest_weights, self.prior_phi0 = None, _word_bytes(zero, self.size)
+        self.frames.append({"frame_identity": t["new_frame_identity"], "map_identity": t["new_map_identity"],
+            "ordinal": new["logical_initialization_index"], "physical_segment_ordinal": ordinal,
+            "weight_packets": 0, "initialization_mode": "accepted_numeric_refresh"})
+        return expected_map
+
+    def complete_refresh(self, prepared, complete, statistics):
+        _require(complete["record_sha256"] == _digest({k: v for k, v in complete.items() if k != "record_sha256"})
+                 and complete["phase"] == "complete" and complete["prepared_sha256"] == prepared["record_sha256"]
+                 and all(complete[k] == v for k, v in prepared.items() if k not in {"phase", "new_epoch", "record_sha256"})
+                 and complete["statistics_sha256"] == _digest(statistics) and complete["public_api"] == "init_step",
+                 "reference_refresh_completion_binding")
+        old, new, raw = prepared["old_epoch"], complete["new_epoch"], statistics["raw_statistics"]
+        before = complete["before_statistics"]["raw_statistics"]
+        _require(before["observation_owner"] == old["owner"] and before["observation_generation"] == old["generation"]
+                 and before["num_steps"] == old["nsteps"] and before["current_time"] == _hex(self.active["t0_hex"])
+                 and new == {"owner": old["owner"], "generation": old["generation"]+1, "nsteps": 0}
+                 and raw["observation_owner"] == new["owner"] and raw["observation_generation"] == new["generation"]
+                 and raw["num_steps"] == 0 and raw["current_time"] == _hex(self.active["t0_hex"]),
+                 "reference_refresh_actual_generation")
+        expected_weights = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": _digest(self.active),
+            **{k: self.active[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
+        _require(complete["parent_weight_frame"] == expected_weights
+                 and complete["initialization_return"] == {"time_hex": self.active["t0_hex"], "success": True,
+                    "raw_z_hex": [0.0.hex()]*self.size, "raw_zdot_hex": [0.0.hex()]*self.size},
+                 "reference_refresh_public_initialization_words")
+        expected_binding = _digest({"adapter": _digest({"map": _digest(self.current_map),
+            "partial_frame": "raw-z,raw-zdot,inputs,input-rates,time-v1"}),
+            "request": self.request_id, "segment": _digest(self.segment)})
+        _require(complete["callback_binding_identity"] == expected_binding, "reference_refresh_callback_binding")
+        self.refreshes.append({"handoff_sha256": complete["record_sha256"], "old_epoch": old, "new_epoch": new,
+            "actual_initial_step_hex": None, "first_return_statistics_sha256": None})
+
+    def refresh_work(self, row):
+        raw = row["raw_statistics"]
+        if row["phase"] in {"after_onestep", "onestep_exception"} and self.refreshes:
+            entry = self.refreshes[-1]
+            if raw["num_steps"] > 0:
+                h0 = raw["initial_step"]
+                requested = segment_startup_controls(self.request, self.segment)["first_step"]
+                _require(type(h0) is float and math.isfinite(h0) and h0 > 0
+                         and (requested == 0 or h0.hex() == float(requested).hex())
+                         and entry["actual_initial_step_hex"] in (None, h0.hex()), "reference_refresh_actual_startup")
+                entry["actual_initial_step_hex"] = h0.hex()
+            if entry["first_return_statistics_sha256"] is None:
+                entry["first_return_statistics_sha256"] = _digest(row)
+                entry["first_return_statistics"] = raw
+
     def weight_state(self, value, *, owner, generation, initial=False):
         value = _decode(value)
         frame, controls = self.active, self.request["controls"]
@@ -1402,7 +1708,8 @@ class SegmentFrameCheck:
                  tuple(abs(a-p) for a, p in zip(actual_rates, rates)), "segment_frame_polynomial_readback_error")
 
     def finish(self):
-        return {"initializations": self.frames, "independent_physical_polynomials": self.polynomials,
+        return {"initializations": self.frames, "numeric_refreshes": self.refreshes,
+                "independent_physical_polynomials": self.polynomials,
                 "physical_path_digests_sha256": self.polynomial_hash.hexdigest(),
                 "weight_basis": "actual callback u/time checked against preceding native phi[0]",
                 "requested_startup_unchanged": True, "actual_automatic_startup_parity_claimed": False,
@@ -1451,6 +1758,9 @@ class _Protocol:
         self.prefix = {k: ((Fraction(0),) * 3, (Fraction(0),) * 3) for k in _LEDGERS}
         self.coverage = []
         self.native_owner = None
+        self.numeric_ordinal = 0
+        self.refresh_anchor = None
+        self.refresh_binding_identity = None
         self.startup = SegmentStartupCheck(request)
         self.segment_frame = SegmentFrameCheck(request)
         self.common_clocks = []
@@ -1469,7 +1779,7 @@ class _Protocol:
             self._context(row)
             self.jacobians += 1
             _require(row["segment_id"] == self.segment["id"]
-                     and row["logical_initialization_index"] == self.ordinal
+                     and row["logical_initialization_index"] == self.numeric_ordinal
                      and row["callback_index"] == self.jacobians, "callback_context")
             _hex(row["time_hex"])
             _hex(row["cj_hex"])
@@ -1489,9 +1799,13 @@ class _Protocol:
             row = self.rows.take()
         _require(row["kind"] == "native_statistics" and row["phase"] == phase
                  and row["segment_id"] == self.segment["id"]
-                 and row["logical_initialization_index"] == self.ordinal, "statistics_order_or_context")
-        self.startup.consume(row)
-        target = self.segment["start"] if phase == "initialization_return" else self.segment["end"]
+                 and row["logical_initialization_index"] == self.numeric_ordinal, "statistics_order_or_context")
+        if self.numeric_ordinal == self.ordinal:
+            self.startup.consume(row)
+        elif phase != "reference_refresh_return":
+            self.segment_frame.refresh_work(row)
+        target = (self.segment["start"] if phase == "initialization_return" else
+                  _hex(self.segment_frame.active["t0_hex"]) if phase == "reference_refresh_return" else self.segment["end"])
         _require(_hex(row["requested_time_hex"]) == target, "statistics_requested_time")
         raw = row["raw_statistics"]
         _require(all(type(raw[k]) is int and raw[k] >= 0 for k in _COUNTERS)
@@ -1510,19 +1824,20 @@ class _Protocol:
         owner = raw["observation_owner"], raw["observation_generation"]
         _require(type(owner[0]) is str and bool(owner[0]) and type(owner[1]) is int and owner[1] > 0,
                  "statistics_native_owner")
-        if phase == "initialization_return":
+        if phase in {"initialization_return", "reference_refresh_return"}:
             self.native_owner = owner
         else:
             _require(owner == self.native_owner, "native_owner_changed_within_segment")
         if self.segment_frame.enabled:
             self.segment_frame.weight_state(raw.get("parent_weight_state"), owner=owner[0], generation=owner[1],
-                                            initial=phase == "initialization_return")
+                                            initial=phase in {"initialization_return", "reference_refresh_return"})
         if previous is not None:
             _require(all(raw[k] >= previous[k] for k in _COUNTERS)
                      and row["work_since_before"] == {k: raw[k] - previous[k] for k in _COUNTERS},
                      "statistics_counter_delta")
             _require(raw["num_steps"] == previous["num_steps"] + 1, "onestep_not_consecutive")
             self.steps += 1
+        self.last_statistics_record = row
         return raw
 
     def _sample(self, when, origin, predecessor, *, initial=False):
@@ -1651,17 +1966,24 @@ class _Protocol:
                  and evidence["DAE_accuracy_certified"] is False, "current_certificate_binding")
         rb = evidence["readback"]
         when = _hex(h["time_hex"])
+        transferred = (self.refresh_anchor["transfer"] if self.refresh_anchor is not None
+                       and self.refresh_anchor["transfer"]["point_identity"] == h["point_identity"]
+                       and self.refresh_anchor["transfer"]["time_hex"] == h["time_hex"] else None)
+        rate_identity = rate["identity"] if transferred is None else transferred["new_rate_identity"]
         side = "right" if when == self.segment["start"] else "left" if when == self.segment["end"] else "continuous"
-        _require(rb["point_identity"] == h["point_identity"] and rb["rate_identity"] == rate["identity"]
+        _require(rb["point_identity"] == h["point_identity"] and rb["rate_identity"] == rate_identity
                  and rb["map_identity"] == self.map_id and rb["path_identity"] == self.path_id
-                 and rb["binding_identity"] == self.initial_proof["source_identity"]
+                 and rb["binding_identity"] == (self.refresh_binding_identity or self.initial_proof["source_identity"])
                  and rb["time_hex"] == h["time_hex"] and rb["event_side"] == side
                  and rb["state_changed"] is False and rb["native_source_provenance_claimed"] is False,
                  "current_readback_binding")
         for name, field, size in (("raw_z_words", "raw_solver_z_hex", self.size),
                                   ("raw_zdot_words", "raw_solver_zdot_hex", self.size),
                                   ("input_words", "inputs_hex", 2), ("input_rate_words", "input_rates_hex", 2)):
-            _require(rb[name] == _word_bytes(h[field], size), "current_readback_words")
+            expected = h[field]
+            if transferred is not None and field in {"raw_solver_z_hex", "raw_solver_zdot_hex"}:
+                expected = transferred["new_raw_state_hex" if field == "raw_solver_z_hex" else "new_raw_rate_hex"]
+            _require(rb[name] == _word_bytes(expected, size), "current_readback_words")
         _require(rb["physical_rate_words"] == tuple(_word_bytes(w, self.size) for w in h["physical_rate_words_hex"]),
                  "current_readback_rate_layers")
         for name in ("physical_state_absolute_error", "physical_rate_absolute_error", "state_action_error_bounds"):
@@ -1689,6 +2011,7 @@ class _Protocol:
             for common in self.common_clocks:
                 if common["sample"]["record_sha256"] == key and common["certificate"] is None:
                     common["certificate"] = row
+        return row
 
     def _interval(self, left, right, frame, *, supplied_row=None, commit=True):
         kind = "voltage_lift_interval_charge_v2" if self.charge_refinement is not None else "voltage_lift_interval_charge"
@@ -1813,6 +2136,30 @@ class _Protocol:
             self.charge_refinement.commit(upper_step)
         if commit:
             self.intervals += 1
+        return row
+
+    def _consume_reference_refresh(self, sample, interval, domain, certificate, cursor, frame, old_statistics):
+        prepared = self.rows.take("voltage_lift_numeric_handoff")
+        old_epoch = {"owner": frame["owner"], "generation": frame["generation"],
+            "nsteps": frame["native_before"]["nsteps"], "endpoint_identity": frame["endpoint"]["identity"],
+            "coefficient_frame_identity": self.frame_id}
+        _require(prepared["old_epoch"] == old_epoch, "reference_refresh_old_native_epoch")
+        ledger = {"prefixes": {k: {"absolute_defects": absolute, "reference_errors": errors}
+                                for k, (absolute, errors) in self.prefix.items()},
+            "upper_accumulator": None if self.charge_refinement is None else self.charge_refinement.summary(),
+            "signed_prefix": self.signed_integrals, "sample_cursor": cursor,
+            "last_accepted": self._pointer(sample), "physical_reference_identity": self.request["voltage_lift_map"]["physical_reference"]}
+        self.mapping = self.segment_frame.prepare_refresh(prepared, self.segment, self.ordinal,
+            sample, interval, domain, certificate, ledger)
+        self.map_id = _digest(self.mapping)
+        self.numeric_ordinal = prepared["transfer"]["new_numeric_initialization_ordinal"]
+        raw = self._statistics("reference_refresh_return", _hex(prepared["transfer"]["time_hex"]))
+        complete = self.rows.take("voltage_lift_numeric_handoff")
+        before = complete["before_statistics"]["raw_statistics"]
+        _require(all(before[k] == old_statistics[k] for k in _COUNTERS), "reference_refresh_preserved_old_work")
+        self.segment_frame.complete_refresh(prepared, complete, self.last_statistics_record)
+        self.refresh_anchor, self.refresh_binding_identity = complete, complete["callback_binding_identity"]
+        return raw
 
     def run(self):
         row = self.rows.take("voltage_lift_reference")
@@ -1838,6 +2185,7 @@ class _Protocol:
         last_right = None
         previous_native = None
         for self.ordinal, self.segment in enumerate(self.request["segments"], 1):
+            self.numeric_ordinal = self.ordinal
             self.rows.checkpoint()
             start, end = self.segment["start"], self.segment["end"]
             _require(start == last_time and start < end, "protocol_segment_order")
@@ -1900,6 +2248,18 @@ class _Protocol:
                     if same_epoch:
                         _require(old["segment"]["id"] == self.segment["id"]
                                  and old["endpoint"]["identity"] == previous["identity"], "native_frame_predecessor_identity")
+                    elif (self.refresh_anchor is not None and old["segment"]["id"] == self.segment["id"]
+                          and self.refresh_anchor["transfer"]["time_hex"] == previous["internal_t"].hex()):
+                        handoff = self.refresh_anchor
+                        _require(handoff["old_epoch"] == {"owner": old["owner"], "generation": old["generation"],
+                            "nsteps": old["nsteps"], "endpoint_identity": old["endpoint"]["identity"],
+                            "coefficient_frame_identity": old["frame_identity"]}
+                            and handoff["new_epoch"] == {"owner": frame["owner"], "generation": frame["generation"], "nsteps": 0}
+                            and old["owner"] == frame["owner"] and frame["generation"] == old["generation"]+1
+                            and previous["nsteps"] == 0 and frame["native_before"]["nsteps"] == 1
+                            and handoff["transfer"]["old_map_identity"] == old["map_identity"]
+                            and handoff["transfer"]["new_map_identity"] == self.map_id,
+                            "native_numeric_restart_epoch")
                     else:
                         _require(old["segment"]["id"] != self.segment["id"]
                                  and old["endpoint"]["internal_t"] == old["segment"]["end"]
@@ -1928,8 +2288,12 @@ class _Protocol:
                         "owner": frame["owner"], "generation": frame["generation"], "step": self.steps,
                         "strip_exact": [max(Fraction(0), strip).numerator, max(Fraction(0), strip).denominator]})
                 for name, field in (("raw_y", "raw_solver_z_hex"), ("raw_yp", "raw_solver_zdot_hex")):
-                    _require(previous[name] == _word_bytes(left["history"][field], self.size), "predecessor_word_binding")
-                domain = _decode(self.rows.take("voltage_lift_polynomial_domain")["evidence"])
+                    expected = left["history"][field]
+                    if self.refresh_anchor is not None and self.refresh_anchor["transfer"]["time_hex"] == float(now).hex():
+                        expected = self.refresh_anchor["transfer"]["new_raw_state_hex" if name == "raw_y" else "new_raw_rate_hex"]
+                    _require(previous[name] == _word_bytes(expected, self.size), "predecessor_word_binding")
+                domain_row = self.rows.take("voltage_lift_polynomial_domain")
+                domain = _decode(domain_row["evidence"])
                 self.path_id = domain["path_identity"]
                 if self.segment_frame.enabled:
                     _require(self.path_id == self.segment_frame.path_identity, "segment_frame_full_physical_polynomial")
@@ -1953,7 +2317,7 @@ class _Protocol:
                              and endpoint["raw_yp"] == _word_bytes(self.last_raw_return["zdot_hex"], self.size)
                              and endpoint["native_status"] == self.last_raw_return["status"],
                              "diagnostic_retained_raw_return_matches_native_snapshot")
-                self._certificate(right)
+                right_certificate = self._certificate(right)
                 cache = {now: self._pointer(left), then: self._pointer(right)}
 
                 def query(when):
@@ -1972,11 +2336,16 @@ class _Protocol:
                 while cursor < len(times) and times[cursor] <= then:
                     self._requested(query(float(times[cursor])))
                     cursor += 1
-                self._interval(left, right, frame)
+                interval_row = self._interval(left, right, frame)
                 previous_native = {"endpoint": endpoint, "owner": frame["owner"],
-                                   "generation": frame["generation"], "segment": self.segment}
+                    "generation": frame["generation"], "segment": self.segment, "nsteps": frame["native_before"]["nsteps"],
+                    "frame_identity": self.frame_id, "map_identity": self.map_id}
                 segment_intervals += 1
                 left, now = right, then
+                policy = self.segment_frame.refresh_policy
+                if policy is not None and not self.segment_frame.refreshes and now >= _hex(policy["time_hex"]):
+                    _require(float(now).hex() == policy["time_hex"], "reference_refresh_missed_boundary")
+                    stats = self._consume_reference_refresh(right, interval_row, domain_row, right_certificate, cursor, frame, stats)
             _require(cursor == len(times), "missing_requested_samples")
             last_right = left["history"]
             predecessor, last_time = last_right["point_identity"], now
@@ -1985,6 +2354,9 @@ class _Protocol:
             self.coverage.append({"segment_id": self.segment["id"], "intervals": segment_intervals,
                                   "requested_samples": cursor, "start_s": start, "end_s": end})
         _require(self.coverage and self.intervals > 0, "empty_protocol")
+        if self.segment_frame.refresh_policy is not None:
+            _require(len(self.segment_frame.refreshes) == 1 and self.segment_frame.refreshes[0]["actual_initial_step_hex"] is not None,
+                     "reference_refresh_incomplete")
         self.startup.finish(complete=True)
         if self.diagnostic is not None:
             _require(len(self.common_clocks) == 5 and all(c["certificate"] is not None for c in self.common_clocks)
@@ -2074,7 +2446,10 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         expected = {"history_bytes": history["logical_bytes"],
                     "native_steps": protocol.steps, "onestep_returns": protocol.intervals,
                     "normal_queries": 0, "polynomial_queries": protocol.queries,
-                    "initializations": len(protocol.coverage), "jacobian": protocol.jacobians}
+                    "initializations": len(protocol.coverage)+len(protocol.segment_frame.refreshes), "jacobian": protocol.jacobians}
+        if protocol.segment_frame.refresh_policy is not None:
+            expected.update(reference_refresh_attempts=1, reference_refreshes=1)
+            _require(result["in_window_reinitializations"] == 1, "reference_refresh_result_count")
         # The diagnostic-window producer records encoded size in history,
         # without the full-protocol producer's duplicate work-counter field.
         # Actual size, complete-container digest, trailer and CRC stay mandatory.

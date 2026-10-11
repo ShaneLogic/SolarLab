@@ -179,12 +179,28 @@ class AcceptedClock:
         if self.strip:
             raise ContractError("observation_uncovered_predecessor_strip")
 
-    def require_successor(self, other):
+    def require_successor(self, other, *, numeric_handoff=None):
         if self.tn != other.predecessor:
             raise ContractError("observation_history_gap_or_overlap")
         if (self.owner is None) != (other.owner is None):
             raise ContractError("observation_clock_owner_authority_changed")
         same = self.segment_id == other.segment_id
+        if numeric_handoff is not None:
+            h = numeric_handoff
+            if (not isinstance(h, Mapping) or h.get("schema") != "solarlab.accepted-reference-handoff.v1"
+                    or h.get("kind") != "voltage_lift_numeric_handoff"
+                    or h.get("phase") != "complete" or not same or self.owner is None
+                    or h["acceptance"].get("schema") != "solarlab.full-interval-refresh-acceptance.v1"
+                    or h["acceptance"]["point_identity"] != h["transfer"]["point_identity"]
+                    or rational(float.fromhex(h["transfer"]["time_hex"])) != self.tn
+                    or h["old_epoch"]["owner"] != self.owner or h["old_epoch"]["generation"] != self.generation
+                    or h["old_epoch"]["nsteps"] != self.nsteps
+                    or other.owner != self.owner or other.generation != self.generation+1
+                    or h["new_epoch"] != {"owner": other.owner, "generation": other.generation, "nsteps": 0}
+                    or other.nsteps != 1 or other.segment_start != self.segment_start
+                    or other.segment_end != self.segment_end or h["state_or_rate_projected"] is not False):
+                raise ContractError("observation_invalid_numeric_handoff")
+            return
         if same and (other.owner != self.owner or other.generation != self.generation
                      or other.nsteps != self.nsteps+1 or other.segment_start != self.segment_start
                      or other.segment_end != self.segment_end):
