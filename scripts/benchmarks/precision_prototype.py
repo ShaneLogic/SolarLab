@@ -240,6 +240,18 @@ def _double_linear_state_words(state, name) -> tuple[Vector, ...]:
     return authority.anchor[name].words + authority.primitives[name].words
 
 
+def physical_state_words(state: StateView) -> Mapping[str, tuple[Vector, ...]]:
+    """Exact SI operands of an affine physical state, with its authority intact.
+
+    This exposes the same validated operands used by public linear actions.
+    Two anchor words plus twelve mapped words remain separate source operands,
+    not a wider canonical state profile or a projected field value.
+    """
+    _linear_affine_authority(state)
+    return MappingProxyType({spec.id: tuple(frozen_array(word) for word in
+        _double_linear_state_words(state, spec.id)) for spec in state.layout.variables})
+
+
 def _double_linear_increment_words(left, right, name) -> tuple[Vector, ...]:
     authority = _linear_affine_authority(right)
     _linear_affine_authority(left)

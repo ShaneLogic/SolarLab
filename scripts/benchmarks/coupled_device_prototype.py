@@ -976,6 +976,16 @@ class AffineCoupledSlab(CoupledSlab):
                        predecessor=self.reference if predecessor is None else predecessor,
                        transition_representation=transition_representation)
 
+    def physical_representation(self, *, gauge_offset_V=0, reference_densities=None,
+                                column_units=None):
+        """Express this unchanged physical model in an explicit constant chart."""
+        from scripts.benchmarks.representation_prototype import PhysicalRepresentation
+
+        return PhysicalRepresentation(self.layout, self.source_identity, self.reference,
+            potential_field="phi_V", voltage_input=0, right_contact_sign=-1,
+            gauge_offset_V=gauge_offset_V, reference_densities=reference_densities,
+            column_units=column_units)
+
     def field(self, point: Point, name: str):
         from scripts.benchmarks.precision_prototype import DoubleArray
 
