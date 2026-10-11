@@ -72,6 +72,67 @@ def double(size):
     return {"high_hex": words(1, size), "low_hex": words(2**-60, size)}
 
 
+class InitialSampleReadbackTests(unittest.TestCase):
+    """Opaque invented metadata exercises identity and exact-word corruption."""
+
+    def make(self):
+        seed = "a"*64
+        state = [[float(2.**(-54*i)).hex()]*3 for i in range(12)]
+        rate = [[float(2.**(-54*i-2)).hex()]*3 for i in range(12)]
+        accepted = dict(Point_identity=seed, physical_state_words_hex=state,
+                        physical_rate_words_hex=rate, inputs_hex=words(0, 2), input_rates_hex=words(0, 2))
+        restore = dict(base_Point_identity=seed, Point={"opaque_saved_identity": seed, "prior": "c"*64})
+        proof = dict(point_identity=seed, Point=deepcopy(restore["Point"]), time_hex=0.375.hex(),
+                     map_identity="d"*64, raw_z_hex=words(0, 3), raw_zdot_hex=words(0.125, 3),
+                     inputs_hex=words(0, 2), input_rates_hex=words(0, 2), mapped_physical_rate_words_hex=deepcopy(rate))
+        history = dict(point_identity="b"*64, predecessor_identity=seed, time_hex=proof["time_hex"],
+                       map_identity=proof["map_identity"], raw_solver_z_hex=words(0, 3),
+                       raw_solver_zdot_hex=words(0.125, 3), inputs_hex=words(0, 2), input_rates_hex=words(0, 2),
+                       physical_cumulative_words_hex=deepcopy(state), physical_rate_words_hex=deepcopy(rate))
+        protocol = object.__new__(_Protocol)
+        protocol.diagnostic = dict(accepted=accepted, restore=restore)
+        return protocol, {"history": history}, proof
+
+    def test_new_sample_identity_retains_saved_predecessor_and_all_words(self):
+        protocol, row, proof = self.make()
+        original = deepcopy((row, proof, protocol.diagnostic))
+        self.assertNotEqual(row["history"]["point_identity"], proof["point_identity"])
+        protocol._initialization_sample(row, proof)
+        self.assertEqual((row, proof, protocol.diagnostic), original)
+
+    def test_ordinary_initialization_still_requires_the_same_point(self):
+        protocol, row, proof = self.make()
+        protocol.diagnostic = None
+        with self.assertRaisesRegex(HistoryVerificationError, "initialization_words"):
+            protocol._initialization_sample(row, proof)
+        row["history"]["point_identity"] = proof["point_identity"]
+        protocol._initialization_sample(row, proof)
+
+    def test_changed_saved_relation_or_low_words_cannot_pass(self):
+        mutations = [
+            lambda h,p,d: h.update(predecessor_identity="e"*64),
+            lambda h,p,d: h.update(point_identity=p["point_identity"]),
+            lambda h,p,d: h.update(time_hex=0.5.hex()),
+            lambda h,p,d: h.update(map_identity="e"*64),
+            lambda h,p,d: h["raw_solver_z_hex"].__setitem__(0, (-0.0).hex()),
+            lambda h,p,d: h["raw_solver_zdot_hex"].__setitem__(0, 0.0.hex()),
+            lambda h,p,d: h["inputs_hex"].__setitem__(0, 1.0.hex()),
+            lambda h,p,d: h["input_rates_hex"].__setitem__(0, 1.0.hex()),
+            lambda h,p,d: p["Point"].update(prior="e"*64),
+            lambda h,p,d: d["accepted"].update(Point_identity="e"*64),
+            lambda h,p,d: p["mapped_physical_rate_words_hex"][11].__setitem__(0, 0.0.hex()),
+        ]
+        for field in ("physical_cumulative_words_hex", "physical_rate_words_hex"):
+            for index in (0, 4, 11):
+                mutations.append(lambda h,p,d,field=field,index=index: h[field][index].__setitem__(0, 0.0.hex()))
+        for index, mutate in enumerate(mutations):
+            with self.subTest(index=index):
+                protocol, row, proof = self.make()
+                mutate(row["history"], proof, protocol.diagnostic)
+                with self.assertRaises(HistoryVerificationError):
+                    protocol._initialization_sample(row, proof)
+
+
 class SegmentFrameReadbackTests(unittest.TestCase):
     """Six-component invented data test the independent reader, not IDA."""
 
@@ -642,6 +703,18 @@ print(json.dumps([name for name in names if name in sys.modules]))
                 self.folder = Path(temp)
                 self.publish()
                 self.bad("ambiguous_observation_tag" if ambiguity else "noncanonical_or_nonfinite_hex")
+
+    def test_full_protocol_requires_its_encoded_byte_counter(self):
+        self.publish()
+        del self.result["counts"]["history_encoded_bytes"]
+        (self.folder / "NativeResult.json").write_text(json.dumps(self.result))
+        self.bad("invalid_artifact_KeyError")
+
+    def test_reported_encoded_byte_counter_must_match_container(self):
+        self.publish()
+        self.result["counts"]["history_encoded_bytes"] += 1
+        (self.folder / "NativeResult.json").write_text(json.dumps(self.result))
+        self.bad("result_counters")
 
     def test_failed_result_is_not_complete_even_with_valid_gzip(self):
         self.result["complete_protocol"] = False

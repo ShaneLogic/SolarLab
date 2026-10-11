@@ -1424,6 +1424,32 @@ class _Protocol:
             self._sample_cache[row["record_sha256"]] = {"sample": row, "certificate": None}
         return row
 
+    def _initialization_sample(self, row, proof):
+        """Bind a fresh diagnostic sample to the unchanged complete saved seed.
+
+        The sample has already passed _sample's map, history and physical checks.
+        Its new transition names the saved Point as predecessor; its identity
+        therefore differs even though every physical and raw word is unchanged.
+        Ordinary initializations retain their original same-Point requirement.
+        """
+        h = row["history"]
+        _require(h["raw_solver_z_hex"] == proof["raw_z_hex"]
+                 and h["raw_solver_zdot_hex"] == proof["raw_zdot_hex"], "initialization_words")
+        if self.diagnostic is None:
+            _require(h["point_identity"] == proof["point_identity"], "initialization_words")
+            return
+        accepted, restore = self.diagnostic["accepted"], self.diagnostic["restore"]
+        _require(proof["Point"] == restore["Point"]
+                 and proof["point_identity"] == restore["base_Point_identity"] == accepted["Point_identity"]
+                 and h["predecessor_identity"] == proof["point_identity"]
+                 and h["point_identity"] != proof["point_identity"]
+                 and h["time_hex"] == proof["time_hex"] and h["map_identity"] == proof["map_identity"]
+                 and h["inputs_hex"] == proof["inputs_hex"] == accepted["inputs_hex"]
+                 and h["input_rates_hex"] == proof["input_rates_hex"] == accepted["input_rates_hex"]
+                 and h["physical_cumulative_words_hex"] == accepted["physical_state_words_hex"]
+                 and h["physical_rate_words_hex"] == proof["mapped_physical_rate_words_hex"]
+                 == accepted["physical_rate_words_hex"], "diagnostic_initial_sample")
+
     @staticmethod
     def _pointer(row):
         h = row["history"]
@@ -1659,9 +1685,7 @@ class _Protocol:
             stats = self._statistics("initialization_return", start)
             _require(stats["num_steps"] == 0, "initialization_step_counter")
             left = self._sample(start, "segment_initial", predecessor, initial=True)
-            _require(left["history"]["point_identity"] == proof["point_identity"]
-                     and left["history"]["raw_solver_z_hex"] == proof["raw_z_hex"]
-                     and left["history"]["raw_solver_zdot_hex"] == proof["raw_zdot_hex"], "initialization_words")
+            self._initialization_sample(left, proof)
             if last_right is not None:
                 _require(left["history"]["physical_cumulative_words_hex"] == last_right["physical_cumulative_words_hex"],
                          "event_state_changed")
@@ -1862,10 +1886,15 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
             _require(history["records"] == rows.count and history["logical_bytes"] == reader.logical_bytes
                      and history["logical_sha256"] == rows.hash.hexdigest(), "logical_count_or_digest")
         counts = result["counts"]
-        expected = {"history_bytes": history["logical_bytes"], "history_encoded_bytes": history["encoded_bytes"],
+        expected = {"history_bytes": history["logical_bytes"],
                     "native_steps": protocol.steps, "onestep_returns": protocol.intervals,
                     "normal_queries": 0, "polynomial_queries": protocol.queries,
                     "initializations": len(protocol.coverage), "jacobian": protocol.jacobians}
+        # The diagnostic-window producer records encoded size in history,
+        # without the full-protocol producer's duplicate work-counter field.
+        # Actual size, complete-container digest, trailer and CRC stay mandatory.
+        if not diagnostic or "history_encoded_bytes" in counts:
+            expected["history_encoded_bytes"] = history["encoded_bytes"]
         _require(all(type(counts[k]) is int and counts[k] == value for k, value in expected.items()), "result_counters")
         _require(type(counts["residual"]) is int and 0 <= counts["residual"] <= request["budgets"]["residual_calls"]
                  and protocol.steps <= request["budgets"]["native_steps"], "native_work_caps")
