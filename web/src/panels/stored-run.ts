@@ -184,11 +184,13 @@ export function mountStoredRunPanel(root: HTMLElement, initial: StoredRunSelecti
   }
 
   async function snapshots(view: SelectionView): Promise<boolean> {
+    const connection = view.connection
     const results = await Promise.allSettled([
       view.client.getRun(view.target.runId, view.abort.signal),
       view.client.getAttempt(view.target, view.abort.signal),
     ])
-    if (!current(view)) return false
+    // A reconnect may finish a newer refresh while these reads are pending.
+    if (!current(view) || view.connection !== connection) return false
     const [run, attempt] = results
     const errors: string[] = []
     if (run.status === 'fulfilled') {

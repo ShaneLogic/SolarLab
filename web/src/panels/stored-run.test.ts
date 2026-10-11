@@ -221,6 +221,65 @@ describe('stored-run panel records and lifecycle', () => {
     expect(field(root, 'artifacts').querySelectorAll('[data-artifact-id]')).toHaveLength(1)
   })
 
+  it.each(['snapshot', 'failure'] as const)(
+    'ignores a late %s refresh from a superseded terminal connection', async outcome => {
+      const end = final('failed', { reason: 'stored failure', qualification: 'not_evaluated' })
+      const { root, panel } = await mount()
+      const earlierRun = deferred<StoredDocument<RunSnapshot>>()
+      const earlierAttempt = deferred<StoredDocument<AttemptSnapshot>>()
+      vi.mocked(StoredRunClient.prototype.getRun).mockReturnValueOnce(earlierRun.promise)
+      vi.mocked(StoredRunClient.prototype.getAttempt).mockReturnValueOnce(earlierAttempt.promise)
+      await connections[0].emit(event(8, 'terminal', end))
+      connections[0].finish('terminal')
+      await vi.waitFor(() => expect(StoredRunClient.prototype.getRun).toHaveBeenCalledTimes(2))
+
+      // The same selected attempt stays failed; the run has a newer retry.
+      const newer = run(selection, { state: 'cancelled', current_attempt_id: 'attempt-newer', generation: 2 })
+      vi.mocked(StoredRunClient.prototype.getRun).mockResolvedValue(documentOf(newer))
+      vi.mocked(StoredRunClient.prototype.getAttempt).mockResolvedValue(documentOf(attempt(selection, end)))
+      panel.reconnect()
+      connections[1].finish('terminal_acknowledged')
+      await vi.waitFor(() => expect(field(root, 'run-state').textContent)
+        .toBe('cancelled; current attempt attempt-newer'))
+      const displayedDocuments = field(root, 'documents').children.length
+      if (outcome === 'failure') earlierRun.reject(new Error('superseded read unavailable'))
+      else earlierRun.resolve(documentOf(run()))
+      earlierAttempt.resolve(documentOf(attempt()))
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(field(root, 'run-state').textContent).toBe('cancelled; current attempt attempt-newer')
+      expect(field(root, 'attempt-state').textContent).toBe('failed')
+      expect(field(root, 'terminal-reason').textContent).toBe('stored failure')
+      expect(field(root, 'read-error').textContent).toBe('')
+      expect(field(root, 'documents').children).toHaveLength(displayedDocuments)
+      expect(panel.cursor?.sequence).toBe('8')
+    },
+  )
+
+  it('retains the current refresh failure when an older connection read succeeds late', async () => {
+    const end = final('failed', { reason: 'stored failure', qualification: 'not_evaluated' })
+    const { root, panel } = await mount()
+    const earlierRun = deferred<StoredDocument<RunSnapshot>>()
+    vi.mocked(StoredRunClient.prototype.getRun).mockReturnValueOnce(earlierRun.promise)
+    vi.mocked(StoredRunClient.prototype.getAttempt).mockResolvedValue(documentOf(attempt(selection, end)))
+    await connections[0].emit(event(8, 'terminal', end))
+    connections[0].finish('terminal')
+    await vi.waitFor(() => expect(StoredRunClient.prototype.getRun).toHaveBeenCalledTimes(2))
+
+    vi.mocked(StoredRunClient.prototype.getRun).mockRejectedValueOnce(new Error('current read unavailable'))
+    panel.reconnect()
+    connections[1].finish('terminal_acknowledged')
+    await vi.waitFor(() => expect(field(root, 'read-error').textContent).toContain('current read unavailable'))
+    earlierRun.resolve(documentOf(run()))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(field(root, 'run-state').textContent).toBe('running; current attempt attempt-a')
+    expect(field(root, 'read-error').textContent).toContain('current read unavailable')
+    expect(field(root, 'read-error-history').textContent).toContain('current read unavailable')
+    expect(field(root, 'attempt-state').textContent).toBe('failed')
+    expect(field(root, 'terminal-reason').textContent).toBe('stored failure')
+  })
+
   it('reports a stream protocol error without rewriting the persisted terminal', async () => {
     const { root } = await mount()
     await connections[0].emit(event(5, 'terminal', final()))
