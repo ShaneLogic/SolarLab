@@ -116,12 +116,13 @@ def run_fixture(fixture, h=.5, **options):
     return conservative_be_step(problem, coordinates, left, h, **options)
 
 
-def test_sub_ulp_increment_and_discrete_history_are_retained():
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_sub_ulp_increment_and_discrete_history_are_retained(globalization):
     fixture = manufactured()
     problem, _, left, _, _, calls = fixture
     before = encode_point(left)
     budgets = {"balance": EquationBudget(PARTICLE, [2.**-180, 2.**-180])}
-    step = run_fixture(fixture, budgets=budgets)
+    step = run_fixture(fixture, budgets=budgets, globalization=globalization)
     expected = (Fraction(1, 2**81), -Fraction(1, 2**81))
     assert exact(step.storage_delta) == exact(step.local_coordinates) == expected
     assert exact(step.increment.field("n")) == expected
@@ -134,6 +135,9 @@ def test_sub_ulp_increment_and_discrete_history_are_retained():
     assert not isinstance(step, AcceptedStep) and not step.scientific_qualified
     assert calls == {"delta": 3, "conservative": 2, "jacobian": 1, "instantaneous": 0}
     assert step.residual_evaluations == 2 and step.line_search_evaluations == 1
+    assert step.globalization == globalization
+    assert step.factorization_calls == step.factorization_returns == 1
+    assert step.linear_solve_calls == step.linear_solve_returns == (2 if globalization == "correction" else 1)
     record, = step.iterations
     assert (record.merit_before, record.merit_after, record.damping) == (2**99, 0, 1.)
     assert record.point_identity_after == step.right.identity
@@ -144,10 +148,11 @@ def test_sub_ulp_increment_and_discrete_history_are_retained():
         replace(step, history_kind="native-continuous-tangent")
 
 
-def test_nonbinary_solver_scales_do_not_become_physical_acceptance():
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_nonbinary_solver_scales_do_not_become_physical_acceptance(globalization):
     fixture = manufactured()
     step = run_fixture(fixture, scaling=PhysicalScaling([.7, 1.3], [.1, .3]),
-                       budgets={"balance": EquationBudget(PARTICLE, [2.**-175]*2)})
+                       budgets={"balance": EquationBudget(PARTICLE, [2.**-175]*2)}, globalization=globalization)
     wanted = (Fraction(1, 2**81), -Fraction(1, 2**81))
     assert all(abs(x-y) <= Fraction(1, 2**175)
                for x, y in zip(exact(step.storage_delta), wanted, strict=True))
@@ -155,13 +160,14 @@ def test_nonbinary_solver_scales_do_not_become_physical_acceptance():
     assert all(x <= 1 for x in step.residual_ratios)
 
 
-def test_fixed_reference_twelve_words_survive_a_step():
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_fixed_reference_twelve_words_survive_a_step(globalization):
     problem, coordinates, reference, scaling, budgets, calls = manufactured()
     words = [np.full(2, 2.**(-20-60*i)) for i in range(12)]
     left, _ = coordinates.trial(reference, FrameInputExpansion(words), 1.)
     before = encode_point(left)
     step = conservative_be_step(problem, coordinates, left, .5, scaling=scaling,
-        budgets={"balance": EquationBudget(PARTICLE, [2.**-180]*2)})
+        budgets={"balance": EquationBudget(PARTICLE, [2.**-180]*2)}, globalization=globalization)
     expected = (Fraction(1, 2**81), -Fraction(1, 2**81))
     assert exact(step.storage_delta) == expected
     assert step.right.state.authority.fixed_reference is reference
@@ -188,7 +194,8 @@ def exchange_reference(h):
         return x, (5-x*x).sqrt()
 
 
-def test_vector_nonlinear_storage_algebraic_rows_and_sparse_only(monkeypatch):
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_vector_nonlinear_storage_algebraic_rows_and_sparse_only(monkeypatch, globalization):
     fixture = manufactured("exchange")
     def forbidden(*args, **kwargs):
         raise AssertionError("dense fallback")
@@ -196,8 +203,8 @@ def test_vector_nonlinear_storage_algebraic_rows_and_sparse_only(monkeypatch):
     monkeypatch.setattr(np.linalg, "lstsq", forbidden)
     monkeypatch.setattr(csc_matrix, "toarray", forbidden)
     reference = exchange_reference(.25)
-    steps = [run_fixture(fixture, .25), run_fixture(fixture, .25,
-        scaling=PhysicalScaling([.5, 4., 8.], [2., .25, 4.]))]
+    steps = [run_fixture(fixture, .25, globalization=globalization), run_fixture(fixture, .25,
+        scaling=PhysicalScaling([.5, 4., 8.], [2., .25, 4.]), globalization=globalization)]
     for step in steps:
         n = exact(step.right.state.field("n"))
         with localcontext() as ctx:
@@ -212,10 +219,11 @@ def test_vector_nonlinear_storage_algebraic_rows_and_sparse_only(monkeypatch):
     assert fixture[-1]["instantaneous"] == 0
 
 
-def test_finite_input_time_storage_and_jacobian_not_tangent_history():
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_finite_input_time_storage_and_jacobian_not_tangent_history(globalization):
     fixture = manufactured("input_storage")
     problem, coordinates, left, _, _, calls = fixture
-    step = run_fixture(fixture, .25, inputs=[.5])
+    step = run_fixture(fixture, .25, inputs=[.5], globalization=globalization)
     with localcontext() as ctx:
         ctx.prec = 80
         x = exact(step.right.state.field("n"))[0]
@@ -268,11 +276,12 @@ def test_invalid_or_unrepresentable_time_step_rejects(h):
 
 
 @pytest.mark.parametrize("failure", ["singular", "line_search", "iterations", "structure", "infeasible"])
-def test_failures_do_not_rebase_clip_or_invoke_dense_fallback(failure):
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_failures_do_not_rebase_clip_or_invoke_dense_fallback(failure, globalization):
     fixture = manufactured(force=(1., -1.))
     problem, coordinates, left, scaling, budgets, _ = fixture
     before = encode_point(left)
-    options = {}
+    options = {"globalization": globalization}
     if failure == "singular":
         problem = replace(problem, conservative_derivative=lambda *args: problem.structure.filled(np.zeros(4)))
     elif failure == "line_search":
@@ -351,7 +360,8 @@ def test_iteration_exhaustion_retains_scalar_history_and_final_full_word_trial()
 
 
 @pytest.mark.parametrize("infeasible", [False, True])
-def test_failed_search_distinguishes_rejected_trial_from_newton_iterate(infeasible):
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_failed_search_distinguishes_rejected_trial_from_newton_iterate(infeasible, globalization):
     fixture = manufactured(force=(1., -1.))
     problem, _, left, _, _, calls = fixture
     derivative = problem.conservative_derivative
@@ -364,7 +374,7 @@ def test_failed_search_distinguishes_rejected_trial_from_newton_iterate(infeasib
         return not infeasible or len(visited) == 1
 
     with pytest.raises(ContractError, match="conservative_line_search_budget_exhausted") as caught:
-        run_fixture((problem, *fixture[1:]), feasible=feasible, max_line_search=2)
+        run_fixture((problem, *fixture[1:]), feasible=feasible, max_line_search=2, globalization=globalization)
     diagnostic = caught.value.conservative_diagnostics
     assert diagnostic.phase == "line_search_limit"
     assert diagnostic.point.identity == visited[-1] != visited[0]
@@ -374,6 +384,11 @@ def test_failed_search_distinguishes_rejected_trial_from_newton_iterate(infeasib
     assert diagnostic.line_search_evaluations == 2
     assert [s.damping for s in diagnostic.rejected_searches] == [1., .5]
     assert [s.point_identity for s in diagnostic.rejected_searches] == visited[1:]
+    if globalization == "correction":
+        assert diagnostic.correction_base.point_identity == visited[0]
+        assert diagnostic.linear_solve_calls == diagnostic.linear_solve_returns == (1 if infeasible else 3)
+        assert [s.solve.point_identity for s in diagnostic.correction_searches] == ([] if infeasible else visited[1:])
+        assert all(s.accepted is False for s in diagnostic.correction_searches)
     if infeasible:
         assert exact(diagnostic.local_coordinates) == (Fraction(1, 4), -Fraction(1, 4))
         assert diagnostic.residual is diagnostic.residual_point_identity is diagnostic.merit is None
@@ -393,7 +408,8 @@ def test_failed_search_distinguishes_rejected_trial_from_newton_iterate(infeasib
 
 
 @pytest.mark.parametrize("failure_phase", ["trial", "feasibility", "residual"])
-def test_callback_failure_never_reuses_the_previous_trial_residual(monkeypatch, failure_phase):
+@pytest.mark.parametrize("globalization", ["residual", "correction"])
+def test_callback_failure_never_reuses_the_previous_trial_residual(monkeypatch, failure_phase, globalization):
     fixture = manufactured(force=(1., -1.))
     problem, _, left, _, _, calls = fixture
     original_trial, values = conservative._trial, problem.conservative_values
@@ -426,7 +442,7 @@ def test_callback_failure_never_reuses_the_previous_trial_residual(monkeypatch, 
     problem = replace(problem, conservative_values=residual)
     before = encode_point(left)
     with pytest.raises(ContractError, match="manufactured_trial_failure") as caught:
-        run_fixture((problem, *fixture[1:]), feasible=feasible)
+        run_fixture((problem, *fixture[1:]), feasible=feasible, globalization=globalization)
     assert caught.value is failure and failure.__cause__ is cause
     diagnostic = failure.conservative_diagnostics
     assert diagnostic.phase == failure_phase
@@ -447,3 +463,142 @@ def test_callback_failure_never_reuses_the_previous_trial_residual(monkeypatch, 
     assert trial_attempts == 2 and len(residual_attempts) == (2 if failure_phase == "residual" else 1)
     assert calls == {"delta": 1, "conservative": 1, "jacobian": 1, "instantaneous": 0}
     assert encode_point(left) == before
+
+
+def curved_fixture():
+    """F=(x-1, y+2*x^2) at h=1; exact physical root n=(4,1).
+
+    x,y are finite particle increments from (3,3). This triangular curve
+    has a large residual remainder but a small column-scaled correction.
+    """
+    problem, coordinates, left, _, budgets, calls = manufactured(force=(1., 0.))
+    arithmetic = problem.arithmetic
+
+    def values(a, b, increment):
+        calls["conservative"] += 1
+        dn = problem.storage.delta(a, b, increment).as_dd()
+        h = b.time-a.time
+        return arithmetic.freeze(arithmetic.concatenate((
+            arithmetic.reshape(dn[0]-h, (1,)),
+            arithmetic.reshape(dn[1]+2*h*dn[0]*dn[0], (1,)))))
+
+    def derivative(a, b):
+        calls["jacobian"] += 1
+        x = (b.state.field("n").as_dd()-a.state.field("n").as_dd())[0]
+        return problem.structure.filled([1., 4*(b.time-a.time)*float(x.hi), 0., 1.])
+
+    problem = replace(problem, conservative_values=values, conservative_derivative=derivative)
+    return problem, coordinates, left, PhysicalScaling([1., 1.], [1., 16.]), budgets, calls
+
+
+def test_correction_globalization_accepts_curvature_but_keeps_physical_gate():
+    fixture = curved_fixture()
+    with pytest.raises(ContractError, match="iteration_budget_exhausted") as caught:
+        run_fixture(fixture, 1., max_iterations=2, max_line_search=6)
+    old = caught.value.conservative_diagnostics
+    assert old.globalization == "residual" and old.iterations[0].damping == .5
+    assert old.merit > 1 and old.linear_solve_calls == 2
+
+    fixture = curved_fixture()
+    step = run_fixture(fixture, 1., max_iterations=2, max_line_search=6, globalization="correction")
+    assert exact(step.right.state.field("n")) == (4, 1)
+    assert exact(step.storage_delta) == (1, -2)
+    assert all(r <= 1 for r in step.residual_ratios) and exact(step.residual) == (0, 0)
+    assert step.factorization_calls == step.factorization_returns == 2
+    assert step.linear_solve_calls == step.linear_solve_returns == 4
+    assert (step.residual_evaluations, step.line_search_evaluations) == (3, 2)
+    first, second = step.iterations
+    assert first.merit_after == 2*first.merit_before
+    assert first.damping == second.damping == 1.
+    assert second.merit_after == 0
+    base, = first.correction_base.solution[:1]
+    assert base == 1.
+    trial, = first.correction_searches
+    assert first.correction_base.norm_squared == 1
+    assert trial.solve.norm_squared == Fraction(1, 64)
+    assert trial.threshold_squared == Fraction(9, 16) and trial.accepted
+    assert trial.solve.rhs == (0., -2.) and trial.solve.solution == (0., -.125)
+    assert trial.base_point_identity == first.point_identity_before
+    assert trial.solve.point_identity == first.point_identity_after == second.point_identity_before
+    assert trial.solve.rhs_projection_error == (0, 0) and trial.solve.linear_residual_inf == 0.
+    assert step.source_identity == fixture[0].source_identity and not step.scientific_qualified
+    assert fixture[-1] == {"delta": 4, "conservative": 3, "jacobian": 2, "instantaneous": 0}
+
+
+def test_tiny_correction_with_failing_residual_is_not_success():
+    fixture = manufactured(force=(1., -1.))
+    original = fixture[0].conservative_derivative
+    problem = replace(fixture[0], conservative_derivative=lambda *args: 2.**500*original(*args))
+    with pytest.raises(ContractError, match="line_search_budget_exhausted") as caught:
+        run_fixture((problem, *fixture[1:]), globalization="correction", max_line_search=2)
+    diagnostic = caught.value.conservative_diagnostics
+    assert 0 < diagnostic.correction_base.norm_squared < Fraction(1, 10**200)
+    assert diagnostic.merit > 1 and diagnostic.iterations == ()
+    assert all(s.solve.norm_squared == diagnostic.correction_base.norm_squared
+               and not s.accepted for s in diagnostic.correction_searches)
+    assert diagnostic.source_identity == problem.source_identity and diagnostic.scaling is fixture[3]
+
+
+def test_zero_returned_correction_cannot_pass_a_failing_residual(monkeypatch):
+    class ZeroFactor:
+        def solve(self, rhs):
+            return np.zeros_like(rhs)
+    monkeypatch.setattr(conservative, "splu", lambda matrix: ZeroFactor())
+    with pytest.raises(ContractError, match="zero_correction_with_failing_residual") as caught:
+        run_fixture(manufactured(force=(1., -1.)), globalization="correction")
+    diagnostic = caught.value.conservative_diagnostics
+    assert diagnostic.correction_base.norm_squared == 0 and diagnostic.merit > 1
+    assert diagnostic.correction_searches == () and diagnostic.iterations == ()
+    assert diagnostic.linear_solve_calls == diagnostic.linear_solve_returns == 1
+    assert diagnostic.line_search_evaluations == 0
+
+
+@pytest.mark.parametrize("failed_return", ["raise", "nonfinite"])
+def test_failed_simplified_solve_owns_its_trial_rhs_and_residual(monkeypatch, failed_return):
+    original = conservative.splu
+    calls = {"factor": 0, "solve": 0}
+    cause = RuntimeError("manufactured_simplified_solve_failure")
+
+    def factor(matrix):
+        calls["factor"] += 1
+        underlying = original(matrix)
+        class Proxy:
+            def solve(self, rhs):
+                calls["solve"] += 1
+                if calls["solve"] == 2:
+                    if failed_return == "raise":
+                        raise cause
+                    return np.full(rhs.shape, np.nan)
+                return underlying.solve(rhs)
+        return Proxy()
+
+    monkeypatch.setattr(conservative, "splu", factor)
+    with pytest.raises(ContractError, match="conservative_sparse_solve_failed") as caught:
+        run_fixture(curved_fixture(), 1., globalization="correction")
+    diagnostic = caught.value.conservative_diagnostics
+    assert calls == {"factor": 1, "solve": 2} and diagnostic.phase == "trial_linear_solve"
+    if failed_return == "raise":
+        assert caught.value.__cause__ is cause
+    assert diagnostic.linear_solve_returns == (1 if failed_return == "raise" else 2)
+    assert diagnostic.correction_base.rhs == (1., 0.)
+    search, = diagnostic.correction_searches
+    assert search.solve.rhs == (0., -2.) and search.solve.rhs_projection_error == (0, 0)
+    assert search.solve.solution is search.solve.norm_squared is search.solve.linear_residual_inf is None
+    assert search.accepted is None
+    assert search.solve.point_identity == diagnostic.point.identity == diagnostic.residual_point_identity
+    assert exact(diagnostic.residual) == (0, 2)
+    assert diagnostic.last_accepted_point_identity == search.base_point_identity != diagnostic.point.identity
+    assert diagnostic.rejected_searches[0].point_identity == diagnostic.point.identity
+
+
+def test_correction_squared_norm_preserves_extreme_represented_values():
+    assert conservative._norm_squared(np.array([2.**900, 2.**-900])) == Fraction(2)**1800+Fraction(2)**-1800
+    assert conservative._norm_squared(np.array([2.**-600])) == Fraction(2)**-1200
+
+
+@pytest.mark.parametrize("mode", ["L2", None])
+def test_unrequested_globalization_rejected_before_public_calls(mode):
+    fixture = manufactured()
+    with pytest.raises(ContractError, match="unsupported_conservative_globalization"):
+        run_fixture(fixture, globalization=mode)
+    assert fixture[-1] == {"delta": 0, "conservative": 0, "jacobian": 0, "instantaneous": 0}

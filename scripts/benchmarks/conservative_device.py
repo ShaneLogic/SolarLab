@@ -6,7 +6,7 @@ derivatives or a continuous physical tangent. Real-device gates are separate.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from typing import Callable, Mapping
 
@@ -42,6 +42,32 @@ class EquationBudget:
 
 
 @dataclass(frozen=True)
+class CorrectionSolve:
+    """Represented, column-scaled solve; absent fields mean no valid return.
+
+    RHS words are the single binary64 projection of the complete residual.
+    The squared norm is exact for the returned binary64 solution, not a bound
+    on inverse error, the physical Jacobian or the true state error.
+    """
+
+    point_identity: str
+    rhs: tuple[float, ...]
+    rhs_projection_error: tuple[Fraction, ...]
+    solution: tuple[float, ...] | None = None
+    norm_squared: Fraction | None = None
+    linear_residual_inf: float | None = None
+
+
+@dataclass(frozen=True)
+class CorrectionSearch:
+    damping: float
+    base_point_identity: str
+    threshold_squared: Fraction
+    solve: CorrectionSolve
+    accepted: bool | None = None
+
+
+@dataclass(frozen=True)
 class NewtonRecord:
     iteration: int
     rhs_projection_error: tuple[Fraction, ...]
@@ -51,6 +77,8 @@ class NewtonRecord:
     merit_after: Fraction | None = None
     point_identity_before: str | None = None
     point_identity_after: str | None = None
+    correction_base: CorrectionSolve | None = None
+    correction_searches: tuple[CorrectionSearch, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,6 +120,15 @@ class ConservativeFailureDiagnostics:
     rejected_searches: tuple[RejectedSearch, ...]
     residual_evaluations: int
     line_search_evaluations: int
+    globalization: str = "residual"
+    correction_base: CorrectionSolve | None = None
+    correction_searches: tuple[CorrectionSearch, ...] = ()
+    factorization_calls: int = 0
+    factorization_returns: int = 0
+    linear_solve_calls: int = 0
+    linear_solve_returns: int = 0
+    source_identity: str | None = None
+    scaling: PhysicalScaling | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +148,11 @@ class ConservativeStep:
     iterations: tuple[NewtonRecord, ...]
     residual_evaluations: int
     line_search_evaluations: int
+    globalization: str = "residual"
+    factorization_calls: int = 0
+    factorization_returns: int = 0
+    linear_solve_calls: int = 0
+    linear_solve_returns: int = 0
     method: str = field(default="conservative-backward-euler", init=False)
     history_kind: str = field(default="finite-storage-difference-and-secant", init=False)
     scientific_qualified: bool = field(default=False, init=False)
@@ -184,12 +226,18 @@ def _correction(solution, columns, damping):
     return result
 
 
+def _norm_squared(solution):
+    # No floating square/sqrt, overflow, underflow or acceptance rounding.
+    return sum((Fraction(float(x))**2 for x in solution), Fraction())
+
+
 def conservative_be_step(
     problem: ValidatedProblem, coordinates: RelativeCoordinates, left: Point, h: float, *,
     scaling: PhysicalScaling, budgets: Mapping[str, EquationBudget], inputs=None,
     initial_increment: PrimitiveExpansion | DoubleArray | None = None,
     feasible: Callable[[Point], bool] = lambda point: True,
     max_iterations: int = 12, max_line_search: int = 8,
+    globalization: str = "residual",
 ) -> ConservativeStep:
     """Solve DeltaQ-h*R(right)=0 and the unchanged algebraic equations.
 
@@ -198,9 +246,18 @@ def conservative_be_step(
     subtraction occurs. Time must advance exactly in the Point's binary64
     time representation. Runtime failures propagate unchanged, with bounded
     ``conservative_diagnostics`` attached; pre-entry validation is unchanged.
+
+    ``residual`` preserves strict maximum residual-ratio decrease. Explicit
+    ``correction`` reuses the scaled base factorization for simplified trial
+    corrections and requires theta <= 1-damping/4 in the same column-scaled
+    state norm, using exact represented squared norms. It can accept a Newton
+    working iterate with larger residuals. Both modes still require every
+    original per-equation residual ratio <= 1 before returning a step.
     """
     if not isinstance(problem, ValidatedProblem) or type(coordinates) is not RelativeCoordinates:
         raise ContractError("conservative_public_problem_and_coordinates_required")
+    if type(globalization) is not str or globalization not in ("residual", "correction"):
+        raise ContractError("unsupported_conservative_globalization")
     if coordinates.layout.identity != problem.layout.identity or any(m != "linear" for m in coordinates.modes.values()):
         raise ContractError("conservative_linear_physical_coordinates_required")
     n = problem.layout.size
@@ -224,6 +281,8 @@ def conservative_be_step(
         raise ContractError("conservative_increment_shape_mismatch")
     arithmetic = problem.arithmetic if problem.arithmetic is not None else FloatArithmetic()
     records, evaluations, searches = [], 0, 0
+    factor_calls = factor_returns = solve_calls = solve_returns = 0
+    correction_base, correction_searches = None, []
     current, phase = None, "initial_trial"
     requested = requested_point = requested_residual = requested_merit = requested_feasible = None
     linear_iteration = linear_point_identity = projection = linear_error = None
@@ -276,7 +335,9 @@ def conservative_be_step(
                 _exact_words(secant, problem.storage_count)
                 return ConservativeStep(left, right, increment, local, delta, secant, residual,
                                         units, limits, ratios, scaling, problem.source_identity,
-                                        tuple(records), evaluations, searches)
+                                        tuple(records), evaluations, searches,
+                                        globalization, factor_calls, factor_returns,
+                                        solve_calls, solve_returns)
             if iteration == max_iterations:
                 phase = "iteration_limit"
                 raise ContractError("conservative_iteration_budget_exhausted")
@@ -291,7 +352,12 @@ def conservative_be_step(
                 rhs = np.array([float(x) for x in exact_rhs])
                 if not np.isfinite(scaled.data).all() or not np.isfinite(rhs).all():
                     raise ArithmeticError("nonfinite scaled system")
-                solution = splu(scaled).solve(rhs)
+                factor_calls += 1
+                factor = splu(scaled)
+                factor_returns += 1
+                solve_calls += 1
+                solution = factor.solve(rhs)
+                solve_returns += 1
                 if not np.isfinite(solution).all():
                     raise ArithmeticError("nonfinite sparse correction")
             except (RuntimeError, ArithmeticError) as error:
@@ -301,6 +367,11 @@ def conservative_be_step(
             linear_error = float(np.max(np.abs(scaled @ solution-rhs), initial=0.0))
             if not np.isfinite(linear_error):
                 raise ContractError("nonfinite_conservative_linear_residual")
+            if globalization == "correction":
+                correction_base = CorrectionSolve(right.identity, tuple(map(float, rhs)),
+                    projection, tuple(map(float, solution)), _norm_squared(solution), linear_error)
+                if correction_base.norm_squared == 0:
+                    raise ContractError("conservative_zero_correction_with_failing_residual")
             for slot in range(max_line_search):
                 searches += 1
                 damping = 2.0**(-slot)
@@ -309,14 +380,52 @@ def conservative_be_step(
                 try:
                     proposed = local.add(_correction(solution, scaling.columns, damping))
                     trial = evaluate(proposed)
+                    accepted = trial is not None and trial[-1] < merit
+                    if trial is not None and globalization == "correction":
+                        phase = "trial_linear_solve"
+                        try:
+                            exact_trial_rhs = tuple(-r/Fraction(float(s))
+                                for r, s in zip(trial[3], scaling.rows, strict=True))
+                            trial_rhs = np.array([float(x) for x in exact_trial_rhs])
+                            if not np.isfinite(trial_rhs).all():
+                                raise ArithmeticError("nonfinite scaled trial RHS")
+                            trial_projection = tuple(x-Fraction(float(y))
+                                for x, y in zip(exact_trial_rhs, trial_rhs, strict=True))
+                            trial_solve = CorrectionSolve(trial[0].identity,
+                                tuple(map(float, trial_rhs)), trial_projection)
+                            threshold = (1-Fraction(damping)/4)**2
+                            correction_searches.append(CorrectionSearch(
+                                damping, right.identity, threshold, trial_solve))
+                            solve_calls += 1
+                            simplified = factor.solve(trial_rhs)
+                            solve_returns += 1
+                            if simplified.shape != (n,) or not np.isfinite(simplified).all():
+                                raise ArithmeticError("nonfinite or invalid simplified correction")
+                        except (RuntimeError, ArithmeticError) as error:
+                            raise ContractError("conservative_sparse_solve_failed") from error
+                        trial_solve = replace(trial_solve, solution=tuple(map(float, simplified)),
+                                              norm_squared=_norm_squared(simplified))
+                        correction_searches[-1] = replace(correction_searches[-1], solve=trial_solve)
+                        phase = "trial_linear_residual"
+                        trial_error = float(np.max(np.abs(scaled @ simplified-trial_rhs), initial=0.0))
+                        if not np.isfinite(trial_error):
+                            raise ContractError("nonfinite_conservative_linear_residual")
+                        trial_solve = replace(trial_solve, linear_residual_inf=trial_error)
+                        phase = "correction_metric"
+                        accepted = trial_solve.norm_squared <= threshold*correction_base.norm_squared
+                        correction_searches[-1] = replace(correction_searches[-1],
+                                                          solve=trial_solve, accepted=accepted)
                 except Exception:
                     rejected.append(rejected_trial(damping))
                     raise
-                if trial is not None and trial[-1] < merit:
+                if accepted:
                     local, current = proposed, trial
                     records.append(NewtonRecord(iteration, projection, linear_error, damping,
-                                                merit, trial[-1], right.identity, trial[0].identity))
+                                                merit, trial[-1], right.identity, trial[0].identity,
+                                                correction_base, tuple(correction_searches)))
                     linear_iteration = linear_point_identity = projection = linear_error = None
+                    correction_base = None
+                    correction_searches.clear()
                     rejected.clear()
                     break
                 rejected.append(rejected_trial(damping))
@@ -335,5 +444,9 @@ def conservative_be_step(
             linear_iteration=linear_iteration, linear_point_identity=linear_point_identity,
             rhs_projection_error=projection, linear_residual_inf=linear_error,
             rejected_searches=tuple(rejected), residual_evaluations=evaluations,
-            line_search_evaluations=searches)
+            line_search_evaluations=searches, globalization=globalization,
+            correction_base=correction_base, correction_searches=tuple(correction_searches),
+            factorization_calls=factor_calls, factorization_returns=factor_returns,
+            linear_solve_calls=solve_calls, linear_solve_returns=solve_returns,
+            source_identity=problem.source_identity, scaling=scaling)
         raise
