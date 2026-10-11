@@ -1380,3 +1380,163 @@ def test_explicit_refinement_preserves_original_gates_and_physical_input(tmp_pat
     changed["diagnostic_interval"]["refinement_selection"] = put(
         "UnrefinedSelection.json", dict(selection, selected_max_step_hex=0.125.hex()))
     rejected(changed)
+
+
+def _accuracy_metadata_case(tmp_path):
+    """Manufactured factor-1024 ancestor; no model or native execution."""
+    import math
+    from scripts.benchmarks.native_readback import diagnostic_accuracy_policy, _digest
+    request, accepted, put = _diagnostic_metadata_case(tmp_path)
+    descriptor = request["diagnostic_interval"]
+    parent = json.loads(Path(descriptor["parent_request"]["path"]).read_text())
+    parent["controls"].update(nonlin_conv_coef=1.024e-5,
+        nonlin_guard="first-correction-wrms-v1", nonlin_trace_capacity=4096)
+    old = {k: deepcopy(parent["controls"][k]) for k in ("rtol", "atol", "nonlin_conv_coef")}
+    before = {"rtol": math.ldexp(old["rtol"],10),
+              "atol": [math.ldexp(a,10) for a in old["atol"]], "nonlin_conv_coef":1e-8}
+    parent["time_weight_policy"] = {"schema":"solarlab.voltage-lift-time-weights.v1",
+        "kappa":1024, "parent_values":before, "values":old}
+    parent["weight_certificate"].update(rtol=old["rtol"], atol=old["atol"],
+        time_weight_policy_sha256=_digest(parent["time_weight_policy"]))
+    descriptor["parent_request"] = put("AccuracyParent.json",parent)
+    descriptor.update(schema="solarlab.native-interval-descriptor.v3", accuracy_case="coarse",
+                      time_accuracy_policy=diagnostic_accuracy_policy(parent))
+    request["prior_request_sha256"] = _digest(parent)
+    request["weight_certificate"] = deepcopy(parent["weight_certificate"])
+    request["controls"].update(parent["controls"])
+    request["controls"].update(descriptor["time_accuracy_policy"]["values"],max_step=0.25)
+    request["diagnostic_limits"] = {"accepted_intervals":128}
+    return request, parent, accepted, put
+
+
+def test_accuracy_controls_preserve_external_promise_and_exact_metric(tmp_path):
+    import math
+    from scripts.benchmarks.native_readback import diagnostic_interval_binding, diagnostic_accuracy_policy
+    request, parent, _, _ = _accuracy_metadata_case(tmp_path)
+    original = deepcopy(request)
+    data = diagnostic_interval_binding(request)
+    assert data["parent"] == parent and request == original
+    assert request["weight_certificate"] == parent["weight_certificate"]
+    policy = request["diagnostic_interval"]["time_accuracy_policy"]
+    assert (policy["parent_factor"],policy["factor"],policy["cumulative_factor"]) == (1024,64,65536)
+    for q in (0.0, -2.0**-10, 1.25, 2.0**20):
+        # Independently form exact denominator/norm squares and physical
+        # nonlinear threshold; no producer transform is used for expectation.
+        old = Fraction(parent["controls"]["rtol"])*abs(Fraction(q))+Fraction(parent["controls"]["atol"][0])
+        new = Fraction(request["controls"]["rtol"])*abs(Fraction(q))+Fraction(request["controls"]["atol"][0])
+        assert new*64 == old
+        norm_old = (Fraction(3,7)/old)**2
+        norm_new = (Fraction(3,7)/new)**2
+        assert norm_new == 4096*norm_old
+        assert new*Fraction(request["controls"]["nonlin_conv_coef"]) == old*Fraction(parent["controls"]["nonlin_conv_coef"])
+        rounded_old = 1/(parent["controls"]["rtol"]*abs(q)+parent["controls"]["atol"][0])
+        rounded_new = 1/(request["controls"]["rtol"]*abs(q)+request["controls"]["atol"][0])
+        assert rounded_new == math.ldexp(rounded_old,6)
+    # The exact scaling helper rejects unsupported subnormal outputs instead
+    # of silently turning the experiment into a tolerance-floor change.
+    bad = deepcopy(parent)
+    bad["controls"]["rtol"] = float.fromhex("0x1p-1022")
+    bad["time_weight_policy"]["values"]["rtol"] = bad["controls"]["rtol"]
+    bad["time_weight_policy"]["parent_values"]["rtol"] = float.fromhex("0x1p-1012")
+    bad["weight_certificate"]["rtol"] = bad["controls"]["rtol"]
+    bad["weight_certificate"]["time_weight_policy_sha256"] = digest(bad["time_weight_policy"])
+    with unittest.TestCase().assertRaises(HistoryVerificationError):
+        diagnostic_accuracy_policy(bad)
+
+
+def test_accuracy_policy_rejects_unbound_or_mismatched_controls(tmp_path):
+    from scripts.benchmarks.native_readback import diagnostic_interval_binding
+    request, _, _, _ = _accuracy_metadata_case(tmp_path)
+    for mutate in (
+        lambda r:r["controls"].update(rtol=r["controls"]["rtol"]*2),
+        lambda r:r["controls"].update(nonlin_conv_coef=r["controls"]["nonlin_conv_coef"]/64),
+        lambda r:r["controls"]["atol"].__setitem__(3,0.0),
+        lambda r:r["controls"].update(max_nonlin_iters=100),
+        lambda r:r["diagnostic_interval"]["time_accuracy_policy"].update(factor=64.0),
+        lambda r:r["diagnostic_interval"]["time_accuracy_policy"].update(parent_factor=1),
+        lambda r:r["diagnostic_interval"]["time_accuracy_policy"].update(global_error_certified=True),
+        lambda r:r["diagnostic_interval"]["time_accuracy_policy"].update(extra="undeclared"),
+        lambda r:r["diagnostic_interval"].update(schema="solarlab.native-interval-descriptor.v1"),
+        lambda r:r["diagnostic_interval"].update(schema="solarlab.native-interval-descriptor.v2"),
+        lambda r:r["diagnostic_interval"].pop("time_accuracy_policy"),
+        lambda r:r["diagnostic_interval"].update(accuracy_case="other"),
+        lambda r:r.update(time_accuracy_policy={}),
+        lambda r:r["weight_certificate"].update(rtol=r["controls"]["rtol"]),
+        lambda r:r["budgets"].update(charge_C=1.0),
+    ):
+        bad=deepcopy(request);mutate(bad)
+        with unittest.TestCase().assertRaises((HistoryVerificationError,KeyError)):
+            diagnostic_interval_binding(bad)
+
+
+def test_accuracy_fine_requires_complete_new_coarse_and_exact_dyadic_rule(tmp_path):
+    from scripts.benchmarks.native_readback import diagnostic_interval_binding, diagnostic_accuracy_fine_ceiling
+    coarse, _, _, put = _accuracy_metadata_case(tmp_path)
+    cp = put("ManufacturedCoarse.json",coarse)
+    grid = [{"left_hex":float(1+i/8).hex(),"right_hex":float(1+(i+1)/8).hex(),
+             "hused_hex":0.125.hex(),"step":i+1,"owner":"manufactured","generation":1} for i in range(8)]
+    result = {"verified":True,"complete_diagnostic_window":True,"complete_protocol":False,
+        "request_sha256":digest(coarse),"common_clocks":[{} for _ in range(5)],"diagnostic_grid":grid,
+        "coverage":{"intervals":8,"ports":2,"physical_word_layers":12}}
+    rp = put("ManufacturedReadback.json",result)
+    op = put("ManufacturedOperation.json",{"operation_id":"NativeAccuracyCoarse01","child_request":cp})
+    outcome = {"schema":"solarlab.native-interval-root-tool-return.v1","passed":True,"within_total":True,
+        "active_tool_session":None,"request_sha256":op["sha256"],
+        "readback":{"accepted":True,"checks":{"owned_process_group_closed":True}}}
+    outp = put("ManufacturedReturn.json",outcome)
+    review = {"accepted":True,"independent":True,"readback":rp,"complete_return":outp}
+    revp = put("ManufacturedReview.json",review)
+    acceptance = {"schema":"solarlab.native-accuracy-coarse-acceptance.v1","authority":"Root","accepted":True,
+        "operation_id":"NativeAccuracyCoarse01","child_request":cp,"readback":rp,"operation_request":op,
+        "GateSpec":coarse["diagnostic_interval"]["GateSpec"],"independent_review":revp,"complete_return":outp}
+    ap = put("ManufacturedAcceptance.json",acceptance)
+    selection = {"schema":"solarlab.native-accuracy-refinement.v1","authority":"Root","accepted":True,
+        "case":"fine","GateSpec":coarse["diagnostic_interval"]["GateSpec"],
+        "base_Point_identity":coarse["starting_Point_identity"],"window_start_hex":1.0.hex(),
+        "window_end_hex":2.0.hex(),"selected_max_step_hex":0.0625.hex(),
+        "observed_coarse_max_step_hex":0.125.hex(),"effective_refinement_required":True,
+        "original_scientific_thresholds_unchanged":True,"coarse_child_request":cp,
+        "coarse_readback":rp,"coarse_acceptance":ap}
+    fine=deepcopy(coarse);d=fine["diagnostic_interval"]
+    d.update(accuracy_case="fine",refinement_selection=put("ManufacturedSelection.json",selection))
+    d["window"]["selected_max_step_hex"]=0.0625.hex();fine["controls"]["max_step"]=0.0625
+    diagnostic_interval_binding(fine)
+    assert diagnostic_accuracy_fine_ceiling(0.125)==0.0625
+    assert diagnostic_accuracy_fine_ceiling(0.1)==0.03125
+    assert diagnostic_accuracy_fine_ceiling(float.fromhex("0x1p-1073"))==float.fromhex("0x1p-1074")
+    for value in (0.0,-1.0,float("nan"),float("inf"),float.fromhex("0x1p-1074")):
+        with unittest.TestCase().assertRaises(HistoryVerificationError):
+            diagnostic_accuracy_fine_ceiling(value)
+    # Re-pin bad data throughout the receipt chain, so the failing witness is
+    # semantic (not merely a stale file digest).
+    for index, mutate in enumerate((
+        lambda r:r.update(complete_diagnostic_window=False),
+        lambda r:r.update(request_sha256="stale-parent"),
+        lambda r:r["diagnostic_grid"].pop(3),
+        lambda r:r["coverage"].update(ports=1),
+        lambda r:r["diagnostic_grid"][3].update(left_hex=1.0.hex()),
+        lambda r:r["diagnostic_grid"][3].update(owner="foreign"),
+        lambda r:r["diagnostic_grid"][3].update(hused_hex=0.5.hex()),
+    )):
+        bad_result=deepcopy(result);mutate(bad_result)
+        bad_rp=put("BadReadback%d.json"%index,bad_result)
+        bad_revp=put("BadReview%d.json"%index,dict(review,readback=bad_rp))
+        bad_ap=put("BadAcceptance%d.json"%index,dict(acceptance,readback=bad_rp,independent_review=bad_revp))
+        bad=deepcopy(fine)
+        bad["diagnostic_interval"]["refinement_selection"]=put("BadSelection%d.json"%index,
+            dict(selection,coarse_readback=bad_rp,coarse_acceptance=bad_ap))
+        with unittest.TestCase().assertRaises(HistoryVerificationError):
+            diagnostic_interval_binding(bad)
+    for index, fields in enumerate(({"accepted":False},{"operation_id":"Coarse03"},
+                                    {"child_request":{"sha256":"old-coarse"}})):
+        bad=deepcopy(fine);bad_ap=put("StaleAcceptance%d.json"%index,dict(acceptance,**fields))
+        bad["diagnostic_interval"]["refinement_selection"]=put("StaleSelection%d.json"%index,
+            dict(selection,coarse_acceptance=bad_ap))
+        with unittest.TestCase().assertRaises(HistoryVerificationError):
+            diagnostic_interval_binding(bad)
+    bad=deepcopy(fine);bad["controls"]["max_step"]=0.03125
+    bad["diagnostic_interval"]["window"]["selected_max_step_hex"]=0.03125.hex()
+    bad["diagnostic_interval"]["refinement_selection"]=put("TooSmallSelection.json",
+        dict(selection,selected_max_step_hex=0.03125.hex()))
+    with unittest.TestCase().assertRaises(HistoryVerificationError):
+        diagnostic_interval_binding(bad)

@@ -736,6 +736,139 @@ def _qualified_frame_input_context_check(request):
             "weight_certificate_sha256": _digest(request["weight_certificate"])}
 
 
+def diagnostic_accuracy_policy(parent):
+    """One exact factor-64 experiment after the recorded factor-1024 parent.
+
+    This certificate changes internal denominators, not the retained physical
+    acceptance certificate. It certifies same-state scaling only, never equal
+    rounded decisions, nonlinear histories or global errors.
+    """
+    controls, ancestry = parent["controls"], parent.get("time_weight_policy", {})
+    proof = parent["weight_certificate"]
+    keys = ("rtol", "atol", "nonlin_conv_coef")
+    _require(ancestry.get("schema") == "solarlab.voltage-lift-time-weights.v1"
+             and type(ancestry.get("kappa")) is int and ancestry["kappa"] == 1024
+             and ancestry.get("values") == {k: controls[k] for k in keys}
+             and proof.get("time_weight_policy_sha256") == _digest(ancestry)
+             and proof.get("rtol") == controls["rtol"] and proof.get("atol") == controls["atol"]
+             and controls.get("nonlin_conv_coef") == 1.024e-5
+             and controls.get("nonlin_guard") == "first-correction-wrms-v1"
+             and controls.get("nonlin_trace_capacity") == 4096,
+             "accuracy_original_1024_ancestry")
+    values = {}
+    for key, shift in (("rtol", -6), ("atol", -6), ("nonlin_conv_coef", 6)):
+        old = _vector(controls[key], 45) if key == "atol" else [controls[key]]
+        before = (_vector(ancestry["parent_values"][key], 45) if key == "atol"
+                  else [ancestry["parent_values"][key]])
+        new = []
+        for a, original in zip(old, before):
+            _require(type(a) is float and type(original) is float
+                     and math.isfinite(a) and math.isfinite(original)
+                     and a >= float.fromhex("0x1p-1022") and original > 0,
+                     "accuracy_positive_normal_controls")
+            factor = Fraction(64) if shift > 0 else Fraction(1, 64)
+            previous_factor = Fraction(1024) if shift > 0 else Fraction(1, 1024)
+            _require(Fraction(a) == Fraction(original)*previous_factor,
+                     "accuracy_original_1024_scaling")
+            b = math.ldexp(a, shift)
+            _require(math.isfinite(b) and b >= float.fromhex("0x1p-1022")
+                     and Fraction(b) == Fraction(a)*factor, "accuracy_exact_normal_scaling")
+            new.append(b)
+        values[key] = new if key == "atol" else new[0]
+    return {"schema": "solarlab.native-internal-accuracy.v1", "factor": 64,
+            "parent_factor": 1024, "cumulative_factor": 65536,
+            "parent_request_sha256": _digest(parent),
+            "parent_controls_sha256": _digest(controls),
+            "parent_time_weight_policy_sha256": _digest(ancestry),
+            "original_weight_certificate_sha256": _digest(proof), "values": values,
+            "application": "fresh_saved_seed_initialization_only",
+            "external_acceptance_changed": False,
+            "same_state_exact_nonlinear_threshold_preserved": True,
+            "rounded_decisions_or_adaptive_path_equal": False,
+            "global_error_certified": False}
+
+
+def diagnostic_accuracy_fine_ceiling(maximum):
+    """Largest representable positive power of two <= exact maximum/2."""
+    _require(type(maximum) is float and math.isfinite(maximum) and maximum > 0,
+             "accuracy_positive_coarse_step")
+    _, exponent = math.frexp(maximum)
+    selected = math.ldexp(1.0, exponent-2)
+    _require(selected > 0 and Fraction(selected) <= Fraction(maximum)/2
+             < 2*Fraction(selected), "accuracy_representable_dyadic_ceiling")
+    return selected
+
+
+def _accuracy_metadata(item, name):
+    _require(type(item) is dict and set(item) == {"path", "bytes", "sha256"}
+             and type(item["bytes"]) is int and 0 < item["bytes"] <= 16*1024*1024,
+             "accuracy_metadata_pin:"+name)
+    with Path(item["path"]).open("rb") as stream:
+        data = stream.read(item["bytes"]+1)
+    _require(len(data) == item["bytes"] and hashlib.sha256(data).hexdigest() == item["sha256"],
+             "accuracy_metadata_changed:"+name)
+    return json.loads(data, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_finite)
+
+
+def diagnostic_accuracy_coarse_basis(selection, descriptor):
+    """Bound a future independently accepted *new* coarse, never old Coarse03."""
+    coarse = _accuracy_metadata(selection["coarse_child_request"], "coarse_request")
+    acceptance = _accuracy_metadata(selection["coarse_acceptance"], "coarse_acceptance")
+    result = _accuracy_metadata(selection["coarse_readback"], "coarse_readback")
+    _require(coarse["diagnostic_interval"]["schema"] == "solarlab.native-interval-descriptor.v3"
+             and coarse["diagnostic_interval"].get("accuracy_case") == "coarse"
+             and coarse["diagnostic_interval"]["time_accuracy_policy"] == descriptor["time_accuracy_policy"]
+             and coarse["diagnostic_interval"]["GateSpec"] == descriptor["GateSpec"],
+             "accuracy_new_coarse_same_policy")
+    diagnostic_interval_binding(coarse)
+    _require(acceptance.get("schema") == "solarlab.native-accuracy-coarse-acceptance.v1"
+             and acceptance.get("authority") == "Root" and acceptance.get("accepted") is True
+             and acceptance.get("operation_id") == "NativeAccuracyCoarse01"
+             and acceptance.get("child_request") == selection["coarse_child_request"]
+             and acceptance.get("readback") == selection["coarse_readback"]
+             and acceptance.get("GateSpec") == descriptor["GateSpec"], "accuracy_coarse_acceptance")
+    review = _accuracy_metadata(acceptance["independent_review"], "coarse_independent_review")
+    outcome = _accuracy_metadata(acceptance["complete_return"], "coarse_complete_return")
+    operation = _accuracy_metadata(acceptance["operation_request"], "coarse_operation_request")
+    _require(review.get("accepted") is True and review.get("independent") is True
+             and review.get("readback") == selection["coarse_readback"]
+             and review.get("complete_return") == acceptance["complete_return"]
+             and outcome.get("schema") == "solarlab.native-interval-root-tool-return.v1"
+             and outcome.get("passed") is True and outcome.get("within_total") is True
+             and outcome.get("active_tool_session") is None
+             and outcome.get("request_sha256") == acceptance["operation_request"]["sha256"]
+             and outcome.get("readback", {}).get("accepted") is True
+             and outcome["readback"]["checks"].get("owned_process_group_closed") is True
+             and operation.get("operation_id") == "NativeAccuracyCoarse01"
+             and operation.get("child_request") == selection["coarse_child_request"],
+             "accuracy_independent_complete_coarse")
+    _require(result.get("verified") is True and result.get("complete_diagnostic_window") is True
+             and result.get("complete_protocol") is False and result.get("request_sha256") == _digest(coarse)
+             and len(result.get("common_clocks", [])) == 5,
+             "accuracy_complete_coarse_readback")
+    grid = result["diagnostic_grid"]
+    _require(type(grid) is list and 0 < len(grid) <= coarse["diagnostic_limits"]["accepted_intervals"],
+             "accuracy_bounded_coarse_grid")
+    coverage = result["coverage"]
+    _require(coverage.get("intervals") == len(grid) and coverage.get("ports") == 2
+             and coverage.get("physical_word_layers") == 12, "accuracy_coarse_coverage")
+    window = coarse["diagnostic_interval"]["window"]
+    previous = _hex(window["start_hex"])
+    owner = (grid[0]["owner"], grid[0]["generation"])
+    for index, row in enumerate(grid, 1):
+        left, right = _hex(row["left_hex"]), _hex(row["right_hex"])
+        _require(left == previous < right <= _hex(window["end_hex"])
+                 and type(row["step"]) is int and row["step"] == index
+                 and (row["owner"], row["generation"]) == owner, "accuracy_coarse_grid_gap")
+        previous = right
+    _require(previous == _hex(window["end_hex"]), "accuracy_incomplete_coarse_grid")
+    steps = [_hex(row["hused_hex"]) for row in grid]
+    _require(all(0 < h <= coarse["controls"]["max_step"] for h in steps)
+             and selection["observed_coarse_max_step_hex"] == max(steps).hex(),
+             "accuracy_observed_coarse_maximum")
+    return diagnostic_accuracy_fine_ceiling(max(steps))
+
+
 def diagnostic_interval_binding(request):
     """Read bounded saved metadata for the explicit diagnostic child contract.
 
@@ -747,8 +880,13 @@ def diagnostic_interval_binding(request):
     _require(request.get("schema") == "solarlab.native-interval-child-request.v1"
              and type(descriptor) is dict
              and descriptor.get("schema") in ("solarlab.native-interval-descriptor.v1",
-                                               "solarlab.native-interval-descriptor.v2"),
+                                               "solarlab.native-interval-descriptor.v2",
+                                               "solarlab.native-interval-descriptor.v3"),
              "diagnostic_interval_descriptor")
+    accuracy = descriptor["schema"] == "solarlab.native-interval-descriptor.v3"
+    _require(not any(k in request for k in ("time_accuracy_policy", "accuracy_case"))
+             and (accuracy or not any(k in descriptor for k in ("time_accuracy_policy", "accuracy_case"))),
+             "accuracy_unbound_policy")
 
     def bound(name):
         item = descriptor[name]
@@ -804,7 +942,30 @@ def diagnostic_interval_binding(request):
              and 0 < min(choices) and max(choices) == 2*min(choices) <= controls["max_step"]
              and controls["first_step"].hex() == window["first_step_hex"],
              "diagnostic_step_controls")
-    if descriptor["schema"] == "solarlab.native-interval-descriptor.v1":
+    if accuracy:
+        policy = diagnostic_accuracy_policy(parent)
+        _require(type(descriptor.get("time_accuracy_policy")) is dict
+                 and _digest(descriptor["time_accuracy_policy"]) == _digest(policy)
+                 and descriptor.get("accuracy_case") in ("coarse", "fine"), "accuracy_policy_binding")
+        controls.update(policy["values"])
+        if descriptor["accuracy_case"] == "coarse":
+            _require(selected == max(choices) and "refinement_selection" not in descriptor,
+                     "accuracy_original_coarse_ceiling")
+        else:
+            selection = bound("refinement_selection")
+            _require(selection.get("schema") == "solarlab.native-accuracy-refinement.v1"
+                     and selection.get("authority") == "Root" and selection.get("accepted") is True
+                     and selection.get("case") == "fine" and selection.get("GateSpec") == descriptor["GateSpec"]
+                     and selection.get("base_Point_identity") == gates["base_Point_identity"]
+                     and selection.get("window_start_hex") == window["start_hex"]
+                     and selection.get("window_end_hex") == window["end_hex"]
+                     and selection.get("selected_max_step_hex") == selected.hex()
+                     and selection.get("effective_refinement_required") is True
+                     and selection.get("original_scientific_thresholds_unchanged") is True,
+                     "accuracy_fine_selection_binding")
+            _require(selected == diagnostic_accuracy_coarse_basis(selection, descriptor),
+                     "accuracy_largest_dyadic_half_coarse")
+    elif descriptor["schema"] == "solarlab.native-interval-descriptor.v1":
         _require(selected in choices and "refinement_selection" not in descriptor,
                  "diagnostic_step_controls")
     else:
@@ -828,6 +989,8 @@ def diagnostic_interval_binding(request):
     controls["max_step"] = selected
     _require(request["controls"] == controls and "segment_startup_policy" not in request,
              "diagnostic_only_declared_control_delta")
+    if accuracy:
+        _require(_digest(request["controls"]) == _digest(controls), "accuracy_exact_control_encoding")
     for key in ("case_id", "numeric_packet", "previous_controls", "weight_certificate", "budgets",
                 "original_budgets", "quadrature", "physical_domain_policy"):
         _require(request[key] == parent[key], "diagnostic_physics_or_gate_changed:"+key)
