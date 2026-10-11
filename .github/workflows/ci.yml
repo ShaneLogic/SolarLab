@@ -108,6 +108,7 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_execution_wall.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_error_weights.py::TestInitialWeightSource::test_pins_and_real_callback_route
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_readback.py tests/numerical_contracts/test_qualification_bridge.py
+          REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_coupled_device.py -k 'diagnostic_initialization or frame_input_unframed_seed_final_and_restored_handoffs or frame_input_saved_fifth_word'
           # This selection uses synthetic packets only and reads no device plan.
           REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_observation.py -k 'charge_refinement or partial_charge_observation or packet_extended_size_requires_matching_qualification_policy'
           REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_interval_observation.py -k 'contained_observation_range or fixed4'
