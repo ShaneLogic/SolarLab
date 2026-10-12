@@ -1763,6 +1763,7 @@ class _Protocol:
         self.prefix = {k: ((Fraction(0),) * 3, (Fraction(0),) * 3) for k in _LEDGERS}
         self.coverage = []
         self.native_owner = None
+        self.statistics_counter_context = None
         self.numeric_ordinal = 0
         self.refresh_anchor = None
         self.refresh_binding_identity = None
@@ -1778,6 +1779,8 @@ class _Protocol:
                  "record_request_or_map")
 
     def _statistics(self, phase, returned=None, previous=None):
+        initial = phase in {"initialization_return", "reference_refresh_return"}
+        _require(initial or phase in {"before_onestep", "after_onestep"}, "statistics_phase")
         row = self.rows.take()
         while row["kind"] == "jacobian_callback_context":
             _require(phase != "before_onestep", "callback_outside_native_call")
@@ -1816,6 +1819,10 @@ class _Protocol:
         _require(all(type(raw[k]) is int and raw[k] >= 0 for k in _COUNTERS)
                  and _hex(row["internal_time_hex"]) == raw["current_time"]
                  and row["method_state_valid"] is (raw["num_steps"] > 0), "statistics_values")
+        marked = "jacobian_counter_phase" in row
+        if marked:
+            _require(row["jacobian_counter_phase"] == ("pre_first_accepted_step" if raw["num_steps"] == 0
+                                                       else "current_initialization"), "statistics_jacobian_phase")
         if returned is not None:
             _require(_hex(row["returned_time_hex"]) == returned, "statistics_return_time")
         if phase == "before_onestep":
@@ -1829,16 +1836,39 @@ class _Protocol:
         owner = raw["observation_owner"], raw["observation_generation"]
         _require(type(owner[0]) is str and bool(owner[0]) and type(owner[1]) is int and owner[1] > 0,
                  "statistics_native_owner")
-        if phase in {"initialization_return", "reference_refresh_return"}:
+        if initial:
+            _require(previous is None and raw["num_steps"] == 0
+                     and "jacobian_work_basis" not in row
+                     and (phase != "reference_refresh_return" or self.segment_frame.enabled),
+                     "statistics_initial_counter_context")
             self.native_owner = owner
         else:
             _require(owner == self.native_owner, "native_owner_changed_within_segment")
         if self.segment_frame.enabled:
             self.segment_frame.weight_state(raw.get("parent_weight_state"), owner=owner[0], generation=owner[1],
                                             initial=phase in {"initialization_return", "reference_refresh_return"})
+        counter_context = (self.segment["id"], self.numeric_ordinal, owner, marked)
+        if initial:
+            self.statistics_counter_context = counter_context
+        else:
+            _require(getattr(self, "statistics_counter_context", None) == counter_context,
+                     "statistics_jacobian_scope_changed")
         if previous is not None:
-            _require(all(raw[k] >= previous[k] for k in _COUNTERS)
-                     and row["work_since_before"] == {k: raw[k] - previous[k] for k in _COUNTERS},
+            prior_row = self.last_statistics_record
+            _require(marked is ("jacobian_counter_phase" in prior_row), "statistics_jacobian_scope_changed")
+            work = {k: raw[k] - previous[k] for k in _COUNTERS}
+            first_solve = (marked and phase == "after_onestep" and prior_row["phase"] == "before_onestep"
+                           and previous["num_steps"] == 0 and raw["num_steps"] == 1
+                           and prior_row["jacobian_counter_phase"] == "pre_first_accepted_step")
+            if first_solve:
+                _require(row.get("jacobian_work_basis") == "first_solve_current_total",
+                         "statistics_jacobian_reset_basis")
+                work["jacobian_evals"] = raw["jacobian_evals"]
+            else:
+                _require("jacobian_work_basis" not in row, "statistics_unexpected_jacobian_reset")
+            _require(all(v >= 0 for v in work.values())
+                     and all(type(v) is int for v in row["work_since_before"].values())
+                     and row["work_since_before"] == work,
                      "statistics_counter_delta")
             _require(raw["num_steps"] == previous["num_steps"] + 1, "onestep_not_consecutive")
             self.steps += 1

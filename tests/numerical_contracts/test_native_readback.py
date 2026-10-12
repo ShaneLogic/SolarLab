@@ -26,6 +26,304 @@ from scripts.benchmarks.native_history import HistoryWriter, encode_integer_valu
 from scripts.benchmarks.native_readback import HistoryVerificationError, verify_history, _Protocol, _native_packet
 
 
+class StatisticsInitializationTests(unittest.TestCase):
+    """The actual collector body and independent reader; no native/model calls."""
+    @classmethod
+    def setUpClass(cls):
+        import ast
+        import math
+        source = Path(__file__).resolve().parents[2] / "scripts/benchmarks/coupled_device_prototype.py"
+        tree = ast.parse(source.read_bytes())
+        selected = [node for node in tree.body if
+                    (isinstance(node, ast.FunctionDef) and node.name == "ida_statistics_snapshot") or
+                    (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name)
+                     and t.id == "_IDA_COUNTER_FIELDS" for t in node.targets))]
+        cls.error = type("CounterContractError", (RuntimeError,), {})
+        ns = {"json": json, "math": math, "ContractError": cls.error}
+        exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), "exec"), ns)
+        cls.collector = staticmethod(ns["ida_statistics_snapshot"])
+        cls.fields = ns["_IDA_COUNTER_FIELDS"]
+
+    def raw(self, steps, jacobian):
+        value = {key: 0 for key in self.fields}
+        value.update(num_steps=steps, jacobian_evals=jacobian, current_time=1.0 + steps / 100,
+                     observation_owner="manufactured-owner", observation_generation=4)
+        return value
+
+    def collect(self, raw, phase, before=None, logical=True):
+        from types import SimpleNamespace
+        return self.collector(SimpleNamespace(statistics=lambda: raw), "hold", 4, phase, 2.,
+                              raw["current_time"] if phase == "after_onestep" else None,
+                              before=before, logical_initialization=logical)
+
+    def protocol(self, before):
+        from types import SimpleNamespace
+        protocol = _Protocol.__new__(_Protocol)
+        protocol.segment = {"id": before["segment_id"], "start": before["raw_statistics"]["current_time"], "end": 2.}
+        protocol.numeric_ordinal = protocol.ordinal = before["logical_initialization_index"]
+        protocol.startup = SimpleNamespace(consume=lambda row: None)
+        protocol.segment_frame = SimpleNamespace(enabled=False)
+        protocol.diagnostic = None
+        protocol.native_owner = None
+        protocol.steps = 0
+        return protocol
+
+    def initialization(self, before):
+        initial = deepcopy(before)
+        initial.update(phase="initialization_return", requested_time_hex=before["internal_time_hex"],
+                       returned_time_hex=before["internal_time_hex"], method_state_valid=False)
+        initial["raw_statistics"]["num_steps"] = 0
+        return initial
+
+    def reader(self, before, after, initial=None):
+        from types import SimpleNamespace
+        protocol = self.protocol(before)
+        rows = iter([self.initialization(before) if initial is None else initial, before, after])
+        protocol.rows = SimpleNamespace(take=lambda: next(rows))
+        protocol._statistics("initialization_return", protocol.segment["start"])
+        previous = protocol._statistics("before_onestep")
+        return protocol._statistics("after_onestep", previous=previous)
+
+    def test_retained_jacobian_reset_preserves_raw_and_nonnegative_work(self):
+        # The installed Build03 scalar confirmation observed retained nje=12.
+        before = self.collect(self.raw(0, 12), "before_onestep")
+        after = self.collect(self.raw(1, 1), "after_onestep", before)
+        self.assertEqual(before["raw_statistics"]["jacobian_evals"], 12)
+        self.assertEqual(after["raw_statistics"]["jacobian_evals"], 1)
+        self.assertEqual(after["work_since_before"]["jacobian_evals"], 1)
+        self.assertTrue(all(v >= 0 for v in after["work_since_before"].values()))
+        self.assertEqual(self.reader(before, after), after["raw_statistics"])
+
+    def test_first_solve_work_is_current_total_even_without_a_drop(self):
+        before = self.collect(self.raw(0, 1), "before_onestep")
+        after = self.collect(self.raw(1, 3), "after_onestep", before)
+        self.assertEqual(after["work_since_before"]["jacobian_evals"], 3)
+        self.reader(before, after)
+
+    def test_later_jacobian_and_all_six_core_regressions_still_fail(self):
+        pairs = [(self.raw(1, 17), self.raw(2, 1), "jacobian_evals")]
+        for key in self.fields:
+            if key == "jacobian_evals":
+                continue
+            old, new = self.raw(0, 17), self.raw(1, 1)
+            old[key], new[key] = 3, 2
+            pairs.append((old, new, key))
+        for old, new, key in pairs:
+            with self.subTest(counter=key):
+                before = self.collect(old, "before_onestep")
+                with self.assertRaisesRegex(self.error, "counter_regressed") as caught:
+                    self.collect(new, "after_onestep", before)
+                evidence = caught.exception.native_statistics_evidence
+                self.assertIn(key, evidence["rejected_fields"])
+                self.assertEqual(evidence["before"]["raw_statistics"], old)
+                self.assertEqual(evidence["after"]["raw_statistics"], new)
+
+    def test_native_owner_or_generation_change_is_not_a_reset(self):
+        before = self.collect(self.raw(0, 17), "before_onestep")
+        for key, value in (("observation_owner", "foreign"), ("observation_generation", 5)):
+            raw = self.raw(1, 1)
+            raw[key] = value
+            with self.assertRaisesRegex(self.error, "generation_mismatch") as caught:
+                self.collect(raw, "after_onestep", before)
+            self.assertEqual(caught.exception.native_statistics_evidence["after"]["raw_statistics"], raw)
+
+    def test_zero_step_failed_call_and_unmarked_scope_cannot_claim_reset(self):
+        before = self.collect(self.raw(0, 17), "before_onestep")
+        with self.assertRaisesRegex(self.error, "counter_regressed"):
+            self.collect(self.raw(0, 0), "onestep_exception", before)
+        legacy = self.collect(self.raw(0, 17), "before_onestep", logical=False)
+        with self.assertRaisesRegex(self.error, "counter_regressed"):
+            self.collect(self.raw(1, 1), "after_onestep", legacy, logical=False)
+
+    def test_reader_rejects_forged_basis_mixed_scope_and_wrong_work(self):
+        before = self.collect(self.raw(0, 17), "before_onestep")
+        after = self.collect(self.raw(1, 1), "after_onestep", before)
+        for mutation in (lambda row: row.pop("jacobian_work_basis"),
+                         lambda row: row.pop("jacobian_counter_phase"),
+                         lambda row: row["work_since_before"].update(jacobian_evals=0),
+                         lambda row: row["work_since_before"].update(jacobian_evals=True),
+                         lambda row: row["raw_statistics"].update(observation_generation=5)):
+            bad = deepcopy(after)
+            mutation(bad)
+            with self.assertRaises(HistoryVerificationError):
+                self.reader(before, bad)
+
+    def test_reader_legacy_rows_keep_original_strict_delta_contract(self):
+        before = self.collect(self.raw(0, 0), "before_onestep")
+        after = self.collect(self.raw(1, 1), "after_onestep", before)
+        before.pop("jacobian_counter_phase")
+        after.pop("jacobian_counter_phase")
+        after.pop("jacobian_work_basis")
+        self.reader(before, after)
+        before["raw_statistics"]["jacobian_evals"] = 17
+        with self.assertRaises(HistoryVerificationError):
+            self.reader(before, after)
+
+    def test_reader_mode_cannot_change_after_initialization(self):
+        before = self.collect(self.raw(0, 12), "before_onestep")
+        after = self.collect(self.raw(1, 1), "after_onestep", before)
+        initial = self.initialization(before)
+        initial.pop("jacobian_counter_phase")
+        with self.assertRaisesRegex(HistoryVerificationError, "statistics_jacobian_scope_changed"):
+            self.reader(before, after, initial)
+        # No counter drop is needed to detect the reverse mode switch.
+        before = self.collect(self.raw(0, 0), "before_onestep")
+        after = self.collect(self.raw(1, 1), "after_onestep", before)
+        initial = self.initialization(before)
+        before.pop("jacobian_counter_phase")
+        after.pop("jacobian_counter_phase")
+        after.pop("jacobian_work_basis")
+        with self.assertRaisesRegex(HistoryVerificationError, "statistics_jacobian_scope_changed"):
+            self.reader(before, after, initial)
+
+    def test_reader_requires_supported_initial_counter_context(self):
+        from types import SimpleNamespace
+        before = self.collect(self.raw(0, 12), "before_onestep")
+        after = self.collect(self.raw(1, 1), "after_onestep", before)
+        for edit in (lambda r: r.update(jacobian_counter_phase="unknown"),
+                     lambda r: r.update(jacobian_work_basis="first_solve_current_total"),
+                     lambda r: (r["raw_statistics"].update(num_steps=1),
+                                r.update(method_state_valid=True, jacobian_counter_phase="current_initialization"))):
+            initial = self.initialization(before)
+            edit(initial)
+            with self.assertRaises(HistoryVerificationError):
+                self.reader(before, after, initial)
+        protocol = self.protocol(before)
+        protocol.native_owner = ("manufactured-owner", 4)
+        protocol.rows = SimpleNamespace(take=lambda: before)
+        with self.assertRaisesRegex(HistoryVerificationError, "statistics_jacobian_scope_changed"):
+            protocol._statistics("before_onestep")
+        with self.assertRaisesRegex(HistoryVerificationError, "statistics_phase"):
+            protocol._statistics("unsupported")
+
+    def test_refresh_establishes_and_retains_its_counter_mode(self):
+        from types import SimpleNamespace
+        before = self.collect(self.raw(0, 12), "before_onestep")
+        protocol = self.protocol(before)
+        initial = self.initialization(before)
+        initial.pop("jacobian_counter_phase")
+        protocol.rows = SimpleNamespace(take=lambda: initial)
+        protocol._statistics("initialization_return", 1.)
+        refresh = self.initialization(before)
+        refresh.update(phase="reference_refresh_return", logical_initialization_index=5)
+        refresh["raw_statistics"]["observation_generation"] = 5
+        protocol.numeric_ordinal = 5
+        protocol.segment_frame = SimpleNamespace(enabled=True, active={"t0_hex": 1.0.hex()},
+            weight_state=lambda *a, **k: None, refresh_work=lambda row: None)
+        protocol.rows = SimpleNamespace(take=lambda: refresh)
+        protocol._statistics("reference_refresh_return", 1.)
+        before["logical_initialization_index"] = 5
+        before["raw_statistics"]["observation_generation"] = 5
+        after = self.collect(self.raw(1, 1), "after_onestep")
+        after["logical_initialization_index"] = 5
+        after["raw_statistics"]["observation_generation"] = 5
+        after.update(jacobian_work_basis="first_solve_current_total",
+                     work_since_before={key: after["raw_statistics"][key] for key in self.fields})
+        protocol.rows = SimpleNamespace(take=lambda: before)
+        previous = protocol._statistics("before_onestep")
+        protocol.rows = SimpleNamespace(take=lambda: after)
+        protocol._statistics("after_onestep", previous=previous)
+        before.pop("jacobian_counter_phase")
+        protocol.rows = SimpleNamespace(take=lambda: before)
+        with self.assertRaisesRegex(HistoryVerificationError, "statistics_jacobian_scope_changed"):
+            protocol._statistics("before_onestep")
+
+    def test_counter_pair_survives_native_failure_result_publication(self):
+        import ast
+        from types import SimpleNamespace
+        source = Path(__file__).resolve().parents[2] / "scripts/benchmarks/coupled_device_prototype.py"
+        tree = ast.parse(source.read_bytes())
+        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                        and n.name == "run_voltage_lift_native_pilot")
+        handler = next(n for n in ast.walk(function) if isinstance(n, ast.ExceptHandler)
+                       and any(isinstance(v, ast.Constant) and v.value == "failed_bounded_voltage_lift_native_pilot"
+                               for v in ast.walk(n)))
+        error = self.error("native_statistics_counter_regressed")
+        error.native_statistics_evidence = {"before": self.raw(1, 17), "after": self.raw(2, 1)}
+        ns = {"error": error, "first_failure": None, "last_attempt": {"phase": "native_step"},
+              "traceback": SimpleNamespace(format_exc=lambda: "manufactured traceback")}
+        exec(compile(ast.Module(body=handler.body, type_ignores=[]), str(source), "exec"), ns)
+        self.assertEqual(ns["result"]["native_statistics_evidence"], error.native_statistics_evidence)
+        self.assertEqual(ns["result"]["reason"], "native_statistics_counter_regressed")
+        scope = next(n.value for n in ast.walk(function)
+                     if isinstance(n, ast.keyword) and n.arg == "cumulative_scope")
+        text = eval(compile(ast.Expression(scope), str(source), "eval"), ns)
+        self.assertIn("through last observed interval only", text)
+        self.assertIn("did not reach interval observation", text)
+
+    def test_early_invalid_counter_preserves_pair_and_failure_scope(self):
+        import ast
+        from types import SimpleNamespace
+        before = self.collect(self.raw(0, 12), "before_onestep")
+        invalid = self.raw(1, 1)
+        invalid["residual_evals"] = -1
+        with self.assertRaisesRegex(self.error, "invalid_native_statistics_counter") as caught:
+            self.collect(invalid, "after_onestep", before)
+        evidence = caught.exception.native_statistics_evidence
+        self.assertEqual(evidence["before"], before)
+        self.assertEqual(evidence["after"]["raw_statistics"], invalid)
+        self.assertEqual(evidence["rejected_fields"], ["residual_evals"])
+        self.assertEqual(evidence["raw_counter_differences"]["residual_evals"], -1)
+        source = Path(__file__).resolve().parents[2] / "scripts/benchmarks/coupled_device_prototype.py"
+        function = next(n for n in ast.parse(source.read_bytes()).body
+                        if isinstance(n, ast.FunctionDef) and n.name == "run_voltage_lift_native_pilot")
+        handler = next(n for n in ast.walk(function) if isinstance(n, ast.ExceptHandler)
+                       and any(isinstance(v, ast.Constant) and v.value == "failed_bounded_voltage_lift_native_pilot"
+                               for v in ast.walk(n)))
+        ns = dict(error=caught.exception, first_failure=None, last_attempt={"phase": "native_return"},
+                  traceback=SimpleNamespace(format_exc=lambda: "manufactured traceback"))
+        exec(compile(ast.Module(body=handler.body, type_ignores=[]), str(source), "exec"), ns)
+        self.assertEqual(ns["result"]["native_statistics_evidence"], evidence)
+        scope = next(n.value for n in ast.walk(function)
+                     if isinstance(n, ast.keyword) and n.arg == "cumulative_scope")
+        self.assertIn("did not reach interval observation",
+                      eval(compile(ast.Expression(scope), str(source), "eval"), ns))
+
+    def test_native_return_is_preserved_before_counter_failure(self):
+        import ast
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        source = Path(__file__).resolve().parents[2] / "scripts/benchmarks/coupled_device_prototype.py"
+        function = next(n for n in ast.parse(source.read_bytes()).body
+                        if isinstance(n, ast.FunctionDef) and n.name == "run_voltage_lift_native_pilot")
+        receipt = next(n for n in ast.walk(function)
+                       if isinstance(n, ast.FunctionDef) and n.name == "snapshot_receipt")
+        loop = next(n for n in ast.walk(function) if isinstance(n, ast.While)
+                    and ast.unparse(n.test) == "left.time < segment.end")
+        attempt_index = next(i for i, n in enumerate(loop.body) if isinstance(n, ast.Try))
+        nodes = loop.body[attempt_index:attempt_index+2]
+        native = dict(time=1.01, success=True, status=0, message="manufactured",
+                      z=[-0.0, 1.0], zdot=[0.0, -1.0])
+        error = self.error("native_statistics_counter_regressed")
+        error.native_statistics_evidence = {"before": self.raw(1, 17), "after": self.raw(2, 1)}
+        def reject(*args, **kwargs):
+            raise error
+        ns = dict(solver=SimpleNamespace(step=lambda *a, **k: native),
+                  timing=SimpleNamespace(phase=lambda name: nullcontext()),
+                  snapshot_solver_result=lambda value: value, segment=SimpleNamespace(id="hold", end=2.),
+                  diagnostic=False, numeric_ordinal=4, before_stats={}, ida_statistics_snapshot=reject)
+        exec(compile(ast.Module(body=[receipt], type_ignores=[]), str(source), "exec"), ns)
+        with self.assertRaisesRegex(self.error, "counter_regressed"):
+            exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), ns)
+        self.assertEqual(ns["last_attempt"], dict(phase="native_return", segment_id="hold",
+            time_hex=1.01.hex(), success=True, status=0, message="manufactured",
+            z_hex=[(-0.0).hex(), 1.0.hex()], zdot_hex=[0.0.hex(), (-1.0).hex()]))
+
+        # Failed native calls retain both the original exception and the
+        # statistics guard's raw pair in the unavailable-statistics record.
+        original = RuntimeError("native step failed")
+        def fail_step(*args, **kwargs):
+            raise original
+        saved = []
+        ns["solver"] = SimpleNamespace(step=fail_step)
+        ns["save"] = saved.append
+        with self.assertRaisesRegex(RuntimeError, "native step failed") as caught:
+            exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), ns)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(original.native_statistics_evidence, error.native_statistics_evidence)
+        self.assertEqual(saved[0]["native_statistics_evidence"], error.native_statistics_evidence)
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 

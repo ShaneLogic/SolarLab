@@ -2426,12 +2426,24 @@ def ida_statistics_snapshot(solver, segment_id: str, generation: int, phase: str
         from scripts.benchmarks.native_observation import observation_record
         collected = dict(collected, parent_weight_state=observation_record(collected["parent_weight_state"]))
     raw = json.loads(json.dumps(collected, allow_nan=False))
-    if any(type(raw.get(k)) is not int or raw[k] < 0 for k in _IDA_COUNTER_FIELDS):
-        raise ContractError("invalid_native_statistics_counter")
+    generation_field = "logical_initialization_index" if logical_initialization else "initialization_generation"
+    record = {"kind": "native_statistics", "segment_id": segment_id,
+              generation_field: generation, "phase": phase, "raw_statistics": raw,
+              "validation_state": "unvalidated_raw_statistics"}
+    def reject(reason, fields=()):
+        previous_raw = {} if before is None else before["raw_statistics"]
+        differences = {k: raw[k]-previous_raw[k] for k in _IDA_COUNTER_FIELDS
+                       if type(raw.get(k)) is int and type(previous_raw.get(k)) is int}
+        error = ContractError(reason)
+        error.native_statistics_evidence = {"before": before, "after": record,
+            "raw_counter_differences": differences, "rejected_fields": list(fields)}
+        raise error
+    invalid = [k for k in _IDA_COUNTER_FIELDS if type(raw.get(k)) is not int or raw[k] < 0]
+    if invalid:
+        reject("invalid_native_statistics_counter", invalid)
     if (type(generation) is not int or generation < 1
             or not math.isfinite(raw["current_time"])):
-        raise ContractError("invalid_native_statistics_context")
-    generation_field = "logical_initialization_index" if logical_initialization else "initialization_generation"
+        reject("invalid_native_statistics_context")
     record = {
         "kind": "native_statistics", "segment_id": segment_id,
         generation_field: generation, "phase": phase,
@@ -2445,13 +2457,32 @@ def ida_statistics_snapshot(solver, segment_id: str, generation: int, phase: str
     }
     if logical_initialization:
         record["initialization_scope"] = "controller initialization ordinal; source-owned snapshots separately carry native owner/generation"
+    owned = (type(raw.get("observation_owner")) is str and bool(raw["observation_owner"])
+             and type(raw.get("observation_generation")) is int and raw["observation_generation"] > 0)
+    if logical_initialization and owned:
+        # The maintained init_step window uses calc_initcond=None. IDAReInit
+        # resets the six core counters; idaLsInitialize resets nje on solve.
+        record["jacobian_counter_phase"] = ("pre_first_accepted_step" if raw["num_steps"] == 0
+                                             else "current_initialization")
+        record["counter_scope"] = "core counters since initialization; raw Jacobian counter follows linear-solver setup"
     if before is not None:
+        previous = before["raw_statistics"]
+        raw_delta = {k: raw[k]-previous[k] for k in _IDA_COUNTER_FIELDS}
         if (before["segment_id"] != segment_id
-                or before.get(generation_field) != generation):
-            raise ContractError("native_statistics_generation_mismatch")
-        delta = {k: raw[k]-before["raw_statistics"][k] for k in _IDA_COUNTER_FIELDS}
+                or before.get(generation_field) != generation
+                or any(raw.get(k) != previous.get(k) for k in ("observation_owner", "observation_generation"))):
+            reject("native_statistics_generation_mismatch")
+        delta = dict(raw_delta)
+        if (logical_initialization and owned and phase == "after_onestep"
+                and before["phase"] == "before_onestep" and previous["num_steps"] == 0
+                and raw["num_steps"] == 1
+                and before.get("jacobian_counter_phase") == "pre_first_accepted_step"):
+            # Use the observed current total after the source-defined reset,
+            # even when it exceeds the retained prior value; never alter raw.
+            delta["jacobian_evals"] = raw["jacobian_evals"]
+            record["jacobian_work_basis"] = "first_solve_current_total"
         if any(v < 0 for v in delta.values()):
-            raise ContractError("native_statistics_counter_regressed")
+            reject("native_statistics_counter_regressed", [k for k, v in delta.items() if v < 0])
         record["work_since_before"] = delta
     return record
 
@@ -5031,11 +5062,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 try:
                     with timing.phase('ida_calls'):
                         native = snapshot_solver_result(solver.step(segment.end, method="onestep", tstop=segment.end))
+                    last_attempt = snapshot_receipt("native_return", segment, native)
                     if diagnostic:
-                        last_attempt = snapshot_receipt("native_return", segment, native)
                         save({"kind": "native_interval_return", "segment_id": segment.id,
                               "receipt": last_attempt, "sequence": counts["onestep_returns"]+1})
-                except BaseException:
+                except BaseException as step_error:
                     try:
                         with timing.phase('ida_calls'):
                             failed_stats = ida_statistics_snapshot(solver, segment.id, numeric_ordinal,
@@ -5044,8 +5075,12 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                         counts["native_steps"] += failed_stats["work_since_before"]["num_steps"]
                         save(failed_stats)
                     except Exception as stats_error:
-                        save({"kind": "native_statistics_unavailable", "segment_id": segment.id,
-                              "phase": "onestep_exception", "reason": str(stats_error)})
+                        unavailable = {"kind": "native_statistics_unavailable", "segment_id": segment.id,
+                                       "phase": "onestep_exception", "reason": str(stats_error)}
+                        if hasattr(stats_error, "native_statistics_evidence"):
+                            step_error.native_statistics_evidence = stats_error.native_statistics_evidence
+                            unavailable["native_statistics_evidence"] = stats_error.native_statistics_evidence
+                        save(unavailable)
                     raise
                 with timing.phase('ida_calls'):
                     after_stats = ida_statistics_snapshot(solver, segment.id, numeric_ordinal,
@@ -5059,7 +5094,6 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                         or after_stats["raw_statistics"]["observation_owner"] != initial_stats["raw_statistics"]["observation_owner"]
                         or after_stats["raw_statistics"]["observation_generation"] != initial_stats["raw_statistics"]["observation_generation"]):
                     raise ContractError("diagnostic_actual_onestep_clock_or_generation")
-                last_attempt = snapshot_receipt("native_return", segment, native)
                 if not native["success"]:
                     raise ContractError("voltage_lift_solver_failure:"+native["message"])
                 _voltage_lift_guard_applied(after_stats["raw_statistics"], controls)
@@ -5237,6 +5271,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         result = {"status": "failed_bounded_voltage_lift_native_pilot", "complete_protocol": False,
                   "reason": str(error), "exception": type(error).__name__, "traceback": traceback.format_exc(),
                   "first_failure": first_failure or last_attempt}
+        if hasattr(error, "native_statistics_evidence"):
+            result["native_statistics_evidence"] = error.native_statistics_evidence
     result.update(
         request_sha256=request_id, map_identity=mapping.identity, counts=counts,
         execution_wall_policy=execution_wall,
@@ -5245,7 +5281,9 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         cumulative_absolute_charge_bounds_C={k: observation_record(v.absolute_defects) for k, v in prefixes.items()},
         cumulative_observation_reference_bounds_C={k: observation_record(v.reference_errors) for k, v in prefixes.items()},
         observation_policy_sha256=digest(observer_policy),
-        cumulative_scope="includes the fully evaluated first failed interval; no prefix reset at a protocol event",
+        cumulative_scope=("through last observed interval only; failing native call did not reach interval observation; no prefix reset at a protocol event"
+                          if "native_statistics_evidence" in result else
+                          "includes the fully evaluated first failed interval; no prefix reset at a protocol event"),
         scientific_or_G2_qualification=False, DAE_time_accuracy_certified=False, continuum_space_accuracy_certified=False,
         in_window_reinitializations=counts["reference_refreshes"],
     )
