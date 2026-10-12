@@ -581,10 +581,10 @@ def require_frame_successor(previous: NativeBasisFrame, current: NativeBasisFram
                 or previous_mapping is None or current_mapping is None
                 or h["transfer"]["old_map_identity"] != previous_mapping.identity
                 or h["transfer"]["new_map_identity"] != current_mapping.identity
-                or h["old_epoch"] != {"owner": previous.owner, "generation": previous.generation,
+                or digest(h["old_epoch"]) != digest({"owner": previous.owner, "generation": previous.generation,
                     "nsteps": previous.snapshot["native_before"]["nsteps"], "endpoint_identity": left["identity"],
-                    "coefficient_frame_identity": previous.identity}
-                or h["new_epoch"] != {"owner": current.owner, "generation": current.generation, "nsteps": 0}
+                    "coefficient_frame_identity": previous.identity})
+                or digest(h["new_epoch"]) != digest({"owner": current.owner, "generation": current.generation, "nsteps": 0})
                 or previous.owner != current.owner or current.generation != previous.generation+1
                 or current.snapshot["native_before"]["nsteps"] != 1 or right["nsteps"] != 0
                 or current_mapping.frame.identity != h["transfer"]["new_frame_identity"]

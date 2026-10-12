@@ -130,7 +130,9 @@ def admitted_refresh(refresh_case, monkeypatch):
         "reference_errors": (Fraction(1, 100),)*3}}, "sample_cursor": 1,
         "upper_accumulator": {"index": 7, "upper_numerators": (11, 13), "rounded_terms": (2, 3)},
         "last_accepted": interval["right"], "physical_reference_identity": c.model.reference.identity, "signed_prefix": None})
-    endpoint = {"internal_t": point.time, "identity": "a"*64, "nsteps": 7,
+    endpoint = {"internal_t": point.time,
+                "identity": ("manufactured-native-owner", 1, 7, point.time.hex(), point.time.hex(), "a"*64),
+                "nsteps": 7,
                 "raw_y": c.z.tobytes(), "raw_yp": c.zdot.tobytes()}
     frame = SimpleNamespace(identity=frame_id, owner="manufactured-native-owner", generation=1,
         binding_identity="b"*64, snapshot={"endpoint": endpoint, "native_before": {"nsteps": 7}})
@@ -274,12 +276,15 @@ def test_refresh_reader_rejects_corruption(admitted_refresh, damage):
         independent_reader(c).prepare_refresh(record, asdict(c.segment), 1, c.sample, c.interval, c.domain, c.certificate, _decode(c.ledger))
 
 
-def test_refresh_clock_and_native_epoch_guards(admitted_refresh):
+@pytest.mark.parametrize("serialized", [False, True], ids=["memory", "json"])
+def test_refresh_clock_and_native_epoch_guards(admitted_refresh, serialized):
     from scripts.benchmarks.interval_observation import AcceptedClock
     from scripts.benchmarks.native_observation import require_frame_successor
     c = admitted_refresh
     fresh, _, _, _, result = initialized(c)
     complete = result[-1]
+    if serialized:
+        complete = json.loads(json.dumps(complete))
     before = AcceptedClock(.5, .625, .125, 1, 7, 2, .5, .75, c.segment.id, owner=c.frame.owner)
     after = AcceptedClock(.625, .6875, .0625, 2, 1, 1, .5, .75, c.segment.id, owner=c.frame.owner)
     before.require_successor(after, numeric_handoff=complete)
@@ -425,7 +430,8 @@ def test_refresh_complete_point_requires_matching_history(admitted_refresh, dama
 
 
 @pytest.mark.parametrize("damage", [None, "missing", "overlapping", "wrong_generation"])
-def test_refresh_metadata_stream_requires_exact_handoff(admitted_refresh, damage):
+@pytest.mark.parametrize("serialized", [False, True], ids=["memory", "json"])
+def test_refresh_metadata_stream_requires_exact_handoff(admitted_refresh, damage, serialized):
     from scripts.benchmarks.native_readback import HistoryVerificationError
     c = admitted_refresh
     _, prepared, _, _, (_, _, stats, complete) = initialized(c)
@@ -435,6 +441,8 @@ def test_refresh_metadata_stream_requires_exact_handoff(admitted_refresh, damage
     if damage == "wrong_generation":
         complete["new_epoch"]["generation"] += 1
         complete["record_sha256"] = c.d.digest({k: v for k, v in complete.items() if k != "record_sha256"})
+    if serialized:
+        records = json.loads(json.dumps(records))
     protocol = protocol_for_refresh(c, records)
     before = deepcopy(protocol.prefix)
     frame = dict(c.frame.snapshot, owner=c.frame.owner, generation=c.frame.generation)
@@ -448,6 +456,75 @@ def test_refresh_metadata_stream_requires_exact_handoff(admitted_refresh, damage
     else:
         with pytest.raises((HistoryVerificationError, KeyError)): consume()
     assert protocol.prefix == before
+
+
+@pytest.mark.parametrize("damage", ["boolean_generation", "float_generation", "endpoint_generation",
+                                    "endpoint_time", "endpoint_digest", "extra_member"])
+def test_refresh_wire_rejects_rehashed_old_epoch(admitted_refresh, damage):
+    from scripts.benchmarks.native_observation import require_frame_successor
+    from scripts.benchmarks.native_readback import HistoryVerificationError
+    c = admitted_refresh
+    fresh, prepared, _, _, (_, _, statistics, complete) = initialized(c)
+    prepared, statistics, complete = json.loads(json.dumps([prepared, statistics, complete]))
+    for record in (prepared, complete):
+        epoch = record["old_epoch"]
+        if damage == "boolean_generation": epoch["generation"] = True
+        if damage == "float_generation": epoch["generation"] = float(epoch["generation"])
+        if damage == "endpoint_generation": epoch["endpoint_identity"][1] = True
+        if damage == "endpoint_time": epoch["endpoint_identity"][3] = .5.hex()
+        if damage == "endpoint_digest": epoch["endpoint_identity"][-1] = "0"*64
+        if damage == "extra_member": epoch["unbound"] = 1
+    prepared["record_sha256"] = c.d.digest({k: v for k, v in prepared.items() if k != "record_sha256"})
+    complete["prepared_sha256"] = prepared["record_sha256"]
+    complete["record_sha256"] = c.d.digest({k: v for k, v in complete.items() if k != "record_sha256"})
+    protocol = protocol_for_refresh(c, [prepared, statistics, complete])
+    frame = dict(c.frame.snapshot, owner=c.frame.owner, generation=c.frame.generation)
+    with pytest.raises(HistoryVerificationError, match="reference_refresh_old_native_epoch"):
+        protocol._consume_reference_refresh(c.sample, c.interval, c.domain, c.certificate, 1, frame,
+                                            complete["before_statistics"]["raw_statistics"])
+    zero = np.zeros(10)
+    current = SimpleNamespace(identity="c"*64, owner=c.frame.owner, generation=2,
+        binding_identity=c.frame.binding_identity,
+        snapshot={"predecessor": {"internal_t": c.point.time, "nsteps": 0,
+                                  "raw_y": zero.tobytes(), "raw_yp": zero.tobytes()},
+                  "native_before": {"nsteps": 1}})
+    with pytest.raises(ContractError, match="native_observation_invalid_numeric_handoff"):
+        require_frame_successor(c.frame, current, previous_segment=c.segment, current_segment=c.segment,
+            previous_mapping=c.old_mapping, current_mapping=fresh, numeric_handoff=complete)
+
+
+@pytest.mark.parametrize("damage", ["generation_float", "steps_bool", "preserved_generation_bool",
+                                    "before_steps_float", "success_int", "weight_size_float", "ordinal_float"])
+def test_refresh_wire_rejects_rehashed_completion_types(admitted_refresh, damage):
+    from scripts.benchmarks.native_observation import require_frame_successor
+    from scripts.benchmarks.native_readback import HistoryVerificationError
+    c = admitted_refresh
+    fresh, prepared, _, _, (_, _, statistics, complete) = initialized(c)
+    prepared, statistics, complete = json.loads(json.dumps([prepared, statistics, complete]))
+    old_statistics = deepcopy(complete["before_statistics"]["raw_statistics"])
+    if damage == "generation_float": complete["new_epoch"]["generation"] = 2.0
+    if damage == "steps_bool": complete["new_epoch"]["nsteps"] = False
+    if damage == "preserved_generation_bool": complete["old_epoch"]["generation"] = True
+    if damage == "before_steps_float": complete["before_statistics"]["raw_statistics"]["num_steps"] = 7.0
+    if damage == "success_int": complete["initialization_return"]["success"] = 1
+    if damage == "weight_size_float": complete["parent_weight_frame"]["size"] = 10.0
+    if damage == "ordinal_float": complete["transfer"]["new_numeric_initialization_ordinal"] = 2.0
+    complete["record_sha256"] = c.d.digest({k: v for k, v in complete.items() if k != "record_sha256"})
+    protocol = protocol_for_refresh(c, [prepared, statistics, complete])
+    frame = dict(c.frame.snapshot, owner=c.frame.owner, generation=c.frame.generation)
+    with pytest.raises(HistoryVerificationError):
+        protocol._consume_reference_refresh(c.sample, c.interval, c.domain, c.certificate, 1, frame,
+                                            old_statistics)
+    if damage in {"generation_float", "steps_bool", "preserved_generation_bool"}:
+        zero = np.zeros(10)
+        current = SimpleNamespace(identity="c"*64, owner=c.frame.owner, generation=2,
+            binding_identity=c.frame.binding_identity,
+            snapshot={"predecessor": {"internal_t": c.point.time, "nsteps": 0,
+                                      "raw_y": zero.tobytes(), "raw_yp": zero.tobytes()},
+                      "native_before": {"nsteps": 1}})
+        with pytest.raises(ContractError, match="native_observation_invalid_numeric_handoff"):
+            require_frame_successor(c.frame, current, previous_segment=c.segment, current_segment=c.segment,
+                previous_mapping=c.old_mapping, current_mapping=fresh, numeric_handoff=complete)
 
 
 def test_refresh_anchor_recertification_retains_original_history(admitted_refresh):

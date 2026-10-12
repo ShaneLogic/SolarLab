@@ -1527,22 +1527,27 @@ class SegmentFrameCheck:
     def complete_refresh(self, prepared, complete, statistics):
         _require(complete["record_sha256"] == _digest({k: v for k, v in complete.items() if k != "record_sha256"})
                  and complete["phase"] == "complete" and complete["prepared_sha256"] == prepared["record_sha256"]
-                 and all(complete[k] == v for k, v in prepared.items() if k not in {"phase", "new_epoch", "record_sha256"})
+                 and all(_digest(complete[k]) == _digest(v) for k, v in prepared.items()
+                         if k not in {"phase", "new_epoch", "record_sha256"})
                  and complete["statistics_sha256"] == _digest(statistics) and complete["public_api"] == "init_step",
                  "reference_refresh_completion_binding")
         old, new, raw = prepared["old_epoch"], complete["new_epoch"], statistics["raw_statistics"]
         before = complete["before_statistics"]["raw_statistics"]
-        _require(before["observation_owner"] == old["owner"] and before["observation_generation"] == old["generation"]
-                 and before["num_steps"] == old["nsteps"] and before["current_time"] == _hex(self.active["t0_hex"])
-                 and new == {"owner": old["owner"], "generation": old["generation"]+1, "nsteps": 0}
-                 and raw["observation_owner"] == new["owner"] and raw["observation_generation"] == new["generation"]
-                 and raw["num_steps"] == 0 and raw["current_time"] == _hex(self.active["t0_hex"]),
+        epoch_fields = ("observation_owner", "observation_generation", "num_steps", "current_time")
+        _require(_digest({k: before[k] for k in epoch_fields}) == _digest({
+                    "observation_owner": old["owner"], "observation_generation": old["generation"],
+                    "num_steps": old["nsteps"], "current_time": _hex(self.active["t0_hex"])})
+                 and _digest(new) == _digest({"owner": old["owner"], "generation": old["generation"]+1, "nsteps": 0})
+                 and _digest({k: raw[k] for k in epoch_fields}) == _digest({
+                    "observation_owner": new["owner"], "observation_generation": new["generation"],
+                    "num_steps": 0, "current_time": _hex(self.active["t0_hex"])}),
                  "reference_refresh_actual_generation")
         expected_weights = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": _digest(self.active),
             **{k: self.active[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
-        _require(complete["parent_weight_frame"] == expected_weights
-                 and complete["initialization_return"] == {"time_hex": self.active["t0_hex"], "success": True,
-                    "raw_z_hex": [0.0.hex()]*self.size, "raw_zdot_hex": [0.0.hex()]*self.size},
+        _require(_digest(complete["parent_weight_frame"]) == _digest(expected_weights)
+                 and _digest(complete["initialization_return"]) == _digest({
+                    "time_hex": self.active["t0_hex"], "success": True,
+                    "raw_z_hex": [0.0.hex()]*self.size, "raw_zdot_hex": [0.0.hex()]*self.size}),
                  "reference_refresh_public_initialization_words")
         expected_binding = _digest({"adapter": _digest({"map": _digest(self.current_map),
             "partial_frame": "raw-z,raw-zdot,inputs,input-rates,time-v1"}),
@@ -2143,7 +2148,7 @@ class _Protocol:
         old_epoch = {"owner": frame["owner"], "generation": frame["generation"],
             "nsteps": frame["native_before"]["nsteps"], "endpoint_identity": frame["endpoint"]["identity"],
             "coefficient_frame_identity": self.frame_id}
-        _require(prepared["old_epoch"] == old_epoch, "reference_refresh_old_native_epoch")
+        _require(_digest(prepared["old_epoch"]) == _digest(old_epoch), "reference_refresh_old_native_epoch")
         ledger = {"prefixes": {k: {"absolute_defects": absolute, "reference_errors": errors}
                                 for k, (absolute, errors) in self.prefix.items()},
             "upper_accumulator": None if self.charge_refinement is None else self.charge_refinement.summary(),
@@ -2156,7 +2161,8 @@ class _Protocol:
         raw = self._statistics("reference_refresh_return", _hex(prepared["transfer"]["time_hex"]))
         complete = self.rows.take("voltage_lift_numeric_handoff")
         before = complete["before_statistics"]["raw_statistics"]
-        _require(all(before[k] == old_statistics[k] for k in _COUNTERS), "reference_refresh_preserved_old_work")
+        _require(_digest({k: before[k] for k in _COUNTERS}) == _digest({k: old_statistics[k] for k in _COUNTERS}),
+                 "reference_refresh_preserved_old_work")
         self.segment_frame.complete_refresh(prepared, complete, self.last_statistics_record)
         self.refresh_anchor, self.refresh_binding_identity = complete, complete["callback_binding_identity"]
         return raw
