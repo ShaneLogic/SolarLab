@@ -2483,8 +2483,55 @@ class _Protocol:
             self.common_clocks.append(common)
 
 
+def execution_output_policy(request, admission=None, *, execution_provenance=None):
+    """Independently bind a caller-admitted output cap; producer claims grant nothing.
+
+    The caller must verify the actual Root admission and operation/message
+    before supplying these arguments. admission_sha256 is its canonical JSON
+    digest, not a value read from NativeResult or inferred from the history.
+    """
+    original = request["budgets"]["total_output_bytes"]
+    admission = {} if admission is None else admission
+    code = "execution_output_binding"
+    _require(type(original) is int and original > 0 and type(admission) is dict, code)
+    if "execution_output_limit" not in admission:
+        _require(execution_provenance is None, code)
+        return {"schema": "solarlab.native-execution-output-observed.v1",
+                "original_total_output_bytes": original, "effective_total_output_bytes": original,
+                "admission_binding": None, "execution_provenance": None}
+    grant = admission["execution_output_limit"]
+    _require(type(grant) is dict and set(grant) == {
+        "schema", "request_sha256", "original_total_output_bytes", "total_output_bytes",
+        "operation_id", "coordinator_message"}, code)
+    _require(type(execution_provenance) is dict and set(execution_provenance) == {
+        "admission_sha256", "request_sha256", "operation_id", "coordinator_message"}, code)
+    value = grant["total_output_bytes"]
+    _require(type(value) is int and value > 0
+             and grant["schema"] == "solarlab.native-execution-output.v1"
+             and type(grant["original_total_output_bytes"]) is int
+             and grant["original_total_output_bytes"] == original, code)
+    _require(admission.get("authority") == "Root" and admission.get("voltage_lift_native_authorized") is True
+             and admission.get("map_identity") == request.get("map_identity"), code)
+    operation, message = grant["operation_id"], grant["coordinator_message"]
+    _require(type(operation) is str and bool(operation)
+             and operation == admission.get("operation_id") == execution_provenance["operation_id"]
+             and type(message) is str and message.startswith("msg_") and len(message) > 4
+             and message == admission.get("coordinator_message") == execution_provenance["coordinator_message"], code)
+    try:
+        request_id, admission_id = _digest(request), _digest(admission)
+    except (TypeError, ValueError, OverflowError) as cause:
+        raise HistoryVerificationError(code) from cause
+    _require(grant["request_sha256"] == admission.get("request_sha256") == request_id
+             and execution_provenance["request_sha256"] == request_id
+             and execution_provenance["admission_sha256"] == admission_id, code)
+    return {"schema": "solarlab.native-execution-output-observed.v1",
+            "original_total_output_bytes": original, "effective_total_output_bytes": value,
+            "admission_binding": dict(grant), "execution_provenance": dict(execution_provenance)}
+
+
 def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: int,
-                   max_records: int, deadline_monotonic: float, integer_io_policy=None) -> dict:
+                   max_records: int, deadline_monotonic: float, integer_io_policy=None,
+                   execution_admission=None, execution_provenance=None) -> dict:
     """Verify a finalized, complete protocol, raising on every partial result.
 
     All limits are caller-selected stop rules. A receipt verifies stored words,
@@ -2510,6 +2557,11 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                  "failure_or_incomplete_publication")
         request = _read_json(folder / "NativeRequest.json", max_record_bytes, checkpoint)
         result = _read_json(folder / "NativeResult.json", max_record_bytes, checkpoint, integer_io_policy)
+        execution_output = execution_output_policy(
+            request, execution_admission, execution_provenance=execution_provenance)
+        if execution_output["admission_binding"] is not None or "execution_output_policy" in result:
+            _require(_digest(result.get("execution_output_policy")) == _digest(execution_output),
+                     "execution_output_observation_binding")
         diagnostic = "diagnostic_interval" in request
         history = result["history"]
         _require(history.get("integer_io") == integer_observed, "integer_io_policy_or_applied_limit_mismatch")
@@ -2532,7 +2584,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         path = folder / history["path"]
         before_stat = path.stat()
         _require(before_stat.st_size == history["encoded_bytes"]
-                 and before_stat.st_size <= request["budgets"]["total_output_bytes"], "encoded_byte_count_or_cap")
+                 and before_stat.st_size <= execution_output["effective_total_output_bytes"], "encoded_byte_count_or_cap")
         with HistoryReader(path, encoding="gzip", max_record_bytes=max_record_bytes,
                             max_logical_bytes=max_logical_bytes, integer_io_policy=integer_io_policy) as reader:
             rows = _Rows(reader, max_records, checkpoint)
@@ -2613,6 +2665,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                 **({"complete_diagnostic_window": True, "common_clocks": protocol.common_clocks,
                     "diagnostic_grid": protocol.diagnostic_grid} if diagnostic else {}),
                 "status": "verified_complete_native_history", "request_sha256": protocol.request_id,
+                "execution_output_policy": execution_output,
                 "map_identity": protocol.root_map_id, "observation_policy_sha256": protocol.policy_id,
                 "history": {"path": history["path"], "logical_bytes": history["logical_bytes"],
                             "encoded_bytes": size, "records": rows.count, "logical_sha256": rows.hash.hexdigest(),

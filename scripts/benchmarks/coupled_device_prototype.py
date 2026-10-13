@@ -4844,9 +4844,64 @@ def voltage_lift_execution_wall_policy(request: Mapping, admission: Mapping) -> 
             "admission_binding": dict(grant)}
 
 
+def voltage_lift_execution_output_policy(request: Mapping, admission: Mapping, *,
+                                       execution_provenance: Mapping | None = None) -> dict:
+    """Resolve an output allowance from caller-verified Root execution authority.
+
+    The caller supplies provenance from its independently admitted operation,
+    never from NativeResult or a history sidecar. admission_sha256 is the
+    canonical document digest, after the caller verifies the actual admission
+    file and Root message. Historical problem budgets remain unchanged.
+    """
+    original = request["budgets"]["total_output_bytes"]
+    field = "execution_output_limit"
+    error = "voltage_lift_execution_output_binding"
+    if type(original) is not int or original <= 0 or type(admission) is not dict:
+        raise ContractError(error)
+    if field not in admission:
+        if execution_provenance is not None:
+            raise ContractError(error)
+        return {"schema": "solarlab.native-execution-output-observed.v1",
+                "original_total_output_bytes": original, "effective_total_output_bytes": original,
+                "admission_binding": None, "execution_provenance": None}
+    grant = admission[field]
+    keys = {"schema", "request_sha256", "original_total_output_bytes", "total_output_bytes",
+            "operation_id", "coordinator_message"}
+    provenance_keys = {"admission_sha256", "request_sha256", "operation_id", "coordinator_message"}
+    if (type(grant) is not dict or set(grant) != keys
+            or type(execution_provenance) is not dict or set(execution_provenance) != provenance_keys):
+        raise ContractError(error)
+    value = grant["total_output_bytes"]
+    operation, message = grant["operation_id"], grant["coordinator_message"]
+    if (type(value) is not int or value <= 0
+            or grant["schema"] != "solarlab.native-execution-output.v1"
+            or type(grant["original_total_output_bytes"]) is not int
+            or grant["original_total_output_bytes"] != original
+            or admission.get("authority") != "Root"
+            or admission.get("voltage_lift_native_authorized") is not True
+            or admission.get("map_identity") != request.get("map_identity")
+            or type(operation) is not str or not operation
+            or operation != admission.get("operation_id") or operation != execution_provenance["operation_id"]
+            or type(message) is not str or not message.startswith("msg_") or len(message) <= 4
+            or message != admission.get("coordinator_message") or message != execution_provenance["coordinator_message"]):
+        raise ContractError(error)
+    try:
+        request_id, admission_id = digest(dict(request)), digest(admission)
+    except (TypeError, ValueError, OverflowError) as cause:
+        raise ContractError(error) from cause
+    if (grant["request_sha256"] != request_id or admission.get("request_sha256") != request_id
+            or execution_provenance["request_sha256"] != request_id
+            or execution_provenance["admission_sha256"] != admission_id):
+        raise ContractError(error)
+    return {"schema": "solarlab.native-execution-output-observed.v1",
+            "original_total_output_bytes": original, "effective_total_output_bytes": value,
+            "admission_binding": dict(grant), "execution_provenance": dict(execution_provenance)}
+
+
 def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[ProtocolSegment, ...],
                                   request: Mapping, admission: Mapping, emit, *,
-                                  timing: RuntimeTiming | None = None) -> dict:
+                                  timing: RuntimeTiming | None = None,
+                                  execution_provenance: Mapping | None = None) -> dict:
     """One separately admitted full protocol with unchanged physical gates.
 
     This controller retains actual IDA outputs before any interpolation and
@@ -4869,6 +4924,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                        or admission.get("diagnostic_interval_sha256") != digest(request["diagnostic_interval"])):
         raise ContractError("diagnostic_interval_not_admitted")
     execution_wall = voltage_lift_execution_wall_policy(request, admission)
+    execution_output = voltage_lift_execution_output_policy(
+        request, admission, execution_provenance=execution_provenance)
     bindings = admission.get("source_sha256", {})
     if str(Path(__file__).resolve()) not in bindings:
         raise ContractError("voltage_lift_native_executing_kernel_not_bound")
@@ -4927,7 +4984,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         try:
             with timing.phase('history_io'):
                 position = emit_record(record, emit, logical_bytes=counts["history_bytes"],
-                                       total_output_bytes=budgets["total_output_bytes"])
+                                       total_output_bytes=execution_output["effective_total_output_bytes"])
         except HistoryLimitError as error:
             raise ContractError("voltage_lift_history_budget") from error
         counts["history_bytes"] = position.logical_bytes
@@ -5343,6 +5400,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     result.update(
         request_sha256=request_id, map_identity=mapping.identity, counts=counts,
         execution_wall_policy=execution_wall,
+        execution_output_policy=execution_output,
         elapsed_s=time.perf_counter()-started, last_numerical=last_numerical,
         last_physically_accepted=last_accepted, last_attempt=last_attempt,
         cumulative_absolute_charge_bounds_C={k: observation_record(v.absolute_defects) for k, v in prefixes.items()},

@@ -74,6 +74,199 @@ def test_frame_input_exact_parent_policy_and_independent_tamper_rejection():
     assert parent["request_json"] == _frame_input_saved_parent()["request_json"]
 
 
+def _execution_output_test_input(original=8*1048576, effective=31*1024**3):
+    """Manufactured authority only; never a case request or a Root grant."""
+    request = {"case_id": "manufactured-output-test", "map_identity": "a"*64,
+               "budgets": {"total_output_bytes": original, "wall_s": 4200, "charge_C": 1e-12,
+                           "current_A": 1e-3, "native_steps": 200000, "rss_bytes": 2*1024**3},
+               "controls": {"rtol": 1e-12, "first_step": 2.0**-32}}
+    request["original_budgets"] = dict(request["budgets"])
+    admission = {"authority": "Root", "voltage_lift_native_authorized": True,
+                 "request_sha256": digest(request), "map_identity": request["map_identity"],
+                 "operation_id": "manufactured-output-test", "coordinator_message": "msg_manufactured_output"}
+    admission["execution_output_limit"] = {
+        "schema": "solarlab.native-execution-output.v1", "request_sha256": digest(request),
+        "original_total_output_bytes": original, "total_output_bytes": effective,
+        "operation_id": admission["operation_id"], "coordinator_message": admission["coordinator_message"]}
+    provenance = {"admission_sha256": digest(admission), "request_sha256": digest(request),
+                  "operation_id": admission["operation_id"], "coordinator_message": admission["coordinator_message"]}
+    return request, admission, provenance
+
+
+def test_execution_output_default_retains_historical_budget():
+    from scripts.benchmarks.coupled_device_prototype import voltage_lift_execution_output_policy
+    from scripts.benchmarks.native_readback import execution_output_policy
+
+    request, _, _ = _execution_output_test_input()
+    before = json.dumps(request, sort_keys=True)
+    expected = {"schema": "solarlab.native-execution-output-observed.v1",
+                "original_total_output_bytes": 8*1048576, "effective_total_output_bytes": 8*1048576,
+                "admission_binding": None, "execution_provenance": None}
+    assert voltage_lift_execution_output_policy(request, {}) == expected
+    assert execution_output_policy(request) == expected
+    assert json.dumps(request, sort_keys=True) == before
+
+
+@pytest.mark.parametrize("effective", [31*1024**3, 4*1048576])
+def test_execution_output_bound_increase_or_decrease_preserves_all_inputs(effective):
+    from scripts.benchmarks.coupled_device_prototype import voltage_lift_execution_output_policy
+    from scripts.benchmarks.native_readback import execution_output_policy
+
+    request, admission, provenance = _execution_output_test_input(effective=effective)
+    before = json.dumps([request, admission, provenance], sort_keys=True)
+    actual = voltage_lift_execution_output_policy(request, admission, execution_provenance=provenance)
+    independent = execution_output_policy(request, admission, execution_provenance=provenance)
+    assert actual == independent
+    assert actual["effective_total_output_bytes"] == effective
+    assert actual["original_total_output_bytes"] == 8*1048576
+    assert json.dumps([request, admission, provenance], sort_keys=True) == before
+    assert request["budgets"] == request["original_budgets"]
+    admission["execution_output_limit"]["total_output_bytes"] = 1
+    provenance["operation_id"] = "later-mutation"
+    assert actual["admission_binding"]["total_output_bytes"] == effective
+    assert actual["execution_provenance"]["operation_id"] == "manufactured-output-test"
+
+
+@pytest.mark.parametrize("case", [
+    "zero", "negative", "bool", "float", "string", "null", "infinite", "nan",
+    "null_grant", "extra_field", "bad_schema", "not_root", "not_authorized",
+    "request", "operation", "message", "map", "original", "original_float",
+    "missing_provenance", "missing_grant", "provenance_shape", "caller_request",
+    "caller_operation", "caller_message", "forged_larger_cap", "other_case",
+])
+def test_execution_output_rejects_unbound_or_malformed_authority(case):
+    from scripts.benchmarks.coupled_device_prototype import voltage_lift_execution_output_policy
+    from scripts.benchmarks.native_readback import execution_output_policy, HistoryVerificationError
+
+    request, admission, provenance = _execution_output_test_input()
+    grant = admission["execution_output_limit"]
+    invalid = {"zero": 0, "negative": -1, "bool": True, "float": float(31*1024**3),
+               "string": "33285996544", "null": None, "infinite": float("inf"), "nan": float("nan")}
+    if case in invalid:
+        grant["total_output_bytes"] = invalid[case]
+    elif case == "null_grant": admission["execution_output_limit"] = None
+    elif case == "extra_field": grant["charge_C"] = 1.0
+    elif case == "bad_schema": grant["schema"] = "unbound"
+    elif case == "not_root": admission["authority"] = "worker"
+    elif case == "not_authorized": admission["voltage_lift_native_authorized"] = 1
+    elif case == "request": grant["request_sha256"] = "0"*64
+    elif case == "operation": grant["operation_id"] = "other-operation"
+    elif case == "message": grant["coordinator_message"] = "msg_other"
+    elif case == "map": admission["map_identity"] = "b"*64
+    elif case == "original": grant["original_total_output_bytes"] += 1
+    elif case == "original_float": grant["original_total_output_bytes"] = float(8*1048576)
+    elif case == "missing_provenance": provenance = None
+    elif case == "missing_grant": del admission["execution_output_limit"]
+    elif case == "provenance_shape": provenance = True
+    elif case == "caller_request": provenance["request_sha256"] = "0"*64
+    elif case == "caller_operation": provenance["operation_id"] = "other-operation"
+    elif case == "caller_message": provenance["coordinator_message"] = "msg_other"
+    elif case == "forged_larger_cap": grant["total_output_bytes"] *= 2
+    else:
+        assert case == "other_case"
+        request["case_id"] = "other-case"
+    with pytest.raises(ContractError, match="^voltage_lift_execution_output_binding$"):
+        voltage_lift_execution_output_policy(request, admission, execution_provenance=provenance)
+    with pytest.raises(HistoryVerificationError, match="^execution_output_binding "):
+        execution_output_policy(request, admission, execution_provenance=provenance)
+
+
+@pytest.mark.parametrize("mode", ["increase", "decrease", "default", "writer_mismatch"])
+def test_execution_output_actual_save_body_and_exclusive_writer(tmp_path, mode):
+    """Execute the current nested save body on small metadata, with no pilot/model call."""
+    import ast
+    from contextlib import nullcontext
+    from scripts.benchmarks import coupled_device_prototype as kernel
+    from scripts.benchmarks.native_history import HistoryWriter, HistoryLimitError, METADATA_RESERVE, emit_record
+
+    small, large = METADATA_RESERVE+128, METADATA_RESERVE+65536
+    original = small if mode in ("increase", "default") else large
+    effective = large if mode == "increase" else small
+    request, admission, provenance = _execution_output_test_input(original, effective)
+    if mode == "default":
+        admission, provenance = {}, None
+    policy = kernel.voltage_lift_execution_output_policy(request, admission, execution_provenance=provenance)
+    cap = large if mode == "writer_mismatch" else policy["effective_total_output_bytes"]
+    writer = HistoryWriter(tmp_path / "NativeHistory.jsonl.gz", encoding="gzip", total_output_bytes=cap)
+    tree = ast.parse(Path(kernel.__file__).read_bytes())
+    pilot = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run_voltage_lift_native_pilot")
+    save = next(n for n in pilot.body if isinstance(n, ast.FunctionDef) and n.name == "save")
+    counts = {"history_bytes": 0}
+    namespace = {"counts": counts, "budgets": request["budgets"], "execution_output": policy,
+                 "emit": writer, "emit_record": emit_record, "HistoryLimitError": HistoryLimitError,
+                 "ContractError": ContractError, "timing": SimpleNamespace(phase=lambda _: nullcontext())}
+    exec(compile(ast.Module(body=[save], type_ignores=[]), kernel.__file__, "exec"), namespace)
+    record = {"kind": "manufactured_metadata", "payload": "".join(digest(i) for i in range(128))}
+    if mode == "increase":
+        namespace["save"](record)
+        writer.finish()
+        assert counts["history_bytes"] == writer.logical_bytes > 0
+        assert 128 < writer.encoded_bytes <= cap - METADATA_RESERVE
+        assert writer.closed and writer.container_complete
+        with pytest.raises(FileExistsError):
+            HistoryWriter(writer.path, encoding="gzip", total_output_bytes=cap)
+    else:
+        with pytest.raises(ContractError, match="^voltage_lift_history_budget$"):
+            namespace["save"](record)
+        assert counts == {"history_bytes": 0} and writer.records == 0
+        if not writer.closed:
+            writer.finish()
+    assert request["budgets"] == request["original_budgets"]
+
+
+@pytest.mark.parametrize("mode", ["default", "increase", "decrease", "wrong_outer", "float_outer", "wrong_provenance"])
+def test_execution_output_maintained_runner_cap_and_forwarding(tmp_path, mode):
+    """Run only current admission/call-site AST statements; all physics edges are sentinels."""
+    import ast
+    from scripts.benchmarks import coupled_device_prototype as kernel
+
+    source = REPO / "scripts/benchmarks/native_runner.py"
+    tree = ast.parse(source.read_bytes())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    body = next(n for n in main.body if isinstance(n, ast.Try)).body
+    index = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == "execution_output" for t in n.targets))
+    binding = body[index:index+3]
+    model_index = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign)
+                       and any(isinstance(t, ast.Name) and t.id == "model" for t in n.targets))
+    assert index+2 < model_index
+    call = next(n for n in body if isinstance(n, ast.Assign)
+                and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
+                and n.value.func.id == "run_recorded")
+    effective = 4*1048576 if mode == "decrease" else 31*1024**3
+    request, admission, provenance = _execution_output_test_input(effective=effective)
+    if mode == "default":
+        admission, provenance, effective = {}, None, request["budgets"]["total_output_bytes"]
+    outer = effective+1 if mode == "wrong_outer" else float(effective) if mode == "float_outer" else effective
+    if mode == "wrong_provenance":
+        provenance["admission_sha256"] = "0"*64
+    freeze = {"resources": {"total_output_bytes": outer}, "watchdog": {"input_file_names": []}}
+    namespace = {"kernel": kernel, "request": request, "admission": admission,
+                 "execution_provenance": provenance, "freeze": freeze}
+    code = compile(ast.Module(body=binding, type_ignores=[]), str(source), "exec")
+    if mode in ("wrong_outer", "float_outer", "wrong_provenance"):
+        with pytest.raises((RuntimeError, ContractError)):
+            exec(code, namespace)
+        return
+    exec(code, namespace)
+    observed = {}
+    emit, mapped, model, segments, timing = (object() for _ in range(5))
+    def pilot(*args, **kwargs):
+        observed["pilot"] = (args, kwargs)
+        return {"status": "manufactured-only"}
+    def recorded(folder, controller, **kwargs):
+        observed["recorded"] = (folder, kwargs)
+        return controller(emit)
+    namespace.update(folder=tmp_path, run_recorded=recorded, run_voltage_lift_native_pilot=pilot,
+                     AffineVoltageMap=lambda actual, **kwargs: mapped if actual is model else None,
+                     model=model, segments=segments, timing=timing)
+    exec(compile(ast.Module(body=[call], type_ignores=[]), str(source), "exec"), namespace)
+    assert observed["recorded"][1]["total_output_bytes"] == effective
+    assert observed["pilot"] == ((mapped, segments, request, admission, emit),
+                                  {"timing": timing, "execution_provenance": provenance})
+    assert request["budgets"] == request["original_budgets"]
+
+
 def dec(value):
     return Decimal.from_float(float(value))
 

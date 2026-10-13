@@ -293,7 +293,8 @@ def _run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, 
 
 
 
-def main(folder: Path, admission_path: Path, *, entry_started: float | None = None) -> int:
+def main(folder: Path, admission_path: Path, *, entry_started: float | None = None,
+         execution_provenance: dict | None = None) -> int:
     """Original source/admission/native boundary; called only by an admitted shim."""
     from AdmissionBindings import hashed, validate
 
@@ -378,6 +379,12 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
      source=Path(freeze["model_input_root"]);plan=Path(freeze["isolated_plan"])
      request=json.loads((folder/"NativeRequest.json").read_text())
      if canonical(request)!=freeze["request_sha256"]:raise RuntimeError("native_request_changed")
+     execution_output=kernel.voltage_lift_execution_output_policy(
+         request,admission,execution_provenance=execution_provenance)
+     effective_output_bytes=execution_output["effective_total_output_bytes"]
+     if (type(freeze["resources"]["total_output_bytes"]) is not int or
+         effective_output_bytes != freeze["resources"]["total_output_bytes"]):
+      raise RuntimeError("controller_and_outer_output_cap_mismatch")
      intervals = 8
      if "qualification_policy" in request:
        from scripts.benchmarks import qualification_policy
@@ -396,12 +403,10 @@ def main(folder: Path, admission_path: Path, *, entry_started: float | None = No
      model=AffineCoupledSlab(SlabDefinition.from_plan(plan,source,request["case_id"]),intervals)
      segments=protocol_from_plan(plan,request["case_id"])
      if flint.__version__!="0.8.0":raise RuntimeError("unreviewed_Arb_binding")
-     if request["budgets"]["total_output_bytes"] != freeze["resources"]["total_output_bytes"]:
-      raise RuntimeError("controller_and_outer_output_cap_mismatch")
      timing=RuntimeTiming()
      result=run_recorded(folder,
-                         lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model, mapped_input_profile=request.get("frame_input_policy", {}).get("profile")),segments,request,admission,emit,timing=timing),
-                         total_output_bytes=request["budgets"]["total_output_bytes"],
+                         lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model, mapped_input_profile=request.get("frame_input_policy", {}).get("profile")),segments,request,admission,emit,timing=timing,execution_provenance=execution_provenance),
+                         total_output_bytes=effective_output_bytes,
                          input_names=freeze["watchdog"]["input_file_names"],
                           max_record_bytes=freeze.get("writer_limits", {}).get("max_record_bytes", 1048576),
                           integer_io_policy=freeze.get("integer_io_policy"),timing=timing)

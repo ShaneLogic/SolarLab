@@ -839,8 +839,8 @@ class NativeReadbackTests(unittest.TestCase):
         self.folder = Path(self.temp.name)
         self.request, self.rows, self.result = deepcopy(self.template)
 
-    def publish(self, integer_io_policy=None):
-        writer = HistoryWriter(self.folder / "NativeHistory.jsonl.gz", encoding="gzip", total_output_bytes=8 * 1048576,
+    def publish(self, integer_io_policy=None, *, total_output_bytes=8*1048576):
+        writer = HistoryWriter(self.folder / "NativeHistory.jsonl.gz", encoding="gzip", total_output_bytes=total_output_bytes,
                                integer_io_policy=integer_io_policy)
         for row in self.rows:
             writer.append(row)
@@ -867,6 +867,81 @@ class NativeReadbackTests(unittest.TestCase):
             self.assertEqual(ctx.exception.code, code)
         self.assertLess(len(str(ctx.exception)), 240)
         return ctx.exception
+
+    def execution_fixture(self, original, effective):
+        """Manufactured operation authority, supplied separately from producer files."""
+        def limits(request, policy):
+            request["budgets"]["total_output_bytes"] = original
+            policy["budgets_sha256"] = digest(request["budgets"])
+            return policy
+        self.request, self.rows, self.result = fixture(limits)
+        admission = {"authority": "Root", "voltage_lift_native_authorized": True,
+                     "request_sha256": digest(self.request), "map_identity": self.request["map_identity"],
+                     "operation_id": "manufactured-output-readback", "coordinator_message": "msg_manufactured_output"}
+        grant = {"schema": "solarlab.native-execution-output.v1", "request_sha256": digest(self.request),
+                 "original_total_output_bytes": original, "total_output_bytes": effective,
+                 "operation_id": admission["operation_id"], "coordinator_message": admission["coordinator_message"]}
+        admission["execution_output_limit"] = grant
+        provenance = {"admission_sha256": digest(admission), "request_sha256": digest(self.request),
+                      "operation_id": admission["operation_id"], "coordinator_message": admission["coordinator_message"]}
+        self.result["execution_output_policy"] = {
+            "schema": "solarlab.native-execution-output-observed.v1",
+            "original_total_output_bytes": original, "effective_total_output_bytes": effective,
+            "admission_binding": deepcopy(grant), "execution_provenance": deepcopy(provenance)}
+        return {"execution_admission": admission, "execution_provenance": provenance}
+
+    def test_execution_output_trusted_increase_and_decrease_full_readback(self):
+        for original, effective in ((1024, 8*1048576), (8*1048576, 4*1048576)):
+            with self.subTest(original=original, effective=effective), tempfile.TemporaryDirectory() as temp:
+                self.folder = Path(temp)
+                authority = self.execution_fixture(original, effective)
+                before = json.dumps(self.request, sort_keys=True)
+                self.publish(total_output_bytes=effective)
+                receipt = self.verify(**authority)
+                self.assertTrue(receipt["verified"] and receipt["history"]["eof_seen"] and receipt["history"]["crc_verified"])
+                self.assertEqual(receipt["coverage"]["intervals"], 3)
+                self.assertEqual(receipt["execution_output_policy"], self.result["execution_output_policy"])
+                self.assertEqual(json.dumps(self.request, sort_keys=True), before)
+                if effective > original:
+                    self.assertGreater(receipt["history"]["encoded_bytes"], original)
+
+    def test_execution_output_producer_claim_is_not_authority(self):
+        self.execution_fixture(1024, 8*1048576)
+        self.publish()
+        self.bad("execution_output_observation_binding")
+        del self.result["execution_output_policy"]
+        (self.folder / "NativeResult.json").write_text(json.dumps(self.result))
+        self.bad("encoded_byte_count_or_cap")
+
+    def test_execution_output_reader_requires_exact_external_provenance(self):
+        authority = self.execution_fixture(1024, 8*1048576)
+        self.publish()
+        for key, value in (("request_sha256", "0"*64), ("operation_id", "other-operation"),
+                           ("coordinator_message", "msg_other"), ("admission_sha256", "0"*64)):
+            with self.subTest(key=key):
+                bad = deepcopy(authority)
+                bad["execution_provenance"][key] = value
+                self.bad("execution_output_binding", **bad)
+        forged = deepcopy(authority)
+        forged["execution_admission"]["execution_output_limit"]["total_output_bytes"] *= 2
+        self.bad("execution_output_binding", **forged)
+        self.bad("execution_output_binding", execution_admission=authority["execution_admission"])
+        del self.result["execution_output_policy"]
+        (self.folder / "NativeResult.json").write_text(json.dumps(self.result))
+        self.bad("execution_output_observation_binding", **authority)
+
+    def test_execution_output_smaller_admitted_cap_is_enforced(self):
+        authority = self.execution_fixture(8*1048576, 4*1048576)
+        self.publish(total_output_bytes=4*1048576)
+        cap = self.result["history"]["encoded_bytes"] - 1
+        authority["execution_admission"]["execution_output_limit"]["total_output_bytes"] = cap
+        authority["execution_provenance"]["admission_sha256"] = digest(authority["execution_admission"])
+        self.result["execution_output_policy"].update(
+            effective_total_output_bytes=cap,
+            admission_binding=deepcopy(authority["execution_admission"]["execution_output_limit"]),
+            execution_provenance=deepcopy(authority["execution_provenance"]))
+        (self.folder / "NativeResult.json").write_text(json.dumps(self.result))
+        self.bad("encoded_byte_count_or_cap", **authority)
 
     def test_complete_event_and_recertification_and_cached_quadrature(self):
         self.publish()
