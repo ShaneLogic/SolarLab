@@ -210,6 +210,14 @@ def check_ancestry(request):
 
 def check_applied_ceiling(request):
     policy = check_ancestry(request)
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import validate_request
+        validate_request(request)
+        validate_layout(request["numeric_packet"], policy)
+        require(request["controls"]["max_step"] == policy["max_step"], "physical_step_changed")
+        if any(key in request for key in ("z0", "zdot0", "initial_preparation", "interval_observation")):
+            check_initialization(request, policy["coordinates"])
+        return policy["coordinates"]
     origin, controls, packet = policy["origin"], request["controls"], request["numeric_packet"]
     factor = Fraction(*policy["tolerance_factor"])
     require(type(controls["rtol"]) is float and math.isfinite(controls["rtol"])

@@ -26,7 +26,7 @@ from scripts.benchmarks.coupled_device_prototype import (
     AffineCoupledSlab, AffineVoltageMap, VoltageLiftSegmentAdapter, digest,
 )
 from scripts.benchmarks.interval_observation import (
-    AcceptedClock, BallIntegrator, ChargePrefix, Enclosure, Polynomial, PolynomialPath, SlabPathObserver,
+    AcceptedClock, BallIntegrator, ChargePrefix, SignedChargePrefix, Enclosure, Polynomial, PolynomialPath, SlabPathObserver,
     endpoint_charge_mismatch, identity, newton_polynomials, public_action_enclosures,
     rational, segment_input_roundoff, contained_subinterval, affine_interval_actions,
 )
@@ -34,6 +34,7 @@ from scripts.benchmarks.bounded_observation import (
     BoundChannel, ExactBoundTerm, UpperAccumulator, UpperSumPolicy,
 )
 from scripts.benchmarks.native_history import encode_integer_values
+from scripts.benchmarks.physical_tolerance import physical_charge_policy, physical_charge_budgets
 
 
 CHARGE_REFINEMENT = "fixed4-upper120-v1"
@@ -43,6 +44,81 @@ CHARGE_CHANNELS = tuple(BoundChannel(ledger, row, kind) for ledger in CHARGE_LED
 CHARGE_LOCAL_FIELDS = ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C",
     "error_components_C", "signed_saved_defect_C", "interval_total_bound_C", "interval_reference_error_C",
     "original_charge_budget_C", "original_reference_share_C")
+
+
+def prepare_physical_charge_prefix(request):
+    """Start once for the full protocol; historical charge budgets stay intact."""
+    if "physical_tolerance_policy" not in request:
+        return None
+    return SignedChargePrefix.start(physical_charge_budgets(request))
+
+
+def physical_charge_summary(prefix):
+    """Retain the signed prefix and its failure latch, separately from old L1."""
+    if type(prefix) is not SignedChargePrefix:
+        raise ContractError("native_observation_physical_charge_prefix_required")
+    checks = tuple(not failed for failed in prefix.failed)
+    return {"schema": "solarlab.native-physical-charge-prefix.v1", "intervals": prefix.intervals,
+            "budgets_C": prefix.budgets, "signed_balance_C": prefix.signed_balances,
+            "error_components_C": {"saved_charge_evaluation": prefix.charge_errors,
+                "physical_flux_integration": prefix.quadrature_errors,
+                "input": prefix.input_errors, "clock_strip": prefix.clock_errors},
+            "total_error_C": prefix.total_errors, "total_bound_C": prefix.total_bounds,
+            "cumulative_interval_absolute_balance_C": prefix.absolute_balances,
+            "failed": prefix.failed, "row_checks": checks, "passed": all(checks)}
+
+
+def physical_charge_passed(request, evidence, *, frame_identity, path_identity, map_identity, map_payload):
+    """Check the new gate's binding/latch, not an independent flux calculation.
+
+    The reader must also reproduce this record from its saved physical inputs.
+    This selector never substitutes the historical top-level ``passed`` flag.
+    """
+    policy = physical_charge_policy(request)
+    if not isinstance(map_payload, Mapping):
+        raise ContractError("native_observation_physical_charge_active_map")
+    root = request["voltage_lift_map"]
+    expected_map = dict(root)
+    if map_payload.get("segment_frame") is not None:
+        frame = map_payload["segment_frame"]
+        if not isinstance(frame, Mapping) or frame.get("parent_map_identity") != request["map_identity"]:
+            raise ContractError("native_observation_physical_charge_parent_map")
+        expected_map.update(segment_frame=frame,
+            raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+            physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+    if (digest(root) != request["map_identity"] or map_payload != expected_map
+            or digest(map_payload) != map_identity):
+        raise ContractError("native_observation_physical_charge_active_map")
+    row = evidence.get("physical_charge")
+    required = {"source_identity", "layout_identity", "model_id", "charge_form_identities", "physical_flux_basis",
+                "saved_finite_charge_change_C", "physical_flux_integral_C", "signed_balance_C",
+                "error_components_C", "interval_total_bound_C", "integration_uncertainty_role"}
+    if (not isinstance(row, Mapping) or row.get("schema") != "solarlab.native-physical-charge.v1"
+            or not required <= row.keys()
+            or row.get("policy") != policy or row.get("request_sha256") != digest(request)
+            or row.get("map_identity") != map_identity or row.get("root_map_identity") != request["map_identity"]
+            or row.get("frame_identity") != frame_identity or row.get("path_identity") != path_identity
+            or evidence.get("frame_identity") != frame_identity or evidence.get("path_identity") != path_identity
+            or row.get("clock") != evidence.get("clock")):
+        raise ContractError("native_observation_physical_charge_evidence_binding")
+    prefix = row.get("prefix")
+    prefix_fields = {"signed_balance_C", "error_components_C", "total_error_C", "total_bound_C",
+                     "cumulative_interval_absolute_balance_C"}
+    if (not isinstance(prefix, Mapping) or prefix.get("schema") != "solarlab.native-physical-charge-prefix.v1"
+            or not prefix_fields <= prefix.keys()
+            or prefix.get("budgets_C") != physical_charge_budgets(request)
+            or type(prefix.get("intervals")) is not int or prefix["intervals"] <= 0):
+        raise ContractError("native_observation_physical_charge_prefix_binding")
+    failed = prefix.get("failed")
+    if (type(failed) is not tuple or len(failed) != 3 or any(type(value) is not bool for value in failed)):
+        raise ContractError("native_observation_physical_charge_latch_missing")
+    checks = tuple(not value for value in failed)
+    if (any(type(record.get("row_checks")) is not tuple or len(record["row_checks"]) != 3
+            or any(type(value) is not bool for value in record["row_checks"]) for record in (row, prefix))
+            or row.get("row_checks") != checks or prefix.get("row_checks") != checks
+            or row.get("passed") is not all(checks) or prefix.get("passed") is not all(checks)):
+        raise ContractError("native_observation_physical_charge_latch_changed")
+    return all(checks)
 
 
 def charge_upper_policy(source_identity):
@@ -848,10 +924,45 @@ class AcceptedIntervalObserver:
 
         The nominal-path defect plus an absolute endpoint mismatch bounds the
         actual saved-endpoint defect. The mismatch is included once; the saved
-        finite increment remains an independent, full-word diagnostic.
+        finite increment remains an independent, full-word diagnostic. The
+        explicit PhysicalToleranceV1 gate instead uses that actual increment
+        against the existing independently flux-derived integral, with its own
+        signed prefix; the historical ledgers and their booleans are unchanged.
         """
         model, path = self.observer.model, self.prepared.path
         left, right, increment = left_pair[0], right_pair[0], right_pair[1]
+        request = self.binding.context.request_copy()
+        physical_policy = None
+        if "physical_tolerance_policy" in request:
+            physical_policy = physical_charge_policy(request)
+            mapping = self.binding.adapter.mapping
+            if (request.get("interval_observation", {}).get("physical_charge") != physical_policy
+                    or self.prepared.request_identity != self.binding.context.request_sha256
+                    or self.prepared.request_identity != digest(request)
+                    or self.prepared.map_identity != mapping.identity
+                    or mapping.identity != digest(mapping.payload())
+                    or digest(mapping.payload(include_frame=False)) != request["map_identity"]
+                    or self.prepared.coefficient_frame_identity != self.frame.identity):
+                raise ContractError("native_observation_physical_charge_context")
+            definition = request["numeric_packet"]["definition"]
+            if (type(self.observer) is not SlabPathObserver
+                    or model.definition.id not in {"S0NeutralPublicDeviceV1", "DynamicAcceptorIonPublicDeviceV1"}
+                    or model.definition.id != definition["id"] or model.definition.dynamic != definition["dynamic"]
+                    or model.source_identity != path.source_identity or model.layout.identity != path.layout_identity
+                    or any(rational(getattr(model.definition, key)) != rational(definition[key])
+                           or rational(definition[key]) <= 0 for key in ("area", "length", "epsilon"))):
+                raise ContractError("native_observation_physical_charge_slab_scope")
+            prefix = prefixes.get("physical_charge")
+            if (type(prefix) is not SignedChargePrefix or prefix.budgets != physical_charge_budgets(request)
+                    or any(key not in prefixes or not isinstance(prefixes[key], ChargePrefix)
+                           or prefixes[key].intervals != prefix.intervals for key in CHARGE_LEDGERS)):
+                raise ContractError("native_observation_physical_charge_prefix_missing_or_reset")
+            if subinterval is not None:
+                raise ContractError("native_observation_physical_charge_requires_complete_native_interval")
+            if rational(left.time) != path.clock.predecessor or rational(right.time) != path.clock.tn:
+                raise ContractError("native_observation_physical_charge_endpoint_clock")
+        elif "physical_charge" in prefixes:
+            raise ContractError("native_observation_physical_charge_profile_missing")
         if subinterval is not None:
             first, last = contained_subinterval(path.clock, subinterval)
             if (rational(left.time) != first or rational(right.time) != last or charge_accumulator is not None):
@@ -933,6 +1044,44 @@ class AcceptedIntervalObserver:
                             "raw_rate_projection_role": "retained counterfactual, not charged as if still used",
                             "source_arithmetic_scope": "the bound ball integrals evaluate the physical sources with the frozen coefficients; no projected nodal source is an integral input",
                             "DAE_time_accuracy_certified": False, "continuum_space_accuracy_certified": False}
+        if physical_policy is not None:
+            if integral.get("path_identity") != path.identity:
+                raise ContractError("native_observation_physical_flux_path_changed")
+            # For these two fixed, uniform-epsilon Dirichlet slabs, the body
+            # row is A*(Jn+Jp at left - at right) plus boundary trap storage.
+            # Contact n,p are reservoirs. Metals use -w dot physical cell
+            # charge rates (including q*Gamma_c), boundary capture storage,
+            # and respectively +/- (epsilon*A/L)*Vdot. SlabPathObserver's
+            # tangent_metal_flux and tangent_metal_polynomial implement this
+            # elimination; the raw metal derivative is never a gate input.
+            flux = integral["same_state_affine_tangent"]
+            successor, checks = prefixes["physical_charge"].append(actual, flux,
+                inputs["tangent_charge_integral_error_C"], strip["same_state_affine_tangent"])
+            components = {"saved_charge_evaluation": tuple(value.radius for value in actual),
+                "physical_flux_integration": tuple(value.radius for value in flux),
+                "input": inputs["tangent_charge_integral_error_C"], "clock_strip": strip["same_state_affine_tangent"]}
+            balances = tuple(a.center-b.center for a, b in zip(actual, flux, strict=True))
+            errors = tuple(sum((values[i] for values in components.values()), Fraction(0)) for i in range(3))
+            # Charge evaluation is already in actual.radius; deterministic
+            # endpoint/path disagreement is in balances. Adding the old
+            # endpoint debit or raw/tangent L1 would double-charge or change
+            # this signed physical gate. All positive uncertainties remain.
+            evidence["physical_charge"] = {"schema": "solarlab.native-physical-charge.v1",
+                "policy": physical_policy, "request_sha256": self.binding.context.request_sha256,
+                "map_identity": self.prepared.map_identity, "root_map_identity": request["map_identity"],
+                "path_identity": path.identity,
+                "frame_identity": self.frame.identity, "clock": path.clock.payload(),
+                "source_identity": model.source_identity, "layout_identity": model.layout.identity,
+                "model_id": model.definition.id,
+                "charge_form_identities": tuple(model.linear_forms["increment"][name].identity
+                                                for name in ("body_charge", "metal_charge")),
+                "physical_flux_basis": "fixed-uniform-epsilon-Dirichlet-slab-reservoir-carrier-ion-trap-capacitance-v1",
+                "saved_finite_charge_change_C": actual, "physical_flux_integral_C": flux,
+                "signed_balance_C": balances, "error_components_C": components,
+                "interval_total_bound_C": tuple(abs(value)+error for value, error in zip(balances, errors, strict=True)),
+                "integration_uncertainty_role": "combined quadrature and physical-integrand evaluation radius; conservative third-share bound",
+                "prefix": physical_charge_summary(successor), "row_checks": checks, "passed": all(checks)}
+            successors["physical_charge"] = successor
         if subinterval is not None:
             evidence.update(observation_subinterval={"left": first, "right": last,
                 "native_clock_unchanged": True, "accepted_native_step": False,
@@ -975,6 +1124,9 @@ def prepare_interval_observation_policy(request, *, binding_identity, header_sha
             "sampling": "original requested and 8/16/32 times, explicitly declared polynomial reconstruction",
             "history": "actual accepted predecessor/endpoint plus source-owned immutable phi/psi/Dky and error metadata",
             "qualification": "represented numerical path only; original independent time/state/space refinements remain pending"}
+    if "physical_tolerance_policy" in request:
+        policy["physical_charge"] = physical_charge_policy(request)
+        policy["quadrature_error_allocation"] = "physical_charge.budget_C/12 * actual_interval/full_protocol / 32 per integral"
     if charge_refinement is not None:
         if charge_refinement != CHARGE_REFINEMENT or type(request["budgets"].get("native_steps")) is not int or request["budgets"]["native_steps"] != 200000:
             raise ContractError("native_observation_unsupported_charge_refinement")
@@ -1019,6 +1171,8 @@ def validate_interval_observation_admission(request, admission):
         names += ("native_readback.py",)
     if "charge_refinement" in policy:
         names += ("bounded_observation.py", "native_history.py")
+    if "physical_tolerance_policy" in request:
+        names += ("physical_tolerance.py", "native_readback.py")
     required = tuple(str(Path(__file__).with_name(name).resolve()) for name in names)
     if any(path not in source_pins or sha256(Path(path).read_bytes()).hexdigest() != source_pins[path]
            for path in required):

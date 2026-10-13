@@ -3687,6 +3687,13 @@ def prepare_voltage_lift_reference_refresh(binding, point, z, zdot, *, sample, i
     evidence, bounds, current = (restore_observation_record(x["evidence"] if "evidence" in x else x["observation"])
                                  for x in (interval, domain, certificate))
     inputs, input_rate = segment.inputs(point.time)
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.native_observation import physical_charge_passed
+        charge_ok = physical_charge_passed(request, evidence, frame_identity=native_frame.identity,
+                                          path_identity=evidence["path_identity"], map_identity=mapping.identity,
+                                          map_payload=mapping.payload())
+    else:
+        charge_ok = evidence.get("passed") is True
     pointer = {"record_sha256": sample["record_sha256"], "point_identity": point.identity,
                "time_s": point.time, "origin": h["origin"], "segment_id": segment.id}
     metrics = sample["state_checks"]
@@ -3708,7 +3715,7 @@ def prepare_voltage_lift_reference_refresh(binding, point, z, zdot, *, sample, i
             or metrics.get("passed") is not True or metrics.get("state_identity") != point.identity
             or metrics.get("state_changed") is not False or not state_ok
             or interval["right"] != pointer or interval["segment_id"] != segment.id
-            or evidence.get("passed") is not True or bounds.get("passed") is not True
+            or not charge_ok or bounds.get("passed") is not True
             or not all(v is True for v in bounds["checks"].values()) or current.get("passed") is not True
             or current.get("native_rate_or_state_changed") is not False or current["point_identity"] != point.identity
             or certificate["sample_record_sha256"] != sample["record_sha256"]
@@ -3756,10 +3763,16 @@ def apply_voltage_lift_reference_refresh(solver, binding, mapping, zero, prepare
         if (prior["observation_owner"] != old["owner"] or prior["observation_generation"] != old["generation"]
                 or prior["num_steps"] != old["nsteps"] or float(prior["current_time"]).hex() != mapping.frame.t0.hex()):
             raise ContractError("reference_refresh_stale_solver")
-        _voltage_lift_frame_applied(prior, binding.adapter.mapping.frame, after_step=True)
+        _voltage_lift_frame_applied(prior, binding.adapter.mapping.frame, after_step=True, request=binding.context.request_copy())
         install_binding(active)  # The callbacks see the same frame passed to init_step.
-        initialized = snapshot_solver_result(solver.init_step(mapping.frame.t0, zero, zero,
-                                              parent_weight_frame=mapping.frame.weight_option()))
+        refresh_request = binding.context.request_copy()
+        weight_key = "physical_weight_frame" if "physical_tolerance_policy" in refresh_request else "parent_weight_frame"
+        if weight_key == "physical_weight_frame":
+            from scripts.benchmarks.physical_tolerance import weight_option
+            refreshed_weights = weight_option(refresh_request, mapping.frame.payload(), asdict(binding.segment))
+        else:
+            refreshed_weights = mapping.frame.weight_option()
+        initialized = snapshot_solver_result(solver.init_step(mapping.frame.t0, zero, zero, **{weight_key: refreshed_weights}))
         statistics = ida_statistics_snapshot(solver, binding.segment.id, mapping.frame.logical_initialization_index,
             "reference_refresh_return", mapping.frame.t0, initialized["time"], logical_initialization=True)
         raw, old = statistics["raw_statistics"], prepared["old_epoch"]
@@ -3769,7 +3782,7 @@ def apply_voltage_lift_reference_refresh(solver, binding, mapping, zero, prepare
                 or raw["observation_generation"] != old["generation"]+1):
             raise ContractError("reference_refresh_native_return_or_epoch")
         _voltage_lift_guard_applied(raw, binding.context.request_copy()["controls"])
-        _voltage_lift_frame_applied(raw, mapping.frame)
+        _voltage_lift_frame_applied(raw, mapping.frame, request=binding.context.request_copy())
         complete = {k: v for k, v in prepared.items() if k != "record_sha256"}
         complete.update(phase="complete", prepared_sha256=prepared["record_sha256"],
             new_epoch={"owner": raw["observation_owner"], "generation": raw["observation_generation"], "nsteps": 0},
@@ -3779,6 +3792,9 @@ def apply_voltage_lift_reference_refresh(solver, binding, mapping, zero, prepare
             initialization_return={"time_hex": initialized["time"].hex(), "success": initialized["success"],
                 "raw_z_hex": [float(v).hex() for v in initialized["z"]],
                 "raw_zdot_hex": [float(v).hex() for v in initialized["zdot"]]})
+        if weight_key == "physical_weight_frame":
+            complete.pop("parent_weight_frame")
+            complete[weight_key] = refreshed_weights
         complete["record_sha256"] = digest(complete)
         active = VoltageLiftSegmentAdapter(active.adapter, binding.context, binding.segment,
                                           json.dumps(complete, allow_nan=False))
@@ -4218,6 +4234,9 @@ def _voltage_lift_guard_applied(raw_statistics, controls):
 
 def _voltage_lift_segment_startup(request, overrides):
     """Bind automatic or the selected explicit hold step to parent controls."""
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import segment_startup_policy
+        return segment_startup_policy(request, overrides)
     controls = request["controls"]
     exponents = {1024: 10, 65536: 16}
     kappa = request.get("time_weight_policy", {}).get("kappa")
@@ -4293,7 +4312,7 @@ def _validate_segment_frame_policy(request):
         policy = request["reference_refresh_policy"]
         if type(policy) is not dict or policy != _reference_refresh_policy(request, float.fromhex(policy["time_hex"])):
             raise ContractError("reference_refresh_policy_binding")
-    if any(key in request for key in ("segment_frame", "frame_overrides", "parent_weight_frame")):
+    if any(key in request for key in ("segment_frame", "frame_overrides", "parent_weight_frame", "physical_weight_frame")):
         raise ContractError("segment_frame_unbound_option")
     if "segment_frame_policy" in request:
         policy = request["segment_frame_policy"]
@@ -4338,7 +4357,17 @@ def _frame_input_parent_binding(request):
     old_controls, controls = old.get("controls"), request.get("controls")
     old_policy, policy = old.get("time_weight_policy"), request.get("time_weight_policy")
     comparison_controls = old_controls
-    if digest(controls) != digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import validate_request
+        physical = validate_request(request)
+        if "physical_tolerance_policy" in old or type(old_controls) is not dict:
+            raise ContractError("frame_input_physical_parent_profile")
+        comparison_controls = controls
+        control_refinement = {"schema": "solarlab.frame-input-physical-control.v1",
+            "old_failed_request_sha256": old_id, "old_controls_sha256": digest(old_controls),
+            "controls_sha256": digest(controls), "physical_tolerance_policy_sha256": digest(physical),
+            "old_parent_failure_retained": True, "effective_nonlinear_equivalence": False}
+    elif digest(controls) != digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
         valid = (type(old_controls) is dict and type(controls) is dict
                  and type(old_policy) is dict and type(policy) is dict
                  and old_policy.get("schema") == policy.get("schema") == "solarlab.voltage-lift-time-weights.v1"
@@ -4489,13 +4518,35 @@ def _frame_input_policy(request, profile):
             "physical_gates_changed": False}
 
 
-def _voltage_lift_frame_applied(statistics, frame, *, after_step=False):
+def _voltage_lift_frame_applied(statistics, frame, *, after_step=False, request=None):
     from scripts.benchmarks.native_observation import restore_observation_record
 
     value = statistics.get("parent_weight_state")
     if value is None:
         raise ContractError("segment_frame_weight_evidence_missing")
     value = restore_observation_record(value)
+    if request is not None and "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import weight_option
+        segment = next(s for s in request["segments"] if digest(s) == frame.segment_sha256)
+        option = weight_option(request, frame.payload(), segment)
+        words = lambda row: np.array([float.fromhex(v) for v in row], dtype="<f8").tobytes()
+        if (value["schema"] != "sksundae.ida.physical-affine-weight-state.v1"
+                or value["profile_identity"] != option["profile_identity"] or value["frame_identity"] != frame.identity
+                or value["owner"] != statistics["observation_owner"] or value["generation"] != statistics["observation_generation"]
+                or value["installed"] is not True or value["setter"] != "IDAWFtolerances" or value["setter_status"] != 0
+                or value["rtol_hex"] != option["rtol_hex"] or value["t0_hex"] != option["t0_hex"]
+                or value["q0_words"] != tuple(w.tobytes() for w in frame.q0.words)
+                or value["v0_words"] != tuple(w.tobytes() for w in frame.v0.words)
+                or value["atol"] != words(option["atol_physical_hex"]) or value["scale"] != words(option["scale_hex"])
+                or value["reference_words"] != b"".join(words(w) for w in option["reference_words_hex"])
+                or value["lift"] != b"".join(words(w) for w in option["lift_hex"])
+                or any(value[k] != option[k] for k in ("protocol_start_hex", "protocol_end_hex"))
+                or any(value[k] != tuple(float.fromhex(v) for v in option[key]) for k,key in (
+                    ("inputs_start","inputs_start_hex"),("inputs_end","inputs_end_hex"),
+                    ("input_rates","input_rates_hex"),("reference_inputs","reference_inputs_hex")))
+                or after_step and (value["callback_calls"] < 1 or value["callback_status"] != 0)):
+            raise ContractError("physical_weight_application_mismatch")
+        return
     if (value["schema"] != "sksundae.ida.parent-affine-weight-state.v1"
             or value["frame_identity"] != frame.identity or value["size"] != frame.q0.shape[0]
             or value["owner"] != statistics["observation_owner"]
@@ -4513,6 +4564,8 @@ def _voltage_lift_segment_solver(ida, request, segment, ordinal, residual, jacob
     """Record the exact constructor kwargs; native h0u is recorded separately."""
     controls = _voltage_lift_initialization_controls(request, segment)
     _validate_segment_frame_policy(request)
+    if "physical_tolerance_policy" in request and "segment_frame_policy" not in request:
+        raise ContractError("physical_tolerance_requires_bound_frame_callback")
     weight_option = None
     if "segment_frame_policy" in request:
         if (type(frame) is not SegmentAffineFrame or frame.parent_map_identity != request["map_identity"]
@@ -4520,11 +4573,16 @@ def _voltage_lift_segment_solver(ida, request, segment, ordinal, residual, jacob
                 or frame.logical_initialization_index != ordinal
                 or frame.q0.shape != (len(request["controls"]["atol"]),)):
             raise ContractError("segment_frame_constructor_binding")
-        weight_option = frame.weight_option()
+        if "physical_tolerance_policy" in request:
+            from scripts.benchmarks.physical_tolerance import weight_option as physical_option
+            weight_option = physical_option(request, frame.payload(), asdict(segment))
+        else:
+            weight_option = frame.weight_option()
     elif frame is not None:
         raise ContractError("segment_frame_unbound_option")
     recorded = json.loads(json.dumps(controls, allow_nan=False))
-    extra = {} if weight_option is None else {"parent_weight_frame": weight_option}
+    weight_key = "physical_weight_frame" if "physical_tolerance_policy" in request else "parent_weight_frame"
+    extra = {} if weight_option is None else {weight_key: weight_option}
     solver = ida(residual, jacfn=jacobian, sparsity=sparsity, algebraic_idx=algebraic, **controls, **extra)
     receipt = None
     if "segment_startup_policy" in request or weight_option is not None:
@@ -4537,10 +4595,15 @@ def _voltage_lift_segment_solver(ida, request, segment, ordinal, residual, jacob
                    "requested_first_step_hex": float(recorded["first_step"]).hex(),
                    "evidence": "exact kwargs passed to the returned IDA constructor; not a native option getter"}
         if weight_option is not None:
-            receipt.update(parent_weight_frame=weight_option,
+            receipt[weight_key] = weight_option
+            receipt.update(
                            segment_frame_policy_sha256=digest(request["segment_frame_policy"]),
-                           parent_weight_frame_sha256=digest(weight_option),
+                           weight_option_sha256=digest(weight_option),
                            evidence="exact numeric controls and parent_weight_frame passed to IDA; not a native option getter")
+    if receipt is not None and weight_option is not None and weight_key == "physical_weight_frame":
+        receipt["evidence"] = "exact controls and physical_weight_frame passed to IDA; not a native option getter"
+    if receipt is not None and weight_option is not None and weight_key == "parent_weight_frame":
+        receipt["parent_weight_frame_sha256"] = receipt.pop("weight_option_sha256")
     return solver, receipt
 
 
@@ -4556,7 +4619,8 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         segment_frame: str | None = None,
                                         frame_input_profile: str | None = None,
                                         frame_input_parent: Mapping | None = None,
-                                        reference_refresh_time: float | None = None) -> dict:
+                                        reference_refresh_time: float | None = None,
+                                        physical_tolerance_profile: Mapping | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     qualification_policy = old.get("qualification_policy")
@@ -4572,7 +4636,7 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                       nonlin_trace_capacity=nonlin_trace_capacity, first_step=first_step,
                       time_weight_kappa=time_weight_kappa,
                       segment_startup_overrides=segment_startup_overrides)
-        if not matches_options(qualification_policy, chosen):
+        if physical_tolerance_profile is None and not matches_options(qualification_policy, chosen):
             raise ContractError("qualification_unbound_control_options")
     if ((qualification_policy is None and (model.intervals != 8 or model.layout.size > 45)) or len(segments) != 3
             or old["schema"] != "solarlab.affine-native-request.v1"
@@ -4588,16 +4652,24 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
             raise ContractError("voltage_lift_geometry_or_scaling_changed:"+key)
     if any(k in old["controls"] for k in ("constraints_idx", "constraints_type")):
         raise ContractError("absolute_population_constraints_on_voltage_departures")
-    proof = voltage_lift_wrms_policy(mapping, old["controls"], segments)
-    controls = dict(old["controls"])
-    controls.update(rtol=proof["rtol"], atol=proof["atol"])
+    if physical_tolerance_profile is not None:
+        from scripts.benchmarks.physical_tolerance import make_policy, controls as physical_controls
+        if (time_weight_kappa is not None or nonlin_conv_coef not in (None, 1e-8)
+                or nonlin_guard not in (None, "first-correction-wrms-v1") or nonlin_trace_capacity != 4096):
+            raise ContractError("physical_tolerance_mixed_legacy_controls")
+        proof = make_policy(packet, physical_tolerance_profile)
+        controls = physical_controls(old["controls"], proof)
+    else:
+        proof = voltage_lift_wrms_policy(mapping, old["controls"], segments)
+        controls = dict(old["controls"])
+        controls.update(rtol=proof["rtol"], atol=proof["atol"])
     refinement = None
-    if nonlin_conv_coef is not None:
+    if nonlin_conv_coef is not None and physical_tolerance_profile is None:
         refinement = _voltage_lift_nonlinear_refinement(
             old["controls"], digest(old), nonlin_conv_coef)
         controls["nonlin_conv_coef"] = refinement["value"]
     guard = None
-    if nonlin_guard is not None:
+    if nonlin_guard is not None and physical_tolerance_profile is None:
         guard = _voltage_lift_nonlinear_guard(
             old["controls"], digest(old), nonlin_guard, nonlin_trace_capacity)
         controls.update(nonlin_guard=guard["policy"], nonlin_trace_capacity=guard["trace_capacity"])
@@ -4644,6 +4716,10 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
             "source-bound observation policy and whole-protocol independent time/state/space qualification"],
         "native_admission": False,
     }
+    if physical_tolerance_profile is not None:
+        request["physical_tolerance_policy"] = proof
+        request["physical_charge_forms"] = {name: model.linear_forms["increment"][name].identity
+                                             for name in ("body_charge", "metal_charge")}
     if qualification_policy is not None:
         request.update(qualification_policy=qualification_policy, qualification_ancestor=old)
     if refinement is not None:
@@ -4683,6 +4759,10 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
 
 def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, request: Mapping):
     """Fail closed on request/physical/allocation changes before importing IDA."""
+    physical_profile = "physical_tolerance_policy" in request
+    if physical_profile:
+        from scripts.benchmarks.physical_tolerance import require_balance_integration
+        require_balance_integration(request)
     model = mapping.model
     if "diagnostic_interval" in request:
         data = diagnostic_interval_context(request)
@@ -4716,46 +4796,54 @@ def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, re
                       first_step=request.get("startup_step_policy", {}).get("value"),
                       time_weight_kappa=request.get("time_weight_policy", {}).get("kappa"),
                       segment_startup_overrides=request.get("segment_startup_policy", {}).get("overrides"))
-        if not matches_options(qualification_policy, chosen):
+        if not physical_profile and not matches_options(qualification_policy, chosen):
             raise ContractError("qualification_unbound_control_options")
-    proof = voltage_lift_wrms_policy(mapping, request["previous_controls"], tuple(segments))
-    controls = dict(request["previous_controls"], rtol=proof["rtol"], atol=proof["atol"])
-    refinement = request.get("nonlinear_control_refinement")
-    if refinement is not None:
-        if not isinstance(refinement, Mapping):
-            raise ContractError("voltage_lift_invalid_nonlinear_refinement")
-        expected = _voltage_lift_nonlinear_refinement(
-            request["previous_controls"], request["prior_request_sha256"], refinement.get("value"))
-        if digest(refinement) != digest(expected):
-            raise ContractError("voltage_lift_nonlinear_refinement_binding")
-        controls["nonlin_conv_coef"] = expected["value"]
-    guard = request.get("nonlinear_guard_policy")
-    if guard is not None:
-        if not isinstance(guard, Mapping):
-            raise ContractError("voltage_lift_invalid_nonlinear_guard")
-        expected = _voltage_lift_nonlinear_guard(
-            request["previous_controls"], request["prior_request_sha256"],
-            guard.get("policy"), guard.get("trace_capacity"))
-        if digest(guard) != digest(expected):
-            raise ContractError("voltage_lift_nonlinear_guard_binding")
-        controls.update(nonlin_guard=expected["policy"], nonlin_trace_capacity=expected["trace_capacity"])
-    if "startup_step_policy" in request:
-        startup = request["startup_step_policy"]
-        if not isinstance(startup, Mapping):
-            raise ContractError("voltage_lift_invalid_startup_step")
-        expected = _voltage_lift_startup_step(
-            request["previous_controls"], request["prior_request_sha256"], startup.get("value"))
-        if digest(startup) != digest(expected):
-            raise ContractError("voltage_lift_startup_step_binding")
-        controls["first_step"] = expected["value"]
-    if "time_weight_policy" in request:
-        time_weights = request["time_weight_policy"]
-        if not isinstance(time_weights, Mapping):
-            raise ContractError("voltage_lift_invalid_time_weights")
-        expected, controls, proof = _voltage_lift_time_weights(
-            mapping, controls, proof, request["prior_request_sha256"], time_weights.get("kappa"), qualification_policy)
-        if digest(time_weights) != digest(expected):
-            raise ContractError("voltage_lift_time_weights_binding")
+    if physical_profile:
+        from scripts.benchmarks.physical_tolerance import validate_request
+        proof = validate_request(request)
+        controls = dict(request["controls"])
+        if request["physical_charge_forms"] != {name: model.linear_forms["increment"][name].identity
+                                                 for name in ("body_charge", "metal_charge")}:
+            raise ContractError("physical_tolerance_charge_forms_changed")
+    else:
+        proof = voltage_lift_wrms_policy(mapping, request["previous_controls"], tuple(segments))
+        controls = dict(request["previous_controls"], rtol=proof["rtol"], atol=proof["atol"])
+        refinement = request.get("nonlinear_control_refinement")
+        if refinement is not None:
+            if not isinstance(refinement, Mapping):
+                raise ContractError("voltage_lift_invalid_nonlinear_refinement")
+            expected = _voltage_lift_nonlinear_refinement(
+                request["previous_controls"], request["prior_request_sha256"], refinement.get("value"))
+            if digest(refinement) != digest(expected):
+                raise ContractError("voltage_lift_nonlinear_refinement_binding")
+            controls["nonlin_conv_coef"] = expected["value"]
+        guard = request.get("nonlinear_guard_policy")
+        if guard is not None:
+            if not isinstance(guard, Mapping):
+                raise ContractError("voltage_lift_invalid_nonlinear_guard")
+            expected = _voltage_lift_nonlinear_guard(
+                request["previous_controls"], request["prior_request_sha256"],
+                guard.get("policy"), guard.get("trace_capacity"))
+            if digest(guard) != digest(expected):
+                raise ContractError("voltage_lift_nonlinear_guard_binding")
+            controls.update(nonlin_guard=expected["policy"], nonlin_trace_capacity=expected["trace_capacity"])
+        if "startup_step_policy" in request:
+            startup = request["startup_step_policy"]
+            if not isinstance(startup, Mapping):
+                raise ContractError("voltage_lift_invalid_startup_step")
+            expected = _voltage_lift_startup_step(
+                request["previous_controls"], request["prior_request_sha256"], startup.get("value"))
+            if digest(startup) != digest(expected):
+                raise ContractError("voltage_lift_startup_step_binding")
+            controls["first_step"] = expected["value"]
+        if "time_weight_policy" in request:
+            time_weights = request["time_weight_policy"]
+            if not isinstance(time_weights, Mapping):
+                raise ContractError("voltage_lift_invalid_time_weights")
+            expected, controls, proof = _voltage_lift_time_weights(
+                mapping, controls, proof, request["prior_request_sha256"], time_weights.get("kappa"), qualification_policy)
+            if digest(time_weights) != digest(expected):
+                raise ContractError("voltage_lift_time_weights_binding")
     if (digest(proof) != digest(request["weight_certificate"])
             or digest(controls) != digest(request["controls"])
             or controls.get("calc_initcond") is not None
@@ -4944,7 +5032,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     from scripts.benchmarks.native_observation import (
         AcceptedIntervalObserver, observation_record, read_native_basis_packet,
         require_loaded_observation_backend, validate_interval_observation_admission,
-        prepare_charge_accumulator, charge_upper_summary,
+        prepare_charge_accumulator, charge_upper_summary, CHARGE_LEDGERS,
+        prepare_physical_charge_prefix, physical_charge_summary, physical_charge_passed,
     )
     from scripts.benchmarks.interval_observation import BallIntegrator, ChargePrefix, rational
 
@@ -4961,12 +5050,16 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
               "reference_refresh_attempts": 0, "reference_refreshes": 0}
     with timing.phase('observation'):
         prefixes = {key: ChargePrefix.start((budgets["charge_C"],)*3)
-                    for key in ("raw_polynomial", "same_state_affine_tangent")}
+                    for key in CHARGE_LEDGERS}
+        physical_prefix = prepare_physical_charge_prefix(request)
+        physical_charge_enabled = physical_prefix is not None
+        if physical_charge_enabled:
+            prefixes["physical_charge"] = physical_prefix
         charge_accumulator = prepare_charge_accumulator(request, observer_policy)
     previous_observer = None
     refresh_policy = request.get("reference_refresh_policy")
     latest_current_certificate = None
-    signed_prefix = {key: (Fraction(0),)*3 for key in prefixes} if diagnostic else None
+    signed_prefix = {key: (Fraction(0),)*3 for key in CHARGE_LEDGERS} if diagnostic else None
     first_failure = last_attempt = last_numerical = last_accepted = None
     history = VoltageLiftHistory(mapping)
     parent_reference = history.reference_record
@@ -5057,7 +5150,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
 
     def refresh_ledger(cursor):
         return {"prefixes": observation_record({k: {"absolute_defects": v.absolute_defects,
-                    "reference_errors": v.reference_errors} for k, v in prefixes.items()}),
+                    "reference_errors": prefixes[k].reference_errors} for k in CHARGE_LEDGERS
+                    for v in (prefixes[k],)}),
+                **({"physical_charge": observation_record(physical_charge_summary(prefixes["physical_charge"]))}
+                   if physical_charge_enabled else {}),
                 "upper_accumulator": None if charge_accumulator is None else observation_record(charge_upper_summary(charge_accumulator)),
                 "signed_prefix": observation_record(signed_prefix), "sample_cursor": cursor,
                 "last_accepted": last_accepted, "physical_reference_identity": model.reference.identity}
@@ -5157,7 +5253,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 raise ContractError("voltage_lift_initialization_changed_state_or_failed")
             _voltage_lift_guard_applied(initial_stats["raw_statistics"], controls)
             if frame_record is not None:
-                _voltage_lift_frame_applied(initial_stats["raw_statistics"], binding.adapter.mapping.frame)
+                _voltage_lift_frame_applied(initial_stats["raw_statistics"], binding.adapter.mapping.frame, request=request)
             left_pair = checked_sample(binding, initialized, predecessor, "segment_initial")
             left, last_numerical = left_pair[0], pointer(left_pair)
             left_native = initialized
@@ -5169,7 +5265,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     save({"kind": "native_interval_common_prefix", "time_hex": float(segment.start).hex(),
                           "origin": "diagnostic_seed", "completed_intervals_before": 0,
                           "signed_integral_centers_C": observation_record(signed_prefix),
-                          "reference_error_C": observation_record({key: (Fraction(0),)*3 for key in prefixes}),
+                          "reference_error_C": observation_record({key: (Fraction(0),)*3 for key in CHARGE_LEDGERS}),
                           "old_B_prefix_credit": False})
                 cursor += 1
             while left.time < segment.end:
@@ -5223,7 +5319,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 _voltage_lift_guard_applied(after_stats["raw_statistics"], controls)
                 if frame_record is not None:
                     _voltage_lift_frame_applied(after_stats["raw_statistics"], binding.adapter.mapping.frame,
-                                                after_step=True)
+                                                after_step=True, request=request)
                 t = native["time"]
                 if not left.time < t <= segment.end:
                     raise ContractError("voltage_lift_interval_not_monotone")
@@ -5283,14 +5379,23 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     duration = observer.prepared.path.clock.tn-observer.prepared.path.clock.predecessor
                     normalization = (float.fromhex(request["original_full_protocol_end_hex"])
                                      if diagnostic else segments[-1].end)
-                    error_allocation = rational(budgets["charge_C"])/12*duration/rational(normalization)/32
+                    if physical_charge_enabled:
+                        from scripts.benchmarks.physical_tolerance import physical_charge_error_allocation
+                        error_allocation = physical_charge_error_allocation(request, duration)
+                    else:
+                        error_allocation = rational(budgets["charge_C"])/12*duration/rational(normalization)/32
                     before_prefix = prefixes
                     completed_before = charge_accumulator.count if diagnostic else None
                     with timing.phase('observation'):
                         prefixes, evidence = observer.charge_evidence(left_pair, right_pair, prefixes,
                             absolute_error=error_allocation, charge_budget=budgets["charge_C"],
                             charge_accumulator=charge_accumulator)
-                    if diagnostic and not evidence["passed"]:
+                    charge_passed = (physical_charge_passed(request, evidence, frame_identity=frame.identity,
+                                     path_identity=observer.prepared.path.identity,
+                                     map_identity=binding.adapter.mapping.identity,
+                                     map_payload=binding.adapter.mapping.payload()) if physical_charge_enabled
+                                     else evidence["passed"])
+                    if diagnostic and not charge_passed:
                         failed = {"kind": "native_interval_failed_charge", "segment_id": segment.id,
                                   "left": pointer(left_pair), "right": pointer(right_pair),
                                   "observation": observation_record(evidence), "arithmetic_calls": list(arithmetic.calls)}
@@ -5310,14 +5415,14 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                                         absolute_error=allocation, charge_budget=budgets["charge_C"],
                                         subinterval=(left.time, common_time))
                             centers = {key: tuple(a+b.center for a, b in zip(signed_prefix[key],
-                                common_evidence["ledgers"][key]["signed_integral_C"], strict=True)) for key in prefixes}
+                                common_evidence["ledgers"][key]["signed_integral_C"], strict=True)) for key in CHARGE_LEDGERS}
                             save({"kind": "native_interval_common_prefix", "time_hex": common_time.hex(),
                                 "segment_id": segment.id, "left": pointer(left_pair), "right": pointer(common_pair),
                                 "coefficient_frame_identity": frame.identity, "completed_intervals_before": completed_before,
                                 "origin": "contained_observation" if common_time < t else "accepted_endpoint",
                                 "signed_integral_centers_C": observation_record(centers),
                                 "reference_error_C": observation_record({key: common_evidence["ledgers"][key]["prefix_reference_error_C"]
-                                                                         for key in prefixes}),
+                                                                         for key in CHARGE_LEDGERS}),
                                 "observation": observation_record(common_evidence), "arithmetic_calls": list(arithmetic.calls),
                                 "endpoint_restore": None, "normal_query_performed": False, "states_projected": False,
                                 "reference_estimates_are_continuum_certificates": False, "old_B_prefix_credit": False})
@@ -5334,13 +5439,16 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                                 "arithmetic_calls": list(arithmetic.calls),
                                 "endpoint_restore": None, "normal_query_performed": False,
                                 "states_projected": False, "reference_estimates_are_continuum_certificates": False}
+                    if physical_charge_enabled:
+                        interval.update(charge_gate="signed-physical-charge-v1",
+                                        physical_charge_error_allocation_C=observation_record(error_allocation))
                     save(interval)
-                    if not evidence["passed"]:
+                    if not charge_passed:
                         first_failure = first_failure or interval
                         raise ContractError("voltage_lift_interval_or_prefix_charge_budget")
                     if diagnostic:
                         signed_prefix = {key: tuple(a+b.center for a, b in zip(signed_prefix[key],
-                            evidence["ledgers"][key]["signed_integral_C"], strict=True)) for key in prefixes}
+                            evidence["ledgers"][key]["signed_integral_C"], strict=True)) for key in CHARGE_LEDGERS}
                     last_accepted = last_numerical
                     previous_observer = observer
                 finally:
@@ -5403,8 +5511,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         execution_output_policy=execution_output,
         elapsed_s=time.perf_counter()-started, last_numerical=last_numerical,
         last_physically_accepted=last_accepted, last_attempt=last_attempt,
-        cumulative_absolute_charge_bounds_C={k: observation_record(v.absolute_defects) for k, v in prefixes.items()},
-        cumulative_observation_reference_bounds_C={k: observation_record(v.reference_errors) for k, v in prefixes.items()},
+        cumulative_absolute_charge_bounds_C={k: observation_record(prefixes[k].absolute_defects) for k in CHARGE_LEDGERS},
+        cumulative_observation_reference_bounds_C={k: observation_record(prefixes[k].reference_errors) for k in CHARGE_LEDGERS},
         observation_policy_sha256=digest(observer_policy),
         cumulative_scope=("through last observed interval only; failing native call did not reach interval observation; no prefix reset at a protocol event"
                           if "native_statistics_evidence" in result else
@@ -5412,6 +5520,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         scientific_or_G2_qualification=False, DAE_time_accuracy_certified=False, continuum_space_accuracy_certified=False,
         in_window_reinitializations=counts["reference_refreshes"],
     )
+    if physical_charge_enabled:
+        result.update(charge_gate="signed-physical-charge-v1",
+                      physical_charge_policy_sha256=digest(observer_policy["physical_charge"]),
+                      physical_charge=observation_record(physical_charge_summary(prefixes["physical_charge"])))
     if diagnostic:
         result.update(complete_diagnostic_window=result.get("complete_diagnostic_window", False),
                       old_B_prefix_credit=False,

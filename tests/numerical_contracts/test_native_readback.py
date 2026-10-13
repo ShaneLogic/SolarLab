@@ -828,6 +828,172 @@ def fixture(policy_factory=None):
     return request, rows, result
 
 
+class PhysicalChargeReadbackTests(unittest.TestCase):
+    """Real observer/reader bodies with manufactured providers, never a device."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        name = "_physical_charge_observer_fixture"
+        path = Path(__file__).with_name("test_physical_charge_observation.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        cls.fixture_module = module
+
+    def prepared(self):
+        from scripts.benchmarks import physical_tolerance as pt
+        from scripts.benchmarks.native_readback import PhysicalChargeCheck
+        m = self.fixture_module
+        f = m.Fixture()
+        request, packet = f.request, f.request["numeric_packet"]
+        packet.update(nodes=3, volumes_m3=[2.0]*3, x_m=[0.0, 1.0, 2.0], layout_identity=f.path.layout_identity)
+        request["segments"] = [{"id": "manufactured", "start": 0.0, "end": 3.0,
+                                "voltage": [0.0, 0.0], "photons": [0.0, 0.0]}]
+        policy = pt.make_policy(packet, {"r": 1e-4, "alpha": 1e-8})
+        request.update(physical_tolerance_policy=policy, weight_certificate=policy,
+                       controls=pt.controls(request["previous_controls"], policy))
+        for name in ("body_charge", "metal_charge"):
+            f.model.linear_forms["increment"][name].identity = digest({"manufactured_increment_form": name})
+        request["physical_charge_forms"] = {k: f.model.linear_forms["increment"][k].identity
+                                            for k in ("body_charge", "metal_charge")}
+        request["interval_observation"] = m.ENV["prepare_interval_observation_policy"](request,
+            binding_identity="fixture-binding", header_sha256="fixture-header", backend_modules={})
+        f.context.request_sha256 = f.prepared.request_identity = digest(request)
+        f.bind_active_frame()
+        size = len(packet["column_scaling"])
+        values = [Fraction(0)]*size
+        dp, dphi = Fraction(1, 2**20)+Fraction(1, 2**80), Fraction(1, 2**100)
+        values[packet["variable_offsets"]["p_m3"][0]+1] = dp
+        lo, hi = packet["variable_offsets"]["phi_V"]
+        values[lo], values[hi-1] = dphi, -dphi
+
+        def sample(vector):
+            remaining = list(vector)
+            words = []
+            for _ in range(4):
+                row = [float(v) for v in remaining]
+                words.append([v.hex() for v in row])
+                remaining = [v-Fraction(w) for v, w in zip(remaining, row)]
+            assert not any(remaining)
+            return {"history": {"physical_cumulative_words_hex": words}}
+
+        left, right = sample([Fraction(0)]*size), sample(values)
+        # Independent three-node affine oracle: volumes contain area already.
+        q = Fraction(m.ENV["Q"])
+        truth = (2*q*dp, 15*dphi, -15*dphi)
+        f.actual = f.flux = tuple(m.E(v) for v in truth)
+        f.raw, f.gap = (m.E(999*f.budget),)*3, (100*f.budget,)*3
+        return f, PhysicalChargeCheck(request), left, right
+
+    def evidence(self, f):
+        from scripts.benchmarks.native_readback import _decode
+        return _decode(self.fixture_module.ENV["observation_record"](f.observe()))
+
+    def consume(self, reader, f, evidence, left, right):
+        return reader.consume(evidence, left, right, frame_identity=f.frame.identity,
+            path_identity=f.path.identity, map_identity=f.prepared.map_identity,
+            map_payload=f.binding.adapter.mapping.payload())
+
+    def test_real_observer_to_reader_keeps_old_failure_and_selects_independent_flux(self):
+        f, reader, left, right = self.prepared()
+        budgets = deepcopy(f.request["budgets"])
+        evidence = self.evidence(f)
+        self.assertFalse(evidence["passed"])
+        self.assertTrue(self.consume(reader, f, evidence, left, right))
+        self.assertEqual(reader.summary(), evidence["physical_charge"]["prefix"])
+        self.assertEqual(f.request["budgets"], budgets)
+        self.assertNotEqual(f.prepared.map_identity, f.request["map_identity"])
+        self.assertEqual(len(f.integration_calls), 1)
+        self.assertEqual(len(f.action_calls), 2)
+
+    def test_complete_saved_low_words_are_required(self):
+        f, reader, left, right = self.prepared()
+        evidence = self.evidence(f)
+        index = f.request["numeric_packet"]["variable_offsets"]["p_m3"][0]+1
+        right["history"]["physical_cumulative_words_hex"][1][index] = 0.0.hex()
+        with self.assertRaisesRegex(HistoryVerificationError, "saved_word_action"):
+            self.consume(reader, f, evidence, left, right)
+
+    def test_raw_metal_derivative_cannot_replace_the_physical_flux(self):
+        f, reader, left, right = self.prepared()
+        evidence = self.evidence(f)
+        evidence["physical_charge"]["physical_flux_integral_C"] = evidence["ledgers"]["raw_polynomial"]["signed_integral_C"]
+        with self.assertRaisesRegex(HistoryVerificationError, "independent_flux_selection"):
+            self.consume(reader, f, evidence, left, right)
+
+    def test_forged_source_parent_frame_and_form_bindings_fail(self):
+        for key, value in (("request_sha256", "0"*64), ("root_map_identity", "0"*64),
+                           ("map_identity", "0"*64), ("frame_identity", "other"),
+                           ("source_identity", "other"), ("layout_identity", "other"),
+                           ("charge_form_identities", ("0"*64, "1"*64))):
+            with self.subTest(key=key):
+                f, reader, left, right = self.prepared()
+                evidence = self.evidence(f)
+                evidence["physical_charge"][key] = value
+                with self.assertRaises(HistoryVerificationError):
+                    self.consume(reader, f, evidence, left, right)
+        f, reader, left, right = self.prepared()
+        evidence = self.evidence(f)
+        f.active_map["segment_frame"]["parent_map_identity"] = "0"*64
+        f.prepared.map_identity = digest(f.active_map)
+        evidence["physical_charge"]["map_identity"] = f.prepared.map_identity
+        with self.assertRaisesRegex(HistoryVerificationError, "parent_map"):
+            self.consume(reader, f, evidence, left, right)
+
+    def test_positive_errors_and_prefix_scalar_types_cannot_be_forged(self):
+        for kind in ("negative", "missing", "counter_bool", "zero_bool", "passed_int"):
+            f, reader, left, right = self.prepared()
+            evidence = self.evidence(f)
+            row = evidence["physical_charge"]
+            if kind == "negative":
+                row["error_components_C"]["input"] = (Fraction(-1),)*3
+            elif kind == "missing":
+                del row["error_components_C"]["saved_charge_evaluation"]
+            elif kind == "counter_bool":
+                row["prefix"]["intervals"] = True
+            elif kind == "zero_bool":
+                row["prefix"]["total_error_C"] = (False,)*3
+            else:
+                row["passed"] = 1
+            with self.assertRaises(HistoryVerificationError):
+                self.consume(reader, f, evidence, left, right)
+
+    def test_cumulative_third_share_and_failed_latch_do_not_reset(self):
+        f, reader, left, _ = self.prepared()
+        m = self.fixture_module
+        f.actual = (m.E(0),)*3
+        f.flux = (m.E(0, f.budget/4),)*3
+        for index in range(3):
+            f.left.time, f.right.time = float(index), float(index+1)
+            f.clock.predecessor, f.clock.tn = Fraction(index), Fraction(index+1)
+            f.clock.payload = lambda: {"predecessor": f.clock.predecessor, "tn": f.clock.tn}
+            f.frame.identity = digest({"manufactured_native_interval": index})
+            f.prepared.coefficient_frame_identity = f.frame.identity
+            if index == 2:
+                f.flux = (m.E(0),)*3
+            evidence = self.evidence(f)
+            self.assertEqual(self.consume(reader, f, evidence, left, left), index == 0)
+        self.assertEqual(reader.summary()["failed"], (True,)*3)
+        self.assertEqual(reader.summary()["error_components_C"]["physical_flux_integration"], (f.budget/2,)*3)
+
+    def test_physical_allocation_uses_new_budget_and_full_protocol(self):
+        from scripts.benchmarks.physical_tolerance import physical_charge_error_allocation
+        from scripts.benchmarks.native_readback import PhysicalChargeCheck
+        f, reader, _, _ = self.prepared()
+        expected = f.budget/12/3/32
+        self.assertEqual(reader.allocation(Fraction(1)), expected)
+        self.assertEqual(physical_charge_error_allocation(f.request, Fraction(1)), expected)
+        self.assertNotEqual(expected, Fraction(f.request["budgets"]["charge_C"])/12/3/32)
+        for value in (0, -1, 4):
+            with self.assertRaises(HistoryVerificationError):
+                reader.allocation(Fraction(value))
+        f.request["interval_observation"]["quadrature_error_allocation"] = "charge_C/12 * actual_interval/full_protocol / 32 per integral"
+        with self.assertRaises(HistoryVerificationError):
+            PhysicalChargeCheck(f.request)
+
+
 class NativeReadbackTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

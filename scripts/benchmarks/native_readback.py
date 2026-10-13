@@ -325,6 +325,16 @@ def qualification_coordinate_count(request):
 def segment_startup_controls(request, segment):
     """Independently bind the selected hold step, without producer imports."""
     controls = dict(request["controls"])
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import validate_request, segment_startup_policy
+        validate_request(request)
+        _require(segment in request["segments"], "physical_startup_segment")
+        if "segment_startup_policy" in request:
+            policy = request["segment_startup_policy"]
+            expected = segment_startup_policy(request, policy.get("overrides"))
+            _require(policy == expected, "physical_startup_binding")
+            controls.update(expected["overrides"].get(segment["id"], {}))
+        return controls
     _require("segment_startup_overrides" not in request, "segment_startup_unbound_override")
     qualified = "qualification_policy" in request
     size = qualification_coordinate_count(request) if qualified else 45
@@ -488,6 +498,10 @@ class _ChargeRefinement:
             "history": "actual accepted predecessor/endpoint plus source-owned immutable phi/psi/Dky and error metadata",
             "qualification": "represented numerical path only; original independent time/state/space refinements remain pending",
         }
+        if "physical_tolerance_policy" in request:
+            from scripts.benchmarks.physical_tolerance import physical_charge_policy, CHARGE_ALLOCATION
+            static.update(physical_charge=physical_charge_policy(request),
+                          quadrature_error_allocation=CHARGE_ALLOCATION)
         expected_keys = {"schema", "map_identity", "protocol_sha256", "controls_sha256", "budgets_sha256",
                          "sampling_sha256", "binding_identity", "header_sha256", "backend_modules", *static}
         _require(policy.get("schema") == "solarlab.interval-observation-policy.v2"
@@ -569,7 +583,9 @@ class _ChargeRefinement:
                      "partial_prefix_clock_provenance")
         left, right = (first-now)/h, (last-now)/h
         _require(part["normalized_interval"] == (left, right), "partition_clock_coverage")
-        allocation = Fraction(self.request["budgets"]["charge_C"]) / 12 * (last-first)
+        charge_budget = (Fraction(self.request["interval_observation"]["physical_charge"]["budget_C"])
+                         if "physical_tolerance_policy" in self.request else Fraction(self.request["budgets"]["charge_C"]))
+        allocation = charge_budget / 12 * (last-first)
         normalization = (_hex(self.request["original_full_protocol_end_hex"])
                          if "diagnostic_interval" in self.request else self.request["segments"][-1]["end"])
         allocation /= Fraction(normalization) * 32
@@ -679,7 +695,17 @@ def _frame_input_parent(request):
     old_controls, controls = old.get("controls"), request.get("controls")
     old_policy, policy = old.get("time_weight_policy"), request.get("time_weight_policy")
     comparison_controls = old_controls
-    if _digest(controls) != _digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import validate_request
+        physical = validate_request(request)
+        _require("physical_tolerance_policy" not in old and type(old_controls) is dict,
+                 "frame_input_physical_parent_profile")
+        comparison_controls = controls
+        control_refinement = {"schema": "solarlab.frame-input-physical-control.v1",
+            "old_failed_request_sha256": old_id, "old_controls_sha256": _digest(old_controls),
+            "controls_sha256": _digest(controls), "physical_tolerance_policy_sha256": _digest(physical),
+            "old_parent_failure_retained": True, "effective_nonlinear_equivalence": False}
+    elif _digest(controls) != _digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
         valid = (type(old_controls) is dict and type(controls) is dict
                  and type(old_policy) is dict and type(policy) is dict
                  and old_policy.get("schema") == policy.get("schema") == "solarlab.voltage-lift-time-weights.v1"
@@ -1330,6 +1356,55 @@ def _reference_refresh_point(record, history, request):
     _require(p["identity"] == history["point_identity"], "reference_refresh_Point_history_identity")
 
 
+def physical_weight_state(value, request, frame, segment, *, owner, generation, initial=False):
+    """Independent rational reconstruction of actual callback SI weights."""
+    from scripts.benchmarks.physical_tolerance import weight_option
+    option = weight_option(request, frame, segment)
+    n = option["size"]
+    words = lambda row: _word_bytes(row, len(row))
+    _require(type(value) is dict and value["schema"] == "sksundae.ida.physical-affine-weight-state.v1"
+             and type(value["generation"]) is int and value["generation"] > 0
+             and type(value["size"]) is int and type(value["setter_status"]) is int
+             and value["frame_identity"] == option["frame_identity"] and value["profile_identity"] == option["profile_identity"]
+             and value["owner"] == owner and value["generation"] == generation and value["size"] == n
+             and value["installed"] is True and value["setter"] == "IDAWFtolerances" and value["setter_status"] == 0
+             and value["t0_hex"] == option["t0_hex"] and value["rtol_hex"] == option["rtol_hex"]
+             and value["weight_rounding"] == option["weight_rounding"]
+             and value["q0_words"] == tuple(words(w) for w in option["q0_words_hex"])
+             and value["v0_words"] == tuple(words(w) for w in option["v0_words_hex"])
+             and value["atol"] == words(option["atol_physical_hex"]) and value["scale"] == words(option["scale_hex"])
+             and value["reference_words"] == b"".join(words(w) for w in option["reference_words_hex"])
+             and value["lift"] == b"".join(words(w) for w in option["lift_hex"])
+             and value["protocol_start_hex"] == option["protocol_start_hex"]
+             and value["protocol_end_hex"] == option["protocol_end_hex"]
+             and all(value[k] == tuple(_hex(v) for v in option[key]) for k,key in (
+                 ("inputs_start","inputs_start_hex"),("inputs_end","inputs_end_hex"),
+                 ("input_rates","input_rates_hex"),("reference_inputs","reference_inputs_hex"))), "physical_weight_actual_context")
+    _require(type(value["callback_calls"]) is int and value["callback_calls"] >= 0, "physical_weight_calls")
+    if initial:
+        _require(value["callback_calls"] == 0 and value["callback_status"] is None
+                 and all(value[k] is None for k in ("basis_time_hex","basis_u","rounded_physical","computed_weights")), "physical_weight_initial_cache")
+    elif value["callback_calls"]:
+        _require(type(value["callback_status"]) is int and value["callback_status"] == 0
+                 and value["failure_component"] is None, "physical_weight_callback_failure")
+        t = _hex(value["basis_time_hex"]); lo,hi = _hex(option["protocol_start_hex"]),_hex(option["protocol_end_hex"])
+        _require(lo <= t <= hi, "physical_weight_basis_time")
+        first,last,rates = (tuple(_hex(v) for v in option[k]) for k in ("inputs_start_hex","inputs_end_hex","input_rates_hex"))
+        inputs = first if t == lo else last if t == hi else tuple(a+v*(t-lo) for a,v in zip(first,rates))
+        q0,v0 = (_frame_word_values(option[k],n) for k in ("q0_words_hex","v0_words_hex"))
+        raw = _buffer(value["basis_u"],n); dt = Fraction(t)-Fraction(_hex(option["t0_hex"]))
+        roots = tuple(sum((Fraction(_hex(w[i])) for w in option["reference_words_hex"]),Fraction(0)) for i in range(n))
+        scale = tuple(_hex(v) for v in option["scale_hex"]); a = tuple(_hex(v) for v in option["atol_physical_hex"])
+        ref = tuple(_hex(v) for v in option["reference_inputs_hex"]); r = _hex(option["rtol_hex"])
+        physical = tuple(float(roots[i]+Fraction(scale[i])*(q0[i]+dt*v0[i]+Fraction(raw[i]))+
+                         sum((Fraction(_hex(option["lift_hex"][i][j]))*(Fraction(inputs[j])-Fraction(ref[j])) for j in range(2)),Fraction(0)))
+                         for i in range(n))
+        expected = tuple(s/(r*abs(x)+b) for s,x,b in zip(scale,physical,a))
+        _require(_buffer(value["rounded_physical"],n) == physical and _buffer(value["computed_weights"],n) == expected
+                 and all(math.isfinite(w) and w > 0 for w in expected), "physical_weight_metric")
+    return value
+
+
 class SegmentFrameCheck:
     """Independent dyadic frame/weight checks; no model or native imports."""
 
@@ -1345,7 +1420,7 @@ class SegmentFrameCheck:
         self.polynomial_hash = hashlib.sha256()
         self.refresh_policy = reference_refresh_policy(request)
         self.refreshes = []
-        _require(not any(k in request for k in ("segment_frame", "frame_overrides", "parent_weight_frame")),
+        _require(not any(k in request for k in ("segment_frame", "frame_overrides", "parent_weight_frame", "physical_weight_frame")),
                  "segment_frame_unbound_option")
         if not self.enabled:
             _require("initial_segment_frame" not in request, "segment_frame_unbound_initialization")
@@ -1501,7 +1576,12 @@ class SegmentFrameCheck:
         frame = self.active
         expected = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": _digest(frame),
                     **{k: frame[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
-        _require(row["parent_weight_frame"] == expected and row["parent_weight_frame_sha256"] == _digest(expected)
+        weight_key, hash_key = "parent_weight_frame", "parent_weight_frame_sha256"
+        if "physical_tolerance_policy" in self.request:
+            from scripts.benchmarks.physical_tolerance import weight_option
+            expected = weight_option(self.request, frame, self.segment)
+            weight_key, hash_key = "physical_weight_frame", "weight_option_sha256"
+        _require(row[weight_key] == expected and row[hash_key] == _digest(expected)
                  and row["segment_frame_policy_sha256"] == _digest(self.request["segment_frame_policy"])
                  and row["request_sha256"] == self.request_id and row["map_identity"] == self.request["map_identity"]
                  and row["segment_sha256"] == self.active["segment_sha256"]
@@ -1528,8 +1608,12 @@ class SegmentFrameCheck:
             "interval_record_sha256": _digest(interval), "domain_record_sha256": _digest(domain),
             "current_certificate_sha256": _digest(certificate), "state_checks_sha256": _digest(sample["state_checks"]),
             "coefficient_frame_identity": interval["coefficient_frame_identity"]}
+        observed = _decode(interval["observation"])
+        charge_passed = (observed["physical_charge"]["passed"] is True
+                         and observed["physical_charge"]["prefix"]["passed"] is True
+                         if "physical_tolerance_policy" in self.request else observed["passed"] is True)
         _require(record["acceptance"] == accepted and sample["state_checks"]["passed"] is True
-                 and _decode(interval["observation"])["passed"] is True
+                 and charge_passed
                  and _decode(domain["evidence"])["passed"] is True
                  and _decode(certificate["evidence"])["passed"] is True
                  and certificate["sample_record_sha256"] == sample["record_sha256"]
@@ -1609,7 +1693,12 @@ class SegmentFrameCheck:
                  "reference_refresh_actual_generation")
         expected_weights = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": _digest(self.active),
             **{k: self.active[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
-        _require(_digest(complete["parent_weight_frame"]) == _digest(expected_weights)
+        weight_key = "parent_weight_frame"
+        if "physical_tolerance_policy" in self.request:
+            from scripts.benchmarks.physical_tolerance import weight_option
+            expected_weights = weight_option(self.request, self.active, self.segment)
+            weight_key = "physical_weight_frame"
+        _require(_digest(complete[weight_key]) == _digest(expected_weights)
                  and _digest(complete["initialization_return"]) == _digest({
                     "time_hex": self.active["t0_hex"], "success": True,
                     "raw_z_hex": [0.0.hex()]*self.size, "raw_zdot_hex": [0.0.hex()]*self.size}),
@@ -1639,6 +1728,11 @@ class SegmentFrameCheck:
     def weight_state(self, value, *, owner, generation, initial=False):
         value = _decode(value)
         frame, controls = self.active, self.request["controls"]
+        if "physical_tolerance_policy" in self.request:
+            value = physical_weight_state(value, self.request, frame, self.segment,
+                                          owner=owner, generation=generation, initial=initial)
+            self.latest_weights = value
+            return value
         _require(type(value) is dict and value["schema"] == "sksundae.ida.parent-affine-weight-state.v1"
                  and value["frame_identity"] == _digest(frame) and value["owner"] == owner
                  and value["generation"] == generation and value["size"] == self.size
@@ -1786,8 +1880,172 @@ class SegmentFrameCheck:
                 "scientific_qualification": False}
 
 
+class PhysicalChargeCheck:
+    """Independent three-channel physical balance from saved words and flux evidence.
+
+    The source-bound flux enclosure is reused, never recomputed from a raw
+    metal derivative. Signed centers may cancel; every positive error and the
+    first-failure latch persist across protocol and numeric-frame boundaries.
+    """
+
+    error_names = ("saved_charge_evaluation", "physical_flux_integration", "input", "clock_strip")
+    flux_basis = "fixed-uniform-epsilon-Dirichlet-slab-reservoir-carrier-ion-trap-capacitance-v1"
+
+    def __init__(self, request):
+        from scripts.benchmarks.physical_tolerance import physical_charge_policy, CHARGE_ALLOCATION
+        self.request, self.request_id = request, _digest(request)
+        self.policy = physical_charge_policy(request)
+        self.input_words = frame_input_word_count(request)
+        _require(request["interval_observation"].get("physical_charge") == self.policy
+                 and request["interval_observation"].get("quadrature_error_allocation") == CHARGE_ALLOCATION,
+                 "physical_charge_policy_or_allocation")
+        self.budgets = (Fraction(self.policy["budget_C"]),)*3
+        self.intervals = 0
+        self.signed = self.absolute = (Fraction(0),)*3
+        self.components = {name: (Fraction(0),)*3 for name in self.error_names}
+        self.failed = (False,)*3
+
+    def allocation(self, duration):
+        first, last = self.request["segments"][0]["start"], self.request["segments"][-1]["end"]
+        full = Fraction(last)-Fraction(first)
+        _require(first == 0 and 0 < duration <= full, "physical_charge_allocation_clock")
+        return self.budgets[0]/12*duration/full/32
+
+    def saved_change(self, left, right):
+        """Exact affine SI actions of all saved endpoint words, including lows."""
+        packet = self.request["numeric_packet"]
+        size, nodes = len(packet["column_scaling"]), packet["nodes"]
+        values = []
+        for sample in (left, right):
+            words = sample["history"]["physical_cumulative_words_hex"]
+            values.append(_frame_word_values(words, size, count=self.input_words))
+        delta = tuple(b-a for a, b in zip(*values))
+        fields = {name: delta[lo:hi] for name, (lo, hi) in packet["variable_offsets"].items()}
+        _require(all(len(v) == nodes for v in fields.values()), "physical_charge_field_shape")
+        definition = packet["definition"]
+        q = Fraction(_hex(self.policy["reference_basis"]["q_C_hex"]))
+        rho = [q*(p-n) for p, n in zip(fields["p_m3"], fields["n_m3"])]
+        if definition["dynamic"]:
+            nt = Fraction(definition["trap_density"])
+            rho = [v+q*(c-nt*f) for v, c, f in zip(rho, fields["c_m3"], fields["f"])]
+        volume = tuple(Fraction(v) for v in _vector(packet["volumes_m3"], nodes))
+        x = _vector(packet["x_m"], nodes)
+        # These are the declared binary64 spacings used by the source forms.
+        dx0, dx1 = Fraction(float(x[1])-float(x[0])), Fraction(float(x[-1])-float(x[-2]))
+        _require(dx0 > 0 and dx1 > 0 and all(v > 0 for v in volume), "physical_charge_geometry")
+        eps_area = Fraction(definition["epsilon"])*Fraction(definition["area"])
+        phi = fields["phi_V"]
+        return (sum((v*r for v, r in zip(volume, rho)), Fraction(0)),
+                eps_area*(phi[0]-phi[1])/dx0-volume[0]*rho[0],
+                -eps_area*(phi[-2]-phi[-1])/dx1-volume[-1]*rho[-1])
+
+    def summary(self):
+        errors = tuple(sum((v[i] for v in self.components.values()), Fraction(0)) for i in range(3))
+        checks = tuple(not value for value in self.failed)
+        return {"schema": "solarlab.native-physical-charge-prefix.v1", "intervals": self.intervals,
+                "budgets_C": self.budgets, "signed_balance_C": self.signed,
+                "error_components_C": dict(self.components), "total_error_C": errors,
+                "total_bound_C": tuple(abs(v)+e for v, e in zip(self.signed, errors)),
+                "cumulative_interval_absolute_balance_C": self.absolute,
+                "failed": self.failed, "row_checks": checks, "passed": all(checks)}
+
+    def consume(self, evidence, left, right, *, frame_identity, path_identity, map_identity, map_payload):
+        row = evidence.get("physical_charge")
+        packet = self.request["numeric_packet"]
+        _require(type(map_payload) is dict, "physical_charge_active_map")
+        root = self.request["voltage_lift_map"]
+        expected_map = dict(root)
+        if map_payload.get("segment_frame") is not None:
+            frame = map_payload["segment_frame"]
+            _require(type(frame) is dict and frame.get("parent_map_identity") == self.request["map_identity"],
+                     "physical_charge_parent_map")
+            expected_map.update(segment_frame=frame,
+                raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+                physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        _require(_digest(root) == self.request["map_identity"] and map_payload == expected_map
+                 and _digest(map_payload) == map_identity, "physical_charge_active_map")
+        expected = {"schema": "solarlab.native-physical-charge.v1", "policy": self.policy,
+                    "request_sha256": self.request_id, "map_identity": map_identity,
+                    "root_map_identity": self.request["map_identity"],
+                    "frame_identity": frame_identity, "path_identity": path_identity, "clock": evidence["clock"],
+                    "source_identity": self.request["voltage_lift_map"]["physical_model"],
+                    "layout_identity": packet["layout_identity"], "model_id": packet["definition"]["id"],
+                    "charge_form_identities": tuple(self.request["physical_charge_forms"][k]
+                                                    for k in ("body_charge", "metal_charge")),
+                    "physical_flux_basis": self.flux_basis,
+                    "integration_uncertainty_role": "combined quadrature and physical-integrand evaluation radius; conservative third-share bound"}
+        computed = {"saved_finite_charge_change_C", "physical_flux_integral_C", "signed_balance_C",
+                    "error_components_C", "interval_total_bound_C", "prefix", "row_checks", "passed"}
+        _require(type(row) is dict and set(row) == set(expected) | computed
+                 and all(row[k] == v for k, v in expected.items())
+                 and evidence["frame_identity"] == frame_identity and evidence["path_identity"] == path_identity,
+                 "physical_charge_record_binding")
+        actual = _enclosures(row["saved_finite_charge_change_C"], 3)
+        flux = _enclosures(row["physical_flux_integral_C"], 3)
+        tangent = evidence["ledgers"]["same_state_affine_tangent"]
+        _require(actual == _enclosures(tangent["saved_finite_charge_change_C"], 3)
+                 == _enclosures(evidence["ledgers"]["raw_polynomial"]["saved_finite_charge_change_C"], 3)
+                 and flux == _enclosures(tangent["signed_integral_C"], 3), "physical_charge_independent_flux_selection")
+        exact = self.saved_change(left, right)
+        _require(all(abs(value["center"]-truth) <= value["absolute_error_bound"]
+                     for value, truth in zip(actual, exact)), "physical_charge_saved_word_action")
+        components = row["error_components_C"]
+        _require(type(components) is dict and set(components) == set(self.error_names), "physical_charge_error_components")
+        components = {name: _nonnegative(components[name], 3) for name in self.error_names}
+        _require(components["saved_charge_evaluation"] == tuple(v["absolute_error_bound"] for v in actual)
+                 and components["physical_flux_integration"] == tuple(v["absolute_error_bound"] for v in flux)
+                 and components["input"] == evidence["input_error"]["tangent_charge_integral_error_C"]
+                 and components["clock_strip"] == tangent["error_components_C"]["clock_strip"],
+                 "physical_charge_error_coverage")
+        balances = tuple(a["center"]-b["center"] for a, b in zip(actual, flux))
+        errors = tuple(sum((v[i] for v in components.values()), Fraction(0)) for i in range(3))
+        bounds = tuple(abs(v)+e for v, e in zip(balances, errors))
+        signed = tuple(a+b for a, b in zip(self.signed, balances))
+        absolute = tuple(a+abs(b) for a, b in zip(self.absolute, balances))
+        cumulative = {name: tuple(a+b for a, b in zip(self.components[name], components[name]))
+                      for name in self.error_names}
+        totals = tuple(sum((v[i] for v in cumulative.values()), Fraction(0)) for i in range(3))
+        checks = tuple(not self.failed[i] and bounds[i] <= budget
+                       and abs(signed[i])+totals[i] <= budget
+                       and 3*components["physical_flux_integration"][i] <= budget
+                       and 3*cumulative["physical_flux_integration"][i] <= budget
+                       for i, budget in enumerate(self.budgets))
+        prefix = {"schema": "solarlab.native-physical-charge-prefix.v1", "intervals": self.intervals+1,
+                  "budgets_C": self.budgets, "signed_balance_C": signed, "error_components_C": cumulative,
+                  "total_error_C": totals, "total_bound_C": tuple(abs(v)+e for v, e in zip(signed, totals)),
+                  "cumulative_interval_absolute_balance_C": absolute, "failed": tuple(not v for v in checks),
+                  "row_checks": checks, "passed": all(checks)}
+        _require(all(type(v) is Fraction for v in _vector(row["signed_balance_C"], 3)),
+                 "physical_charge_signed_terms")
+        _nonnegative(row["interval_total_bound_C"], 3)
+        supplied = row["prefix"]
+        _require(type(supplied) is dict
+                 and all(type(v) is Fraction for v in _vector(supplied.get("signed_balance_C"), 3))
+                 and type(supplied.get("error_components_C")) is dict
+                 and set(supplied["error_components_C"]) == set(self.error_names), "physical_charge_prefix_terms")
+        for name in ("budgets_C", "total_error_C", "total_bound_C", "cumulative_interval_absolute_balance_C"):
+            _nonnegative(supplied[name], 3)
+        for values in supplied["error_components_C"].values():
+            _nonnegative(values, 3)
+        _require(type(row["prefix"]) is dict and type(row["prefix"].get("intervals")) is int
+                 and all(type(v) is bool for name in ("failed", "row_checks")
+                         for v in _vector(row["prefix"].get(name), 3))
+                 and type(row["prefix"].get("passed")) is bool
+                 and all(type(v) is bool for v in _vector(row["row_checks"], 3))
+                 and type(row["passed"]) is bool and row["signed_balance_C"] == balances
+                 and row["interval_total_bound_C"] == bounds and row["prefix"] == prefix
+                 and tuple(row["row_checks"]) == checks and row["passed"] is all(checks),
+                 "physical_charge_signed_prefix_or_latch")
+        self.intervals += 1
+        self.signed, self.absolute, self.components, self.failed = signed, absolute, cumulative, prefix["failed"]
+        return all(checks)
+
+
 class _Protocol:
     def __init__(self, request, rows):
+        if "physical_tolerance_policy" in request:
+            from scripts.benchmarks.physical_tolerance import require_balance_integration
+            require_balance_integration(request)
         self.request, self.rows = request, rows
         self.request_id = _digest(request)
         self.mapping, self.policy = request["voltage_lift_map"], request["interval_observation"]
@@ -1826,6 +2084,7 @@ class _Protocol:
                      "quadrature_shape_or_domain")
         self.jacobians = self.steps = self.intervals = self.samples = self.queries = 0
         self.prefix = {k: ((Fraction(0),) * 3, (Fraction(0),) * 3) for k in _LEDGERS}
+        self.physical_charge = PhysicalChargeCheck(request) if "physical_tolerance_policy" in request else None
         self.coverage = []
         self.native_owner = None
         self.statistics_counter_context = None
@@ -2114,6 +2373,8 @@ class _Protocol:
         return row
 
     def _interval(self, left, right, frame, *, supplied_row=None, commit=True):
+        physical = "physical_tolerance_policy" in self.request
+        _require(not physical or commit and self.diagnostic is None, "physical_charge_complete_interval_required")
         kind = "voltage_lift_interval_charge_v2" if self.charge_refinement is not None else "voltage_lift_interval_charge"
         if supplied_row is None and self.diagnostic is not None:
             for common in self._pending_common:
@@ -2134,7 +2395,8 @@ class _Protocol:
         _require(row["segment_id"] == self.segment["id"] and row["left"] == self._pointer(left)
                  and row["right"] == self._pointer(right) and row["coefficient_frame_identity"] == self.frame_id
                  and evidence["frame_identity"] == self.frame_id and evidence["path_identity"] == self.path_id
-                 and evidence["passed"] is True and row["endpoint_restore"] is None
+                 and (type(evidence["passed"]) is bool if physical else evidence["passed"] is True)
+                 and row["endpoint_restore"] is None
                  and all(row[k] is False for k in ("normal_query_performed", "states_projected",
                                                   "reference_estimates_are_continuum_certificates")),
                  "interval_binding_or_gate")
@@ -2171,10 +2433,18 @@ class _Protocol:
                 _require("upper_sum" not in evidence, "partial_prefix_cannot_mutate_upper_accumulator")
         else:
             _require("terminal_partition" not in evidence and "upper_sum" not in evidence, "legacy_record_refinement_metadata")
+        # Consume the serialized enclosure pairs before the historical-reader
+        # loop below replaces those pairs with its normalized Fractions.
+        physical_passed = (self.physical_charge.consume(evidence, left, right, frame_identity=self.frame_id,
+                           path_identity=self.path_id, map_identity=self.map_id, map_payload=self.mapping)
+                           if physical else None)
         for key in _LEDGERS:
             ledger = evidence["ledgers"][key]
-            _require(ledger["passed"] is True and ledger["endpoint_debited_once"] is True
-                     and all(v is True for v in _vector(ledger["row_checks"], 3)), "charge_ledger_gate")
+            _require(ledger["endpoint_debited_once"] is True
+                     and (type(ledger["passed"]) is bool
+                          and all(type(v) is bool for v in _vector(ledger["row_checks"], 3)) if physical
+                          else ledger["passed"] is True and all(v is True for v in _vector(ledger["row_checks"], 3))),
+                     "charge_ledger_gate")
             for name in ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C", "signed_saved_defect_C"):
                 ledger[name] = _enclosures(ledger[name], 3)
             bound = _nonnegative(ledger["interval_total_bound_C"], 3)
@@ -2185,9 +2455,12 @@ class _Protocol:
             # The controller records binary64(B/3); ChargePrefix also enforces
             # the exact 3*error<=B condition. Preserve both, including rounding.
             reference_share = Fraction(float(self.request["budgets"]["charge_C"]) / 3)
+            old_checks = tuple(bound[i] <= budget and absolute[i] <= budget
+                               and error[i] <= reference_share and cumulative[i] <= reference_share
+                               and 3*error[i] <= budget and 3*cumulative[i] <= budget for i in range(3))
             _require(ledger["original_charge_budget_C"] == budget and ledger["original_reference_share_C"] == reference_share
-                     and all(v <= budget for v in (*bound, *absolute))
-                     and all(v <= reference_share and 3 * v <= budget for v in (*error, *cumulative)), "charge_budget_binding")
+                     and tuple(ledger["row_checks"]) == old_checks and ledger["passed"] is all(old_checks)
+                     and (physical or all(old_checks)), "charge_budget_binding")
             components = ledger["error_components_C"]
             _require(set(components) == {"endpoint", "input", "clock_strip", "raw_tangent_departure", "integration"},
                      "charge_error_components")
@@ -2221,6 +2494,8 @@ class _Protocol:
                 self.prefix[key] = absolute, cumulative
                 if self.diagnostic is not None:
                     self.signed_integrals[key] = next_signed
+        _require(evidence["passed"] is all(evidence["ledgers"][k]["passed"] for k in _LEDGERS),
+                 "historical_charge_verdict_changed")
         for call in calls:
             if call.get("purpose") == "full-real-interval-precheck":
                 # BallIntegrator.absolute_bound first checks a real enclosure;
@@ -2232,6 +2507,15 @@ class _Protocol:
             actual, requested = Fraction(*call["actual_error"]), Fraction(*call["requested_error"])
             _require(type(call["evaluations"]) is int and call["evaluations"] > 0
                      and 0 <= actual <= requested, "arithmetic_receipt_error")
+        if physical:
+            allocation = _decode(row.get("physical_charge_error_allocation_C"))
+            duration = Fraction(*clock["tn"])-Fraction(*clock["predecessor"])
+            _require(row.get("charge_gate") == "signed-physical-charge-v1" and type(allocation) is Fraction
+                     and allocation == self.physical_charge.allocation(duration), "physical_charge_actual_allocation")
+            _require(physical_passed, "physical_charge_gate")
+        else:
+            _require("physical_charge" not in evidence and "charge_gate" not in row
+                     and "physical_charge_error_allocation_C" not in row, "unbound_physical_charge_gate")
         if upper_step is not None and commit:
             self.charge_refinement.commit(upper_step)
         if commit:
@@ -2248,6 +2532,7 @@ class _Protocol:
                                 for k, (absolute, errors) in self.prefix.items()},
             "upper_accumulator": None if self.charge_refinement is None else self.charge_refinement.summary(),
             "signed_prefix": self.signed_integrals, "sample_cursor": cursor,
+            **({"physical_charge": self.physical_charge.summary()} if self.physical_charge is not None else {}),
             "last_accepted": self._pointer(sample), "physical_reference_identity": self.request["voltage_lift_map"]["physical_reference"]}
         self.mapping = self.segment_frame.prepare_refresh(prepared, self.segment, self.ordinal,
             sample, interval, domain, certificate, ledger)
@@ -2455,6 +2740,9 @@ class _Protocol:
             self.coverage.append({"segment_id": self.segment["id"], "intervals": segment_intervals,
                                   "requested_samples": cursor, "start_s": start, "end_s": end})
         _require(self.coverage and self.intervals > 0, "empty_protocol")
+        if self.physical_charge is not None:
+            _require(self.physical_charge.intervals == self.intervals and self.physical_charge.summary()["passed"],
+                     "physical_charge_protocol_prefix")
         if self.segment_frame.refresh_policy is not None:
             _require(len(self.segment_frame.refreshes) == 1 and self.segment_frame.refreshes[0]["actual_initial_step_hex"] is not None,
                      "reference_refresh_incomplete")
@@ -2623,6 +2911,14 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         for key, (absolute, error) in protocol.prefix.items():
             _require(_decode(result["cumulative_absolute_charge_bounds_C"][key]) == absolute
                      and _decode(result["cumulative_observation_reference_bounds_C"][key]) == error, "result_charge_prefix")
+        if protocol.physical_charge is not None:
+            _require(result.get("charge_gate") == "signed-physical-charge-v1"
+                     and result.get("physical_charge_policy_sha256") == _digest(protocol.physical_charge.policy)
+                     and _decode(result.get("physical_charge")) == protocol.physical_charge.summary(),
+                     "result_physical_charge_prefix")
+        else:
+            _require(not any(k in result for k in ("charge_gate", "physical_charge", "physical_charge_policy_sha256")),
+                     "unbound_result_physical_charge")
         if protocol.charge_refinement is not None:
             representation = _decode(result["cumulative_representation"])
             _require(type(representation) is dict and representation == protocol.charge_refinement.summary()
@@ -2685,6 +2981,10 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                    if protocol.charge_refinement is not None else {}),
                 **({"integer_io": {"role": "independent_reader", **integer_io_observed(integer_io_policy)}}
                    if integer_io_policy is not None else {}),
+                **({"physical_charge": {"policy_sha256": _digest(protocol.physical_charge.policy),
+                    "prefix": result["physical_charge"], "saved_charge_words_independently_checked": True,
+                    "flux": "source-bound independently flux-derived enclosure; no physics replay"}}
+                   if protocol.physical_charge is not None else {}),
                 "scope": "stored artifact integrity, complete request coverage and recorded gate consistency; no numerical replay",
                 "scientific_qualification": False}
     except HistoryVerificationError as error:

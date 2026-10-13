@@ -15,14 +15,14 @@
     },
     "src/sksundae/_cy_ida.pyx": {
       "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
-      "patched_sha256": "ad2aa3f6c443061511af6e61ff9733742bcd9a29e55b8de4f1798456799d5900"
+      "patched_sha256": "fa2221c914491e1aac66a91c87a71f5a8f3652664b72fec464bcf9a1a26b9e16"
     },
     "src/sksundae/ida/_solver.py": {
       "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
-      "patched_sha256": "e3bccc19ec1fe078ecdc860f56c17e09f3d0b2bbda20f4d67514b98f855bad65"
+      "patched_sha256": "ab05db63b7a1b6ab4a928bcae9cd0c4b16666f1e0fa1a2e86538fe6a76a93994"
     }
   },
-  "patch_sha256": "18ccb2ef10a934121ff57d1cb14557c582587a2eaabc2ee63cbdeb8850bc7610",
+  "patch_sha256": "cecb03e44fc0999ca1ca797f8208e178289feb0461948563ec7fbf190ab6612c",
   "build_binding_token": "_OBSERVATION_BUILD_ID = None",
   "required_config": {
     "SUNDIALS_VERSION": "7.5.0",
@@ -132,5 +132,15 @@
     "native_validation_pending": true,
     "successful_init_phase": "current successful zero-step initialization endpoint, no prior step attempt; failed-first-step and later endpoints reject; explicit evaluations preserve eligibility",
     "weight_mode_guard": "ida_user_efun plus exact registered callback/user_data under pinned public tolerance setters; no unavailable ida.c macro dependency"
+  },
+  "physical_affine_weights": {
+    "schema": "sksundae.ida.physical-affine-weights.v1",
+    "public_api": "IDAWFtolerances / IDAEwtFn / IDAGetCurrentTime",
+    "default": "off",
+    "sum_term_capacity": 64,
+    "maximum_physical_terms": 52,
+    "upstream_algorithm_or_header_changed": false,
+    "actual_application_requires_separate_native_fixture": true,
+    "rounding": "RN-exact-physical-X_then-unfused-physical-EWT-v1"
   }
 }

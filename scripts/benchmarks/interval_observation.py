@@ -524,6 +524,88 @@ class ChargePrefix:
         return successor, tuple(passed)
 
 
+@dataclass(frozen=True)
+class SignedChargePrefix:
+    """Physical charge-change minus independently supplied flux integral, in C.
+
+    Every vector is ordered (body, left metal, right metal). Changes and
+    integrals are Enclosures. The change radius bounds actual saved-charge
+    evaluation error. The integral radius must cover both quadrature and the
+    physical-integrand evaluation contribution to the integral's error in C,
+    including every separately available contribution. ``quadrature_errors``
+    accumulates this combined integration bound, conservatively used as the
+    quadrature upper bound for the one-third gates; it is not a decomposition
+    of quadrature alone. Input and clock uncertainties are supplied separately,
+    including explicit zeros. The observer/reader must establish coverage of
+    these errors, the physical input basis and flux independence; this
+    arithmetic cannot.
+
+    Signed centers may cancel across intervals, but uncertainties never do.
+    ``absolute_balances`` sums interval absolute centers for diagnostics only.
+    ``failed`` latches each component's first interval or prefix failure.
+    """
+
+    budgets: tuple[Fraction, ...]
+    signed_balances: tuple[Fraction, ...]
+    charge_errors: tuple[Fraction, ...]
+    quadrature_errors: tuple[Fraction, ...]
+    input_errors: tuple[Fraction, ...]
+    clock_errors: tuple[Fraction, ...]
+    absolute_balances: tuple[Fraction, ...]
+    failed: tuple[bool, ...]
+    intervals: int = 0
+
+    @staticmethod
+    def _nonnegative(values):
+        if (type(values) not in (tuple, list) or len(values) != 3
+                or any(type(value) not in (int, float, Fraction) for value in values)):
+            raise ContractError("observation_signed_charge_terms")
+        values = tuple(rational(value) for value in values)
+        if any(value < 0 for value in values):
+            raise ContractError("observation_negative_signed_charge_term")
+        return values
+
+    @classmethod
+    def start(cls, budgets):
+        budgets = cls._nonnegative(budgets)
+        zero = (Fraction(0),)*3
+        return cls(budgets, zero, zero, zero, zero, zero, zero, (False,)*3)
+
+    @property
+    def total_errors(self):
+        return tuple(sum(values, Fraction(0)) for values in zip(
+            self.charge_errors, self.quadrature_errors, self.input_errors, self.clock_errors, strict=True))
+
+    @property
+    def total_bounds(self):
+        return tuple(abs(value)+error for value, error in zip(self.signed_balances, self.total_errors, strict=True))
+
+    def append(self, changes, integrals, input_errors, clock_errors):
+        if any(type(values) not in (tuple, list) or len(values) != 3
+               or any(type(value) is not Enclosure for value in values) for values in (changes, integrals)):
+            raise ContractError("observation_signed_charge_enclosures")
+        charge = self._nonnegative(tuple(value.radius for value in changes))
+        quadrature = self._nonnegative(tuple(value.radius for value in integrals))
+        inputs, clocks = self._nonnegative(input_errors), self._nonnegative(clock_errors)
+        balances = tuple(change.center-integral.center for change, integral in zip(changes, integrals, strict=True))
+        signed = tuple(old+value for old, value in zip(self.signed_balances, balances, strict=True))
+        absolute = tuple(old+abs(value) for old, value in zip(self.absolute_balances, balances, strict=True))
+        cumulative = tuple(tuple(old+value for old, value in zip(previous, current, strict=True))
+                           for previous, current in zip(
+                               (self.charge_errors, self.quadrature_errors, self.input_errors, self.clock_errors),
+                               (charge, quadrature, inputs, clocks), strict=True))
+        interval_errors = tuple(sum(values, Fraction(0)) for values in zip(charge, quadrature, inputs, clocks, strict=True))
+        prefix_errors = tuple(sum(values, Fraction(0)) for values in zip(*cumulative, strict=True))
+        passed = tuple(not self.failed[i]
+                       and abs(balances[i])+interval_errors[i] <= budget
+                       and abs(signed[i])+prefix_errors[i] <= budget
+                       and quadrature[i]*3 <= budget and cumulative[1][i]*3 <= budget
+                       for i, budget in enumerate(self.budgets))
+        successor = SignedChargePrefix(self.budgets, signed, *cumulative, absolute,
+                                       tuple(not value for value in passed), self.intervals+1)
+        return successor, passed
+
+
 class BallIntegrator:
     """Small optional Arb adapter with hard callback and observed-radius gates.
 

@@ -124,7 +124,7 @@
  from .c_nvector cimport *
  from .c_sundials cimport *
  from .c_sunmatrix cimport *
-@@ -34,6 +42,199 @@
+@@ -34,6 +42,294 @@
  from .utils import RichResult
  from .ida._precond import IDAPrecond
  from .ida._jactimes import IDAJacTimes
@@ -147,6 +147,11 @@
 +        double t0, rtol, basis_time;
 +        char frame_id[65];
 +        double *data, *q0, *v0, *atol, *u, *parent, *weights;
++        int physical_mode;
++        double *scale, *reference, *lift;
++        double protocol_start, protocol_end;
++        double input_start[2], input_end[2], input_rate[2], input_reference[2];
++        char profile_id[65];
 +    } sl_parent_weights;
 +
 +    static void sl_parent_weights_free(sl_parent_weights **p) {
@@ -158,12 +163,13 @@
 +        if (!mem || !owner || generation < 1 || n < 1 || n > 1000000) return NULL;
 +        sl_parent_weights *p = calloc(1, sizeof(*p));
 +        if (!p) return NULL;
-+        p->data = calloc((size_t)n*12, sizeof(double));
++        p->data = calloc((size_t)n*17, sizeof(double));
 +        if (!p->data) { free(p); return NULL; }
 +        p->memory=mem; p->owner=owner; p->generation=generation; p->n=n;
 +        p->t0=t0; p->rtol=rtol; p->status=1; p->component=-1;
 +        p->q0=p->data; p->v0=p->q0+4*n; p->atol=p->v0+4*n;
 +        p->u=p->atol+n; p->parent=p->u+n; p->weights=p->parent+n;
++        p->scale=p->weights+n; p->reference=p->scale+n; p->lift=p->reference+2*n;
 +        memcpy(p->q0,q0,(size_t)n*4*sizeof(double));
 +        memcpy(p->v0,v0,(size_t)n*4*sizeof(double));
 +        memcpy(p->atol,atol,(size_t)n*sizeof(double));
@@ -173,8 +179,8 @@
 +    /* Exact error-free partials, then one ties-to-even binary64 rounding.
 +       At most 21 finite input terms; any intermediate overflow fails closed. */
 +    static int sl_parent_sum(const double *values, int count, double *answer) {
-+        double p[32], x, y, hi=0.0, lo=0.0, yr; int n=0, i, j;
-+        if (count > 32) return -8;
++        double p[64], x, y, hi=0.0, lo=0.0, yr; int n=0, i, j;
++        if (count > 64) return -8;
 +        for (j=0; j<count; ++j) {
 +            x=values[j]; i=0;
 +            for (int k=0; k<n; ++k) {
@@ -182,7 +188,7 @@
 +                hi=x+y; if (!isfinite(hi)) return -5;
 +                lo=y-(hi-x); if (lo != 0.0) p[i++]=lo; x=hi;
 +            }
-+            n=i; if (x != 0.0) { if(n==32) return -8; p[n++]=x; }
++            n=i; if (x != 0.0) { if(n==64) return -8; p[n++]=x; }
 +        }
 +        if (n) {
 +            hi=p[--n];
@@ -209,6 +215,20 @@
 +        if (!isfinite(lo)) return -5;
 +        terms[(*n)++]=hi; terms[(*n)++]=lo; return 0;
 +    }
++    static void sl_physical_weights_set(sl_parent_weights *p, const double *scale,
++            const double *reference, const double *lift, double start, double end,
++            const double *input_start, const double *input_end,
++            const double *input_rate, const double *input_reference, const char *id) {
++        p->physical_mode=1; p->protocol_start=start; p->protocol_end=end;
++        memcpy(p->scale,scale,(size_t)p->n*sizeof(double));
++        memcpy(p->reference,reference,(size_t)p->n*2*sizeof(double));
++        memcpy(p->lift,lift,(size_t)p->n*2*sizeof(double));
++        memcpy(p->input_start,input_start,2*sizeof(double));
++        memcpy(p->input_end,input_end,2*sizeof(double));
++        memcpy(p->input_rate,input_rate,2*sizeof(double));
++        memcpy(p->input_reference,input_reference,2*sizeof(double));
++        memcpy(p->profile_id,id,64); p->profile_id[64]=0;
++    }
 +    static int sl_parent_weights_apply(sl_parent_weights *p, void *owner,
 +                                       long generation, N_Vector y, N_Vector w) {
 +        if (!p) return -1;
@@ -224,6 +244,16 @@
 +        p->status=-4;
 +        if (IDAGetCurrentTime(p->memory,&t)!=0 || !isfinite(t)) return -1;
 +        p->basis_time=t;
++        double inputs[2]={0.0,0.0};
++        if (p->physical_mode) {
++            if (t<p->protocol_start || t>p->protocol_end) { p->status=-9; return -1; }
++            for (int j=0;j<2;++j) {
++                if (t==p->protocol_start) inputs[j]=p->input_start[j];
++                else if (t==p->protocol_end) inputs[j]=p->input_end[j];
++                else inputs[j]=p->input_start[j]+p->input_rate[j]*(t-p->protocol_start);
++                if (!isfinite(inputs[j])) { p->status=-9; return -1; }
++            }
++        }
 +        double dt=t-p->t0, bv=dt-t, dtlo=(t-(dt-bv))+(-p->t0-bv);
 +        if (!isfinite(dt) || !isfinite(dtlo)) { p->status=-5; return -1; }
 +        for (sunindextype i=0; i<p->n; ++i) {
@@ -237,13 +267,26 @@
 +                if (!status) status=sl_parent_product(dtlo,p->v0[k*p->n+i],terms,&n);
 +                if (status) { p->status=status; return -1; }
 +            }
-+            status=sl_parent_sum(terms,n,&q);
++            if (p->physical_mode) {
++                double physical[64]; int used=0;
++                for (int k=0;k<n;++k) {
++                    status=sl_parent_product(p->scale[i],terms[k],physical,&used);
++                    if (status) { p->status=status; return -1; }
++                }
++                physical[used++]=p->reference[i]; physical[used++]=p->reference[p->n+i];
++                for (int j=0;j<2;++j) {
++                    status=sl_parent_product(p->lift[2*i+j],inputs[j],physical,&used);
++                    if (!status) status=sl_parent_product(-p->lift[2*i+j],p->input_reference[j],physical,&used);
++                    if (status) { p->status=status; return -1; }
++                }
++                status=sl_parent_sum(physical,used,&q);
++            } else status=sl_parent_sum(terms,n,&q);
 +            if (status) { p->status=status; return -1; }
 +            /* Match original SV: abs, separately rounded scale and sum, inv.
 +               The supported builder disables contraction and fast math. */
 +            product=p->rtol*fabs(q); den=product+p->atol[i];
 +            if (!isfinite(den) || den<=0.0) { p->status=-6; return -1; }
-+            double weight=1.0/den;
++            double weight=(p->physical_mode ? p->scale[i] : 1.0)/den;
 +            if (!isfinite(weight) || weight<=0.0) { p->status=-7; return -1; }
 +            p->parent[i]=q; p->weights[i]=weight; ewt[i]=weight;
 +        }
@@ -259,9 +302,16 @@
 +        double t0, rtol, basis_time
 +        char frame_id[65]
 +        double *q0, *v0, *atol, *u, *parent, *weights
++        int physical_mode
++        double *scale, *reference, *lift
++        double protocol_start, protocol_end
++        double input_start[2], input_end[2], input_rate[2], input_reference[2]
++        char profile_id[65]
 +    sl_parent_weights* sl_parent_weights_new(void*, void*, long, sunindextype, double, double,
 +                                           const double*, const double*, const double*, const char*)
 +    void sl_parent_weights_free(sl_parent_weights**)
++    void sl_physical_weights_set(sl_parent_weights*, const double*, const double*, const double*,
++                                double, double, const double*, const double*, const double*, const double*, const char*)
 +    int sl_parent_weights_apply(sl_parent_weights*, void*, long, N_Vector, N_Vector) noexcept
 +
 +
@@ -298,6 +348,51 @@
 +                prefix.append(supplied)
 +    return deepcopy(value)
 +
++def _validate_physical_weight_frame(value):
++    base = {"schema", "frame_identity", "t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding"}
++    extra = {"profile_identity", "rtol_hex", "atol_physical_hex", "scale_hex", "reference_words_hex", "lift_hex",
++             "reference_inputs_hex", "protocol_start_hex", "protocol_end_hex", "inputs_start_hex", "inputs_end_hex", "input_rates_hex"}
++    if (type(value) is not dict or set(value) != base | extra
++            or value["schema"] != "sksundae.ida.physical-affine-weights.v1"
++            or value["weight_rounding"] != "RN-exact-physical-X_then-unfused-physical-EWT-v1"):
++        raise ValueError("invalid physical_weight_frame binding")
++    parent = {k: value[k] for k in base}
++    parent.update(schema="sksundae.ida.parent-affine-weights.v1", weight_rounding="RN-exact-parent-q_then-unfused-SV-v1")
++    _validate_parent_weight_frame(parent)
++    identity = value["profile_identity"]
++    if type(identity) is not str or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
++        raise ValueError("physical_weight_frame profile identity")
++    def word(v, positive=False):
++        if type(v) is not str:
++            raise ValueError("physical_weight_frame requires exact hex words")
++        f = float.fromhex(v)
++        if not math.isfinite(f) or f.hex() != v or positive and f <= 0:
++            raise ValueError("physical_weight_frame finite positive word")
++        return f
++    def vector(v, size, positive=False):
++        if type(v) is not list or len(v) != size:
++            raise ValueError("physical_weight_frame shape")
++        return [word(x, positive) for x in v]
++    n=value["size"]
++    word(value["rtol_hex"], True)
++    vector(value["atol_physical_hex"], n, True)
++    vector(value["scale_hex"], n, True)
++    if type(value["reference_words_hex"]) is not list or len(value["reference_words_hex"]) != 2:
++        raise ValueError("physical_weight_frame reference shape")
++    for row in value["reference_words_hex"]: vector(row,n)
++    if type(value["lift_hex"]) is not list or len(value["lift_hex"]) != n:
++        raise ValueError("physical_weight_frame lift shape")
++    for row in value["lift_hex"]: vector(row,2)
++    vector(value["reference_inputs_hex"],2)
++    start,end=word(value["protocol_start_hex"]),word(value["protocol_end_hex"])
++    if not start < end or not start <= word(value["t0_hex"]) <= end:
++        raise ValueError("physical_weight_frame protocol time")
++    first,last,rates=(vector(value[k],2) for k in ("inputs_start_hex","inputs_end_hex","input_rates_hex"))
++    if any(v != (b-a)/(end-start) for a,b,v in zip(first,last,rates)):
++        raise ValueError("physical_weight_frame forcing law")
++    return deepcopy(value)
++
++
 +# Replaced only by the source/hash-checked observation build helper.
 +_OBSERVATION_BUILD_ID = None
 +_OBSERVATION_LIBRARIES = ()
@@ -324,7 +419,7 @@
  
  
  # Messages shorted from documentation online:
-@@ -255,6 +456,8 @@
+@@ -255,6 +551,8 @@
      cdef np.ndarray np_cc       # constraints (-2, -1, 0, 1, 2)
      cdef bint with_userdata
      cdef bint is_constrained
@@ -333,7 +428,7 @@
  
      cdef object resfn           # Callable
      cdef object userdata        # Any
-@@ -266,6 +469,8 @@
+@@ -266,6 +564,8 @@
      cdef object jactimes        # IDAJacTimes
  
      def __cinit__(self, sunindextype NEQ, object options):
@@ -342,7 +437,7 @@
          self.np_yy = np.empty(NEQ, DTYPE)
          self.np_yp = np.empty(NEQ, DTYPE)
          self.np_rr = np.empty(NEQ, DTYPE)
-@@ -327,6 +532,14 @@
+@@ -327,6 +627,14 @@
              self.np_cc = np.zeros(0, INT_TYPE)
  
  
@@ -357,7 +452,7 @@
  cdef class _idaLSSparseDQJac:
      """
      Sparse Jacobian approximation.
-@@ -464,8 +677,21 @@
+@@ -464,8 +772,21 @@
      cdef object _malloc         # bool - flag for memory allocation
      cdef object _options        # dict[str, Any]
      cdef object _initialized    # bool - flag for init_step completion
@@ -379,7 +474,7 @@
          self._free_memory()
          
          self._options = {
-@@ -488,6 +714,10 @@
+@@ -488,6 +809,11 @@
              "max_order": 5,
              "max_num_steps": 500,
              "max_nonlin_iters": 4,
@@ -387,18 +482,26 @@
 +            "nonlin_guard": None,
 +            "nonlin_trace_capacity": 4096,
 +            "parent_weight_frame": None,
++            "physical_weight_frame": None,
              "max_conv_fails": 10,
              "constraints_idx": None,
              "constraints_type": None,
-@@ -503,6 +733,7 @@
+@@ -503,6 +829,14 @@
              raise ValueError(f"Invalid keyword arguments: {invalid_keys}.")
          
          self._options.update(options)
-+        self._options["parent_weight_frame"] = _validate_parent_weight_frame(self._options["parent_weight_frame"])
++        if self._options["physical_weight_frame"] is not None:
++            if self._options["parent_weight_frame"] is not None:
++                raise ValueError("physical and parent weight options are mutually exclusive")
++            physical = _validate_physical_weight_frame(self._options["physical_weight_frame"])
++            self._options["physical_weight_frame"] = physical
++            self._options["parent_weight_frame"] = physical
++        else:
++            self._options["parent_weight_frame"] = _validate_parent_weight_frame(self._options["parent_weight_frame"])
  
          _check_options(self._options)
  
-@@ -544,7 +775,7 @@
+@@ -544,7 +878,7 @@
              nthreads = <int> self._options["nthreads"]
  
              self.A = SUNSparseMatrix(self.NEQ, self.NEQ, nnz, CSC_MAT, self.ctx)
@@ -407,13 +510,13 @@
  
          elif linsolver == "gmres":
              self.LS = SUNLinSol_SPGMR(self.yy, prectype, maxl, self.ctx)
-@@ -561,6 +792,40 @@
+@@ -561,6 +895,59 @@
              raise MemoryError("SUNLinSol constructor returned NULL.")
  
      cdef _set_tolerances(self):
 +        cdef sl_parent_weights* context = NULL
 +        cdef sl_parent_weights* retired = NULL
-+        cdef np.ndarray q0, v0, absolute
++        cdef np.ndarray q0, v0, absolute, scale, reference, lift, input_first, input_last, input_rates, input_reference
 +        cdef sunrealtype tcur
 +        if self._options["parent_weight_frame"] is not None:
 +            spec = self._options["parent_weight_frame"]
@@ -429,12 +532,31 @@
 +            if (not np.isfinite(absolute).all() or np.any(absolute <= 0)
 +                    or not math.isfinite(self._options["rtol"]) or self._options["rtol"] <= 0):
 +                raise ValueError("parent_weight_frame nonpositive or nonfinite tolerance")
++            physical = self._options["physical_weight_frame"] is not None
++            if physical:
++                scale = np.array([float.fromhex(v) for v in spec["scale_hex"]], dtype=DTYPE)
++                physical_absolute = np.array([float.fromhex(v) for v in spec["atol_physical_hex"]], dtype=DTYPE)
++                if (self._options["rtol"] != float.fromhex(spec["rtol_hex"])
++                        or not np.array_equal(absolute, physical_absolute / scale)):
++                    raise ValueError("physical_weight_frame tolerance controls mismatch")
++                absolute = physical_absolute
++                reference = np.array([[float.fromhex(v) for v in row] for row in spec["reference_words_hex"]], dtype=DTYPE)
++                lift = np.array([[float.fromhex(v) for v in row] for row in spec["lift_hex"]], dtype=DTYPE)
++                input_first, input_last, input_rates, input_reference = (
++                    np.array([float.fromhex(v) for v in spec[k]], dtype=DTYPE) for k in
++                    ("inputs_start_hex", "inputs_end_hex", "input_rates_hex", "reference_inputs_hex"))
 +            encoded_id = spec["frame_identity"].encode("ascii")
 +            context = sl_parent_weights_new(self.mem, <void*>self.aux, self._obs_generation,
 +                self.NEQ, tcur, <double>self._options["rtol"], <double*>q0.data,
 +                <double*>v0.data, <double*>absolute.data, encoded_id)
 +            if context is NULL:
 +                raise MemoryError("parent weight context allocation failed")
++            if physical:
++                profile_id = spec["profile_identity"].encode("ascii")
++                sl_physical_weights_set(context, <double*>scale.data, <double*>reference.data, <double*>lift.data,
++                    float.fromhex(spec["protocol_start_hex"]), float.fromhex(spec["protocol_end_hex"]),
++                    <double*>input_first.data, <double*>input_last.data, <double*>input_rates.data,
++                    <double*>input_reference.data, profile_id)
 +            status = IDAWFtolerances(self.mem, _parent_weight_wrapper)
 +            if status != 0:
 +                sl_parent_weights_free(&context)
@@ -448,7 +570,7 @@
          rtol = self._options["rtol"]
          atol = self._options["atol"]
  
-@@ -587,42 +852,52 @@
+@@ -587,42 +974,52 @@
              raise RuntimeError("IDAtolerances - " + IDAMESSAGES[flag])
  
      cdef _free_memory(self):
@@ -530,7 +652,7 @@
          self._size = None
          self._malloc = False
  
-@@ -680,6 +955,13 @@
+@@ -680,6 +1077,13 @@
          flag = IDAInit(self.mem, _resfn_wrapper, t0, self.yy, self.yp)
          if flag < 0:
              raise RuntimeError("IDAInit - " + IDAMESSAGES[flag])
@@ -544,7 +666,7 @@
  
          # 9) Specify integration tolerances
          self._set_tolerances()
-@@ -732,6 +1014,13 @@
+@@ -732,6 +1136,13 @@
          if flag < 0:
              raise RuntimeError("IDASetMaxNonlinIters - " + IDAMESSAGES[flag])
  
@@ -558,7 +680,7 @@
          cdef int max_conv_fails = <int> self._options["max_conv_fails"]
          flag = IDASetMaxConvFails(self.mem, max_conv_fails)
          if flag < 0:
-@@ -820,6 +1109,10 @@
+@@ -820,6 +1231,10 @@
          cdef int ic_opt
          cdef sunrealtype ic_t0
  
@@ -569,7 +691,7 @@
          yy_tmp = y0.copy()
          yp_tmp = yp0.copy()
  
-@@ -840,6 +1133,11 @@
+@@ -840,6 +1255,11 @@
              flag = IDAReInit(self.mem, t0, self.yy, self.yp)
              if flag < 0:
                  raise RuntimeError("IDAReInit - " + IDAMESSAGES[flag])
@@ -581,7 +703,7 @@
  
          # 16) Correct initial values
          calc_initcond = self._options["calc_initcond"]
-@@ -878,6 +1176,8 @@
+@@ -878,6 +1298,8 @@
              nfev=nfev, njev=njev,
          )
  
@@ -590,7 +712,7 @@
          return result
  
      cdef _step(self, sunrealtype tt, object method, object tstop):
-@@ -899,11 +1199,21 @@
+@@ -899,11 +1321,21 @@
          yp_tmp = self.aux.np_yp
          
          # 17) Advance solution in time
@@ -616,7 +738,7 @@
          svec2np(self.yy, yy_tmp)
          svec2np(self.yp, yp_tmp)
  
-@@ -968,11 +1278,13 @@
+@@ -968,11 +1400,13 @@
          while True:
              tend = tspan[ind]
  
@@ -630,7 +752,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1059,11 +1371,13 @@
+@@ -1059,11 +1493,13 @@
  
          # 17) Advance solution in time
          while True:
@@ -644,7 +766,7 @@
              svec2np(self.yy, yy_tmp)
              svec2np(self.yp, yp_tmp)
  
-@@ -1111,49 +1425,616 @@
+@@ -1111,49 +1547,654 @@
  
          return result
  
@@ -857,7 +979,8 @@
 +                        or basis[0].tobytes() != endpoint["raw_y"]
 +                        or basis[1].tobytes() != endpoint["raw_yp"]):
 +                    raise IDAObservationError("initial_parent_weight_evaluation_readback")
-+                return {"schema": "sksundae.ida.initial-parent-weight-evaluation.v1",
++                return {"schema": ("sksundae.ida.initial-physical-weight-evaluation.v1" if self._options["physical_weight_frame"] is not None
++                                   else "sksundae.ida.initial-parent-weight-evaluation.v1"),
 +                    "binding": binding, "owner": self._obs_instance,
 +                    "generation": self._obs_generation, "size": int(self.NEQ),
 +                    "native_steps": 0, "time_hex": before["t0_hex"],
@@ -887,6 +1010,16 @@
 +                "extension_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
 +                "config": _OBSERVATION_CONFIG, "native_initializations_performed": 0}
 +
++    @staticmethod
++    def physical_weight_capability():
++        return {"schema": "sksundae.ida.physical-affine-weights-capability.v1",
++                "public_setter": "IDAWFtolerances", "callback": "compiled_C_via_registered_AuxData",
++                "rounding": "RN-exact-physical-X_then-unfused-physical-EWT-v1",
++                "word_capacity": 4, "sum_term_capacity": 64, "default": "off",
++                "same_size_reinit_refresh": True, "native_initializations_performed": 0,
++                "build_recipe_sha256": _OBSERVATION_BUILD_ID,
++                "extension_sha256": sha256(Path(__file__).read_bytes()).hexdigest()}
++
 +    cdef _frame_snapshot(self):
 +        cdef sl_parent_weights* g = NULL
 +        cdef int k
@@ -902,7 +1035,7 @@
 +        for k in range(4):
 +            q0.append((<char*>(g.q0+k*g.n))[:g.n*sizeof(double)])
 +            v0.append((<char*>(g.v0+k*g.n))[:g.n*sizeof(double)])
-+        return {"schema": "sksundae.ida.parent-affine-weight-state.v1",
++        result = {"schema": "sksundae.ida.parent-affine-weight-state.v1",
 +                "owner": self._obs_instance, "generation": g.generation, "size": int(g.n),
 +                "frame_identity": (<char*>g.frame_id)[:64].decode("ascii"),
 +                "build_identity": binding["identity"], "installed": bool(g.installed),
@@ -918,6 +1051,20 @@
 +                "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
 +                "basis_role": "actual IDAEwtFn argument at IDAGetCurrentTime; not returned endpoint",
 +                "raw_tolerance_getter": False}
++        if g.physical_mode:
++            result.update(schema="sksundae.ida.physical-affine-weight-state.v1",
++                weight_rounding="RN-exact-physical-X_then-unfused-physical-EWT-v1",
++                profile_identity=(<char*>g.profile_id)[:64].decode("ascii"),
++                scale=(<char*>g.scale)[:g.n*sizeof(double)],
++                reference_words=(<char*>g.reference)[:2*g.n*sizeof(double)],
++                lift=(<char*>g.lift)[:2*g.n*sizeof(double)],
++                protocol_start_hex=float(g.protocol_start).hex(), protocol_end_hex=float(g.protocol_end).hex(),
++                inputs_start=(float(g.input_start[0]), float(g.input_start[1])),
++                inputs_end=(float(g.input_end[0]), float(g.input_end[1])),
++                input_rates=(float(g.input_rate[0]), float(g.input_rate[1])),
++                reference_inputs=(float(g.input_reference[0]), float(g.input_reference[1])))
++            result["rounded_physical"] = result.pop("rounded_parent")
++        return result
 +
 +    cdef _obs_nls_state(self, long nsteps, long nniters,
 +                        sunrealtype tcur, sunrealtype hlast, int qlast,
@@ -1039,13 +1186,26 @@
 +                **({"parent_weight_state": self._frame_snapshot()}
 +                   if self._options["parent_weight_frame"] is not None else {})})
 +
-+    def init_step(self, DTYPE_t t0, object y0, object yp0, *, parent_weight_frame=None):
++    def init_step(self, DTYPE_t t0, object y0, object yp0, *, parent_weight_frame=None, physical_weight_frame=None):
 +        with self._obs_lock:
 +            if self._obs_busy:
 +                raise IDAObservationError("operation_in_progress")
 +            self._obs_busy = True
 +            try:
++                if physical_weight_frame is not None:
++                    if parent_weight_frame is not None or self._options["physical_weight_frame"] is None:
++                        raise ValueError("physical weight reinit requires exclusive constructor opt-in")
++                    physical = _validate_physical_weight_frame(physical_weight_frame)
++                    if float.fromhex(physical["rtol_hex"]) != self._options["rtol"]:
++                        raise ValueError("physical weight reinit cannot change rtol")
++                    if physical["size"] != self.NEQ:
++                        self._options["atol"] = np.array([float.fromhex(a)/float.fromhex(b)
++                            for a,b in zip(physical["atol_physical_hex"], physical["scale_hex"])], dtype=DTYPE)
++                    self._options["physical_weight_frame"] = physical
++                    self._options["parent_weight_frame"] = physical
 +                if parent_weight_frame is not None:
++                    if self._options["physical_weight_frame"] is not None:
++                        raise ValueError("cannot replace physical weights with parent weights")
 +                    if self._options["parent_weight_frame"] is None:
 +                        raise ValueError("parent weight reinit requires explicit constructor opt-in")
 +                    self._options["parent_weight_frame"] = _validate_parent_weight_frame(parent_weight_frame)
@@ -1297,13 +1457,18 @@
  
      def __dealloc__(self):
          self._free_memory()
-@@ -1293,6 +2174,13 @@
+@@ -1293,6 +2334,18 @@
  
  
  def _check_options(options: dict) -> None:
 +
-+    if options["parent_weight_frame"] is not None:
++    if options["physical_weight_frame"] is not None:
++        physical = _validate_physical_weight_frame(options["physical_weight_frame"])
++        if options["parent_weight_frame"] != physical:
++            raise ValueError("physical weight internal option binding mismatch")
++    elif options["parent_weight_frame"] is not None:
 +        _validate_parent_weight_frame(options["parent_weight_frame"])
++    if options["parent_weight_frame"] is not None:
 +        if (options["calc_initcond"] is not None or options["constraints_idx"] is not None
 +                or type(options["rtol"]) not in (int, float) or not math.isfinite(options["rtol"])
 +                or options["rtol"] <= 0):
@@ -1311,7 +1476,7 @@
  
      # resfn
      if not isinstance(options["resfn"], Callable):
-@@ -1484,6 +2372,26 @@
+@@ -1484,6 +2537,26 @@
      elif not options["max_nonlin_iters"] > 0:
          raise ValueError("'max_nonlin_iters' must be > 0.")
  
@@ -1358,7 +1523,7 @@
          max_conv_fails : int, optional
              Specifies the max number of nonlinear solver convergence failures
              in one step. The default is 10.
-@@ -282,7 +293,41 @@
+@@ -282,7 +293,46 @@
          """
          self._IDA = _IDA(resfn, **options)
  
@@ -1371,6 +1536,11 @@
 +    def parent_weight_capability() -> dict:
 +        """Compiled optional public-WF bridge metadata; does not initialize IDA."""
 +        return _IDA.parent_weight_capability()
++
++    @staticmethod
++    def physical_weight_capability() -> dict:
++        """Compiled physical-EWT capability; no native initialization."""
++        return _IDA.physical_weight_capability()
 +
 +    def evaluate_initial_parent_weights(self) -> dict:
 +        """Evaluate installed parent weights on the actual zero-step native state.
@@ -1397,20 +1567,20 @@
 +        """
 +        return self._IDA.statistics()
 +
-+    def init_step(self, t0: float, y0: ndarray, yp0: ndarray, *, parent_weight_frame=None) -> IDAResult:
++    def init_step(self, t0: float, y0: ndarray, yp0: ndarray, *, parent_weight_frame=None, physical_weight_frame=None) -> IDAResult:
          """
          Initialize the solver.
  
-@@ -318,7 +363,7 @@
+@@ -318,7 +368,7 @@
              'y0' and 'yp0' must be the same length.
  
          """
 -        return self._IDA.init_step(t0, y0, yp0)
-+        return self._IDA.init_step(t0, y0, yp0, parent_weight_frame=parent_weight_frame)
++        return self._IDA.init_step(t0, y0, yp0, parent_weight_frame=parent_weight_frame, physical_weight_frame=physical_weight_frame)
  
      def step(self, t: float, method='normal', tstop=None) -> IDAResult:
          """
-@@ -406,6 +451,30 @@
+@@ -406,6 +456,30 @@
  
          """
          return self._IDA.solve(tspan, y0, yp0)

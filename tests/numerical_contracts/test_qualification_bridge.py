@@ -239,6 +239,171 @@ def _qualified_metadata(label="B", axis="base"):
     return request
 
 
+def _physical_qualified_metadata(label="B", profile=(1e-5, 1e-8)):
+    """Synthetic complete control ancestry; no model or actual case input."""
+    from scripts.benchmarks import physical_tolerance as pt
+    request = _qualified_metadata(label)
+    numeric = request["numeric_packet"]
+    for name, values in numeric["physical_reference_fields"].items():
+        value = 0.0 if name == "phi_V" else 0.5 if name == "f" else 1.0
+        values["high"] = [value]*len(values["high"])
+    numeric["initial_reference"] = {"payload": {"fields": {name: {
+        key: [v.hex() for v in values] for key, values in pair.items()}
+        for name, pair in numeric["physical_reference_fields"].items()}}}
+    affine = request["qualification_ancestor"]
+    raw = affine["qualification_ancestor"]
+    scales = list(map(Fraction, numeric["column_scaling"]))
+    upper = [Fraction(v) for name, (lo, hi) in sorted(numeric["variable_offsets"].items(), key=lambda row: row[1][0])
+             for v in numeric["physical_reference_fields"][name]["high"]]
+    amounts = [s*Fraction(a) for s, a in zip(scales, raw["controls"]["atol"])]
+    rr = q.downward(min([Fraction(raw["controls"]["rtol"])] + [a/(2*u) for a, u in zip(amounts, upper) if u]))
+    aa = [q.downward((a-Fraction(rr)*u)/s) for a, u, s in zip(amounts, upper, scales)]
+    previous = {k: v for k, v in raw["controls"].items() if k not in ("constraints_idx", "constraints_type")}
+    previous.update(rtol=rr, atol=aa)
+    affine.update(controls=previous, prior_request_sha256=q.digest(raw),
+        weight_certificate={"old_controls_sha256": q.digest(raw["controls"]), "rtol": rr, "atol": aa})
+    for key in ("nonlinear_control_refinement", "nonlinear_guard_policy", "startup_step_policy",
+                "time_weight_policy", "segment_startup_policy"):
+        request.pop(key, None)
+    policy = pt.make_policy(numeric, {"r": profile[0], "alpha": profile[1]})
+    request.update(prior_request_sha256=q.digest(affine), previous_controls=previous,
+                   controls=pt.controls(previous, policy), physical_tolerance_policy=policy,
+                   weight_certificate=policy, native_admission=False)
+    return request
+
+
+class PhysicalQualifiedControlTests(unittest.TestCase):
+    def test_physical_profiles_return_exact_size_without_old_tolerance_compression(self):
+        from scripts.benchmarks import physical_tolerance as pt
+        for label, size in (("S0", 51), ("B", 85)):
+            for profile in pt.PROFILES:
+                request = _physical_qualified_metadata(label, profile)
+                self.assertEqual(q.check_applied_ceiling(request), size)
+                self.assertIs(type(q.check_applied_ceiling(request)), int)
+                self.assertEqual(request["controls"]["rtol"], profile[0])
+                self.assertEqual(request["controls"]["atol"], [a/s for a, s in zip(
+                    request["physical_tolerance_policy"]["atol_SI"], request["numeric_packet"]["column_scaling"])])
+                self.assertEqual(request["controls"]["nonlin_conv_coef"], 1e-8)
+                self.assertEqual(request["budgets"], request["original_budgets"])
+
+    def test_physical_qualification_requires_complete_initialization_and_rejects_mixed_controls(self):
+        for mutate in (lambda r: r.update(z0=[]), lambda r: r.update(initial_preparation={}),
+                       lambda r: r.update(time_weight_policy={}),
+                       lambda r: r["controls"].update(nonlin_conv_coef=65536e-8),
+                       lambda r: r["controls"].update(max_step=0.5)):
+            request = _physical_qualified_metadata()
+            mutate(request)
+            with self.assertRaises((ValueError, KeyError)):
+                q.check_applied_ceiling(request)
+
+    def test_real_factory_and_reader_select_physical_option_with_all_frame_words(self):
+        from dataclasses import asdict
+        import numpy as np
+        from scripts.benchmarks import coupled_device_prototype as producer
+        from scripts.benchmarks import native_readback as reader
+        from scripts.benchmarks import physical_tolerance as pt
+        from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+        request = _physical_qualified_metadata()
+        request["segment_frame_policy"] = producer._segment_frame_policy(request, "fixed-affine-state-rate-v1")
+        request["frame_input_policy"] = producer._frame_input_policy(request, "frame-input-expansion12-v1")
+        self.assertEqual(reader.frame_input_word_count(request), 12)
+        row = request["segments"][0]
+        segment = producer.ProtocolSegment(row["id"], row["start"], row["end"], tuple(row["voltage"]), tuple(row["photons"]))
+        size = request["qualification_policy"]["coordinates"]
+        zero = PrimitiveExpansion(tuple(np.zeros(size) for _ in range(4)))
+        frame = producer.SegmentAffineFrame(request["map_identity"], q.digest(asdict(segment)), 1,
+                                            "a"*64, "b"*64, segment.start, zero, zero)
+        captured, marker = {}, object()
+        def constructor(residual, **kwargs):
+            captured.update(kwargs)
+            return marker
+        result, receipt = producer._voltage_lift_segment_solver(constructor, request, segment, 1,
+            marker, marker, marker, [], frame=frame)
+        self.assertIs(result, marker)
+        self.assertNotIn("parent_weight_frame", captured)
+        self.assertEqual(captured["physical_weight_frame"], pt.weight_option(request, frame.payload(), asdict(segment)))
+        self.assertEqual(receipt["physical_weight_frame"], captured["physical_weight_frame"])
+        self.assertEqual(reader.segment_startup_controls(request, row), receipt["constructor_controls"])
+        self.assertEqual(captured["nonlin_conv_coef"], 1e-8)
+        foreign = asdict(segment)
+        foreign["photons"] = (foreign["photons"][0]+1.0, foreign["photons"][1])
+        rebound_frame = dict(frame.payload(), segment_sha256=q.digest(foreign))
+        with self.assertRaisesRegex(ValueError, "segment_binding"):
+            pt.weight_option(request, rebound_frame, foreign)
+        # This is an in-memory constructor-argument spy, not IDA or a model.
+
+    def test_physical_profile_binds_the_failed_parent_without_kappa_equivalence(self):
+        from scripts.benchmarks import coupled_device_prototype as producer
+        from scripts.benchmarks import native_readback as reader
+        from scripts.benchmarks import physical_tolerance as pt
+        old = _physical_qualified_metadata()
+        for key in ("physical_tolerance_policy", "qualification_policy", "qualification_ancestor"):
+            old.pop(key)
+        old["controls"] = copy.deepcopy(old["previous_controls"])
+        old["weight_certificate"] = {"rtol": old["controls"]["rtol"], "atol": old["controls"]["atol"]}
+        old["voltage_lift_map"].pop("mapped_input_profile")
+        old["voltage_lift_map"].pop("mapped_input_words")
+        old["map_identity"] = q.digest(old["voltage_lift_map"])
+        old["segment_frame_policy"] = producer._segment_frame_policy(old, "fixed-affine-state-rate-v1")
+        failure = {"manufactured_failure_fixture": True}
+        parent = {"request_json": json.dumps(old), "native_result_json": json.dumps({
+            "request_sha256": q.digest(old), "complete_protocol": False,
+            "reason": "primitive_expansion_capacity_exceeded", "first_failure": failure}),
+            "first_failure_json": json.dumps({"kind": "first_callback_failure", "failure": failure})}
+        current = copy.deepcopy(old)
+        policy = pt.make_policy(current["numeric_packet"], {"r": 1e-5, "alpha": 1e-8})
+        current.update(physical_tolerance_policy=policy, weight_certificate=policy,
+                       controls=pt.controls(current["previous_controls"], policy), frame_input_parent=parent)
+        current["voltage_lift_map"].update(mapped_input_profile="frame-input-expansion12-v1", mapped_input_words=12)
+        current["map_identity"] = q.digest(current["voltage_lift_map"])
+        current["segment_frame_policy"] = producer._segment_frame_policy(current, "fixed-affine-state-rate-v1")
+        current["frame_input_policy"] = producer._frame_input_policy(current, "frame-input-expansion12-v1")
+        a, b = producer._frame_input_parent_binding(current), reader._frame_input_parent(current)
+        self.assertEqual(a, b)
+        self.assertEqual(a["control_refinement"]["old_failed_request_sha256"], q.digest(old))
+        self.assertFalse(a["control_refinement"]["effective_nonlinear_equivalence"])
+        self.assertEqual(reader.frame_input_word_count(current), 12)
+        self.assertEqual(parent["request_json"], json.dumps(old))
+        for kind in ("control", "physics", "successful_parent"):
+            bad = copy.deepcopy(current)
+            if kind == "control":
+                bad["controls"]["nonlin_conv_coef"] *= 65536
+            elif kind == "physics":
+                bad["segments"][0]["voltage"][0] += 1
+            else:
+                result = json.loads(bad["frame_input_parent"]["native_result_json"])
+                result["complete_protocol"] = True
+                bad["frame_input_parent"]["native_result_json"] = json.dumps(result)
+            with self.assertRaises((ValueError, producer.ContractError)):
+                producer._frame_input_parent_binding(bad)
+            with self.assertRaises(ValueError):
+                reader._frame_input_parent(bad)
+
+    def test_declared_twelve_word_charge_reader_uses_complete_physical_words(self):
+        from scripts.benchmarks import coupled_device_prototype as producer
+        from scripts.benchmarks.native_observation import prepare_interval_observation_policy
+        from scripts.benchmarks.native_readback import PhysicalChargeCheck
+        from perovskite_sim.constants import Q
+        request = _physical_qualified_metadata()
+        request["segment_frame_policy"] = producer._segment_frame_policy(request, "fixed-affine-state-rate-v1")
+        request["frame_input_policy"] = producer._frame_input_policy(request, "frame-input-expansion12-v1")
+        request["interval_observation"] = prepare_interval_observation_policy(request,
+            binding_identity="a"*64, header_sha256="b"*64, backend_modules={})
+        check = PhysicalChargeCheck(request)
+        self.assertEqual(check.input_words, 12)
+        size = request["qualification_policy"]["coordinates"]
+        left = {"history": {"physical_cumulative_words_hex": [[0.0.hex()]*size for _ in range(12)]}}
+        right = copy.deepcopy(left)
+        index = request["numeric_packet"]["variable_offsets"]["p_m3"][0]+1
+        right["history"]["physical_cumulative_words_hex"][0][index] = (2.0**-20).hex()
+        right["history"]["physical_cumulative_words_hex"][1][index] = (2.0**-80).hex()
+        expected = Fraction(Q)*Fraction(request["numeric_packet"]["volumes_m3"][1])*(Fraction(1, 2**20)+Fraction(1, 2**80))
+        self.assertEqual(check.saved_change(left, right), (expected, Fraction(0), Fraction(0)))
+        right["history"]["physical_cumulative_words_hex"].pop()
+        with self.assertRaises(ValueError):
+            check.saved_change(left, right)
+
+
 class QualifiedControlTests(unittest.TestCase):
     def test_original_fourteen_choices_keep_defaults_and_allow_explicit_hold(self):
         for label in ("S0", "B"):
