@@ -4353,20 +4353,46 @@ def _frame_input_parent_binding(request):
             or failure.get("kind") != "first_callback_failure"
             or digest(failure.get("failure")) != digest(result.get("first_failure"))):
         raise ContractError("frame_input_parent_failure_binding")
-    control_refinement = None
+    control_refinement = same_physical_profile = None
     old_controls, controls = old.get("controls"), request.get("controls")
     old_policy, policy = old.get("time_weight_policy"), request.get("time_weight_policy")
     comparison_controls = old_controls
     if "physical_tolerance_policy" in request:
         from scripts.benchmarks.physical_tolerance import validate_request
         physical = validate_request(request)
-        if "physical_tolerance_policy" in old or type(old_controls) is not dict:
+        if type(old_controls) is not dict:
             raise ContractError("frame_input_physical_parent_profile")
-        comparison_controls = controls
-        control_refinement = {"schema": "solarlab.frame-input-physical-control.v1",
-            "old_failed_request_sha256": old_id, "old_controls_sha256": digest(old_controls),
-            "controls_sha256": digest(controls), "physical_tolerance_policy_sha256": digest(physical),
-            "old_parent_failure_retained": True, "effective_nonlinear_equivalence": False}
+        if "physical_tolerance_policy" in old:
+            # A capacity-only successor of an already physical request. Source
+            # identities are regenerated; physical policy and controls are not.
+            old_physical = validate_request(old)
+            # Python equality aliases bool/int; bind the supplied JSON values.
+            for supplied, expected in ((old, old_physical), (request, physical)):
+                if any(digest(supplied[key]) != digest(expected)
+                       for key in ("physical_tolerance_policy", "weight_certificate")):
+                    raise ContractError("frame_input_same_physical_raw_policy")
+            if digest(old_physical) != digest(physical):
+                raise ContractError("frame_input_same_physical_policy")
+            for key in ("budgets", "observation_policy", "quadrature_uncertainty_scope",
+                        "observation_policy_authority", "projection_policy",
+                        "full_word_consumer_qualification", "history_policy",
+                        "startup_step_policy", "segment_startup_policy", "reference_refresh_policy"):
+                if ((key in request) != (key in old)
+                        or digest(request.get(key)) != digest(old.get(key))):
+                    raise ContractError("frame_input_same_physical_setting:"+key)
+            if type(request["voltage_lift_map"].get("mapped_input_words")) is not int:
+                raise ContractError("frame_input_parent_map_profile")
+            same_physical_profile = {"schema": "solarlab.frame-input-same-physical-profile.v1",
+                "physical_tolerance_policy_sha256": digest(physical),
+                "controls_sha256": digest(controls), "raw_parent_words": 4,
+                "mapped_input_words": 12, "physical_controls_changed": False,
+                "old_parent_failure_retained": True}
+        else:
+            comparison_controls = controls
+            control_refinement = {"schema": "solarlab.frame-input-physical-control.v1",
+                "old_failed_request_sha256": old_id, "old_controls_sha256": digest(old_controls),
+                "controls_sha256": digest(controls), "physical_tolerance_policy_sha256": digest(physical),
+                "old_parent_failure_retained": True, "effective_nonlinear_equivalence": False}
     elif digest(controls) != digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
         valid = (type(old_controls) is dict and type(controls) is dict
                  and type(old_policy) is dict and type(policy) is dict
@@ -4447,6 +4473,8 @@ def _frame_input_parent_binding(request):
         for key, value in parent.items()}}
     if control_refinement is not None:
         result["control_refinement"] = control_refinement
+    if same_physical_profile is not None:
+        result["same_physical_profile"] = same_physical_profile
     return result
 
 

@@ -691,20 +691,41 @@ def _frame_input_parent(request):
              and result.get("complete_protocol") is False and result.get("reason") == "primitive_expansion_capacity_exceeded"
              and failure.get("kind") == "first_callback_failure"
              and _digest(failure.get("failure")) == _digest(result.get("first_failure")), "frame_input_parent_failure_binding")
-    control_refinement = None
+    control_refinement = same_physical_profile = None
     old_controls, controls = old.get("controls"), request.get("controls")
     old_policy, policy = old.get("time_weight_policy"), request.get("time_weight_policy")
     comparison_controls = old_controls
     if "physical_tolerance_policy" in request:
         from scripts.benchmarks.physical_tolerance import validate_request
         physical = validate_request(request)
-        _require("physical_tolerance_policy" not in old and type(old_controls) is dict,
-                 "frame_input_physical_parent_profile")
-        comparison_controls = controls
-        control_refinement = {"schema": "solarlab.frame-input-physical-control.v1",
-            "old_failed_request_sha256": old_id, "old_controls_sha256": _digest(old_controls),
-            "controls_sha256": _digest(controls), "physical_tolerance_policy_sha256": _digest(physical),
-            "old_parent_failure_retained": True, "effective_nonlinear_equivalence": False}
+        _require(type(old_controls) is dict, "frame_input_physical_parent_profile")
+        if "physical_tolerance_policy" in old:
+            old_physical = validate_request(old)
+            for supplied, expected in ((old, old_physical), (request, physical)):
+                _require(all(_digest(supplied[key]) == _digest(expected)
+                             for key in ("physical_tolerance_policy", "weight_certificate")),
+                         "frame_input_same_physical_raw_policy")
+            _require(_digest(old_physical) == _digest(physical), "frame_input_same_physical_policy")
+            for key in ("budgets", "observation_policy", "quadrature_uncertainty_scope",
+                        "observation_policy_authority", "projection_policy",
+                        "full_word_consumer_qualification", "history_policy",
+                        "startup_step_policy", "segment_startup_policy", "reference_refresh_policy"):
+                _require((key in request) == (key in old)
+                         and _digest(request.get(key)) == _digest(old.get(key)),
+                         "frame_input_same_physical_setting:"+key)
+            _require(type(request["voltage_lift_map"].get("mapped_input_words")) is int,
+                     "frame_input_parent_map_profile")
+            same_physical_profile = {"schema": "solarlab.frame-input-same-physical-profile.v1",
+                "physical_tolerance_policy_sha256": _digest(physical),
+                "controls_sha256": _digest(controls), "raw_parent_words": 4,
+                "mapped_input_words": 12, "physical_controls_changed": False,
+                "old_parent_failure_retained": True}
+        else:
+            comparison_controls = controls
+            control_refinement = {"schema": "solarlab.frame-input-physical-control.v1",
+                "old_failed_request_sha256": old_id, "old_controls_sha256": _digest(old_controls),
+                "controls_sha256": _digest(controls), "physical_tolerance_policy_sha256": _digest(physical),
+                "old_parent_failure_retained": True, "effective_nonlinear_equivalence": False}
     elif _digest(controls) != _digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
         valid = (type(old_controls) is dict and type(controls) is dict
                  and type(old_policy) is dict and type(policy) is dict
@@ -779,6 +800,8 @@ def _frame_input_parent(request):
         for key, value in parent.items()}}
     if control_refinement is not None:
         result["control_refinement"] = control_refinement
+    if same_physical_profile is not None:
+        result["same_physical_profile"] = same_physical_profile
     return result
 
 

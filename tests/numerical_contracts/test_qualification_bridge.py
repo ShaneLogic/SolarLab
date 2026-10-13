@@ -273,6 +273,163 @@ def _physical_qualified_metadata(label="B", profile=(1e-5, 1e-8)):
 
 
 class PhysicalQualifiedControlTests(unittest.TestCase):
+    def _same_physical_frame_pair(self, label="S0"):
+        from scripts.benchmarks import coupled_device_prototype as producer
+        old = _physical_qualified_metadata(label)
+        for key in ("qualification_policy", "qualification_ancestor"):
+            old.pop(key)
+        for key in ("mapped_input_profile", "mapped_input_words"):
+            old["voltage_lift_map"].pop(key)
+        old["map_identity"] = q.digest(old["voltage_lift_map"])
+        old["segment_frame_policy"] = producer._segment_frame_policy(old, "fixed-affine-state-rate-v1")
+        failure = {"manufactured_capacity_fixture": True}
+        parent = {"request_json": json.dumps(old), "native_result_json": json.dumps({
+            "request_sha256": q.digest(old), "complete_protocol": False,
+            "reason": "primitive_expansion_capacity_exceeded", "first_failure": failure}),
+            "first_failure_json": json.dumps({"kind": "first_callback_failure", "failure": failure})}
+        current = copy.deepcopy(old)
+        current["voltage_lift_map"].update(mapped_input_profile="frame-input-expansion12-v1",
+            mapped_input_words=12, physical_model="d"*64)
+        current["map_identity"] = q.digest(current["voltage_lift_map"])
+        current["frame_input_parent"] = parent
+        current["segment_frame_policy"] = producer._segment_frame_policy(current, "fixed-affine-state-rate-v1")
+        current["frame_input_policy"] = producer._frame_input_policy(current, "frame-input-expansion12-v1")
+        return old, current
+
+    def test_same_physical_capacity_parent_keeps_controls_and_legacy_defaults(self):
+        import hashlib
+        from scripts.benchmarks import coupled_device_prototype as producer
+        from scripts.benchmarks import native_readback as reader
+        for label in ("S0", "B"):
+            with self.subTest(label=label):
+                old, current = self._same_physical_frame_pair(label)
+                binding = producer._frame_input_parent_binding(current)
+                self.assertEqual(binding, reader._frame_input_parent(current))
+                self.assertNotIn("control_refinement", binding)
+                self.assertEqual(binding["same_physical_profile"]["physical_tolerance_policy_sha256"],
+                                 q.digest(old["physical_tolerance_policy"]))
+                self.assertFalse(binding["same_physical_profile"]["physical_controls_changed"])
+                self.assertEqual(binding["request_file_sha256"],
+                    hashlib.sha256(current["frame_input_parent"]["request_json"].encode()).hexdigest())
+                self.assertEqual(current["controls"], old["controls"])
+                self.assertEqual(current["budgets"], old["budgets"])
+                self.assertEqual(reader.frame_input_word_count(old), 4)
+                self.assertEqual(reader.frame_input_word_count(current), 12)
+                producer._validate_segment_frame_policy(current)
+
+    def test_same_physical_raw_policy_and_certificate_reject_boolean_aliases(self):
+        import hashlib
+        from scripts.benchmarks import coupled_device_prototype as producer
+        from scripts.benchmarks import native_readback as reader
+        _, current = self._same_physical_frame_pair()
+        for side in ("current", "parent"):
+            for field in ("physical_tolerance_policy", "weight_certificate"):
+                bad = copy.deepcopy(current)
+                if side == "current":
+                    # Detach the fixture's shared policy/certificate object so
+                    # each supplied document is tested independently.
+                    bad[field] = copy.deepcopy(bad[field])
+                    bad[field]["native_execution_authorized"] = 0
+                    if field == "weight_certificate":
+                        bad["segment_frame_policy"] = producer._segment_frame_policy(
+                            bad, "fixed-affine-state-rate-v1")
+                        bad["frame_input_policy"]["segment_frame_policy_sha256"] = q.digest(bad["segment_frame_policy"])
+                else:
+                    parent = bad["frame_input_parent"]
+                    old = json.loads(parent["request_json"])
+                    old[field]["native_execution_authorized"] = 0
+                    parent["request_json"] = json.dumps(old)
+                    result = json.loads(parent["native_result_json"])
+                    result["request_sha256"] = q.digest(old)
+                    parent["native_result_json"] = json.dumps(result)
+                    # Rebind the exact failed-file receipts, so a stale hash
+                    # cannot hide acceptance of the parent-side type alias.
+                    receipt = bad["frame_input_policy"]["failed_parent"]
+                    receipt["request_sha256"] = q.digest(old)
+                    for key, value in parent.items():
+                        receipt[key.removesuffix("_json")+"_file_sha256"] = hashlib.sha256(value.encode()).hexdigest()
+                for role, check, error in (("producer", producer._validate_segment_frame_policy, producer.ContractError),
+                                           ("reader", reader.frame_input_word_count, ValueError)):
+                    with self.subTest(side=side, field=field, role=role):
+                        with self.assertRaisesRegex(error, "frame_input_same_physical_raw_policy"):
+                            check(bad)
+
+    def test_same_physical_capacity_parent_rejects_changed_contracts(self):
+        from scripts.benchmarks import coupled_device_prototype as producer
+        from scripts.benchmarks import native_readback as reader
+        from scripts.benchmarks import physical_tolerance as pt
+        _, current = self._same_physical_frame_pair()
+        mutations = {
+            "case": lambda r: r.update(case_id="other"),
+            "control": lambda r: r["controls"].update(nonlin_conv_coef=1e-7),
+            "protocol": lambda r: r["segments"][0]["voltage"].__setitem__(0, 0.125),
+            "history": lambda r: r.update(history_policy="other"),
+            "projection": lambda r: r.update(projection_policy={"discard_low_words": True}),
+            "refresh": lambda r: r.update(reference_refresh_policy={"time_hex": 0.25.hex()}),
+            "map": lambda r: r["voltage_lift_map"]["columns_hex"].__setitem__(0, 1.0.hex()),
+            "input": lambda r: r["voltage_lift_map"]["reference_inputs_hex"].__setitem__(0, 1.0.hex()),
+            "float_word_count": lambda r: r["voltage_lift_map"].update(mapped_input_words=12.0),
+        }
+        for name, mutate in mutations.items():
+            bad = copy.deepcopy(current); mutate(bad)
+            with self.subTest(change=name):
+                with self.assertRaises((ValueError, producer.ContractError)):
+                    producer._frame_input_parent_binding(bad)
+                with self.assertRaises(ValueError):
+                    reader._frame_input_parent(bad)
+        for name in ("valid_other_profile", "budget", "successful_parent", "wrong_parent_request", "wrong_failure"):
+            bad = copy.deepcopy(current)
+            if name == "valid_other_profile":
+                policy = pt.make_policy(bad["numeric_packet"], {"r": 1e-4, "alpha": 1e-8})
+                bad.update(physical_tolerance_policy=policy, weight_certificate=policy,
+                           controls=pt.controls(bad["previous_controls"], policy))
+            elif name == "budget":
+                bad["budgets"]["charge_C"] *= 2
+                bad["original_budgets"] = copy.deepcopy(bad["budgets"])
+            elif name == "wrong_failure":
+                bad["frame_input_parent"]["first_failure_json"] = json.dumps({
+                    "kind": "first_callback_failure", "failure": {"other": True}})
+            else:
+                result = json.loads(bad["frame_input_parent"]["native_result_json"])
+                result.update(complete_protocol=True) if name == "successful_parent" else result.update(request_sha256="0"*64)
+                bad["frame_input_parent"]["native_result_json"] = json.dumps(result)
+            with self.subTest(change=name):
+                with self.assertRaises((ValueError, producer.ContractError)):
+                    producer._frame_input_parent_binding(bad)
+                with self.assertRaises(ValueError):
+                    reader._frame_input_parent(bad)
+        for name in ("parent_bytes", "marker"):
+            bad = copy.deepcopy(current)
+            if name == "parent_bytes":
+                bad["frame_input_parent"]["request_json"] += "\n"
+            else:
+                bad["frame_input_policy"]["failed_parent"]["same_physical_profile"]["raw_parent_words"] = 12
+            with self.subTest(change=name):
+                with self.assertRaises(producer.ContractError):
+                    producer._validate_segment_frame_policy(bad)
+                with self.assertRaises(ValueError):
+                    reader.frame_input_word_count(bad)
+
+    def test_actual_s0_component24_has_a_nonzero_fifth_mapped_word(self):
+        import numpy as np
+        from scripts.benchmarks import coupled_device_prototype as producer
+        from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+        words = [float.fromhex(v) for v in ("0x1.4d3ab4fa2ef03p-60", "0x1.1651e1e7fce1dp-114",
+                                           "-0x1.e4cd4b8332ff1p-169", "0x1.8000000000000p-223")]
+        scale = float.fromhex("0x1.a78f25679cb4ep-6")
+        raw = PrimitiveExpansion(tuple(np.array([w]) for w in words))
+        remainder = sum(map(Fraction, words), Fraction())*Fraction(scale)
+        expected = []
+        for _ in range(4):
+            word = float(remainder); expected.append(word); remainder -= Fraction(word)
+        self.assertEqual(remainder, Fraction(1, 2**281))
+        with self.assertRaisesRegex(producer.ContractError, "primitive_expansion_capacity_exceeded"):
+            producer._frame_scale(raw, [scale])
+        mapped = producer._frame_mapped_input(raw, [scale], [[1., 0.]], [0., 0.], [0., 0.])
+        self.assertEqual([float(w[0]) for w in mapped.words[:5]], expected+[float(remainder)])
+        self.assertEqual(sum((Fraction(float(w[0])) for w in mapped.words), Fraction()),
+                         sum(map(Fraction, words), Fraction())*Fraction(scale))
+
     def test_physical_profiles_return_exact_size_without_old_tolerance_compression(self):
         from scripts.benchmarks import physical_tolerance as pt
         for label, size in (("S0", 51), ("B", 85)):
