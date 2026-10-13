@@ -94,7 +94,7 @@ def test_native_producer_binds_request_input_profile(policy):
                 and isinstance(n.func, ast.Name) and n.func.id == "run_recorded")
     request = {} if policy is None else {"frame_input_policy": policy}
     expected_profile = None if policy is None else policy.get("profile")
-    model, segments, admission, timing, emitter = (object() for _ in range(5))
+    model, segments, admission, timing, emitter, execution_provenance = (object() for _ in range(6))
     observed = []
 
     def map_factory(actual_model, *, mapped_input_profile=None):
@@ -106,12 +106,12 @@ def test_native_producer_binds_request_input_profile(policy):
         assert observed == [expected_profile]
         assert actual_segments is segments and actual_request is request
         assert actual_admission is admission and emit is emitter
-        assert kwargs == {"timing": timing}
+        assert kwargs == {"timing": timing, "execution_provenance": execution_provenance}
         return mapping
 
     env = {"AffineVoltageMap": map_factory, "run_voltage_lift_native_pilot": controller,
            "model": model, "segments": segments, "request": request,
-           "admission": admission, "timing": timing}
+           "admission": admission, "timing": timing, "execution_provenance": execution_provenance}
     producer = eval(compile(ast.Expression(call.args[1]), native_runner.__file__, "eval"), env)
     assert producer(emitter) is not None
 
@@ -125,6 +125,7 @@ def save_body(owner, emit, cap):
                for n in ast.walk(save)), "actual controller save path is not integrated"
     counts = {"history_bytes": 0, "native_steps": 0}
     env = {"emit": emit, "budgets": {"total_output_bytes": cap}, "counts": counts,
+           "execution_output": {"effective_total_output_bytes": cap},
            "emit_record": emit_record, "HistoryLimitError": HistoryLimitError,
            "ContractError": BoundaryContractError, "json": json,
            "timing": native_runner.RuntimeTiming()}
@@ -381,10 +382,12 @@ def test_runner_main_record_limit_forwarding_and_exact_large_record(tmp_path, ex
     freeze = {"watchdog": {"input_file_names": []}}
     if explicit_limit:
         freeze["writer_limits"] = {"max_record_bytes": 16 * METADATA_RESERVE}
-    env = {"freeze": freeze, "request": {"budgets": {"total_output_bytes": cap}},
+    env = {"freeze": freeze, "request": {"budgets": {"total_output_bytes": 2 * cap}},
+           "effective_output_bytes": cap,
            "timing": native_runner.RuntimeTiming()}
     kwargs = {kw.arg: eval(compile(ast.Expression(kw.value), native_runner.__file__, "eval"), env)
               for kw in call.keywords}
+    assert kwargs["total_output_bytes"] == cap
     record = {"kind": "infrastructure_large_record", "high": [1.0, -0.0],
               "low": [2.0 ** -100, -2.0 ** -100], "payload": "x" * METADATA_RESERVE}
     raw = (json.dumps(record, separators=(",", ":"), allow_nan=False) + "\n").encode()

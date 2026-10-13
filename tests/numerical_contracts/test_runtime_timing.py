@@ -230,6 +230,8 @@ class RuntimeTimingTests(unittest.TestCase):
                           if isinstance(node, ast.FunctionDef) and node.name == "run_voltage_lift_native_pilot")
         wall_policy = next(node for node in ast.parse(controller_path.read_text()).body
                            if isinstance(node, ast.FunctionDef) and node.name == "voltage_lift_execution_wall_policy")
+        output_policy = next(node for node in ast.parse(controller_path.read_text()).body
+                             if isinstance(node, ast.FunctionDef) and node.name == "voltage_lift_execution_output_policy")
         stop = next(i for i, node in enumerate(controller.body)
                     if isinstance(node, ast.ImportFrom) and node.module == "scripts.benchmarks.native_observation")
         controller.body = controller.body[:stop] + ast.parse("return metadata_policy(request, admission)").body
@@ -255,7 +257,7 @@ class RuntimeTimingTests(unittest.TestCase):
                  "AffineSamplingContext": lambda model, request: SimpleNamespace(
                      request_sha256=digest(request), request_copy=lambda: copy.deepcopy(request), segments=()),
                  "metadata_policy": policy_scope["validate_interval_observation_admission"]}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[wall_policy, controller], type_ignores=[])),
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[wall_policy, output_policy, controller], type_ignores=[])),
                      "<timing-controller-admission-prefix-only>", "exec"), scope)
         paths = {controller_path.resolve(), timing_path,
                  *(policy_path.with_name(name).resolve() for name in
@@ -269,7 +271,8 @@ class RuntimeTimingTests(unittest.TestCase):
         ]
         for label, bound, with_policy, expected in cases:
             with self.subTest(case=label):
-                request = {"synthetic_metadata_only": True, "segments": [], "budgets": {"wall_s": 4200}}
+                request = {"synthetic_metadata_only": True, "segments": [],
+                           "budgets": {"wall_s": 4200, "total_output_bytes": 1024 ** 2}}
                 admission = {"map_identity": "synthetic-map", "voltage_lift_native_authorized": True,
                              "coordinator_message": "msg_unit_metadata_no_native_authority", "source_sha256": dict(pins)}
                 if not bound:
