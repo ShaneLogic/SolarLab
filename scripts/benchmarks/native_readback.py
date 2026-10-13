@@ -330,6 +330,8 @@ def segment_startup_controls(request, segment):
     size = qualification_coordinate_count(request) if qualified else 45
     if "segment_startup_policy" not in request:
         return controls
+    exponents = {1024: 10, 65536: 16}
+    kappa = request.get("time_weight_policy", {}).get("kappa")
     policy = request["segment_startup_policy"]
     _require(type(policy) is dict, "segment_startup_policy_binding")
     overrides = policy.get("overrides")
@@ -358,10 +360,10 @@ def segment_startup_controls(request, segment):
              and segment in request["segments"]
              and controls.get("first_step") == 7.8125e-7
              and len(controls.get("atol", [])) == size
-             and controls.get("nonlin_conv_coef") == 1.024e-5
+             and type(kappa) is int and kappa in exponents
+             and controls.get("nonlin_conv_coef") == math.ldexp(1e-8, exponents[kappa])
              and controls.get("nonlin_guard") == "first-correction-wrms-v1"
-             and controls.get("nonlin_trace_capacity") == 4096
-             and request.get("time_weight_policy", {}).get("kappa") == 1024,
+             and controls.get("nonlin_trace_capacity") == 4096,
              "segment_startup_policy_binding")
     if segment["id"] == "slow_state_hold":
         controls["first_step"] = float(value)
@@ -673,9 +675,69 @@ def _frame_input_parent(request):
              and result.get("complete_protocol") is False and result.get("reason") == "primitive_expansion_capacity_exceeded"
              and failure.get("kind") == "first_callback_failure"
              and _digest(failure.get("failure")) == _digest(result.get("first_failure")), "frame_input_parent_failure_binding")
+    control_refinement = None
+    old_controls, controls = old.get("controls"), request.get("controls")
+    old_policy, policy = old.get("time_weight_policy"), request.get("time_weight_policy")
+    comparison_controls = old_controls
+    if _digest(controls) != _digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
+        valid = (type(old_controls) is dict and type(controls) is dict
+                 and type(old_policy) is dict and type(policy) is dict
+                 and old_policy.get("schema") == policy.get("schema") == "solarlab.voltage-lift-time-weights.v1"
+                 and type(old_policy.get("kappa")) is int and old_policy["kappa"] == 1024
+                 and type(policy.get("kappa")) is int and policy["kappa"] == 65536)
+        if not valid:
+            raise HistoryVerificationError("frame_input_parent_time_controls")
+        keys = ("rtol", "atol", "nonlin_conv_coef")
+        if (old_policy.get("values") != {k: old_controls.get(k) for k in keys}
+                or policy.get("values") != {k: controls.get(k) for k in keys}
+                or policy.get("parent_values") != old_policy.get("parent_values")
+                or old_policy.get("ancestor_request_sha256") != old.get("prior_request_sha256")
+                or policy.get("ancestor_request_sha256") != request.get("prior_request_sha256")
+                or type(old_policy.get("parent_values")) is not dict
+                or set(old_policy["parent_values"]) != set(keys)
+                or old_policy.get("parent_controls_sha256") != _digest(dict(old_controls, **old_policy["parent_values"]))
+                or policy.get("parent_controls_sha256") != _digest(dict(controls, **policy["parent_values"]))):
+            raise HistoryVerificationError("frame_input_parent_time_policy")
+        expected_values = {}
+        for key in keys:
+            before = old_controls[key] if key == "atol" else [old_controls[key]]
+            after = controls[key] if key == "atol" else [controls[key]]
+            parent_values = old_policy["parent_values"][key] if key == "atol" else [old_policy["parent_values"][key]]
+            size = 45 if key == "atol" else 1
+            if (type(before) is not list or type(after) is not list or type(parent_values) is not list
+                    or len(before) != size or len(after) != size or len(parent_values) != size
+                    or any(type(v) is not float or not math.isfinite(v) or v < float.fromhex("0x1p-1022")
+                           for v in before + after + parent_values)):
+                raise HistoryVerificationError("frame_input_parent_time_normal")
+            scale = Fraction(64) if key == "nonlin_conv_coef" else Fraction(1, 64)
+            parent_scale = Fraction(1024) if key == "nonlin_conv_coef" else Fraction(1, 1024)
+            if any(Fraction(b) != Fraction(a)*scale or Fraction(a) != Fraction(p)*parent_scale
+                   for p, a, b in zip(parent_values, before, after, strict=True)):
+                raise HistoryVerificationError("frame_input_parent_time_scaling")
+            expected_values[key] = after if key == "atol" else after[0]
+        old_certificate, certificate = old.get("weight_certificate"), request.get("weight_certificate")
+        if type(old_certificate) is not dict or type(certificate) is not dict:
+            raise HistoryVerificationError("frame_input_parent_time_certificate")
+        expected_policy = dict(old_policy, kappa=65536, values=expected_values,
+            parent_weight_certificate_sha256=certificate.get("parent_weight_certificate_sha256"),
+            exact_parameter_scaling="rtol/atol ldexp(-16); nonlin_conv_coef ldexp(+16); positive normal binary64",
+            norm_comparison="same-state denominators divide by65536; exact WRMS and epcon/epsNewt/toldel/m0-direct thresholds multiply by65536")
+        if (_digest(policy) != _digest(expected_policy)
+                or old_certificate.get("time_weight_policy_sha256") != _digest(old_policy)
+                or certificate.get("time_weight_policy_sha256") != _digest(policy)
+                or any(certificate.get(k) != controls[k] for k in ("rtol", "atol"))):
+            raise HistoryVerificationError("frame_input_parent_time_certificate")
+        comparison_controls = dict(old_controls, **expected_values)
+        control_refinement = {
+            "schema": "solarlab.frame-input-time-control.v1", "factor": 64,
+            "old_kappa": 1024, "kappa": 65536,
+            "old_controls_sha256": _digest(old_controls), "controls_sha256": _digest(controls),
+            "old_time_weight_policy_sha256": _digest(old_policy), "time_weight_policy_sha256": _digest(policy),
+            "scaling": "exact rtol/atol /64; nonlin_conv_coef *64; positive normal binary64",
+            "physical_gates_changed": False}
     for key in ("case_id", "prior_request_sha256", "controls", "previous_controls", "segments",
                 "observation_times", "quadrature", "original_budgets", "mandatory", "physical_domain_policy"):
-        _require(key in request and _digest(request[key]) == _digest(old.get(key)), "frame_input_parent_science_changed:"+key)
+        _require(key in request and _digest(request[key]) == _digest(comparison_controls if key == "controls" else old.get(key)), "frame_input_parent_science_changed:"+key)
     mapping, old_map = dict(request["voltage_lift_map"]), dict(old["voltage_lift_map"])
     _require(mapping.pop("mapped_input_profile", None) == "frame-input-expansion12-v1"
              and mapping.pop("mapped_input_words", None) == 12, "frame_input_parent_map_profile")
@@ -686,9 +748,12 @@ def _frame_input_parent(request):
         packet["definition"].pop("source_path", None)
         packet.pop("definition_identity", None)
     _require(_digest(current_packet) == _digest(old_packet), "frame_input_parent_physics_changed")
-    return {"request_sha256": old_id, **{
+    result = {"request_sha256": old_id, **{
         key.removesuffix("_json")+"_file_sha256": hashlib.sha256(value.encode()).hexdigest()
         for key, value in parent.items()}}
+    if control_refinement is not None:
+        result["control_refinement"] = control_refinement
+    return result
 
 
 def _qualified_frame_input_context_check(request):

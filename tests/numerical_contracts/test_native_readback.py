@@ -1838,3 +1838,24 @@ def test_accuracy_fine_requires_complete_new_coarse_and_exact_dyadic_rule(tmp_pa
         dict(selection,selected_max_step_hex=0.03125.hex()))
     with unittest.TestCase().assertRaises(HistoryVerificationError):
         diagnostic_interval_binding(bad)
+
+
+def test_accuracy_policy_retains_its_original_saved_seed_scope(tmp_path):
+    """The full-protocol option must not widen the old diagnostic contract."""
+    import math
+    from scripts.benchmarks.native_readback import diagnostic_accuracy_policy
+    _, parent, _, _ = _accuracy_metadata_case(tmp_path)
+    old = diagnostic_accuracy_policy(parent)
+    assert old["application"] == "fresh_saved_seed_initialization_only"
+    assert old["external_acceptance_changed"] is False
+    changed = deepcopy(parent)
+    changed["time_weight_policy"]["kappa"] = 65536
+    changed["controls"].update(rtol=math.ldexp(parent["controls"]["rtol"], -6),
+        atol=[math.ldexp(v, -6) for v in parent["controls"]["atol"]],
+        nonlin_conv_coef=math.ldexp(parent["controls"]["nonlin_conv_coef"], 6))
+    changed["time_weight_policy"]["values"] = {
+        k: changed["controls"][k] for k in ("rtol", "atol", "nonlin_conv_coef")}
+    changed["weight_certificate"].update(rtol=changed["controls"]["rtol"], atol=changed["controls"]["atol"],
+        time_weight_policy_sha256=digest(changed["time_weight_policy"]))
+    with unittest.TestCase().assertRaisesRegex(HistoryVerificationError, "accuracy_original_1024_ancestry"):
+        diagnostic_accuracy_policy(changed)

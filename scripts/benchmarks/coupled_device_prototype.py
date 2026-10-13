@@ -4129,6 +4129,7 @@ def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_
     scale together. Matching norm histories also preserve rate/ss. Native
     rounded decisions and future weighting states need separate evidence.
     """
+    exponents = {1024: 10, 65536: 16}
     size = 45
     if qualification_policy is not None:
         from scripts.benchmarks.qualification_policy import validate_policy
@@ -4136,7 +4137,7 @@ def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_
         size = qualification_policy["coordinates"]
         if mapping.model.intervals != qualification_policy["intervals"]:
             raise ContractError("qualification_time_weight_mesh")
-    if (type(kappa) is not int or kappa != 1024
+    if (type(kappa) is not int or kappa not in exponents
             or mapping.model.definition.id != "DynamicAcceptorIonPublicDeviceV1"
             or mapping.model.layout.size != size
             or parent_controls.get("nonlin_conv_coef") != 1e-8
@@ -4147,9 +4148,10 @@ def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_
             or any(c not in "0123456789abcdef" for c in ancestor_sha256)):
         raise ContractError("voltage_lift_invalid_time_weights")
     old = {key: parent_controls[key] for key in ("rtol", "atol", "nonlin_conv_coef")}
-    values = {"rtol": math.ldexp(old["rtol"], -10),
-              "atol": [math.ldexp(value, -10) for value in old["atol"]],
-              "nonlin_conv_coef": math.ldexp(old["nonlin_conv_coef"], 10)}
+    exponent = exponents[kappa]
+    values = {"rtol": math.ldexp(old["rtol"], -exponent),
+              "atol": [math.ldexp(value, -exponent) for value in old["atol"]],
+              "nonlin_conv_coef": math.ldexp(old["nonlin_conv_coef"], exponent)}
     f = lambda value: Fraction.from_float(float(value))
     pairs = [(old["rtol"], values["rtol"], Fraction(1, kappa)),
              (old["nonlin_conv_coef"], values["nonlin_conv_coef"], Fraction(kappa))]
@@ -4165,8 +4167,8 @@ def _voltage_lift_time_weights(mapping, parent_controls, parent_proof, ancestor_
         "parent_weight_certificate_sha256": digest(parent_proof),
         "parent_values": old, "values": values,
         "application": "every_fresh_initialization_before_first_solve",
-        "exact_parameter_scaling": "rtol/atol ldexp(-10); nonlin_conv_coef ldexp(+10); positive normal binary64",
-        "norm_comparison": "same-state denominators divide by1024; exact WRMS and epcon/epsNewt/toldel/m0-direct thresholds multiply by1024",
+        "exact_parameter_scaling": f"rtol/atol ldexp(-{exponent}); nonlin_conv_coef ldexp(+{exponent}); positive normal binary64",
+        "norm_comparison": f"same-state denominators divide by{kappa}; exact WRMS and epcon/epsNewt/toldel/m0-direct thresholds multiply by{kappa}",
         "history_condition": "matching correction/weight histories preserve norm ratios and dimensionless rate/ss; later ss*WRMS comparison scales homogeneously",
         "local_time_error_threshold": 1,
         "rounded_native_decisions_or_adaptive_path_equal": False,
@@ -4217,6 +4219,8 @@ def _voltage_lift_guard_applied(raw_statistics, controls):
 def _voltage_lift_segment_startup(request, overrides):
     """Bind automatic or the selected explicit hold step to parent controls."""
     controls = request["controls"]
+    exponents = {1024: 10, 65536: 16}
+    kappa = request.get("time_weight_policy", {}).get("kappa")
     qualification_policy = request.get("qualification_policy")
     size = 45
     if qualification_policy is not None:
@@ -4234,10 +4238,10 @@ def _voltage_lift_segment_startup(request, overrides):
                 "dark_equilibrium_hold", "voltage_ramp", "slow_state_hold"]
             or controls.get("first_step") != 7.8125e-7
             or len(controls.get("atol", [])) != size
-            or controls.get("nonlin_conv_coef") != 1.024e-5
+            or type(kappa) is not int or kappa not in exponents
+            or controls.get("nonlin_conv_coef") != math.ldexp(1e-8, exponents[kappa])
             or controls.get("nonlin_guard") != "first-correction-wrms-v1"
-            or controls.get("nonlin_trace_capacity") != 4096
-            or request.get("time_weight_policy", {}).get("kappa") != 1024):
+            or controls.get("nonlin_trace_capacity") != 4096):
         raise ContractError("voltage_lift_invalid_segment_startup")
     policy = {"schema": "solarlab.voltage-lift-segment-startup.v1",
             "ancestor_request_sha256": request["prior_request_sha256"],
@@ -4330,9 +4334,69 @@ def _frame_input_parent_binding(request):
             or failure.get("kind") != "first_callback_failure"
             or digest(failure.get("failure")) != digest(result.get("first_failure"))):
         raise ContractError("frame_input_parent_failure_binding")
+    control_refinement = None
+    old_controls, controls = old.get("controls"), request.get("controls")
+    old_policy, policy = old.get("time_weight_policy"), request.get("time_weight_policy")
+    comparison_controls = old_controls
+    if digest(controls) != digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
+        valid = (type(old_controls) is dict and type(controls) is dict
+                 and type(old_policy) is dict and type(policy) is dict
+                 and old_policy.get("schema") == policy.get("schema") == "solarlab.voltage-lift-time-weights.v1"
+                 and type(old_policy.get("kappa")) is int and old_policy["kappa"] == 1024
+                 and type(policy.get("kappa")) is int and policy["kappa"] == 65536)
+        if not valid:
+            raise ContractError("frame_input_parent_time_controls")
+        keys = ("rtol", "atol", "nonlin_conv_coef")
+        if (old_policy.get("values") != {k: old_controls.get(k) for k in keys}
+                or policy.get("values") != {k: controls.get(k) for k in keys}
+                or policy.get("parent_values") != old_policy.get("parent_values")
+                or old_policy.get("ancestor_request_sha256") != old.get("prior_request_sha256")
+                or policy.get("ancestor_request_sha256") != request.get("prior_request_sha256")
+                or type(old_policy.get("parent_values")) is not dict
+                or set(old_policy["parent_values"]) != set(keys)
+                or old_policy.get("parent_controls_sha256") != digest(dict(old_controls, **old_policy["parent_values"]))
+                or policy.get("parent_controls_sha256") != digest(dict(controls, **policy["parent_values"]))):
+            raise ContractError("frame_input_parent_time_policy")
+        expected_values = {}
+        for key in keys:
+            before = old_controls[key] if key == "atol" else [old_controls[key]]
+            after = controls[key] if key == "atol" else [controls[key]]
+            parent_values = old_policy["parent_values"][key] if key == "atol" else [old_policy["parent_values"][key]]
+            size = 45 if key == "atol" else 1
+            if (type(before) is not list or type(after) is not list or type(parent_values) is not list
+                    or len(before) != size or len(after) != size or len(parent_values) != size
+                    or any(type(v) is not float or not math.isfinite(v) or v < sys.float_info.min
+                           for v in before + after + parent_values)):
+                raise ContractError("frame_input_parent_time_normal")
+            scale = Fraction(64) if key == "nonlin_conv_coef" else Fraction(1, 64)
+            parent_scale = Fraction(1024) if key == "nonlin_conv_coef" else Fraction(1, 1024)
+            if any(Fraction(b) != Fraction(a)*scale or Fraction(a) != Fraction(p)*parent_scale
+                   for p, a, b in zip(parent_values, before, after, strict=True)):
+                raise ContractError("frame_input_parent_time_scaling")
+            expected_values[key] = after if key == "atol" else after[0]
+        old_certificate, certificate = old.get("weight_certificate"), request.get("weight_certificate")
+        if type(old_certificate) is not dict or type(certificate) is not dict:
+            raise ContractError("frame_input_parent_time_certificate")
+        expected_policy = dict(old_policy, kappa=65536, values=expected_values,
+            parent_weight_certificate_sha256=certificate.get("parent_weight_certificate_sha256"),
+            exact_parameter_scaling="rtol/atol ldexp(-16); nonlin_conv_coef ldexp(+16); positive normal binary64",
+            norm_comparison="same-state denominators divide by65536; exact WRMS and epcon/epsNewt/toldel/m0-direct thresholds multiply by65536")
+        if (digest(policy) != digest(expected_policy)
+                or old_certificate.get("time_weight_policy_sha256") != digest(old_policy)
+                or certificate.get("time_weight_policy_sha256") != digest(policy)
+                or any(certificate.get(k) != controls[k] for k in ("rtol", "atol"))):
+            raise ContractError("frame_input_parent_time_certificate")
+        comparison_controls = dict(old_controls, **expected_values)
+        control_refinement = {
+            "schema": "solarlab.frame-input-time-control.v1", "factor": 64,
+            "old_kappa": 1024, "kappa": 65536,
+            "old_controls_sha256": digest(old_controls), "controls_sha256": digest(controls),
+            "old_time_weight_policy_sha256": digest(old_policy), "time_weight_policy_sha256": digest(policy),
+            "scaling": "exact rtol/atol /64; nonlin_conv_coef *64; positive normal binary64",
+            "physical_gates_changed": False}
     for key in ("case_id", "prior_request_sha256", "controls", "previous_controls", "segments",
                 "observation_times", "quadrature", "original_budgets", "mandatory", "physical_domain_policy"):
-        if key not in request or digest(request[key]) != digest(old.get(key)):
+        if key not in request or digest(request[key]) != digest(comparison_controls if key == "controls" else old.get(key)):
             raise ContractError("frame_input_parent_science_changed:"+key)
     current_map = dict(request["voltage_lift_map"])
     if (current_map.pop("mapped_input_profile", None) != "frame-input-expansion12-v1"
@@ -4349,9 +4413,12 @@ def _frame_input_parent_binding(request):
         packet.pop("definition_identity", None)
     if digest(current_packet) != digest(prior_packet):
         raise ContractError("frame_input_parent_physics_changed")
-    return {"request_sha256": old_id, **{
+    result = {"request_sha256": old_id, **{
         key.removesuffix("_json")+"_file_sha256": sha256(value.encode()).hexdigest()
         for key, value in parent.items()}}
+    if control_refinement is not None:
+        result["control_refinement"] = control_refinement
+    return result
 
 
 def _qualified_frame_input_context(request):

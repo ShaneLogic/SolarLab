@@ -3156,3 +3156,160 @@ def test_segment_frame_physical_chain_and_live_event_handoff(request):
                        "frames": [receipt["frame_identity"], receipt2["frame_identity"]]},
              {"same_state_F_J_words": True, "all45_handoff_words": True,
               "both_event_sides_retained": True, "full_polynomial_derivatives": True})
+
+
+def test_voltage_lift_time_weights_65536_preserves_physics_and_legacy_bytes():
+    """Current45-component factory; only in-memory construction, no IDA."""
+    from copy import deepcopy
+    import math
+    from scripts.benchmarks import coupled_device_prototype as d
+    from scripts.benchmarks.native_readback import segment_startup_controls
+
+    mapping, segments, previous, options, parent, legacy = time_weight_requests()
+    # Controls and legacy policy bytes stay exact on identical current inputs.
+    # Whole request identities also bind the kernel source and must change
+    # honestly when that source changes (CoupledSlab.source_identity).
+    assert digest(legacy["controls"]) == "96bbebe0118c3f871826cd8a9a71d01a5b3e53d4007573375e3747c062eb5754"
+    expected_legacy_policy = {
+        "schema": "solarlab.voltage-lift-time-weights.v1", "kappa": 1024,
+        "ancestor_request_sha256": digest(previous),
+        "parent_controls_sha256": digest(parent["controls"]),
+        "parent_weight_certificate_sha256": digest(parent["weight_certificate"]),
+        "parent_values": {k: parent["controls"][k] for k in ("rtol", "atol", "nonlin_conv_coef")},
+        "values": {k: legacy["controls"][k] for k in ("rtol", "atol", "nonlin_conv_coef")},
+        "application": "every_fresh_initialization_before_first_solve",
+        "exact_parameter_scaling": "rtol/atol ldexp(-10); nonlin_conv_coef ldexp(+10); positive normal binary64",
+        "norm_comparison": "same-state denominators divide by1024; exact WRMS and epcon/epsNewt/toldel/m0-direct thresholds multiply by1024",
+        "history_condition": "matching correction/weight histories preserve norm ratios and dimensionless rate/ss; later ss*WRMS comparison scales homogeneously",
+        "local_time_error_threshold": 1,
+        "rounded_native_decisions_or_adaptive_path_equal": False,
+        "global_accuracy_or_conservation_certified": False}
+    assert json.dumps(legacy["time_weight_policy"], sort_keys=True, separators=(",", ":")) == (
+        json.dumps(expected_legacy_policy, sort_keys=True, separators=(",", ":")))
+    current = d.prepare_voltage_lift_native_request(mapping, segments, previous,
+        **options, time_weight_kappa=65536,
+        segment_startup_overrides={"slow_state_hold": {"first_step": 2.0**-32}})
+    d.validate_voltage_lift_native_request(mapping, segments, current)
+    before, after = legacy["controls"], current["controls"]
+    assert after["rtol"] == math.ldexp(before["rtol"], -6)
+    assert after["nonlin_conv_coef"] == math.ldexp(before["nonlin_conv_coef"], 6)
+    assert {k for k in before if before[k] != after[k]} == {"rtol", "atol", "nonlin_conv_coef"}
+    assert len(after["atol"]) == 45 and after["max_step"] == 0.1
+    for old, new, row in zip(before["atol"], after["atol"],
+                             current["weight_certificate"]["components"], strict=True):
+        assert Fraction(new)*64 == Fraction(old) and new >= sys.float_info.min
+        assert Fraction(row["new_physical_atol_exact"]) == Fraction(row["scale_exact"])*Fraction(new)
+        assert all(row["checks"].values())
+    for key in ("numeric_packet", "voltage_lift_map", "segments", "previous_controls",
+                "budgets", "original_budgets", "observation_times", "quadrature", "history_policy"):
+        assert current[key] == legacy[key], key
+    for key in ("point_identity", "raw_z_hex", "raw_zdot_hex", "inputs_hex", "input_rates_hex",
+                "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
+                "desired_tangent_residual_SI", "represented_rate_residual_SI"):
+        assert current["initial_preparation"][key] == legacy["initial_preparation"][key], key
+    for segment, record in zip(segments, current["segments"], strict=True):
+        selected = d._voltage_lift_initialization_controls(current, segment)
+        assert selected == segment_startup_controls(current, record)
+        assert selected["nonlin_conv_coef"] == after["nonlin_conv_coef"]
+        assert selected["first_step"] == (2.0**-32 if segment.id == "slow_state_hold" else 7.8125e-7)
+    policy = current["time_weight_policy"]
+    assert policy["kappa"] == 65536 and "ldexp(-16)" in policy["exact_parameter_scaling"]
+    assert not policy["rounded_native_decisions_or_adaptive_path_equal"]
+    # Same-state weighted correction and nonlinear thresholds scale together.
+    q, correction = Fraction(-3, 7), Fraction(1, 1 << 30)
+    for old, new in zip(before["atol"], after["atol"], strict=True):
+        den0, den1 = Fraction(before["rtol"])*abs(q)+Fraction(old), Fraction(after["rtol"])*abs(q)+Fraction(new)
+        assert den0 == 64*den1
+        assert (correction/den0/Fraction(before["nonlin_conv_coef"]))**2 == (
+            correction/den1/Fraction(after["nonlin_conv_coef"]))**2
+    for field in ("nonlin_conv_coef", "rtol", "max_step"):
+        bad = deepcopy(current); bad["controls"][field] *= 2
+        with pytest.raises(ContractError, match="native_controls_changed"):
+            d.validate_voltage_lift_native_request(mapping, segments, bad)
+    bad = deepcopy(current); bad["time_weight_policy"]["kappa"] = 1024
+    with pytest.raises(ContractError, match="native_controls_changed|time_weights_binding"):
+        d.validate_voltage_lift_native_request(mapping, segments, bad)
+    low = dict(parent["controls"], rtol=math.ldexp(sys.float_info.min, 15))
+    with pytest.raises(ContractError, match="time_weights_not_exact_normal"):
+        d._voltage_lift_time_weights(mapping, low, parent["weight_certificate"], digest(previous), 65536)
+    assert current["native_admission"] is False
+
+
+def test_full_protocol_65536_frame_input_ancestry_and_independent_reader():
+    """Use saved bounded parent metadata and the actual45-component factory."""
+    from copy import deepcopy
+    import math
+    from scripts.benchmarks import coupled_device_prototype as d
+    from scripts.benchmarks.native_readback import (
+        HistoryVerificationError, _frame_input_parent, frame_input_word_count)
+
+    source = os.environ.get("FRAME_INPUT_CURRENT_B_REQUEST")
+    if not source:
+        pytest.skip("bounded current-B request metadata is required")
+    saved = json.loads(Path(source).read_text())
+    old_binding = d._frame_input_parent_binding(saved)
+    assert old_binding == _frame_input_parent(saved) and "control_refinement" not in old_binding
+    # Use the complete saved definition; the generic derivative fixture
+    # deliberately supplies its own area and is not this full-B input.
+    model = d.AffineCoupledSlab(d.SlabDefinition(**saved["numeric_packet"]["definition"]), 8)
+    segments = tuple(d.ProtocolSegment(**row) for row in saved["segments"])
+    previous_paths = json.loads(Path(os.environ["LIFT_PREVIOUS_REQUESTS"]).read_text())
+    previous = json.loads(Path(previous_paths[saved["case_id"]]).read_text())
+    for key in ("wall_s", "total_output_bytes"):
+        previous["budgets"][key] = saved["original_budgets"][key]
+    options = {"nonlin_conv_coef": 1e-8, "nonlin_guard": "first-correction-wrms-v1",
+               "first_step": 7.8125e-7}
+    full_mapping = d.AffineVoltageMap(model, mapped_input_profile="frame-input-expansion12-v1")
+    current = d.prepare_voltage_lift_native_request(full_mapping, segments, previous, **options,
+        time_weight_kappa=65536, segment_frame="fixed-affine-state-rate-v1",
+        frame_input_profile="frame-input-expansion12-v1", frame_input_parent=saved["frame_input_parent"],
+        reference_refresh_time=float.fromhex(saved["reference_refresh_policy"]["time_hex"]),
+        segment_startup_overrides={"slow_state_hold": {"first_step": 2.0**-32}})
+    d.validate_voltage_lift_native_request(full_mapping, segments, current)
+    assert current["frame_input_parent"] == saved["frame_input_parent"]
+    bound = d._frame_input_parent_binding(current)
+    assert bound == _frame_input_parent(current)
+    assert bound["request_sha256"] == old_binding["request_sha256"]
+    assert {k: v for k, v in bound.items() if k != "control_refinement"} == old_binding
+    refinement = bound["control_refinement"]
+    assert (refinement["old_kappa"], refinement["kappa"], refinement["factor"]) == (1024, 65536, 64)
+    assert current["frame_input_policy"]["failed_parent"] == bound
+    assert refinement["controls_sha256"] == digest(current["controls"])
+    assert frame_input_word_count(current) == 12
+    assert current["reference_refresh_policy"]["time_hex"] == saved["reference_refresh_policy"]["time_hex"]
+    assert current["budgets"] == saved["budgets"] and current["original_budgets"] == saved["original_budgets"]
+
+    def retie(value):
+        policy, controls = value["time_weight_policy"], value["controls"]
+        policy["values"] = {k: deepcopy(controls[k]) for k in ("rtol", "atol", "nonlin_conv_coef")}
+        policy["parent_controls_sha256"] = digest(dict(controls, **policy["parent_values"]))
+        value["weight_certificate"].update(rtol=controls["rtol"], atol=controls["atol"],
+            time_weight_policy_sha256=digest(policy))
+
+    mutations = (
+        lambda q: q["time_weight_policy"].update(kappa=65536.0),
+        lambda q: q["time_weight_policy"].update(kappa=1024),
+        lambda q: q["time_weight_policy"].update(kappa=32768),
+        lambda q: q["time_weight_policy"].update(extra=True),
+        lambda q: q["controls"].update(nonlin_conv_coef=1.024e-5),
+        lambda q: q["controls"].update(max_step=0.05),
+        lambda q: q["controls"]["atol"].__setitem__(29, math.nextafter(q["controls"]["atol"][29], math.inf)),
+        lambda q: q["controls"]["atol"].pop(),
+        lambda q: q["controls"].update(rtol=float.fromhex("0x1p-1074")),
+        lambda q: q["physical_domain_policy"].update(forged=True))
+    for mutate in mutations:
+        bad = deepcopy(current); mutate(bad); retie(bad)
+        with pytest.raises(d.ContractError):
+            d._frame_input_parent_binding(bad)
+        with pytest.raises(HistoryVerificationError):
+            _frame_input_parent(bad)
+    bad = deepcopy(current)
+    old = json.loads(bad["frame_input_parent"]["request_json"])
+    old["time_weight_policy"]["kappa"] = 1024.0
+    result = json.loads(bad["frame_input_parent"]["native_result_json"])
+    result["request_sha256"] = digest(old)
+    bad["frame_input_parent"].update(request_json=json.dumps(old), native_result_json=json.dumps(result))
+    with pytest.raises(d.ContractError, match="time_controls"):
+        d._frame_input_parent_binding(bad)
+    with pytest.raises(HistoryVerificationError, match="time_controls"):
+        _frame_input_parent(bad)

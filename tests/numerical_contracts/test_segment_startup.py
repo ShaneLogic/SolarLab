@@ -2,11 +2,12 @@
 
 from dataclasses import asdict, replace
 import json
+import math
 
 import pytest
 
 
-def _full_protocol_startup_case():
+def _full_protocol_startup_case(kappa=1024):
     """Manufactured binding shapes only; no model, Point or solver is made."""
     from scripts.benchmarks import coupled_device_prototype as d
 
@@ -20,6 +21,11 @@ def _full_protocol_startup_case():
                                  atol=[(i+1)*1e-10 for i in range(45)], max_step=.1,
                                  nonlin_conv_coef=1.024e-5, nonlin_guard="first-correction-wrms-v1",
                                  nonlin_trace_capacity=4096), time_weight_policy={"kappa": 1024})
+    if kappa == 65536:
+        request["controls"].update(rtol=math.ldexp(request["controls"]["rtol"], -6),
+            atol=[math.ldexp(v, -6) for v in request["controls"]["atol"]],
+            nonlin_conv_coef=math.ldexp(request["controls"]["nonlin_conv_coef"], 6))
+        request["time_weight_policy"]["kappa"] = kappa
     return d, json.loads(json.dumps(request)), segments
 
 
@@ -46,10 +52,11 @@ def _full_protocol_startup_stats(segment, ordinal, phase, h0=0., steps=0):
                                     num_steps=steps, initial_step=h0, last_step=2.0**-40))
 
 
-def test_full_protocol_startup_absent_and_zero_identity():
+@pytest.mark.parametrize("kappa", [1024, 65536])
+def test_full_protocol_startup_absent_and_zero_identity(kappa):
     from scripts.benchmarks.native_readback import segment_startup_controls
 
-    d, request, segments = _full_protocol_startup_case()
+    d, request, segments = _full_protocol_startup_case(kappa)
     before = d.digest(request)
     for ordinal, segment in enumerate(segments, 1):
         controls, receipt = _full_protocol_startup_constructor(d, request, segment, ordinal)
@@ -73,10 +80,11 @@ def test_full_protocol_startup_absent_and_zero_identity():
     assert d.digest({k: v for k, v in request.items() if k != "segment_startup_policy"}) == before
 
 
-def test_full_protocol_startup_explicit_hold_constructor_and_readback():
+@pytest.mark.parametrize("kappa", [1024, 65536])
+def test_full_protocol_startup_explicit_hold_constructor_and_readback(kappa):
     from scripts.benchmarks.native_readback import SegmentStartupCheck, segment_startup_controls
 
-    d, request, segments = _full_protocol_startup_case()
+    d, request, segments = _full_protocol_startup_case(kappa)
     policy = d._voltage_lift_segment_startup(request, {"slow_state_hold": {"first_step": 2.0**-32}})
     zero = d._voltage_lift_segment_startup(request, {"slow_state_hold": {"first_step": 0.0}})
     assert {k for k in policy if policy[k] != zero[k]} == {"overrides"}
@@ -97,12 +105,13 @@ def test_full_protocol_startup_explicit_hold_constructor_and_readback():
     assert result["native_requested_first_step_getter"] == "unavailable"
 
 
-def test_full_protocol_startup_invalid_or_unbound_policy():
+@pytest.mark.parametrize("kappa", [1024, 65536])
+def test_full_protocol_startup_invalid_or_unbound_policy(kappa):
     from copy import deepcopy
     from math import inf, nan, nextafter
     from scripts.benchmarks.native_readback import HistoryVerificationError, segment_startup_controls
 
-    d, request, segments = _full_protocol_startup_case()
+    d, request, segments = _full_protocol_startup_case(kappa)
     selected = {"slow_state_hold": {"first_step": 2.0**-32}}
     policy = d._voltage_lift_segment_startup(request, selected)
     invalid = [{"slow_state_hold": {"first_step": v}} for v in
@@ -141,11 +150,12 @@ def test_full_protocol_startup_invalid_or_unbound_policy():
         segment_startup_controls(dict(request, segment_startup_overrides=selected), request["segments"][-1])
 
 
-def test_full_protocol_startup_reader_rejects_control_or_actual_h0_mismatch():
+@pytest.mark.parametrize("kappa", [1024, 65536])
+def test_full_protocol_startup_reader_rejects_control_or_actual_h0_mismatch(kappa):
     from copy import deepcopy
     from scripts.benchmarks.native_readback import HistoryVerificationError, SegmentStartupCheck
 
-    d, request, segments = _full_protocol_startup_case()
+    d, request, segments = _full_protocol_startup_case(kappa)
     request["segment_startup_policy"] = d._voltage_lift_segment_startup(
         request, {"slow_state_hold": {"first_step": 2.0**-32}})
     for wrong_h0 in (0.0, 2.0**-40, 7.8125e-7):
@@ -168,3 +178,28 @@ def test_full_protocol_startup_reader_rejects_control_or_actual_h0_mismatch():
                     check.consume(row)
             else:
                 check.consume(row)
+
+
+@pytest.mark.parametrize("kappa", [1024, 65536])
+def test_full_protocol_startup_rejects_rebound_mismatched_accuracy(kappa):
+    """Reach both numeric guards after rebinding manufactured policy hashes."""
+    from copy import deepcopy
+    from scripts.benchmarks.native_readback import HistoryVerificationError, segment_startup_controls
+
+    d, request, segments = _full_protocol_startup_case(kappa)
+    overrides = {"slow_state_hold": {"first_step": 2.0**-32}}
+    request["segment_startup_policy"] = d._voltage_lift_segment_startup(request, overrides)
+    bad_options = [(kappa, math.ldexp(1e-8, 16 if kappa == 1024 else 10)),
+                   (65536 if kappa == 1024 else 1024, request["controls"]["nonlin_conv_coef"])]
+    bad_options += [(value, request["controls"]["nonlin_conv_coef"])
+                    for value in (65536.0, "65536", True, None, 2048, [])]
+    for selected, coefficient in bad_options:
+        bad = deepcopy(request)
+        bad["time_weight_policy"]["kappa"] = selected
+        bad["controls"]["nonlin_conv_coef"] = coefficient
+        bad["segment_startup_policy"]["base_controls_sha256"] = d.digest(bad["controls"])
+        bad["segment_startup_policy"]["time_weight_policy_sha256"] = d.digest(bad["time_weight_policy"])
+        with pytest.raises(d.ContractError, match="invalid_segment_startup"):
+            d._voltage_lift_segment_startup(bad, overrides)
+        with pytest.raises(HistoryVerificationError, match="segment_startup"):
+            segment_startup_controls(bad, bad["segments"][-1])
