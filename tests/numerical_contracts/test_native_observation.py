@@ -99,7 +99,8 @@ def _synthetic_charge_observer(monkeypatch, source='a'*64):
     path = SimpleNamespace(identity='b'*64, clock=SimpleNamespace(payload=lambda: {'segment_id': 'synthetic'}))
     observer.prepared = SimpleNamespace(path=path)
     observer.frame = SimpleNamespace(identity='c'*64)
-    observer.binding = SimpleNamespace(context=SimpleNamespace(request_sha256=source))
+    observer.binding = SimpleNamespace(context=SimpleNamespace(
+        request_sha256=source, request_copy=_charge_refinement_request))
     observer.arithmetic = object()
     values = (Enclosure(0), Enclosure(Fraction(-1, 7), Fraction(1, 1000)), Enclosure(0))
     calls = []
@@ -125,7 +126,8 @@ def test_partial_charge_observation_cannot_commit_completed_prefix():
 
     clock = AcceptedClock(0,1,1,1,1,1,0,1,"manufactured-prefix-clock")
     path = SimpleNamespace(clock=clock)
-    observer = SimpleNamespace(observer=SimpleNamespace(model=None),prepared=SimpleNamespace(path=path))
+    observer = SimpleNamespace(observer=SimpleNamespace(model=None),prepared=SimpleNamespace(path=path),
+        binding=SimpleNamespace(context=SimpleNamespace(request_copy=_charge_refinement_request)))
     left, right = SimpleNamespace(time=0.0), SimpleNamespace(time=0.5)
     prefixes = {key:ChargePrefix.start((1,)*3) for key in ("raw_polynomial","same_state_affine_tangent")}
     accumulator = UpperAccumulator(charge_upper_policy(sha256(b"manufactured-source").hexdigest()))
