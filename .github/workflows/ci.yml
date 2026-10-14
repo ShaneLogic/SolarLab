@@ -129,7 +129,7 @@ jobs:
         run: >-
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider
           tests/unit/contracts tests/unit/mesh tests/unit/discretization
-          tests/unit/physics/electrostatics
+          tests/unit/physics/electrostatics tests/independent/p04
 
   packages:
     runs-on: ubuntu-24.04
