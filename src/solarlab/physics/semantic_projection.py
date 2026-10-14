@@ -9,6 +9,7 @@ This module depends on model declarations, not devices, solvers or config.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 from typing import Any
@@ -23,6 +24,86 @@ _DISPLAY_LABEL_EVIDENCE = {
     "src/solarlab/physics/registry.py": "b22c15eae2fbcc64aaef9aa8230b07d794b26caa30fc7818e6c23c77230cce1e",
     "src/solarlab/physics/selection.py": "2fcfd5279feba3d35de577772371ee3a5cc60b17d7b8ebbe765d939e9475198b",
 }
+
+
+def _project_historical_physics(physical: dict[str, Any], inspection: dict[str, Any]) -> dict[str, Any]:
+    """The fixed v1 behavior rule, called with a validated historical context.
+
+    Only the source-proven effective settings replace declarations. Everything
+    else remains conservative: this is not a caller-defined exclusion list or
+    a claim of model/solver qualification. Driver protocol, preparation and
+    numerical import switches belong to the complete execution context.
+    """
+    expected = {"mode_ceiling", "switches", "switch_scope", "interface_state_requested", "interface_state_count",
+                "interface_state_shared_occupancy_if_enabled", "interfaces", "contacts", "ions", "ion_flux_label",
+                "te", "optics", "electrostatics", "import_time_policy", "runtime_interface_requests", "preparation"}
+    if set(inspection) != expected:
+        raise ValueError("historical inspection changed; a new semantic projection is required")
+    result = deepcopy(physical)
+    result["domain"] = "prepared-historical-device-1d.v2"
+    result["settings"].update(inspection["switches"])
+    effective_contacts = []
+    for contact in inspection["contacts"]:
+        target = next(row for row in result["contacts"] if row["side"] == contact["side"])
+        target["S_" + contact["carrier"]] = contact["effective_S_m_s"]
+        effective_contacts.append({key: contact[key] for key in ("side", "carrier", "effective_S_m_s", "condition")})
+    incoherence = []
+    for row in inspection["optics"]["incoherence"]:
+        layer = next(item for item in result["layers"] if item["id"] == row["layer"])
+        value = row["historical_loader_value"]
+        if "incoherent" in layer["remaining_effective_parameters"]:
+            layer["remaining_effective_parameters"]["incoherent"] = value
+        for model in result["models"]:
+            if model["scope"] == {"kind": "layer", "ids": [row["layer"]]} and "incoherent" in model["effective_values"]:
+                model["effective_values"]["incoherent"] = value
+        incoherence.append({"layer": row["layer"], "effective": value})
+    optical = inspection["optics"]
+    result["effective_behavior"] = {
+        "projection": "historical-driver-effective.v1",
+        **{key: deepcopy(inspection[key]) for key in ("mode_ceiling", "switches", "te", "interfaces", "ions",
+            "ion_flux_label", "electrostatics", "interface_state_requested", "interface_state_shared_occupancy_if_enabled")},
+        "contacts": effective_contacts,
+        "optics": {**{key: optical[key] for key in ("generation", "uniform_generation_m3_s", "recycling")},
+                   "incoherence": incoherence},
+        "runtime_interface_requests": {key: inspection["runtime_interface_requests"][key] for key in ("qss", "allow_generation")},
+        "QSS_velocity_m_s": inspection["import_time_policy"]["QSS_velocity_effective_m_s"],
+    }
+    return result
+
+
+def _project_r1_physics(
+    physical: dict[str, Any], material: dict[str, Any], *, ceilings: dict[str, Any], switches: dict[str, bool],
+    controls: dict[str, int], reference: dict[str, Any],
+) -> dict[str, Any]:
+    """Fixed R1 model/charge reference; complete history stays in execution.
+
+    Pair and binary64 representations implement the same declared physics.
+    Their seed, high/low words and source bytes are retained by the caller's
+    complete R1 execution context, never projected into one rounded state.
+    """
+    if set(reference) != {"f_ref", "geometry", "maximum_difference", "microscopic_documents", "reference_intervals",
+                          "rungs", "schema", "scope", "sha256", "stack_sha256"} or reference["schema"] != "ReferenceBindingV1":
+        raise ValueError("R1 reference changed; a new semantic projection is required")
+    result = deepcopy(physical)
+    result["domain"] = "prepared-historical-device-1d.v2"
+    result["settings"].update(switches)
+    result["settings"]["interface_charge_closure"] = material["material_interface_charge_closure"]
+    overrides = dict(material["material_overrides"])
+    # This controls acceptance of an inner solve, not a physical coefficient.
+    overrides.pop("iface_qss_allow_inexact_inner")
+    environment = material["environment_effective_snapshot"]
+    result["effective_behavior"] = {
+        "projection": "historical-r1-effective.v1", "mode_ceiling": deepcopy(ceilings),
+        "switches": dict(switches), "geometry": material["physical_geometry"],
+        "material_interface_charge_closure": material["material_interface_charge_closure"],
+        "material_overrides": overrides, "ions": deepcopy(material["ions"]),
+        "active_populations": dict(controls),
+        "charge_reference": {key: deepcopy(reference[key]) for key in ("f_ref", "geometry", "microscopic_documents", "scope")},
+        "QSS_velocity_m_s": material["import_time_policy"]["QSS_velocity_effective_m_s"],
+        "runtime_interface_requests": {"qss": environment["SOLARLAB_IFACE_QSS"] == "1",
+                                       "allow_generation": environment["SOLARLAB_IFACE_ALLOW_GEN"] == "1"},
+    }
+    return result
 
 
 @dataclass(frozen=True, slots=True)

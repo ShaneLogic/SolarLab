@@ -165,6 +165,7 @@ jobs:
           tests/refactor/test_input_domain_closure.py
           tests/refactor/test_legacy_behavior_execution.py
           tests/refactor/test_legacy_execution_context.py
+          tests/refactor/test_effective_behavior_identity.py
           tests/refactor/test_configuration_schema_export.py
           tests/refactor/test_configuration_input_types.py::test_json_mode_matches_public_metadata_and_preserves_default
           tests/runtime/test_run_store.py
@@ -173,7 +174,7 @@ jobs:
           tests/runtime/test_configuration_schema_service.py
       - name: Check typed configuration, registry and runtime preparation
         run: |
-          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_input_types.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/refactor/test_experiment_registry_startup.py tests/refactor/test_input_domain_closure.py tests/refactor/test_legacy_behavior_execution.py tests/refactor/test_legacy_execution_context.py tests/refactor/legacy_driver_observer.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py tests/runtime/test_configuration_schema_service.py tests/runtime/test_configuration_preview.py tests/unit/contracts tests/unit/mesh tests/unit/discretization tests/unit/physics/electrostatics
+          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_input_types.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/refactor/test_experiment_registry_startup.py tests/refactor/test_input_domain_closure.py tests/refactor/test_legacy_behavior_execution.py tests/refactor/test_legacy_execution_context.py tests/refactor/legacy_driver_observer.py tests/refactor/test_effective_behavior_identity.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py tests/runtime/test_configuration_schema_service.py tests/runtime/test_configuration_preview.py tests/unit/contracts tests/unit/mesh tests/unit/discretization tests/unit/physics/electrostatics
           uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab src/solarlab_server
       - name: Check generated configuration schema
         run: uv run --frozen --no-sync python scripts/generate_configuration_schema.py --check

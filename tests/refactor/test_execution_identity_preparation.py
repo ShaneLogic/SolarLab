@@ -63,7 +63,8 @@ def changed(device, edit):
 
 
 def identity_inputs(device, *, version=1, label="Temperature-dependent mobility", rule="all_values_v1", overrides=None,
-                    local_id="mobility", parameters=("mu_n", "mu_p", "mu_T_gamma")):
+                    local_id="mobility", parameters=("mu_n", "mu_p", "mu_T_gamma"),
+                    effective_behavior=None, problem="transient"):
     source = SourceDocument("physics/temperature.py", (LEGACY / "physics/temperature.py").read_bytes())
     ref = ModelRef("transport.temperature_mobility", version)
     capability = CapabilityRule("source_data_only", (1,), ("dc", "transient"),
@@ -74,15 +75,17 @@ def identity_inputs(device, *, version=1, label="Temperature-dependent mobility"
     registry = ModelRegistry((definition,))
     defaults = {"layer": (ModelChoice(local_id, ref, parameter_schema="full_layer"),)}
     overrides = {} if overrides is None else overrides
-    sources = {Scope("layer", (layer.id,)): layer_parameter_source(layer) for layer in device.layers}
-    context = CapabilityContext(1, "transient", "metadata_only", "maxwell_boltzmann", temperature_K=device.values["settings"]["T"])
+    sources = {Scope("layer", (layer.id,)): layer_parameter_source(layer) for layer in device.layers
+               if layer.id in device_topology(device).electrical_layer_ids}
+    context = CapabilityContext(1, problem, "metadata_only", "maxwell_boltzmann", temperature_K=device.values["settings"]["T"])
     selection = select_models(registry, device_topology(device), context, defaults, sources, overrides)
     evidence = ()
     if rule == "without_display_label_v1":
         evidence = tuple(SourceDocument(name, (ROOT / name).read_bytes()) for name in
                          ("src/solarlab/physics/registry.py", "src/solarlab/physics/selection.py"))
     projection = SemanticProjection(ref, rule, (source,), evidence)
-    return IdentityInputs(device, selection, registry, ModelInputs.from_mappings(defaults=defaults, overrides=overrides), (projection,))
+    return IdentityInputs(device, selection, registry, ModelInputs.from_mappings(defaults=defaults, overrides=overrides),
+                          (projection,), effective_behavior=effective_behavior)
 
 
 @pytest.fixture(scope="module")

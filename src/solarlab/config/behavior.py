@@ -219,6 +219,19 @@ def _mode(sources: dict[str, SourceDocument], mode: str) -> dict[str, Any]:
     raise ValueError("unsupported historical mode")
 
 
+def _material_switches(
+    settings: dict[str, Any], environment: dict[str, str | None], sources: dict[str, SourceDocument],
+) -> tuple[dict[str, Any], dict[str, bool]]:
+    """Shared, source-pinned build_material_arrays gates, including R1's base."""
+    ceilings = _mode(sources, settings["mode"])
+    flags = {name: bool(settings[name] or environment.get(key) == "1") for name, key in _SWITCHES.items()}
+    for name in ("band_grading", "dos_band_potentials", "te_physical_norm", "ion_steric_diffusion_only"):
+        flags[name] = flags[name] and settings["mode"] != "legacy"
+    flags["interface_plane_generation"] &= flags["interface_plane_closure"]
+    flags["interface_tunneling"] &= ceilings["use_thermionic_emission"] and settings["mode"] != "legacy"
+    return ceilings, flags
+
+
 def _environment(entries: tuple[tuple[str, str | None], ...]) -> tuple[tuple[str, str | None], ...]:
     if not isinstance(entries, tuple) or any(type(p) is not tuple or len(p) != 2 for p in entries):
         raise ValueError("environment requires an explicit immutable snapshot of pairs")
@@ -419,12 +432,7 @@ class BehaviorContext:
             raise ValueError("extended material models require a separate historical inspection")
         if any(dict(layer.parameters)["carrier_statistics"] != "maxwell_boltzmann" for layer in self.device.layers):
             raise ValueError("carrier statistics are outside the audited driver subset")
-        ceilings = _mode(sources, settings["mode"])
-        flags = {name: bool(settings[name] or env.get(key) == "1") for name, key in _SWITCHES.items()}
-        for name in ("band_grading", "dos_band_potentials", "te_physical_norm", "ion_steric_diffusion_only"):
-            flags[name] = flags[name] and settings["mode"] != "legacy"
-        flags["interface_plane_generation"] &= flags["interface_plane_closure"]
-        flags["interface_tunneling"] &= ceilings["use_thermionic_emission"] and settings["mode"] != "legacy"
+        ceilings, flags = _material_switches(settings, env, sources)
         mol = _tree(sources, "solver/mol.py")
         steady = _tree(sources, "experiments/steady_state.py")
         softness = (_literal(steady, "_TE_SOFTNESS") if self.driver == "scaps_steady_state"

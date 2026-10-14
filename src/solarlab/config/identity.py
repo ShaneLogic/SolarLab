@@ -10,14 +10,15 @@ or P07 release-coverage contracts merely by hashing supplied documents.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
 import re
 from typing import Any
 
-from solarlab.config.behavior import BehaviorContext
+from solarlab.config.behavior import BehaviorContext, _material_switches
+from solarlab.config.legacy_execution import R1ExecutionContext
 from solarlab.config.model_parameters import (
     device_topology, layer_parameter_source, structured_parameter_source,
 )
@@ -26,7 +27,7 @@ from solarlab.materials.resources import ResourceTable
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.registry import ModelRegistry, Scope, metadata_value
 from solarlab.physics.selection import ModelChoice, Selection, select_models, validate_selection
-from solarlab.physics.semantic_projection import SemanticProjection
+from solarlab.physics.semantic_projection import SemanticProjection, _project_historical_physics, _project_r1_physics
 from solarlab.units import UNIT_SCHEMA_VERSION
 
 __all__ = [
@@ -165,6 +166,10 @@ class IdentityInputs:
     Validation uses existing public factories and selection, without modifying
     resolution or executing a physical model. Canonical snapshots are private
     immutable record data, not any of the four reusable numerical cache layers.
+
+    ``effective_behavior`` selects the versioned historical physical rule;
+    its complete source/protocol/history record is bound only by execution.
+    Without it the original prepared-device projection stays byte-identical.
     """
 
     prepared: PreparedDevice
@@ -172,6 +177,7 @@ class IdentityInputs:
     registry: ModelRegistry
     model_inputs: ModelInputs
     projections: tuple[SemanticProjection, ...]
+    effective_behavior: BehaviorContext | R1ExecutionContext | None = None
     _input_document: bytes = field(init=False, repr=False)
     _physical_document: bytes = field(init=False, repr=False)
     _execution_binding: bytes = field(init=False, repr=False)
@@ -222,7 +228,12 @@ class IdentityInputs:
             raise ValueError("unaccounted resolved-device schema/fields require a new identity projection")
         if self.selection.context.dimension != 1 or data["grain_boundaries"]:
             raise ValueError("full lateral geometry identity is not available in the 1D prepared-device domain")
-        if data["diagnostics"]:
+        behavior = self.effective_behavior
+        if behavior is not None:
+            _match_behavior(behavior, prepared, self.selection)
+        if data["diagnostics"] and (type(behavior) is not BehaviorContext or any(
+            item["code"] != "legacy_scaps_ignored_incoherent" for item in data["diagnostics"]
+        )):
             raise ValueError("historical effective-behavior diagnostics require a supplied behavior context")
         temperature = self.selection.context.temperature_K
         if temperature is not None and temperature != data["settings"]["T"]:
@@ -256,6 +267,16 @@ class IdentityInputs:
             "metastable_preparation": [{"layer_id": layer.id, "preparation": (
                 layer.to_mapping().get("metastable_preparation"))} for layer in prepared.layers],
         }
+        if behavior is not None:
+            document = behavior.export()
+            if isinstance(behavior, BehaviorContext):
+                physical = _project_historical_physics(physical, document["source_inspection"])
+            else:
+                ceilings, switches = _material_switches(data["settings"], dict(behavior.environment),
+                                                       {item.id: item for item in behavior.sources})
+                physical = _project_r1_physics(physical, document["material_behavior"], ceilings=ceilings,
+                    switches=switches, controls=document["arguments"]["controls"], reference=json.loads(behavior.reference.content))
+            binding["effective_behavior"] = {"sha256": behavior.content_sha256, "context": document}
         object.__setattr__(self, "_input_document", _json_bytes(supplied))
         object.__setattr__(self, "_physical_document", _json_bytes(physical))
         object.__setattr__(self, "_execution_binding", _json_bytes(binding))
@@ -411,18 +432,18 @@ class ExecutionEngine:
     """Explicit implementation choice for the high-level execution facade.
 
     This only binds identity. It neither imports an engine nor grants execution;
-    a historical BehaviorContext retains its existing preparation-only status.
+    historical contexts retain their existing preparation-only status.
     There is no default, automatic selection, or failure-fallback mode.
     """
 
     name: str
-    behavior: BehaviorContext | None = None
+    behavior: BehaviorContext | R1ExecutionContext | None = None
 
     def __post_init__(self) -> None:
         if type(self.name) is not str or self.name not in {"legacy", "solarlab"}:
             raise ValueError("execution engine must be explicitly legacy or solarlab")
-        if self.name == "legacy" and type(self.behavior) is not BehaviorContext:
-            raise ValueError("legacy execution identity requires an explicit BehaviorContext")
+        if self.name == "legacy" and type(self.behavior) not in {BehaviorContext, R1ExecutionContext}:
+            raise ValueError("legacy execution identity requires an explicit BehaviorContext or complete R1ExecutionContext")
         if self.name == "solarlab" and self.behavior is not None:
             raise ValueError("a legacy BehaviorContext cannot be relabelled as the solarlab engine")
 
@@ -452,6 +473,15 @@ def physics_identity(inputs: IdentityInputs) -> Identity:
     return _identity("H_physics", json.loads(inputs._physical_document))
 
 
+def _match_behavior(behavior: BehaviorContext | R1ExecutionContext, device: PreparedDevice, selection: Selection) -> None:
+    if type(behavior) not in {BehaviorContext, R1ExecutionContext}:
+        raise ValueError("actual source-bound BehaviorContext or complete R1ExecutionContext required")
+    if behavior.device.content_sha256 != device.content_sha256 or (
+        isinstance(behavior, BehaviorContext) and behavior.selection.content_sha256 != selection.content_sha256
+    ):
+        raise ValueError("behavior context belongs to a different prepared device or selection")
+
+
 def execution_identity(
     inputs: IdentityInputs, execution: ExecutionDescription, *, engine: ExecutionEngine | None = None,
 ) -> Identity:
@@ -465,11 +495,13 @@ def execution_identity(
     if engine is not None:
         if type(engine) is not ExecutionEngine:
             raise ValueError("a typed explicit execution engine is required")
-        if engine.behavior is not None and (
-            engine.behavior.device.content_sha256 != inputs.prepared.content_sha256
-            or engine.behavior.selection.content_sha256 != inputs.selection.content_sha256
-        ):
-            raise ValueError("behavior context belongs to a different prepared device or selection")
+        if inputs.effective_behavior is not None and (engine.behavior is None
+                or engine.behavior.content_sha256 != inputs.effective_behavior.content_sha256):
+            raise ValueError("execution engine differs from the effective physics behavior")
+        if engine.behavior is not None:
+            _match_behavior(engine.behavior, inputs.prepared, inputs.selection)
+            if inputs.effective_behavior is None:
+                inputs = replace(inputs, effective_behavior=engine.behavior)
     payload = {
         "H_input": input_identity(inputs).sha256, "H_physics": physics_identity(inputs).sha256,
         "effective_binding": json.loads(inputs._execution_binding),
