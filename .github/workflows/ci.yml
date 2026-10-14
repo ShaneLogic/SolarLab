@@ -126,6 +126,9 @@ jobs:
         working-directory: .
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          # The core environment is the legacy perovskite-sim project; the new
+          # solarlab packages are imported from the checkout source tree.
+          PYTHONPATH: src
         run: >-
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider
           tests/unit/contracts tests/unit/mesh tests/unit/discretization
