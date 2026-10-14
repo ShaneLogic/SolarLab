@@ -133,6 +133,10 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider
           tests/unit/contracts tests/unit/mesh tests/unit/discretization
           tests/unit/physics/electrostatics tests/independent/p04
+          --deselect tests/independent/p04/test_p04_legacy_golden.py::test_legacy_reproduces_golden_bitwise
+          --deselect tests/independent/p04/test_p04_legacy_golden.py::test_candidate_against_golden
+      # The recorded legacy golden is bitwise for its macOS/Accelerate capture
+      # host only (libm differs on Linux); live legacy-vs-new parity runs here.
 
   packages:
     runs-on: ubuntu-24.04
