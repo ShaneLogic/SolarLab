@@ -27,7 +27,7 @@ from solarlab.materials.source import SourceDocument
 from solarlab.physics.selection import Selection
 
 __all__ = ["BehaviorContext", "CapturedPreparation", "behavior_source_requirements",
-           "inspect_historical_behavior"]
+           "inspect_historical_behavior", "inspect_r1_material_behavior"]
 
 Driver = Literal["scaps_transient", "scaps_steady_state", "ion_hysteresis"]
 _SCHEMA = "solarlab.historical-behavior-preparation.v1"
@@ -77,6 +77,7 @@ _SWITCHES = {
 }
 _ENV_NAMES = frozenset(_SWITCHES.values()) | {
     "SOLARLAB_INTERFACE_PLANE_STATE", "SOLARLAB_SS_JAC_REUSE",
+    "SOLARLAB_SS_GUMMEL",
     "SOLARLAB_QSS_VTH", "SOLARLAB_IFACE_QSS", "SOLARLAB_IFACE_ALLOW_GEN",
     "PEROVSKITE_RHS_FINITE_CHECK",
 }
@@ -93,9 +94,21 @@ _CATALOG_SOURCES = ("models/parameters.py", "models/device.py", "models/defects.
                     "physics/band_gap_narrowing.py", "scaps_compat/loader.py", "constants.py",
                     "twod/microstructure.py", "models/tandem_config.py")
 
+_R1_PINS = {
+    "experiments/one_dimensional_mechanism_r1.py": "637bc790dc09ec0632b733bc72e3fdcacf20dc017efc88a8fafed7dd927fb116",
+    "experiments/one_dimensional_mechanism_r1_backend.py": "630c2a686547e269ee406ba301bb44b078de0c2a939ab5f377784d4bf77badb9",
+    "experiments/quasi_fermi_steady_state.py": "f8fc4b1f4274fd154e956b42d2d0d715c4b8045ec84ee50de2798023e5b14fc4",
+    "physics/interface_plane.py": "7e8e9344d8f96b04b565986879ad9c67bd36d54afa3de90ee39de264a44f9dee",
+    "physics/physical_control_volume.py": "7ab20365a9f857169a8b9e2beb3a00c5129440e934e7f9875595c85413dec245",
+}
 
-def behavior_source_requirements() -> tuple[tuple[str, str], ...]:
+
+def behavior_source_requirements(*, driver: str | None = None) -> tuple[tuple[str, str], ...]:
     """Explicit relative legacy-source IDs and audited byte digests to supply."""
+    if driver == "r1_material":
+        return tuple(sorted({**_PINS, **_R1_PINS}.items()))
+    if driver is not None and driver not in _DRIVERS:
+        raise ValueError("unknown historical behavior source domain")
     return tuple(sorted(_PINS.items()))
 
 
@@ -135,6 +148,52 @@ def _literal(tree: ast.Module, name: str, owner: str | None = None) -> Any:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name and node.value is not None:
             return ast.literal_eval(node.value)
     raise ValueError(f"missing audited source literal: {owner}.{name}")
+
+
+def _import_setting(tree: ast.Module, name: str, environment: dict[str, str | None]) -> bool | float:
+    """Evaluate only the four audited env.get import assignments, from source."""
+    expression = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == name for target in node.targets))
+    if isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name) and expression.func.id == "float" and len(expression.args) == 1:
+        numeric, call = True, expression.args[0]
+    elif isinstance(expression, ast.Compare):
+        numeric, call = False, expression.left
+    else:
+        raise ValueError("audited import-time environment assignment changed")
+    if (not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute)
+            or call.func.attr != "get" or not isinstance(call.func.value, ast.Attribute)
+            or call.func.value.attr != "environ" or len(call.args) != 2 or call.keywords):
+        raise ValueError("audited import-time environment expression changed")
+    key, default = (ast.literal_eval(node) for node in call.args)
+    if key not in _ENV_NAMES or type(default) is not str:
+        raise ValueError("audited import-time environment source is incomplete")
+    supplied = environment.get(key)
+    value = default if supplied is None else supplied
+    if numeric:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{key} must produce a finite import-time value")
+        return number
+    if not isinstance(expression, ast.Compare) or len(expression.ops) != 1 or len(expression.comparators) != 1:
+        raise ValueError("audited import-time comparison changed")
+    target = ast.literal_eval(expression.comparators[0])
+    if isinstance(expression.ops[0], ast.Eq):
+        return value == target
+    if isinstance(expression.ops[0], ast.NotEq):
+        return value != target
+    raise ValueError("unsupported audited import-time comparison")
+
+
+def _import_policy(sources: dict[str, SourceDocument], environment: dict[str, str | None]) -> dict[str, Any]:
+    steady, mol = _tree(sources, "experiments/steady_state.py"), _tree(sources, "solver/mol.py")
+    return {
+        "ss_jacobian_reuse": _import_setting(steady, "_SS_JAC_REUSE", environment),
+        "ss_gummel": _import_setting(steady, "_SS_GUMMEL", environment),
+        "rhs_finite_check": _import_setting(mol, "_RHS_FINITE_CHECK", environment),
+        "QSS_velocity_override_text": environment.get("SOLARLAB_QSS_VTH"),
+        "QSS_velocity_effective_m_s": _import_setting(mol, "_QSS_V_TH_MS", environment),
+        "binding": "supplied snapshot must precede any future isolated old import",
+    }
 
 
 def _signature(tree: ast.Module, name: str) -> dict[str, Any]:
@@ -443,10 +502,7 @@ class BehaviorContext:
             "electrostatics": {"configured_V_bi": settings["V_bi"], "configured_potential_mode": settings["built_in_potential_mode"],
                                "signed_V_bi_eff": {"status": "unobserved"}, "signed_V_bi_bc": {"status": "unobserved"},
                                "rule": "compatibility None retains distinct band-derived operating value and signed manual-magnitude BC; explicit modes share the selected value; BC drop is V_bi_bc - junction_polarity*V_app"},
-            "import_time_policy": {"ss_jacobian_reuse": env.get("SOLARLAB_SS_JAC_REUSE", "1") != "0",
-                                   "rhs_finite_check": env.get("PEROVSKITE_RHS_FINITE_CHECK") == "1",
-                                   "QSS_velocity_override_text": env.get("SOLARLAB_QSS_VTH"),
-                                   "binding": "supplied snapshot must precede any future isolated old import"},
+            "import_time_policy": _import_policy(sources, env),
             "runtime_interface_requests": {"qss": env.get("SOLARLAB_IFACE_QSS") == "1",
                                            "allow_generation": env.get("SOLARLAB_IFACE_ALLOW_GEN") == "1",
                                            "scope": "conditional on actual interface/phi; no RHS is evaluated"},
@@ -508,3 +564,70 @@ def inspect_historical_behavior(
     arguments: SourceDocument, capture: CapturedPreparation | None = None,
 ) -> BehaviorContext:
     return BehaviorContext(driver, device, selection, sources, environment, arguments, capture)
+
+
+def inspect_r1_material_behavior(
+    device: PreparedDevice, *, sources: tuple[SourceDocument, ...],
+    environment: tuple[tuple[str, str | None], ...], backend: str | None = None,
+) -> dict[str, Any]:
+    """Inspect the actual R1 material overrides and inherited import settings.
+
+    This deliberately does not reuse a SCAPS driver label or construct an R1
+    state. Full raw input/source bindings remain visible; material and history
+    qualification belong to their existing independent consumers.
+    """
+    if type(device) is not PreparedDevice:
+        raise ValueError("R1 inspection requires an actual prepared device")
+    documents = tuple(sources)
+    if any(type(source) is not SourceDocument for source in documents):
+        raise ValueError("R1 inspection requires immutable source documents")
+    by_id = {source.id: source for source in documents}
+    required = dict(behavior_source_requirements(driver="r1_material"))
+    if len(by_id) != len(documents) or set(by_id) != set(required) or any(by_id[name].sha256 != digest for name, digest in required.items()):
+        raise ValueError("exact audited R1 behavior sources are required")
+    snapshot = dict(_environment(environment))
+    tree = _tree(by_id, "experiments/one_dimensional_mechanism_r1.py")
+    builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "build_r1_material")
+    replacement = next(node for node in ast.walk(builder) if isinstance(node, ast.Call)
+                       and isinstance(node.func, ast.Name) and node.func.id == "replace")
+    overrides = {}
+    for keyword in replacement.keywords:
+        if isinstance(keyword.value, ast.Name) and keyword.value.id == "FERMI_DIRAC_RICHARDSON":
+            value = _literal(_tree(by_id, "physics/interface_plane.py"), keyword.value.id)
+        else:
+            value = ast.literal_eval(keyword.value)
+        overrides[keyword.arg] = value
+    qf = _tree(by_id, "experiments/quasi_fermi_steady_state.py")
+    charge_off = next(node for node in qf.body if isinstance(node, ast.FunctionDef) and node.name == "_research_charge_off_stack")
+    closure = next(ast.literal_eval(keyword.value) for node in ast.walk(charge_off) if isinstance(node, ast.Call)
+                   for keyword in node.keywords if keyword.arg == "interface_charge_closure")
+    backend_tree = _tree(by_id, "experiments/one_dimensional_mechanism_r1_backend.py")
+    representations = {target.id: ast.literal_eval(node.value.args[0]) for node in backend_tree.body
+                       if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                       and isinstance(node.value.func, ast.Name) and node.value.func.id == "R1Backend"
+                       for target in node.targets if isinstance(target, ast.Name)}
+    if backend is None or backend in ("legacy", "float64", representations["LEGACY"]):
+        selected_backend = representations["LEGACY"]
+    elif backend in ("pair", representations["PAIR"]):
+        selected_backend = representations["PAIR"]
+    else:
+        raise ValueError("unrecognized R1 numerical backend")
+    data = device.to_mapping()
+    return {
+        "schema": "solarlab.r1-material-behavior-inspection.v1", "can_execute": False,
+        "driver": "r1_material", "driver_source": "experiments/one_dimensional_mechanism_r1.py#build_r1_material",
+        "prepared_device_sha256": device.content_sha256, "input_sources": data["input_sources"],
+        "declared_interface_charge_closure": data["settings"]["interface_charge_closure"],
+        "material_interface_charge_closure": closure,
+        "physical_geometry": _literal(_tree(by_id, "physics/physical_control_volume.py"), "PHYSICAL_GEOMETRY_V1"),
+        "material_overrides": overrides,
+        "ions": [{"layer": layer.id, "D_reference_m2_s": dict(layer.parameters)["D_ion"],
+                  "configured_inventory_m3": dict(layer.parameters)["P0"],
+                  "zero_diffusion_retains_inventory": dict(layer.parameters)["D_ion"] == 0}
+                 for layer in device.layers if layer.role != "substrate"],
+        "backend_requested": backend, "backend_representation": selected_backend,
+        "environment_effective_snapshot": {name: snapshot.get(name) for name in sorted(_ENV_NAMES)},
+        "import_time_policy": _import_policy(by_id, snapshot),
+        "sources": [_binding(by_id[name]) for name in sorted(by_id)],
+        "unperformed": ["material_array_construction", "R1_state_preparation", "R1_step_or_history", "new_core_equivalence"],
+    }

@@ -10,7 +10,8 @@
       "BehaviorContext",
       "CapturedPreparation",
       "behavior_source_requirements",
-      "inspect_historical_behavior"
+      "inspect_historical_behavior",
+      "inspect_r1_material_behavior"
     ],
     "solarlab.config.device_import": [
       "import_standard_device"
@@ -202,7 +203,8 @@
       "BehaviorContext",
       "CapturedPreparation",
       "behavior_source_requirements",
-      "inspect_historical_behavior"
+      "inspect_historical_behavior",
+      "inspect_r1_material_behavior"
     ],
     "solarlab.config.device_import": [
       "import_standard_device"

@@ -68,6 +68,30 @@ def metadata_digest(value: Any) -> str:
     ).encode()).hexdigest()
 
 
+def _verify_evidence_sources(
+    references: Iterable[EvidenceRef], sources: Iterable[tuple[str, bytes]],
+) -> None:
+    """Check supplied bytes; a #fragment names a symbol in that same document.
+
+    This does not import source or endorse the conclusions of a qualification
+    record. Schema references require their actual serialized schema document.
+    """
+    documents = tuple(sources)
+    if any(type(item) is not tuple or len(item) != 2 or type(item[0]) is not str
+           or not item[0].strip() or type(item[1]) is not bytes or not item[1]
+           for item in documents):
+        raise ValueError("evidence sources require (ID, immutable bytes) pairs")
+    by_id = dict(documents)
+    if len(by_id) != len(documents):
+        raise ValueError("duplicate evidence source ID")
+    for reference in references:
+        source_id = reference.id.partition("#")[0]
+        if source_id not in by_id:
+            raise ValueError(f"missing evidence source: {source_id}")
+        if hashlib.sha256(by_id[source_id]).hexdigest() != reference.sha256:
+            raise ValueError(f"evidence source content mismatch: {reference.id}")
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class ModelRef:
     id: str
@@ -489,6 +513,22 @@ class ModelRegistry:
     def validate_parameter_schema(self) -> None:
         if json.dumps(self._schemas(), sort_keys=True, allow_nan=False) != self._parameter_schema:
             raise ValueError("parameter schema changed after registry construction; rebuild explicitly")
+
+    def verify_sources(
+        self, sources: Iterable[tuple[str, bytes]], *, expected_sha256: str,
+    ) -> None:
+        """Verify a frozen registry and every declared evidence/schema source.
+
+        Expected identity is supplied by the consumer. This validates content
+        only, leaving numerical qualification and executor availability intact.
+        """
+        self.validate_parameter_schema()
+        if expected_sha256 != self.content_sha256:
+            raise ValueError("model registry changed from the expected frozen identity")
+        references = [ref for item in self.definitions for ref in item.capability.evidence]
+        references.extend(item.structured_schema.source for item in self.definitions
+                          if item.structured_schema is not None)
+        _verify_evidence_sources(references, sources)
 
     def export(self) -> dict[str, Any]:
         return {"schema": "solarlab.model-registry.v1", "models": metadata_value(self.definitions),

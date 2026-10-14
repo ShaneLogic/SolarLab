@@ -8,15 +8,26 @@ installed by this preparation API.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+import ast
 from dataclasses import dataclass, field
+import hashlib
+from pathlib import Path
 import re
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from solarlab.physics.registry import (
-    CapabilityRule, EvidenceRef, ModelRef, ModelRegistry, _token,
+    CapabilityRule, EvidenceRef, ModelRef, ModelRegistry, _token, _verify_evidence_sources,
     metadata_digest, metadata_value,
 )
 from solarlab.physics.selection import Selection, validate_selection
+
+if TYPE_CHECKING:
+    from solarlab.device.defaults import DefaultCatalog
+    from solarlab.experiments.jv.preparation import PreparedJVExperiment
+    from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment
+    from solarlab.materials.resources import ResourceLibrary
+    from solarlab.materials.source import SourceDocument
 
 __all__ = ["ExperimentDefinition", "ExperimentPreflight", "ExperimentRegistry"]
 
@@ -102,11 +113,110 @@ class ExperimentRegistry:
 
     def export(self) -> dict[str, Any]:
         return {"schema": "solarlab.experiment-registry.v1", "experiments": metadata_value(self.definitions),
-                "registered_executors": [], "status": "prepared_pending_G2"}
+                "registered_executors": [], "status": "prepared_pending_dependencies"}
 
     @property
     def content_sha256(self) -> str:
         return metadata_digest(self.export())
+
+    def verify_startup(
+        self, models: ModelRegistry, sources: Iterable[tuple[str, bytes]], *,
+        expected_sha256: str, expected_model_sha256: str,
+    ) -> None:
+        """Verify the exact registry, schemas and source contracts at startup.
+
+        Source/qualification records are checked as bytes, not promoted to
+        executable capability. No source path is imported by this check.
+        """
+        if expected_sha256 != self.content_sha256:
+            raise ValueError("experiment registry changed from the expected frozen identity")
+        documents = tuple(sources)
+        models.verify_sources(documents, expected_sha256=expected_model_sha256)
+        references: list[EvidenceRef] = []
+        for item in self.definitions:
+            references.extend((item.parameter_schema, item.result_schema, item.protocol_builder,
+                               item.executor_source, item.renderer_source, *item.capability.evidence))
+            for ref in item.required_models:
+                models.get(ref)
+        _verify_evidence_sources(references, documents)
+        by_id = dict(documents)
+        for item in self.definitions:
+            for reference in (item.parameter_schema, item.result_schema, item.protocol_builder,
+                              item.executor_source, item.renderer_source):
+                path, _, symbol = reference.id.partition("#")
+                if not symbol:
+                    continue
+                if path.endswith(".py"):
+                    body = ast.parse(by_id[path]).body
+                    for part in symbol.split("."):
+                        node = next((node for node in body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                                     and node.name == part), None)
+                        if node is None:
+                            raise ValueError(f"declared entry symbol is absent: {reference.id}")
+                        body = node.body
+                elif reference is item.renderer_source and path.endswith((".ts", ".js")):
+                    pattern = r"\bexport\s+(?:async\s+)?function\s+" + re.escape(symbol) + r"\s*\("
+                    if re.search(pattern, by_id[path].decode("utf-8")) is None:
+                        raise ValueError(f"declared renderer symbol is absent: {reference.id}")
+
+    def prepare(
+        self, id: str, version: int, input: Any,
+        defaults: DefaultCatalog, resources: ResourceLibrary, *,
+        models: ModelRegistry, selection: Selection,
+        startup_sources: Iterable[tuple[str, bytes]],
+        expected_sha256: str, expected_model_sha256: str,
+        sources: tuple[SourceDocument, ...] = (),
+    ) -> PreparedJVExperiment | PreparedSpatialExperiment:
+        """Call an existing public data preparer after the complete startup check.
+
+        Only the two actual preparation functions below are dispatchable. A
+        legacy executor reference remains evidence, never a callable fallback.
+        Input schema bytes bind the DTO; result_schema binds the actual source
+        contract of the immutable prepared result, not a future P05 result DTO.
+        """
+        self.verify_startup(models, startup_sources, expected_sha256=expected_sha256,
+                            expected_model_sha256=expected_model_sha256)
+        preflight = self.preflight(id, version, selection, models)
+        if not preflight.declared_compatible:
+            raise ValueError("experiment preparation capability refused: " + "; ".join(preflight.declared_problems))
+        definition = preflight.experiment
+        from solarlab.config.model_parameters import device_topology
+        from solarlab.config.resolve_device import resolve_device
+        from solarlab.experiments.jv.inputs import JVExperimentInput
+        from solarlab.experiments.jv.preparation import PreparedJVExperiment, prepare_jv_experiment
+        from solarlab.experiments.two_dimensional.inputs import SpatialExperimentInput
+        from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment, prepare_spatial_experiment
+
+        symbol = definition.protocol_builder.id.partition("#")[2]
+        result_type: type[PreparedJVExperiment | PreparedSpatialExperiment]
+        factory: Callable[..., PreparedJVExperiment | PreparedSpatialExperiment]
+        if symbol == "prepare_jv_experiment":
+            dto, result_type, factory, dimension = JVExperimentInput, PreparedJVExperiment, prepare_jv_experiment, 1
+        elif symbol == "prepare_spatial_experiment":
+            dto, result_type, factory, dimension = SpatialExperimentInput, PreparedSpatialExperiment, prepare_spatial_experiment, 2
+        else:
+            raise ValueError("experiment is not bound to a supported public preparation entry")
+        current_source = Path(factory.__code__.co_filename).read_bytes()
+        digest = hashlib.sha256(current_source).hexdigest()
+        if definition.protocol_builder.sha256 != digest:
+            raise ValueError("loaded preparation source differs from its registry binding")
+        if (definition.result_schema.id.partition("#")[2] != result_type.__name__
+                or definition.result_schema.sha256 != digest):
+            raise ValueError("prepared result source contract differs from its registry binding")
+        if definition.parameter_schema.sha256 != metadata_digest(dto.model_json_schema(mode="validation")):
+            raise ValueError("actual preparation input schema differs from its registry binding")
+        checked = dto.model_validate(input)
+        if checked.experiment.kind != id or selection.context.dimension != dimension:
+            raise ValueError("experiment kind/dimension differs from the selected registry entry")
+        device = resolve_device(checked.device, defaults, resources, sources=sources)
+        if selection.topology != device_topology(device):
+            raise ValueError("selected model topology differs from the actual prepared device")
+        if selection.context.temperature_K is not None and selection.context.temperature_K != device.values["settings"]["T"]:
+            raise ValueError("selected temperature context differs from the actual prepared device")
+        statistics = {layer.material.values["carrier_statistics"] for layer in device.layers if layer.role != "substrate"}
+        if statistics != {selection.context.statistics}:
+            raise ValueError("selected statistics context differs from the actual prepared device")
+        return factory(checked, defaults, resources, sources=sources)
 
     def preflight(
         self, id: str, version: int, selection: Selection, models: ModelRegistry,

@@ -7,12 +7,12 @@ from mode flags. Unresolved driver/environment behavior remains explicit.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from solarlab.physics.registry import (
     CapabilityContext, EvidenceRef, ModelRef, ModelRegistry, Scope,
-    _strings, _token, metadata_digest, metadata_value,
+    _strings, _token, _verify_evidence_sources, metadata_digest, metadata_value,
 )
 from solarlab.physics.selection import (
     ModelChoice, ParameterSource, Selection, Topology, _choices, select_models,
@@ -82,6 +82,16 @@ class NamedPreset:
     @property
     def content_sha256(self) -> str:
         return metadata_digest(metadata_value(self))
+
+    def verify_sources(
+        self, sources: Iterable[tuple[str, bytes]], *, expected_sha256: str,
+    ) -> None:
+        """Bind default/disable records to bytes without changing their policy."""
+        if expected_sha256 != self.content_sha256:
+            raise ValueError("preset changed from the expected frozen identity")
+        _verify_evidence_sources(
+            (*self.evidence, *(item.evidence for item in self.historical_disables)), sources,
+        )
 
 
 @dataclass(frozen=True, slots=True)

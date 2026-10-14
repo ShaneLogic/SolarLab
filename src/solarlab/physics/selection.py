@@ -55,9 +55,10 @@ class Topology:
             _token(self.device_id, "device ID")
         if isinstance(self.interface_ids, (str, bytes)) or isinstance(self.contact_sides, (str, bytes)):
             raise ValueError("topology IDs require explicit tuples")
-        if any(isinstance(item, (str, bytes)) for item in (*self.interface_ids, *self.contact_sides)):
+        interface_entries, side_entries = tuple(self.interface_ids), tuple(self.contact_sides)
+        if any(isinstance(item, (str, bytes)) for item in (*interface_entries, *side_entries)):
             raise ValueError("topology bindings require explicit endpoint tuples")
-        interfaces = tuple(tuple(item) for item in self.interface_ids)
+        interfaces = tuple(tuple(item) for item in interface_entries)
         if any(len(item) != 3 for item in interfaces) or len({item[0] for item in interfaces}) != len(interfaces):
             raise ValueError("interfaces require unique (ID, left, right) triples")
         pairs = set(zip(ids, ids[1:]))
@@ -65,7 +66,7 @@ class Topology:
             raise ValueError("interface IDs must bind directed adjacent electrical layers")
         for identifier, _, _ in interfaces:
             _token(identifier, "interface ID")
-        sides = tuple(tuple(item) for item in self.contact_sides)
+        sides = tuple(tuple(item) for item in side_entries)
         if any(len(item) != 2 for item in sides) or len({item[0] for item in sides}) != len(sides):
             raise ValueError("contact sides require unique (ID, side) pairs")
         if len({item[1] for item in sides}) != len(sides):
@@ -264,7 +265,7 @@ class Selection:
                    for item in self.instances if item.structured is not None}
         return {"schema": "solarlab.model-selection.v1", **metadata_value(self),
                 "parameter_schemas": {name: schemas[name] for name in sorted(schemas)},
-                "status": "prepared_pending_G2", "can_execute": False}
+                "status": "prepared_pending_dependencies", "can_execute": False}
 
 
 def _structured_binding(parameters: StructuredParameters, schema: str, scalars: object) -> None:
@@ -476,6 +477,9 @@ def select_models(
     for source in parameter_sources.values():
         if not isinstance(source, ParameterSource):
             raise ValueError("parameter sources must be immutable validated records")
+    # A default family is reused at every matching scope. Freeze it once so a
+    # one-pass input cannot silently omit the second layer's model instances.
+    default_choices = {kind: _choices(values) for kind, values in defaults.items()}
     per_instance = {} if instance_parameter_sources is None else instance_parameter_sources
     if not isinstance(per_instance, Mapping):
         raise ValueError("instance parameter sources must be a mapping")
@@ -486,7 +490,7 @@ def select_models(
     selected: list[SelectedModel] = []
     for scope in topology.scopes():
         families: dict[str, tuple[ModelChoice, ...]] = {}
-        for choice in _choices(defaults.get(scope.kind, ())):
+        for choice in default_choices.get(scope.kind, ()):
             family = registry.get(choice.model).family
             families[family] = (*families.get(family, ()), choice)
         for family, values in patches.get(scope, {}).items():

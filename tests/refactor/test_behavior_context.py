@@ -20,6 +20,7 @@ import pytest
 
 from solarlab.config.behavior import (
     CapturedPreparation, _verify_words, behavior_source_requirements, inspect_historical_behavior,
+    inspect_r1_material_behavior,
 )
 from solarlab.config.device_import import import_standard_device
 from solarlab.config.legacy_defaults import read_legacy_default_catalog
@@ -407,3 +408,66 @@ assert Path(behavior.__file__).resolve() == Path(sys.argv[2])
         cwd=tmp_path, capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, True), ("0", False), ("1", True)])
+def test_actual_gummel_import_policy_preserves_unset_zero_one(scaps, sources, value, expected):
+    record = context(scaps, sources, environment=(("SOLARLAB_SS_GUMMEL", value),)).export()
+    assert record["source_inspection"]["import_time_policy"]["ss_gummel"] is expected
+    assert record["environment_effective_snapshot"]["SOLARLAB_SS_GUMMEL"] == value
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, 1e5), ("0", 0.0), ("1", 1.0), ("-0", -0.0)])
+def test_actual_qss_import_velocity_retains_the_effective_word(scaps, sources, value, expected):
+    record = context(scaps, sources, environment=(("SOLARLAB_QSS_VTH", value),)).export()
+    policy = record["source_inspection"]["import_time_policy"]
+    assert policy["QSS_velocity_override_text"] == value
+    assert policy["QSS_velocity_effective_m_s"].hex() == expected.hex()
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "not-a-velocity"])
+def test_invalid_qss_import_values_cannot_be_recorded_as_valid_context(scaps, sources, value):
+    with pytest.raises(ValueError):
+        context(scaps, sources, environment=(("SOLARLAB_QSS_VTH", value),))
+
+
+@pytest.fixture
+def r1_material_inputs(defaults, resources):
+    path = ROOT / "perovskite-sim/tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml"
+    original = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
+    device = resolve_device(import_standard_device(original, id="r1_material", defaults=defaults),
+                            defaults, resources, sources=(original,))
+    sources = tuple(SourceDocument(name, (LEGACY / name).read_bytes())
+                    for name, _ in behavior_source_requirements(driver="r1_material"))
+    return device, sources
+
+
+def test_r1_keeps_distinct_material_overrides_frozen_inventory_and_backend(r1_material_inputs):
+    device, sources = r1_material_inputs
+    result = inspect_r1_material_behavior(device, sources=sources, environment=())
+    assert result["driver"] == "r1_material" and result["can_execute"] is False
+    assert result["declared_interface_charge_closure"] == "equilibrium_referenced"
+    assert result["material_interface_charge_closure"] == "off"
+    assert result["material_overrides"]["N_iface_state"] == 0
+    assert result["material_overrides"]["iface_state_v_th"] == 1e5
+    assert result["material_overrides"]["iface_state_physical_offsets"] is True
+    assert result["physical_geometry"] == "physical_boundary_two_sided_v1"
+    frozen = [item for item in result["ions"] if item["zero_diffusion_retains_inventory"]]
+    assert len(frozen) == 1 and frozen[0]["configured_inventory_m3"] == 1e22
+    assert result["backend_representation"] == "float64-baseline"
+    pair = inspect_r1_material_behavior(device, sources=sources, environment=(), backend="pair")
+    assert pair["backend_representation"] == "float64-pair-v1"
+    assert pair["material_overrides"] == result["material_overrides"]
+    result["material_overrides"].clear()
+    assert inspect_r1_material_behavior(device, sources=sources, environment=())["material_overrides"]
+
+
+def test_r1_missing_changed_sources_backend_and_environment_refuse(r1_material_inputs):
+    device, sources = r1_material_inputs
+    for candidate in (sources[:-1], (replace(sources[0], content=sources[0].content+b"\n"), *sources[1:])):
+        with pytest.raises(ValueError, match="audited R1"):
+            inspect_r1_material_behavior(device, sources=candidate, environment=())
+    with pytest.raises(ValueError, match="backend"):
+        inspect_r1_material_behavior(device, sources=sources, environment=(), backend="automatic")
+    with pytest.raises(ValueError, match="environment"):
+        inspect_r1_material_behavior(device, sources=sources, environment=(("UNKNOWN_FLAG", "1"),))

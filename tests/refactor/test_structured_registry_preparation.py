@@ -131,6 +131,28 @@ def source_for(prepared, family):
     return next(source for source in structured_parameter_sources(prepared) if source.structured.data.schema.family == family)
 
 
+@pytest.mark.parametrize("name", (*COMPLEX, *MONOVALENT))
+def test_frozen_structured_registry_requires_actual_closed_schema_bytes(name, prepared_case):
+    registry, selected, _, _ = selection_for(prepared_case(name))
+    documents = {}
+    for definition in registry.definitions:
+        schema = definition.structured_schema
+        assert schema is not None
+        key = schema.source.id.partition("#")[0]
+        content = json.dumps(json.loads(schema.input_json), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        if key in documents:
+            assert documents[key] == content
+        documents[key] = content
+    before = selected.content_sha256
+    registry.verify_sources(tuple(documents.items()), expected_sha256=registry.content_sha256)
+    assert selected.content_sha256 == before
+    if documents:
+        key = next(iter(documents))
+        documents[key] += b"\n"
+        with pytest.raises(ValueError, match="content mismatch"):
+            registry.verify_sources(tuple(documents.items()), expected_sha256=registry.content_sha256)
+
+
 def by_id(value, path):
     for item in path:
         value = next(row for row in value if row["id"] == item) if isinstance(value, list) else value.get(item)
@@ -142,7 +164,7 @@ def test_actual_structured_documents_select_and_export_without_lost_fields(name,
     prepared = prepared_case(name)
     registry, selected, _, _ = selection_for(prepared)
     exported = selected.export()
-    assert exported["status"] == "prepared_pending_G2" and not exported["can_execute"]
+    assert exported["status"] == "prepared_pending_dependencies" and not exported["can_execute"]
     assert validate_selection(selected, registry) == ()
     assert list(exported["parameter_schemas"]) == sorted(exported["parameter_schemas"])
     assert [item.id for item in selected.instances] == sorted(item.id for item in selected.instances)

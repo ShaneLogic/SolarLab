@@ -20,8 +20,8 @@ from solarlab.physics.selection import SelectedModel
 __all__ = ["SemanticProjection"]
 
 _DISPLAY_LABEL_EVIDENCE = {
-    "src/solarlab/physics/registry.py": "0a638307d4eec988d6920030750155970f4d7c9a2623f8de6b2b8a8f9e57ba1b",
-    "src/solarlab/physics/selection.py": "dab0a6453ac64401a41f5a4028a49086074f063968d1fb22cafa3db0e297455c",
+    "src/solarlab/physics/registry.py": "b22c15eae2fbcc64aaef9aa8230b07d794b26caa30fc7818e6c23c77230cce1e",
+    "src/solarlab/physics/selection.py": "2fcfd5279feba3d35de577772371ee3a5cc60b17d7b8ebbe765d939e9475198b",
 }
 
 

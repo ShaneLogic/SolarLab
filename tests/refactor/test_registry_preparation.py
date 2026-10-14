@@ -169,6 +169,63 @@ def test_selection_replaces_families_and_explicit_empty_clears(registry, inputs)
     assert selected.instances[0].owned_variables == positive.instances[0].owned_variables
 
 
+def test_defaults_and_topology_bindings_are_snapshotted_once(registry, inputs):
+    normal = selection(registry, inputs)
+    one_pass = selection(registry, inputs, defaults={
+        "layer": (choice for choice in (ModelChoice("carrier", TRANSPORT),)),
+    })
+    assert one_pass.export() == normal.export()
+    assert {item.scope for item in one_pass.instances} == {LEFT, RIGHT}
+    contacts = (("anode", "left"), ("cathode", "right"))
+    interfaces, sides = (("junction", "left", "right"),), (("anode", "left"), ("cathode", "right"))
+    expected = Topology(("left", "right"), contacts, interfaces, sides, "device")
+    actual = Topology(("left", "right"), contacts,
+                      (item for item in interfaces), (item for item in sides), "device")
+    assert actual == expected
+    with pytest.raises(ValueError, match="directed adjacent"):
+        Topology(("left", "right"), contacts, (item for item in (("bad", "right", "left"),)))
+
+
+def source_documents(refs):
+    paths = sorted({ref.id.partition("#")[0] for ref in refs})
+    return tuple((path, (ROOT / path).read_bytes()) for path in paths)
+
+
+def test_frozen_model_registry_checks_actual_source_bytes_and_keeps_metadata(registry):
+    references = tuple(ref for model in registry.definitions for ref in model.capability.evidence)
+    sources = source_documents(references)
+    before = registry.export()
+    registry.verify_sources(iter(sources), expected_sha256=registry.content_sha256)
+    assert registry.export() == before
+    with pytest.raises(ValueError, match="frozen identity"):
+        registry.verify_sources(sources, expected_sha256="0" * 64)
+    with pytest.raises(ValueError, match="missing evidence"):
+        registry.verify_sources(sources[:-1], expected_sha256=registry.content_sha256)
+    altered = ((sources[0][0], sources[0][1] + b"\n"), *sources[1:])
+    with pytest.raises(ValueError, match="content mismatch"):
+        registry.verify_sources(altered, expected_sha256=registry.content_sha256)
+    with pytest.raises(ValueError, match="duplicate evidence source"):
+        registry.verify_sources((*sources, sources[0]), expected_sha256=registry.content_sha256)
+
+
+def test_frozen_preset_keeps_all_real_historical_disable_evidence(registry, inputs):
+    preset = NamedPreset("legacy_observed", 1, "Observed legacy metadata",
+        (("layer", (ModelChoice("carrier", TRANSPORT),)),),
+        (evidence(LEGACY + "models/mode.py", "LEGACY"),), historical_disables())
+    refs = (*preset.evidence, *(item.evidence for item in preset.historical_disables))
+    sources = source_documents(refs)
+    preset.verify_sources(sources, expected_sha256=preset.content_sha256)
+    selected = select_preset(preset, registry, inputs[0], context(), inputs[1])
+    assert len(selected.preset.historical_disables) == 12
+    assert not selected.reenabled_historical_mechanisms
+    assert selected.selection.export()["status"] == "prepared_pending_dependencies"
+    assert selected.selection.export()["can_execute"] is False
+    with pytest.raises(ValueError, match="frozen identity"):
+        replace(preset, label="Other display label").verify_sources(sources, expected_sha256=preset.content_sha256)
+    with pytest.raises(ValueError, match="missing evidence"):
+        preset.verify_sources(sources[:-1], expected_sha256=preset.content_sha256)
+
+
 def test_additive_instances_and_deterministic_declaration_order(registry, inputs):
     overrides = {LEFT: {"recombination": (srh_choice("second"), srh_choice("first"))}}
     selected = selection(registry, inputs, overrides=overrides)
