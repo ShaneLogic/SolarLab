@@ -41,6 +41,11 @@
     "solarlab.config.legacy_defaults": [
       "read_legacy_default_catalog"
     ],
+    "solarlab.config.legacy_execution": [
+      "LegacyExecutionContext",
+      "R1ExecutionContext",
+      "r1_execution_source_requirements"
+    ],
     "solarlab.config.legacy_wire": [
       "LEGACY_WIRE_VERSION",
       "LegacyWire",
@@ -233,6 +238,11 @@
     ],
     "solarlab.config.legacy_defaults": [
       "read_legacy_default_catalog"
+    ],
+    "solarlab.config.legacy_execution": [
+      "LegacyExecutionContext",
+      "R1ExecutionContext",
+      "r1_execution_source_requirements"
     ],
     "solarlab.config.legacy_wire": [
       "LEGACY_WIRE_VERSION",
