@@ -142,6 +142,7 @@ jobs:
         run: >-
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
           tests/refactor/test_package_preparation.py
+          tests/refactor/test_package_boundaries.py
           tests/refactor/test_configuration_preparation.py
           tests/refactor/test_registry_preparation.py
           tests/refactor/test_device_configuration_preparation.py

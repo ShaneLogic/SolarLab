@@ -17,6 +17,7 @@ import math
 import re
 from typing import Any
 
+from solarlab.config.behavior import BehaviorContext
 from solarlab.config.model_parameters import (
     device_topology, layer_parameter_source, structured_parameter_source,
 )
@@ -30,7 +31,7 @@ from solarlab.units import UNIT_SCHEMA_VERSION
 
 __all__ = [
     "ModelInputs", "IdentityInputs", "Identity", "BuildSource", "RuntimeEnvironment",
-    "ExecutionDescription", "input_identity", "physics_identity", "execution_identity",
+    "ExecutionDescription", "ExecutionEngine", "input_identity", "physics_identity", "execution_identity",
     "CACHE_LAYERS",
 ]
 
@@ -405,6 +406,36 @@ class ExecutionDescription:
         _commit(self.current_repository_head)
 
 
+@dataclass(frozen=True, slots=True)
+class ExecutionEngine:
+    """Explicit implementation choice for the high-level execution facade.
+
+    This only binds identity. It neither imports an engine nor grants execution;
+    a historical BehaviorContext retains its existing preparation-only status.
+    There is no default, automatic selection, or failure-fallback mode.
+    """
+
+    name: str
+    behavior: BehaviorContext | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.name) is not str or self.name not in {"legacy", "solarlab"}:
+            raise ValueError("execution engine must be explicitly legacy or solarlab")
+        if self.name == "legacy" and type(self.behavior) is not BehaviorContext:
+            raise ValueError("legacy execution identity requires an explicit BehaviorContext")
+        if self.name == "solarlab" and self.behavior is not None:
+            raise ValueError("a legacy BehaviorContext cannot be relabelled as the solarlab engine")
+
+    def export(self) -> dict[str, Any]:
+        return {
+            "schema": "solarlab.execution-engine.v1",
+            "name": self.name,
+            "fallback": "forbidden",
+            "behavior_context_sha256": self.behavior.content_sha256 if self.behavior else None,
+            "behavior_context": self.behavior.export() if self.behavior else None,
+        }
+
+
 def _identity(kind: str, payload: Any, head: str | None = None) -> Identity:
     return Identity(kind, _json_bytes({"schema": "solarlab." + kind + ".v1", "zero_policy": _ZERO_POLICY, "payload": payload}), head)
 
@@ -421,10 +452,25 @@ def physics_identity(inputs: IdentityInputs) -> Identity:
     return _identity("H_physics", json.loads(inputs._physical_document))
 
 
-def execution_identity(inputs: IdentityInputs, execution: ExecutionDescription) -> Identity:
+def execution_identity(
+    inputs: IdentityInputs, execution: ExecutionDescription, *, engine: ExecutionEngine | None = None,
+) -> Identity:
+    """Build preparation identity; facade callers must supply ``engine``.
+
+    Omitting it preserves the existing non-executable preparation document.
+    A legacy facade must reject such a document, not infer an implementation.
+    """
     if type(inputs) is not IdentityInputs or type(execution) is not ExecutionDescription:
         raise ValueError("all actual identity inputs and explicit execution content roles are required")
-    return _identity("H_execution", {
+    if engine is not None:
+        if type(engine) is not ExecutionEngine:
+            raise ValueError("a typed explicit execution engine is required")
+        if engine.behavior is not None and (
+            engine.behavior.device.content_sha256 != inputs.prepared.content_sha256
+            or engine.behavior.selection.content_sha256 != inputs.selection.content_sha256
+        ):
+            raise ValueError("behavior context belongs to a different prepared device or selection")
+    payload = {
         "H_input": input_identity(inputs).sha256, "H_physics": physics_identity(inputs).sha256,
         "effective_binding": json.loads(inputs._execution_binding),
         "documents": {name: _source(getattr(execution, name)) for name in
@@ -432,4 +478,7 @@ def execution_identity(inputs: IdentityInputs, execution: ExecutionDescription) 
         "implementation": {"build_source_commit": execution.implementation.build_source_commit,
                            "files": [_source(item) for item in execution.implementation.files]},
         "environment": metadata_value(execution.environment),
-    }, execution.current_repository_head)
+    }
+    if engine is not None:
+        payload["engine"] = engine.export()
+    return _identity("H_execution", payload, execution.current_repository_head)

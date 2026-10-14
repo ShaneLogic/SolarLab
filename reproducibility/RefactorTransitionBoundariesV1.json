@@ -1,0 +1,126 @@
+{
+  "schema": "solarlab.refactor-transition-boundaries.v1",
+  "version": 1,
+  "scope": "P03-01 package and explicit legacy transition boundaries; no execution or retirement authorization",
+  "consumer_inventory": {
+    "index": "reproducibility/RefactorCoverageV1.json",
+    "discovery_record": "discovery_evidence",
+    "policy": "Use the complete P00 consumer graph, including lazy imports and historical consumers, before retiring any source; the groups below do not replace that graph."
+  },
+  "legacy_package": {
+    "source_root": "perovskite-sim/perovskite_sim",
+    "wheel_root": "perovskite_sim",
+    "source_copies": 1,
+    "relocation": "none",
+    "excluded_alternative": "src/perovskite_sim",
+    "release_exclusion_task": "P09-01",
+    "retirement_task": "P09-03",
+    "retirement_condition": "Every transitive consumer has a reviewed replacement or an explicit retained RS owner."
+  },
+  "execution_facade": {
+    "id": "legacy-engine",
+    "owner": "WS4",
+    "status": "planned_for_M1_not_implemented_by_WS2",
+    "module": "solarlab_server.legacy_engine",
+    "path": "src/solarlab_server/legacy_engine/__init__.py",
+    "symbol": "run",
+    "signature": "run(request: WorkerRequest, context: WorkerContext) -> WorkerResult",
+    "dispatch": "solarlab.experiments.worker.WorkerBinding.from_function",
+    "executor": "solarlab.experiments.execution.ProcessSupervisor.submit",
+    "activation_task": "P06-06",
+    "exit_tasks": ["P06-06", "P09-03"],
+    "rules": [
+      "One code-owned worker allowlist entry; request data cannot choose an import path.",
+      "Require an explicit ExecutionEngine in H_execution; engine-less preparation identities cannot execute.",
+      "Legacy execution requires the exact immutable BehaviorContext bound to the prepared device and selection.",
+      "Freeze the isolated child environment before importing the legacy engine; never change process-global environment during a job.",
+      "Record and return the chosen engine failure; never retry through another engine.",
+      "Core never imports this facade, perovskite_sim, server or research."
+    ]
+  },
+  "data_adapters": [
+    {
+      "module": "solarlab.config.legacy_wire",
+      "symbol": "prepare_legacy_wire",
+      "path": "src/solarlab/config/legacy_wire.py",
+      "role": "Single data-only reverse wire adapter; never an engine executor",
+      "owner": "WS2",
+      "exit_tasks": ["P06-06", "P06-07", "P06-08", "P09-03"]
+    },
+    {
+      "module": "solarlab.config.legacy_defaults",
+      "symbol": "read_legacy_default_catalog",
+      "path": "src/solarlab/config/legacy_defaults.py",
+      "role": "Read source-bound legacy default declarations without importing the old engine",
+      "owner": "WS2",
+      "exit_tasks": ["P03-04", "P09-03"]
+    },
+    {
+      "module": "solarlab.config.behavior",
+      "symbol": "inspect_historical_behavior",
+      "path": "src/solarlab/config/behavior.py",
+      "role": "Preparation-only historical effective-behavior inspection, with distinct declared values",
+      "owner": "WS2",
+      "exit_tasks": ["P03-04", "P09-03"]
+    }
+  ],
+  "consumer_groups": [
+    {
+      "id": "legacy-http-jobs",
+      "paths": ["perovskite-sim/backend/main.py"],
+      "owner": "WS4",
+      "status": "retained_legacy_execution",
+      "replacement": "solarlab_server.legacy_engine followed by qualified solarlab executors",
+      "exit_tasks": ["P06-06", "P09-03"]
+    },
+    {
+      "id": "legacy-celery",
+      "paths": ["perovskite-sim/backend/celery_app.py"],
+      "owner": "WS4",
+      "status": "retained_optional_entry_no_broker_run_claim",
+      "replacement": "Explicit worker binding and supported queue policy",
+      "exit_tasks": ["P06-04", "P06-06", "P09-03"]
+    },
+    {
+      "id": "legacy-cli-and-registries",
+      "paths": [
+        "perovskite-sim/scripts/run_device_parameter_sweep.py",
+        "perovskite-sim/scripts/run_material_screening.py",
+        "perovskite-sim/scripts/verify_reproducibility.py"
+      ],
+      "inventory_scope": "All active script and registry executor entries in the P00 graph, not just these representative paths",
+      "owner": "WS2/WS3; RS for research-qualified executors",
+      "status": "retained_legacy_executors",
+      "replacement": "Versioned experiment registry and explicit public executors",
+      "exit_tasks": ["P03-06", "P05-05", "P09-03"]
+    },
+    {
+      "id": "legacy-2d",
+      "paths": [
+        "perovskite-sim/perovskite_sim/twod/solver_2d.py",
+        "perovskite-sim/perovskite_sim/twod/experiments/jv_sweep_2d.py"
+      ],
+      "owner": "WS3/WS4",
+      "status": "retained_low_level_dependency_closure_pending",
+      "replacement": "Low-level geometry in solarlab.mesh; explicit public solver and experiment contracts",
+      "exit_tasks": ["P06-01", "P06-02", "P09-03"]
+    },
+    {
+      "id": "retained-r1-and-reverse-research-consumers",
+      "paths": [
+        "perovskite-sim/perovskite_sim/experiments/one_dimensional_mechanism_r1.py",
+        "perovskite-sim/perovskite_sim/experiments/interface_defect_ion_transient.py",
+        "perovskite-sim/perovskite_sim/experiments/defect_ion_combined_impedance.py"
+      ],
+      "inventory_scope": "All precision, backend, replay, certificate and archive consumers in the P00 graph",
+      "owner": "RS",
+      "status": "retained_until_RS_exit; not deleted to close product G9P",
+      "replacement": "solarlab_research public-contract migration with original certificate verification",
+      "exit_tasks": ["P07-01", "P07-05", "P09-03"]
+    }
+  ],
+  "historical_evidence": {
+    "policy": "Keep original paths, source commits, digests, failures and verification algorithms; do not rewrite archives during path migration.",
+    "exit_tasks": ["P03-06", "P09-03", "P09-04"]
+  }
+}

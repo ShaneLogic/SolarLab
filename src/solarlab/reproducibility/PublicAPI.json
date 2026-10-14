@@ -1,0 +1,433 @@
+{
+  "schema": "solarlab.public-api-policy.v1",
+  "version": 1,
+  "core_root_exports": [],
+  "scope": "Closed public symbols for WS2 modules and current companion-package consumers; private helpers are not cross-package API.",
+  "declared_exports": {
+    "solarlab": [],
+    "solarlab.config": [],
+    "solarlab.config.behavior": [
+      "BehaviorContext",
+      "CapturedPreparation",
+      "behavior_source_requirements",
+      "inspect_historical_behavior"
+    ],
+    "solarlab.config.device_import": [
+      "import_standard_device"
+    ],
+    "solarlab.config.device_inputs": [
+      "DeviceInput",
+      "FullLayerInput",
+      "NamedMaterialInput",
+      "TandemInput"
+    ],
+    "solarlab.config.identity": [
+      "ModelInputs",
+      "IdentityInputs",
+      "Identity",
+      "BuildSource",
+      "RuntimeEnvironment",
+      "ExecutionDescription",
+      "ExecutionEngine",
+      "input_identity",
+      "physics_identity",
+      "execution_identity",
+      "CACHE_LAYERS"
+    ],
+    "solarlab.config.inputs": [
+      "LayerInput"
+    ],
+    "solarlab.config.legacy_defaults": [
+      "read_legacy_default_catalog"
+    ],
+    "solarlab.config.legacy_wire": [
+      "LEGACY_WIRE_VERSION",
+      "LegacyWire",
+      "prepare_legacy_wire"
+    ],
+    "solarlab.config.model_parameters": [
+      "layer_parameter_source",
+      "device_topology",
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source",
+      "resolve_structured_edit"
+    ],
+    "solarlab.config.resolve": [
+      "load_template_library",
+      "load_layer_input",
+      "layer_input_mapping",
+      "resolve_layer",
+      "resolve_layers"
+    ],
+    "solarlab.config.resolve_device": [
+      "resolve_device",
+      "resolve_tandem"
+    ],
+    "solarlab.config.scaps_input": [
+      "import_scaps_device"
+    ],
+    "solarlab.config.schema": [
+      "export_configuration_schema",
+      "configuration_schema_representation"
+    ],
+    "solarlab.config.structured_parameters": [
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source",
+      "resolve_structured_edit",
+      "device_topology"
+    ],
+    "solarlab.config.tandem_input": [
+      "import_tandem"
+    ],
+    "solarlab.config.yaml": [
+      "load_yaml_mapping"
+    ],
+    "solarlab.device": [],
+    "solarlab.device.defaults": [
+      "DefaultCatalog"
+    ],
+    "solarlab.device.layer": [
+      "ResolvedLayer",
+      "ResolvedMaterial",
+      "ValueOrigin"
+    ],
+    "solarlab.device.resolved": [
+      "PreparedMaterial",
+      "PreparedLayer",
+      "PreparedDefect",
+      "PreparedMultivalentDefect",
+      "PreparedInterface",
+      "PreparedDevice",
+      "PreparedTandem"
+    ],
+    "solarlab.experiments.registry": [
+      "ExperimentDefinition",
+      "ExperimentPreflight",
+      "ExperimentRegistry"
+    ],
+    "solarlab.experiments.two_dimensional.preparation": [
+      "PreparedSpatialExperiment",
+      "prepare_spatial_experiment"
+    ],
+    "solarlab.materials": [],
+    "solarlab.materials.full_parameters": [
+      "ParameterFieldsInput",
+      "StructuredInput",
+      "StableId",
+      "Nonempty",
+      "FullParameterInput",
+      "quantity_field",
+      "LAYER_OWNED_PARAMETERS",
+      "full_parameter_items"
+    ],
+    "solarlab.materials.library": [
+      "LayerTemplate",
+      "MaterialLibrary",
+      "validated_parameters"
+    ],
+    "solarlab.materials.parameter_schema": [
+      "parameter_names",
+      "parameter_schema",
+      "parameter_values"
+    ],
+    "solarlab.materials.parameters": [
+      "EditableInput",
+      "LayerValuesInput",
+      "Scalar",
+      "parameter_units"
+    ],
+    "solarlab.materials.resources": [
+      "ResourceTable",
+      "ResourceLibrary"
+    ],
+    "solarlab.materials.source": [
+      "SourceDocument"
+    ],
+    "solarlab.physics.presets": [
+      "HistoricalDisable",
+      "NamedPreset",
+      "PresetSelection",
+      "select_preset"
+    ],
+    "solarlab.physics.registry": [
+      "CapabilityContext",
+      "CapabilityRule",
+      "EvidenceRef",
+      "ModelDefinition",
+      "ModelRef",
+      "ModelRegistry",
+      "OwnedVariable",
+      "Requirement",
+      "Scope",
+      "StructuredSchema",
+      "StructuredData",
+      "StructuredParameters",
+      "StructuredAuthority",
+      "metadata_digest",
+      "metadata_value"
+    ],
+    "solarlab.physics.selection": [
+      "ModelChoice",
+      "ParameterSource",
+      "SelectedModel",
+      "Selection",
+      "Topology",
+      "select_models",
+      "validate_selection"
+    ],
+    "solarlab.physics.semantic_projection": [
+      "SemanticProjection"
+    ],
+    "solarlab.reproducibility": [
+      "MigrationRegistry",
+      "load_registry",
+      "validate_registry_pair",
+      "SourceRef",
+      "SourceSet",
+      "read_sources"
+    ],
+    "solarlab.units": [
+      "UNIT_SCHEMA_VERSION",
+      "QuantityError",
+      "normalize_quantity",
+      "supported_units"
+    ]
+  },
+  "public_imports": {
+    "solarlab": [],
+    "solarlab.config": [],
+    "solarlab.config.behavior": [
+      "BehaviorContext",
+      "CapturedPreparation",
+      "behavior_source_requirements",
+      "inspect_historical_behavior"
+    ],
+    "solarlab.config.device_import": [
+      "import_standard_device"
+    ],
+    "solarlab.config.device_inputs": [
+      "DeviceInput",
+      "FullLayerInput",
+      "NamedMaterialInput",
+      "TandemInput"
+    ],
+    "solarlab.config.identity": [
+      "BuildSource",
+      "CACHE_LAYERS",
+      "ExecutionDescription",
+      "ExecutionEngine",
+      "Identity",
+      "IdentityInputs",
+      "ModelInputs",
+      "RuntimeEnvironment",
+      "execution_identity",
+      "input_identity",
+      "physics_identity"
+    ],
+    "solarlab.config.inputs": [
+      "LayerInput"
+    ],
+    "solarlab.config.legacy_defaults": [
+      "read_legacy_default_catalog"
+    ],
+    "solarlab.config.legacy_wire": [
+      "LEGACY_WIRE_VERSION",
+      "LegacyWire",
+      "prepare_legacy_wire"
+    ],
+    "solarlab.config.model_parameters": [
+      "device_topology",
+      "layer_parameter_source",
+      "resolve_structured_edit",
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source"
+    ],
+    "solarlab.config.resolve": [
+      "layer_input_mapping",
+      "load_layer_input",
+      "load_template_library",
+      "resolve_layer",
+      "resolve_layers"
+    ],
+    "solarlab.config.resolve_device": [
+      "resolve_device",
+      "resolve_tandem"
+    ],
+    "solarlab.config.scaps_input": [
+      "import_scaps_device"
+    ],
+    "solarlab.config.schema": [
+      "configuration_schema_representation",
+      "export_configuration_schema"
+    ],
+    "solarlab.config.structured_parameters": [
+      "device_topology",
+      "resolve_structured_edit",
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source"
+    ],
+    "solarlab.config.tandem_input": [
+      "import_tandem"
+    ],
+    "solarlab.config.yaml": [
+      "load_yaml_mapping"
+    ],
+    "solarlab.device": [],
+    "solarlab.device.defaults": [
+      "DefaultCatalog"
+    ],
+    "solarlab.device.inputs": [
+      "DeviceInput",
+      "TandemInput"
+    ],
+    "solarlab.device.layer": [
+      "ResolvedLayer",
+      "ResolvedMaterial",
+      "ValueOrigin"
+    ],
+    "solarlab.device.resolved": [
+      "PreparedDefect",
+      "PreparedDevice",
+      "PreparedInterface",
+      "PreparedLayer",
+      "PreparedMaterial",
+      "PreparedMultivalentDefect",
+      "PreparedTandem"
+    ],
+    "solarlab.experiments.inputs": [
+      "invalid"
+    ],
+    "solarlab.experiments.jv.inputs": [
+      "JVExperimentInput"
+    ],
+    "solarlab.experiments.jv.preparation": [
+      "PreparedJVExperiment",
+      "prepare_jv_experiment"
+    ],
+    "solarlab.experiments.registry": [
+      "ExperimentDefinition",
+      "ExperimentPreflight",
+      "ExperimentRegistry"
+    ],
+    "solarlab.experiments.two_dimensional.inputs": [
+      "SpatialExperimentInput"
+    ],
+    "solarlab.experiments.two_dimensional.preparation": [
+      "PreparedSpatialExperiment",
+      "prepare_spatial_experiment"
+    ],
+    "solarlab.io.artifacts": [
+      "ArtifactIntegrityError"
+    ],
+    "solarlab.io.run_store": [
+      "RunStore",
+      "StateConflict"
+    ],
+    "solarlab.materials": [],
+    "solarlab.materials.full_parameters": [
+      "FullParameterInput",
+      "LAYER_OWNED_PARAMETERS",
+      "Nonempty",
+      "ParameterFieldsInput",
+      "StableId",
+      "StructuredInput",
+      "full_parameter_items",
+      "quantity_field"
+    ],
+    "solarlab.materials.library": [
+      "LayerTemplate",
+      "MaterialLibrary",
+      "validated_parameters"
+    ],
+    "solarlab.materials.parameter_schema": [
+      "parameter_names",
+      "parameter_schema",
+      "parameter_values"
+    ],
+    "solarlab.materials.parameters": [
+      "EditableInput",
+      "LayerValuesInput",
+      "Scalar",
+      "parameter_units"
+    ],
+    "solarlab.materials.resources": [
+      "ResourceLibrary",
+      "ResourceTable"
+    ],
+    "solarlab.materials.source": [
+      "SourceDocument"
+    ],
+    "solarlab.physics.presets": [
+      "HistoricalDisable",
+      "NamedPreset",
+      "PresetSelection",
+      "select_preset"
+    ],
+    "solarlab.physics.registry": [
+      "CapabilityContext",
+      "CapabilityRule",
+      "EvidenceRef",
+      "ModelDefinition",
+      "ModelRef",
+      "ModelRegistry",
+      "OwnedVariable",
+      "Requirement",
+      "Scope",
+      "StructuredAuthority",
+      "StructuredData",
+      "StructuredParameters",
+      "StructuredSchema",
+      "metadata_digest",
+      "metadata_value"
+    ],
+    "solarlab.physics.selection": [
+      "ModelChoice",
+      "ParameterSource",
+      "SelectedModel",
+      "Selection",
+      "Topology",
+      "select_models",
+      "validate_selection"
+    ],
+    "solarlab.physics.semantic_projection": [
+      "SemanticProjection"
+    ],
+    "solarlab.reproducibility": [
+      "MigrationRegistry",
+      "SourceRef",
+      "SourceSet",
+      "load_registry",
+      "read_sources",
+      "validate_registry_pair"
+    ],
+    "solarlab.sweeps.inputs": [
+      "SweepInput"
+    ],
+    "solarlab.sweeps.preparation": [
+      "PreparedSweep",
+      "prepare_sweep"
+    ],
+    "solarlab.sweeps.reference": [
+      "SweepReference"
+    ],
+    "solarlab.units": [
+      "QuantityError",
+      "UNIT_SCHEMA_VERSION",
+      "normalize_quantity",
+      "supported_units"
+    ]
+  },
+  "checked_consumers": [
+    "solarlab_server",
+    "solarlab_research"
+  ],
+  "future_contracts": {
+    "owner": "WS3",
+    "namespace": "solarlab.contracts",
+    "rule": "Low-level protocols only; implementation and export list come from WS3, not placeholder source from WS2."
+  }
+}

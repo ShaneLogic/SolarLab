@@ -23,7 +23,7 @@ import pytest
 
 from solarlab.config.device_import import import_standard_device
 from solarlab.config.identity import (
-    BuildSource, CACHE_LAYERS, ExecutionDescription, IdentityInputs, ModelInputs,
+    BuildSource, CACHE_LAYERS, ExecutionDescription, ExecutionEngine, IdentityInputs, ModelInputs,
     RuntimeEnvironment, execution_identity, input_identity, physics_identity,
 )
 from solarlab.config.legacy_defaults import read_legacy_default_catalog
@@ -112,6 +112,66 @@ def execution():
 
 def hashes(inputs, execution):
     return input_identity(inputs).sha256, physics_identity(inputs).sha256, execution_identity(inputs, execution).sha256
+
+
+def engine_behavior(inputs, environment=()):
+    from solarlab.config.behavior import behavior_source_requirements, inspect_historical_behavior
+    sources = tuple(SourceDocument(name, (LEGACY / name).read_bytes())
+                    for name, _ in behavior_source_requirements())
+    return inspect_historical_behavior(
+        inputs.prepared, inputs.selection, driver="scaps_transient", sources=sources,
+        environment=environment, arguments=SourceDocument("engine-identity:arguments", b"{}"),
+    )
+
+
+def test_explicit_engine_and_behavior_are_inside_execution_identity_only(device, execution):
+    inputs = identity_inputs(device)
+    original = hashes(inputs, execution)
+    behavior = engine_behavior(inputs)
+    legacy = execution_identity(inputs, execution, engine=ExecutionEngine("legacy", behavior))
+    current = execution_identity(inputs, execution, engine=ExecutionEngine("solarlab"))
+    document = legacy.export()["document"]["payload"]
+    assert document["engine"]["name"] == "legacy"
+    assert document["engine"]["fallback"] == "forbidden"
+    assert document["engine"]["behavior_context_sha256"] == behavior.content_sha256
+    assert document["engine"]["behavior_context"]["can_execute"] is False
+    assert len({legacy.sha256, current.sha256, original[2]}) == 3
+    assert (input_identity(inputs).sha256, physics_identity(inputs).sha256) == original[:2]
+    assert hashes(inputs, execution) == original
+    assert not legacy.cache_eligible and not current.cache_eligible
+
+
+def test_legacy_environment_and_driver_cannot_disappear_from_execution_identity(device, execution):
+    inputs = identity_inputs(device)
+    first = engine_behavior(inputs, (("PEROVSKITE_RHS_FINITE_CHECK", "0"),))
+    second = engine_behavior(inputs, (("PEROVSKITE_RHS_FINITE_CHECK", "1"),))
+    a = execution_identity(inputs, execution, engine=ExecutionEngine("legacy", first))
+    b = execution_identity(inputs, execution, engine=ExecutionEngine("legacy", second))
+    assert a.sha256 != b.sha256
+    assert a.export()["document"]["payload"]["engine"]["behavior_context"]["driver"] == "scaps_transient"
+
+
+def test_engine_requires_real_matching_context_and_has_no_automatic_fallback(device, execution):
+    inputs = identity_inputs(device)
+    behavior = engine_behavior(inputs)
+    for name in ("auto", "fallback", "", True):
+        with pytest.raises(ValueError, match="explicitly"):
+            ExecutionEngine(name)
+    with pytest.raises(ValueError, match="BehaviorContext"):
+        ExecutionEngine("legacy")
+    with pytest.raises(ValueError, match="relabelled"):
+        ExecutionEngine("solarlab", behavior)
+    with pytest.raises(ValueError, match="typed explicit"):
+        execution_identity(inputs, execution, engine={"name": "legacy"})
+    changed_inputs = identity_inputs(changed(device, lambda d: d["settings"].update(Phi=1e21)))
+    with pytest.raises(ValueError, match="different prepared"):
+        execution_identity(changed_inputs, execution, engine=ExecutionEngine("legacy", behavior))
+    engine = ExecutionEngine("legacy", behavior)
+    exported = engine.export()
+    exported["behavior_context"]["environment_effective_snapshot"].clear()
+    assert engine.export()["behavior_context"]["environment_effective_snapshot"]
+    with pytest.raises(FrozenInstanceError):
+        engine.name = "solarlab"
 
 
 def test_real_prepared_device_selection_resource_and_execution_producers(device, execution):

@@ -133,6 +133,8 @@ only-include = [
     "tests/refactor/test_behavior_context.py",
     "tests/refactor/test_configuration_schema_export.py",
     "tests/refactor/test_configuration_input_types.py",
+    "tests/refactor/test_package_boundaries.py",
+    "reproducibility/RefactorTransitionBoundariesV1.json",
     "scripts/generate_configuration_schema.py",
     "web/src",
     "web/tests",
@@ -196,3 +198,35 @@ name = "Physics declarations do not import device assembly or experiments"
 type = "forbidden"
 source_modules = ["solarlab.physics"]
 forbidden_modules = ["solarlab.config", "solarlab.device", "solarlab.experiments"]
+
+# Parenthesized layers may be absent while WS3 creates its packages. They are
+# enforced as soon as they exist; tests create each future layer and exercise
+# direct and indirect violations without adding placeholder production modules.
+[[tool.importlinter.contracts]]
+name = "Physics does not depend on equation assembly"
+type = "layers"
+layers = ["(solarlab.equations)", "solarlab.physics"]
+
+[[tool.importlinter.contracts]]
+name = "Solvers do not depend on device assembly"
+type = "layers"
+layers = ["solarlab.device", "(solarlab.solvers)"]
+
+[[tool.importlinter.contracts]]
+name = "Low-level geometry stays below solvers and spatial experiments"
+type = "layers"
+layers = [
+    "solarlab.experiments.two_dimensional",
+    "(solarlab.solvers)",
+    "(solarlab.discretization)",
+    "(solarlab.mesh)",
+]
+
+[[tool.importlinter.contracts]]
+name = "Shared contracts do not import implementation layers"
+type = "layers"
+containers = ["solarlab"]
+layers = [
+    "config : device : materials : reproducibility : units : physics : experiments : sweeps : (io) : (mesh) : (discretization) : (equations) : (solvers)",
+    "(contracts)",
+]
