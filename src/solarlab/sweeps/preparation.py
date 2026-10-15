@@ -9,6 +9,10 @@ import json
 from typing import Any
 
 from pydantic import ValidationError
+from solarlab.config.identity import (
+    ExecutionDescription, ExecutionEngine, ExecutionManifest, IdentityInputs,
+    RuntimeEnvironment, verify_execution_manifest,
+)
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.inputs import DeviceInput
@@ -169,6 +173,33 @@ class PreparedSweep:
     @property
     def content_sha256(self) -> str:
         return digest([input_document(self.input_json), self.to_mapping()])
+
+    def consume_point_manifest(
+        self, point_id: str, manifest: ExecutionManifest, inputs: IdentityInputs,
+        execution: ExecutionDescription, *, engine: ExecutionEngine,
+        environment: RuntimeEnvironment, expected_sha256: str,
+    ) -> PreparedDevice | PreparedJVExperiment:
+        """Freshly prepare one declared point and verify its complete binding.
+
+        No state, numerical binding or factorization is shared with any other
+        point. A device-only point needs its caller's upstream protocol/state
+        contract; a J-V point additionally checks the actual history builder.
+        """
+        point = next((value for value in self.to_mapping()["points"] if value["id"] == point_id), None)
+        if point is None or point["status"] != "prepared_pending_dependencies" or point["applied_input"] is None:
+            raise ValueError("manifest consumption requires a resolved declared sweep point")
+        prepared = prepare_point(point["applied_input"], self.defaults, self.resources, self.sources)
+        if prepared.content_sha256 != point["content_sha256"] or digest(prepared.to_mapping()) != point["resolved_sha256"]:
+            raise ValueError("fresh sweep preparation differs from its declared point")
+        if isinstance(prepared, PreparedJVExperiment):
+            prepared.verify_manifest(manifest, inputs, execution, engine=engine,
+                                     environment=environment, expected_sha256=expected_sha256)
+        else:
+            if inputs.prepared.content_sha256 != prepared.content_sha256:
+                raise ValueError("manifest identity inputs belong to a different sweep device")
+            verify_execution_manifest(manifest, inputs, execution, engine=engine,
+                                      environment=environment, expected_sha256=expected_sha256)
+        return prepared
 
 
 def prepare_sweep(input: SweepInput, defaults: DefaultCatalog, resources: ResourceLibrary, *, sources: tuple[SourceDocument, ...] = (), references: tuple[SweepReference, ...] = ()) -> PreparedSweep:

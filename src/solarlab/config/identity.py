@@ -33,7 +33,7 @@ from solarlab.units import UNIT_SCHEMA_VERSION
 __all__ = [
     "ModelInputs", "IdentityInputs", "Identity", "BuildSource", "RuntimeEnvironment",
     "ExecutionDescription", "ExecutionEngine", "input_identity", "physics_identity", "execution_identity",
-    "CACHE_LAYERS",
+    "CACHE_LAYERS", "ExecutionManifest", "execution_manifest", "verify_execution_manifest",
 ]
 
 CACHE_LAYERS = ("topology_plan", "numeric_parameter_binding", "working_point_initial_state", "numeric_factorization")
@@ -514,3 +514,123 @@ def execution_identity(
     if engine is not None:
         payload["engine"] = engine.export()
     return _identity("H_execution", payload, execution.current_repository_head)
+
+
+_EXECUTION_ROLES = ("protocol", "preparation", "initial_state", "grid", "numeric_controls")
+
+
+def _content_record(source: SourceDocument) -> dict[str, Any]:
+    return {**_source(source), "content_hex": source.content.hex()}
+
+
+def _manifest_source(value: Any) -> SourceDocument:
+    if not isinstance(value, dict) or set(value) != {"id", "sha256", "bytes", "content_hex"}:
+        raise ValueError("manifest requires complete source bytes and their identity")
+    if type(value["content_hex"]) is not str:
+        raise ValueError("manifest source content must be hexadecimal bytes")
+    try:
+        source = SourceDocument(value["id"], bytes.fromhex(value["content_hex"]))
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid manifest source content") from error
+    if _content_record(source) != value or type(value["bytes"]) is not int:
+        raise ValueError("manifest source bytes do not match their recorded identity")
+    return source
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionManifest:
+    """Portable complete content binding, with no execution/cache admission.
+
+    All five upstream documents and implementation files retain their exact
+    bytes, including state words and signed zero. Their domain completeness
+    remains the upstream producer's contract. Consumers must call
+    ``verify_execution_manifest`` with independently supplied current inputs,
+    engine, content and environment; parsing alone is not verification.
+    Maintenance HEAD is recorded separately from the immutable build commit.
+    """
+
+    canonical_json: bytes
+    current_repository_head: str
+    sha256: str = field(init=False)
+    execution_sha256: str = field(init=False)
+    can_execute: bool = field(default=False, init=False)
+    cache_eligible: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        _commit(self.current_repository_head)
+        if type(self.canonical_json) is not bytes or len(self.canonical_json) > 2**23:
+            raise ValueError("manifest requires bounded immutable JSON bytes")
+        value = json.loads(self.canonical_json)
+        if (not isinstance(value, dict) or set(value) != {
+            "schema", "execution_identity", "content_roles", "implementation_content",
+        } or value["schema"] != "solarlab.execution-manifest.v1" or _json_bytes(value) != self.canonical_json):
+            raise ValueError("manifest is not in its canonical versioned domain")
+        document = value["execution_identity"]
+        if not isinstance(document, dict) or set(document) != {"schema", "zero_policy", "payload"}:
+            raise ValueError("manifest requires a complete execution identity document")
+        identity = Identity("H_execution", _json_bytes(document))
+        payload = document["payload"]
+        if not isinstance(payload, dict) or set(payload) != {
+            "H_input", "H_physics", "effective_binding", "documents", "implementation", "environment", "engine",
+        }:
+            raise ValueError("manifest requires the complete explicit-engine execution identity")
+        if (not isinstance(payload["engine"], dict) or payload["engine"].get("name") not in {"legacy", "solarlab"}
+                or payload["engine"].get("fallback") != "forbidden"):
+            raise ValueError("manifest requires an explicit engine without fallback")
+        if not isinstance(payload["implementation"], dict) or set(payload["implementation"]) != {"build_source_commit", "files"}:
+            raise ValueError("manifest requires the explicit implementation source binding")
+        roles = value["content_roles"]
+        if not isinstance(roles, dict) or set(roles) != set(_EXECUTION_ROLES):
+            raise ValueError("manifest is missing a complete upstream content role")
+        documents = {name: _source(_manifest_source(record)) for name, record in roles.items()}
+        implementation = value["implementation_content"]
+        if not isinstance(implementation, list):
+            raise ValueError("manifest requires implementation content")
+        build = BuildSource(payload["implementation"]["build_source_commit"],
+                            tuple(_manifest_source(record) for record in implementation))
+        if (payload["documents"] != documents or payload["implementation"] != {
+            "build_source_commit": build.build_source_commit, "files": [_source(source) for source in build.files],
+        }):
+            raise ValueError("manifest content differs from the bound execution identity")
+        object.__setattr__(self, "sha256", hashlib.sha256(self.canonical_json).hexdigest())
+        object.__setattr__(self, "execution_sha256", identity.sha256)
+
+    def export(self) -> dict[str, Any]:
+        return {"sha256": self.sha256, "document": json.loads(self.canonical_json),
+                "current_repository_head": self.current_repository_head,
+                "can_execute": self.can_execute, "cache_eligible": self.cache_eligible}
+
+
+def execution_manifest(
+    inputs: IdentityInputs, execution: ExecutionDescription, *, engine: ExecutionEngine,
+) -> ExecutionManifest:
+    """Bind every supplied role; never infer engine, initial state or protocol."""
+    if type(engine) is not ExecutionEngine:
+        raise ValueError("manifest requires a typed explicit execution engine")
+    identity = execution_identity(inputs, execution, engine=engine)
+    value = {"schema": "solarlab.execution-manifest.v1", "execution_identity": json.loads(identity.canonical_json),
+             "content_roles": {name: _content_record(getattr(execution, name)) for name in _EXECUTION_ROLES},
+             "implementation_content": [_content_record(source) for source in execution.implementation.files]}
+    return ExecutionManifest(_json_bytes(value), execution.current_repository_head)
+
+
+def verify_execution_manifest(
+    manifest: ExecutionManifest, inputs: IdentityInputs, execution: ExecutionDescription, *,
+    engine: ExecutionEngine, environment: RuntimeEnvironment, expected_sha256: str,
+) -> Identity:
+    """Check an externally pinned manifest at a real consumer boundary.
+
+    The caller supplies its observed runtime environment, not one decoded from
+    the manifest. Matching bytes do not establish P05 state qualification or
+    P07 release coverage, and the returned identity remains cache-ineligible.
+    """
+    if type(manifest) is not ExecutionManifest or manifest.sha256 != expected_sha256:
+        raise ValueError("manifest differs from the expected frozen identity")
+    if type(environment) is not RuntimeEnvironment or execution.environment != environment:
+        raise ValueError("consumer runtime environment differs from the manifest request")
+    if type(engine) is not ExecutionEngine or manifest.export()["document"]["execution_identity"]["payload"]["engine"] != engine.export():
+        raise ValueError("consumer engine/context differs from the manifest; fallback is forbidden")
+    expected = execution_manifest(inputs, execution, engine=engine)
+    if manifest.canonical_json != expected.canonical_json:
+        raise ValueError("consumer inputs, protocol, state, grid, controls or implementation differ from the manifest")
+    return execution_identity(inputs, execution, engine=engine)

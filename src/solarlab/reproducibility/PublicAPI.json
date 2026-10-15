@@ -33,7 +33,10 @@
       "input_identity",
       "physics_identity",
       "execution_identity",
-      "CACHE_LAYERS"
+      "CACHE_LAYERS",
+      "ExecutionManifest",
+      "execution_manifest",
+      "verify_execution_manifest"
     ],
     "solarlab.config.inputs": [
       "LayerInput"
@@ -240,13 +243,16 @@
       "CACHE_LAYERS",
       "ExecutionDescription",
       "ExecutionEngine",
+      "ExecutionManifest",
       "Identity",
       "IdentityInputs",
       "ModelInputs",
       "RuntimeEnvironment",
       "execution_identity",
+      "execution_manifest",
       "input_identity",
-      "physics_identity"
+      "physics_identity",
+      "verify_execution_manifest"
     ],
     "solarlab.config.inputs": [
       "LayerInput"
@@ -340,6 +346,7 @@
     ],
     "solarlab.experiments.jv.preparation": [
       "PreparedJVExperiment",
+      "consume_jv_manifest",
       "prepare_jv_experiment"
     ],
     "solarlab.experiments.registry": [

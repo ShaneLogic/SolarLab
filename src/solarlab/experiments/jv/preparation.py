@@ -9,6 +9,10 @@ from typing import Any, NoReturn
 
 import numpy as np
 
+from solarlab.config.identity import (
+    ExecutionDescription, ExecutionEngine, ExecutionManifest, Identity, IdentityInputs,
+    RuntimeEnvironment, verify_execution_manifest,
+)
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.experiments.jv.inputs import DarkJVInput, JVExperimentInput, JVInput, JVProtocolInput
@@ -227,8 +231,48 @@ class PreparedJVExperiment:
     def content_sha256(self) -> str:
         return hashlib.sha256(_bytes([_document(self.input_json), self.to_mapping()])).hexdigest()
 
+    def execution_documents(self) -> tuple[SourceDocument, SourceDocument]:
+        """The actual complete J-V declaration and controls, without a state."""
+        resolved = self.to_mapping()["experiment"]
+        if resolved["protocol"]["status"] != "declared_history" or resolved["numerical_controls"] is None:
+            raise ValueError("a complete transient J-V protocol and numerical controls are required")
+        protocol = SourceDocument("solarlab.jv-execution-protocol.v1", _bytes({
+            "schema": "solarlab.jv-execution-protocol.v1",
+            "input": self.to_input().experiment.editing_data(), "resolved": resolved,
+        }))
+        controls = SourceDocument("solarlab.jv-execution-controls.v1", _bytes({
+            "schema": "solarlab.jv-execution-controls.v1", "controls": resolved["numerical_controls"],
+            "mesh_request": resolved["mesh"],
+        }))
+        return protocol, controls
+
+    def verify_manifest(
+        self, manifest: ExecutionManifest, inputs: IdentityInputs, execution: ExecutionDescription, *,
+        engine: ExecutionEngine, environment: RuntimeEnvironment, expected_sha256: str,
+    ) -> Identity:
+        device = resolve_device(self.to_input().device, self.defaults, self.resources, sources=self.sources)
+        if inputs.prepared.content_sha256 != device.content_sha256:
+            raise ValueError("manifest identity inputs belong to a different J-V device")
+        if (execution.protocol, execution.numeric_controls) != self.execution_documents():
+            raise ValueError("manifest request differs from the complete actual J-V protocol/controls")
+        return verify_execution_manifest(manifest, inputs, execution, engine=engine,
+                                         environment=environment, expected_sha256=expected_sha256)
+
 
 def prepare_jv_experiment(input: JVExperimentInput, defaults: DefaultCatalog, resources: ResourceLibrary,
                           *, sources: tuple[SourceDocument, ...] = ()) -> PreparedJVExperiment:
     model = JVExperimentInput.model_validate(input)
     return PreparedJVExperiment(_bytes(model.model_dump(mode="json", exclude_unset=True)), defaults, resources, sources)
+
+
+def consume_jv_manifest(
+    input: JVExperimentInput, defaults: DefaultCatalog, resources: ResourceLibrary, *,
+    manifest: ExecutionManifest, inputs: IdentityInputs, execution: ExecutionDescription,
+    engine: ExecutionEngine, environment: RuntimeEnvironment, expected_sha256: str,
+    sources: tuple[SourceDocument, ...] = (),
+) -> PreparedJVExperiment:
+    """Reprepare the real request and verify its manifest before any executor."""
+    prepared = prepare_jv_experiment(input, defaults, resources, sources=sources)
+    prepared.verify_manifest(manifest, inputs, execution, engine=engine,
+                             environment=environment, expected_sha256=expected_sha256)
+    return prepared
