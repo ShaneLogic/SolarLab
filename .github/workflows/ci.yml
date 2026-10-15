@@ -111,6 +111,8 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_g2_route_launcher.py
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_error_weights.py::TestInitialWeightSource::test_pins_and_real_callback_route
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_readback.py tests/numerical_contracts/test_qualification_bridge.py
+          # G2-R latched producer/refresh/reader slice and metadata-only route checks.
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_reference_refresh.py tests/numerical_contracts/test_g2_route.py tests/numerical_contracts/test_g2_route_bindings.py
           # Repository-only comparison arithmetic; prepared campaign IO has separate evidence.
           "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_qualification_comparison.py::ArithmeticTests
           REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_transfer.py

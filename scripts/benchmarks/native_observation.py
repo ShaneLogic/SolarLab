@@ -645,14 +645,17 @@ def require_frame_successor(previous: NativeBasisFrame, current: NativeBasisFram
     same_epoch = previous.owner == current.owner and previous.generation == current.generation
     if numeric_handoff is not None:
         h = numeric_handoff
-        if (not isinstance(h, Mapping) or h.get("schema") != "solarlab.accepted-reference-handoff.v1"
+        v2 = isinstance(h, Mapping) and h.get("schema") == "solarlab.reference-state-transfer.v2"
+        proof = h.get("state_transfer" if v2 else "acceptance", {}) if isinstance(h, Mapping) else {}
+        if (not isinstance(h, Mapping) or h.get("schema") not in {"solarlab.accepted-reference-handoff.v1", "solarlab.reference-state-transfer.v2"}
                 or h.get("kind") != "voltage_lift_numeric_handoff"
                 or h.get("phase") != "complete" or same_epoch or previous_segment != current_segment
                 or h["record_sha256"] != digest({k: v for k, v in h.items() if k != "record_sha256"})
-                or h["acceptance"].get("schema") != "solarlab.full-interval-refresh-acceptance.v1"
-                or h["transfer"]["acceptance_sha256"] != digest(h["acceptance"])
-                or h["acceptance"]["coefficient_frame_identity"] != previous.identity
-                or h["acceptance"]["point_identity"] != h["transfer"]["point_identity"]
+                or proof.get("schema") != ("solarlab.numeric-reference-transfer-evidence.v2" if v2 else "solarlab.full-interval-refresh-acceptance.v1")
+                or h["transfer"]["state_transfer_sha256" if v2 else "acceptance_sha256"] != digest(proof)
+                or proof["coefficient_frame_identity"] != previous.identity
+                or proof["point_identity"] != h["transfer"]["point_identity"]
+                or v2 and ("acceptance" in h or proof.get("scientific_progress") != h["ledger"].get("scientific_progress"))
                 or h["ledger_sha256"] != digest(h["ledger"])
                 or previous_mapping is None or current_mapping is None
                 or h["transfer"]["old_map_identity"] != previous_mapping.identity
@@ -1106,6 +1109,108 @@ class AcceptedIntervalObserver:
                            "interval_sha256": certificate.term.interval_sha256},
                 passed=all(row["passed"] for row in ledgers.values()))
         return successors, evidence
+
+
+class SealedChargeObserver:
+    """Charge integration of sealed paths, driven by the independent reader.
+
+    No solver is created. Only the previous physical endpoint and one immutable
+    native interval are live; the original sample/packet bytes remain in the
+    producer history. The independent checker verifies the newly computed
+    charge increments, positive errors and cumulative arithmetic before emit.
+    """
+
+    def __init__(self, mapping, request, emit, checkpoint):
+        from scripts.benchmarks.coupled_device_prototype import AffineSamplingContext
+        from scripts.benchmarks.native_readback import _Protocol
+        from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+        policy = validate_certificate_policy(request)
+        if (policy is None or policy["observation"] != "sealed-history" or mapping.frame is not None
+                or digest(mapping.payload()) != request["map_identity"]
+                or digest(mapping.model.numeric_packet()) != digest(request["numeric_packet"])):
+            raise ContractError("sealed_charge_source_or_input_binding")
+        self.root, self.request, self.context = mapping, request, AffineSamplingContext(mapping.model, request)
+        self.emit, self.checkpoint = emit, checkpoint
+        self.checker = _Protocol(request, None)
+        self.prefixes = {key: ChargePrefix.start((request["budgets"]["charge_C"],)*3) for key in CHARGE_LEDGERS}
+        physical = prepare_physical_charge_prefix(request)
+        if physical is not None:
+            self.prefixes["physical_charge"] = physical
+        self.accumulator = prepare_charge_accumulator(request, request["interval_observation"])
+        self.last_point, self.previous, self.intervals = mapping.model.reference, None, 0
+
+    def consume_interval(self, deferred, left, right, packet_row, map_payload, segment, handoff, science):
+        from copy import deepcopy
+        from scripts.benchmarks.coupled_device_prototype import (
+            SegmentAffineFrame, VoltageLiftAdapter, VoltageLiftHistory,
+        )
+        from scripts.benchmarks.precision_prototype import PrimitiveExpansion
+        from scripts.benchmarks.physical_tolerance import physical_charge_error_allocation
+        self.checkpoint()
+        frame_payload = map_payload.get("segment_frame")
+        mapping = self.root
+        if frame_payload is not None:
+            words = lambda name: PrimitiveExpansion(tuple(frozen_array([float.fromhex(v) for v in row])
+                                                           for row in frame_payload[name]))
+            affine = SegmentAffineFrame(*(frame_payload[k] for k in (
+                "parent_map_identity", "segment_sha256", "logical_initialization_index", "predecessor_identity", "parent_input_sha256")),
+                float.fromhex(frame_payload["t0_hex"]), words("q0_words_hex"), words("v0_words_hex"))
+            if affine.payload() != frame_payload:
+                raise ContractError("sealed_charge_frame_words")
+            mapping = AffineVoltageMap(self.root.model, affine, self.root.mapped_input_profile)
+        if mapping.payload() != map_payload:
+            raise ContractError("sealed_charge_active_map")
+        owned_segment = next(s for s in self.context.segments if s.id == segment["id"])
+        numeric_handoff = None
+        if handoff is not None and handoff["transfer"]["new_map_identity"] == mapping.identity:
+            numeric_handoff = json.dumps(handoff, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        binding = VoltageLiftSegmentAdapter(VoltageLiftAdapter(mapping), self.context, owned_segment, numeric_handoff)
+        reference = VoltageLiftHistory(self.root).reference_record
+        history = VoltageLiftHistory(mapping, parent_reference=reference if mapping.frame is not None else None)
+        if self.last_point.identity != left["history"]["point_identity"]:
+            self.last_point = history.restore(reference, left["history"], self.last_point)[0]
+        right_point, increment, _, _ = history.restore(reference, right["history"], self.last_point)
+        policy = self.request["interval_observation"]
+        packet = restore_observation_record(packet_row["packet"])
+        frame = read_native_basis_packet(packet, expected_binding_identity=policy["binding_identity"],
+            expected_header_sha256=policy["header_sha256"], size=self.root.model.layout.size,
+            qualification_policy=self.request.get("qualification_policy"))
+        arithmetic = BallIntegrator(**{k: policy["arithmetic"][k] for k in ("bits", "evaluations", "depth")})
+        observer = AcceptedIntervalObserver(binding, frame, arithmetic=arithmetic, previous=self.previous)
+        if observer.prepared.path.identity != deferred["observation"]["path_identity"]:
+            raise ContractError("sealed_charge_path_identity")
+        clock = observer.prepared.path.clock
+        duration = clock.tn-clock.predecessor
+        allocation = (physical_charge_error_allocation(self.request, duration) if "physical_tolerance_policy" in self.request else
+                      rational(self.request["budgets"]["charge_C"])/12*duration/rational(self.context.segments[-1].end)/32)
+        self.prefixes, evidence = observer.charge_evidence((self.last_point,), (right_point, increment), self.prefixes,
+            absolute_error=allocation, charge_budget=self.request["budgets"]["charge_C"], charge_accumulator=self.accumulator)
+        rendered = {k: v for k, v in deferred.items() if k != "charge_observation"}
+        rendered.update(kind="voltage_lift_interval_certificate", observation=observation_record(evidence),
+                        arithmetic_calls=list(arithmetic.calls))
+        if "physical_tolerance_policy" in self.request:
+            rendered.update(charge_gate="signed-physical-charge-v1", physical_charge_error_allocation_C=observation_record(allocation))
+        checker = self.checker
+        checker.mapping, checker.map_id, checker.segment = map_payload, mapping.identity, segment
+        checker.frame_id, checker.path_id, checker.science = frame.identity, observer.prepared.path.identity, deepcopy(science)
+        # This is the reader's charge arithmetic, not physical_charge_passed.
+        checker._interval(left, right, packet, supplied_row=rendered)
+        self.checkpoint()
+        self.emit({"kind": "sealed_voltage_lift_charge", "request_sha256": digest(self.request),
+                   "source_interval_sha256": digest(deferred), "interval": rendered})
+        self.last_point, self.previous = right_point, observer
+        self.intervals += 1
+
+    def summary(self):
+        check = self.checker
+        return {"schema": "solarlab.sealed-charge-observation.v1", "intervals": self.intervals,
+                "request_sha256": digest(self.request), "no_native_calls": True,
+                "physical_charge": (None if check.physical_charge is None else observation_record(check.physical_charge.summary())),
+                "historical_prefixes": observation_record(check.prefix),
+                "signed_integrals": observation_record(check.signed_integrals),
+                "arithmetic": self.request["interval_observation"]["arithmetic"],
+                "independent_saved_word_and_ledger_check": True,
+                "scientific_status": check.science.summary(final=True)["status"], "scientific_pass": False}
 
 
 def prepare_interval_observation_policy(request, *, binding_identity, header_sha256, backend_modules,

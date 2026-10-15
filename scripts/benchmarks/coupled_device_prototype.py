@@ -3627,8 +3627,47 @@ def _voltage_lift_frame_handoff(mapping, point, z, zdot, input_rate, acceptance_
     return fresh, zero, zero, record
 
 
+class _ScientificProgress:
+    """Persistent scientific findings, separate from native/safety failures."""
+
+    def __init__(self, policy):
+        self.policy = policy
+        self.failed = set()
+        self.first_failure = None
+
+    def note(self, gate, passed, record):
+        if type(passed) is not bool:
+            raise ContractError("scientific_certificate_boolean")
+        if not passed:
+            self.failed.add(gate)
+            if self.first_failure is None:
+                self.first_failure = {"gate": gate, "record_sha256": digest(record)}
+
+    def payload(self):
+        pending = ["T1"]  # No reviewed reference/scale proof is supplied online.
+        return {"schema": "solarlab.scientific-progress.v1",
+                "failed_gates": sorted(self.failed), "first_failure": self.first_failure,
+                "pending_proofs": pending,
+                "status": "failed" if self.failed else "pending", "passed": False}
+
+
+def _scientific_sample_safety(metrics):
+    """Only domain/nonfinite faults stop the new certificate mode here."""
+    names = ("constraint_potential_bound_V", "constraint_charge_bound_C", "contact_max_relative")
+    names += tuple(k for k in ("ion_inventory_relative", "maximum_site_fraction", "minimum_f", "maximum_f")
+                   if k in metrics)
+    if any(type(metrics.get(k)) not in (int, float) or not math.isfinite(metrics[k]) or metrics[k] < 0
+           for k in names):
+        raise ContractError("scientific_nonfinite_or_negative_state_bound")
+    if ("minimum_f" in metrics and not 0 <= metrics["minimum_f"] <= metrics["maximum_f"] <= 1
+            or "maximum_site_fraction" in metrics and metrics["maximum_site_fraction"] >= 1):
+        raise ContractError("scientific_state_outside_mathematical_domain")
+
+
 def _reference_refresh_policy(request, time):
     """First opt-in: one exact accepted boundary in the last physical segment."""
+    from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+    continuing = validate_certificate_policy(request) is not None
     segments = request["segments"]
     segment = segments[-1]
     if (type(time) is not float or not math.isfinite(time)
@@ -3637,12 +3676,15 @@ def _reference_refresh_policy(request, time):
             or request["controls"].get("calc_initcond") is not None
             or request["voltage_lift_map"].get("mapped_input_profile") != "frame-input-expansion12-v1"):
         raise ContractError("reference_refresh_unsupported_scope")
-    return {"schema": "solarlab.accepted-reference-refresh-policy.v1", "time_hex": time.hex(),
+    return {"schema": ("solarlab.reference-state-transfer-policy.v2" if continuing else
+                       "solarlab.accepted-reference-refresh-policy.v1"), "time_hex": time.hex(),
         "physical_segment_ordinal": len(segments), "segment_sha256": digest(segment), "max_refreshes": 1,
         "parent_map_identity": request["map_identity"], "controls_sha256": digest(request["controls"]),
         "budgets_sha256": digest(request["budgets"]), "segments_sha256": digest(segments),
         "sampling_sha256": digest((request["observation_times"], request["quadrature"])),
-        "trigger": "exact_fully_accepted_native_endpoint", "native_api": "init_step",
+        "trigger": ("exact_domain_safe_native_endpoint" if continuing else "exact_fully_accepted_native_endpoint"),
+        **({"certificate_failure_policy_sha256": digest(request["certificate_failure_policy"])} if continuing else {}),
+        "native_api": "init_step",
         "same_owner_generation_increment": 1, "preserve_original_segment_inputs": True,
         "discard_native_multistep_history": True, "restored_seed_prefix_credit": False}
 
@@ -3652,8 +3694,12 @@ def _reference_refresh_binding(request, mapping, segment, encoded):
         raise ContractError("reference_refresh_record_size")
     record = json.loads(encoded)
     policy = request.get("reference_refresh_policy")
+    continuing = "certificate_failure_policy" in request
+    evidence_key = "state_transfer" if continuing else "acceptance"
+    transfer_key = "state_transfer_sha256" if continuing else "acceptance_sha256"
+    proof = record[evidence_key]
     if (type(policy) is not dict or policy != _reference_refresh_policy(request, float.fromhex(policy["time_hex"]))
-            or record["schema"] != "solarlab.accepted-reference-handoff.v1"
+            or record["schema"] != ("solarlab.reference-state-transfer.v2" if continuing else "solarlab.accepted-reference-handoff.v1")
             or record["kind"] != "voltage_lift_numeric_handoff" or record["phase"] not in {"prepared", "complete"}
             or record["record_sha256"] != digest({k: v for k, v in record.items() if k != "record_sha256"})
             or record["request_sha256"] != digest(request) or record["policy_sha256"] != digest(policy)
@@ -3663,11 +3709,13 @@ def _reference_refresh_binding(request, mapping, segment, encoded):
             or record["transfer"]["new_frame"] != mapping.frame.payload()
             or record["transfer"]["new_map"] != mapping.payload()
             or record["transfer"]["new_map_identity"] != mapping.identity
-            or record["acceptance"].get("schema") != "solarlab.full-interval-refresh-acceptance.v1"
-            or record["acceptance"]["point_identity"] != record["transfer"]["point_identity"]
-            or record["acceptance"]["time_hex"] != record["transfer"]["time_hex"]
-            or record["acceptance"]["coefficient_frame_identity"] != record["old_epoch"]["coefficient_frame_identity"]
-            or record["transfer"]["acceptance_sha256"] != digest(record["acceptance"])
+            or proof.get("schema") != ("solarlab.numeric-reference-transfer-evidence.v2" if continuing else "solarlab.full-interval-refresh-acceptance.v1")
+            or proof["point_identity"] != record["transfer"]["point_identity"]
+            or proof["time_hex"] != record["transfer"]["time_hex"]
+            or proof["coefficient_frame_identity"] != record["old_epoch"]["coefficient_frame_identity"]
+            or record["transfer"][transfer_key] != digest(proof)
+            or continuing and ("acceptance" in record or "acceptance_sha256" in record["transfer"]
+                               or proof.get("scientific_progress") != record["ledger"].get("scientific_progress"))
             or record["ledger_sha256"] != digest(record["ledger"])):
         raise ContractError("reference_refresh_binding")
     return record
@@ -3679,6 +3727,7 @@ def prepare_voltage_lift_reference_refresh(binding, point, z, zdot, *, sample, i
     from scripts.benchmarks.native_observation import restore_observation_record
 
     request = binding.context.request_copy()
+    continuing = "certificate_failure_policy" in request
     policy = request.get("reference_refresh_policy")
     if type(policy) is not dict or policy != _reference_refresh_policy(request, float(point.time)):
         raise ContractError("reference_refresh_not_at_frozen_boundary")
@@ -3687,7 +3736,7 @@ def prepare_voltage_lift_reference_refresh(binding, point, z, zdot, *, sample, i
     evidence, bounds, current = (restore_observation_record(x["evidence"] if "evidence" in x else x["observation"])
                                  for x in (interval, domain, certificate))
     inputs, input_rate = segment.inputs(point.time)
-    if "physical_tolerance_policy" in request:
+    if "physical_tolerance_policy" in request and interval["kind"] != "voltage_lift_interval_deferred":
         from scripts.benchmarks.native_observation import physical_charge_passed
         charge_ok = physical_charge_passed(request, evidence, frame_identity=native_frame.identity,
                                           path_identity=evidence["path_identity"], map_identity=mapping.identity,
@@ -3697,6 +3746,14 @@ def prepare_voltage_lift_reference_refresh(binding, point, z, zdot, *, sample, i
     pointer = {"record_sha256": sample["record_sha256"], "point_identity": point.identity,
                "time_s": point.time, "origin": h["origin"], "segment_id": segment.id}
     metrics = sample["state_checks"]
+    if continuing:
+        _scientific_sample_safety(metrics)
+        if (type(metrics.get("passed")) is not bool or type(bounds.get("passed")) is not bool
+                or type(current.get("passed")) is not bool
+                or any(type(v) is not bool for v in bounds["checks"].values())
+                or any(v < 0 for v in current["combined_current_bound_A"])
+                or ledger.get("scientific_progress") != interval.get("scientific_progress")):
+            raise ContractError("reference_refresh_scientific_evidence_binding")
     state_ok = all(type(metrics.get(name)) in (int, float) and 0 <= metrics[name] <= request["budgets"][limit]
         for name, limit in (("constraint_potential_bound_V", "constraint_potential_V"),
                            ("constraint_charge_bound_C", "constraint_charge_C"), ("contact_max_relative", "contact_relative")))
@@ -3712,37 +3769,44 @@ def prepare_voltage_lift_reference_refresh(binding, point, z, zdot, *, sample, i
             or h["input_rates_hex"] != [float(v).hex() for v in input_rate]
             or h["raw_solver_z_hex"] != [float(v).hex() for v in z]
             or h["raw_solver_zdot_hex"] != [float(v).hex() for v in zdot]
-            or metrics.get("passed") is not True or metrics.get("state_identity") != point.identity
-            or metrics.get("state_changed") is not False or not state_ok
+            or not continuing and metrics.get("passed") is not True or metrics.get("state_identity") != point.identity
+            or metrics.get("state_changed") is not False or not continuing and not state_ok
             or interval["right"] != pointer or interval["segment_id"] != segment.id
-            or not charge_ok or bounds.get("passed") is not True
-            or not all(v is True for v in bounds["checks"].values()) or current.get("passed") is not True
+            or not continuing and (not charge_ok or bounds.get("passed") is not True
+                or not all(v is True for v in bounds["checks"].values()) or current.get("passed") is not True)
             or current.get("native_rate_or_state_changed") is not False or current["point_identity"] != point.identity
             or certificate["sample_record_sha256"] != sample["record_sha256"]
             or not evidence["path_identity"] == bounds["path_identity"] == current["path_identity"]
             or interval["coefficient_frame_identity"] != native_frame.identity
-            or any(v > Fraction(float(request["budgets"]["current_A"])/3) or v < 0
+            or not continuing and any(v > Fraction(float(request["budgets"]["current_A"])/3) or v < 0
                    for v in current["combined_current_bound_A"])
             or any(interval.get(k) is not False for k in ("states_projected", "normal_query_performed"))
             or native_frame.snapshot["endpoint"]["raw_y"] != np.asarray(z).tobytes()
             or native_frame.snapshot["endpoint"]["raw_yp"] != np.asarray(zdot).tobytes()
             or float(native_frame.snapshot["endpoint"]["internal_t"]).hex() != point.time.hex()):
         raise ContractError("reference_refresh_requires_full_acceptance")
-    acceptance = {"schema": "solarlab.full-interval-refresh-acceptance.v1",
+    acceptance = {"schema": ("solarlab.numeric-reference-transfer-evidence.v2" if continuing else
+                             "solarlab.full-interval-refresh-acceptance.v1"),
+        **({"scientific_progress": ledger["scientific_progress"]} if continuing else {}),
         "request_sha256": binding.context.request_sha256, "point_identity": point.identity,
         "time_hex": point.time.hex(), "sample_record_sha256": sample["record_sha256"],
         "history_sha256": digest(h), "interval_record_sha256": digest(interval),
         "domain_record_sha256": digest(domain), "current_certificate_sha256": digest(certificate),
         "state_checks_sha256": digest(metrics), "coefficient_frame_identity": native_frame.identity}
     fresh, zero, zero_rate, transfer = _voltage_lift_frame_handoff(mapping, point, z, zdot, input_rate, digest(acceptance))
+    if continuing:
+        transfer["schema"] = "solarlab.exact-reference-transfer.v2"
+        transfer["state_transfer_sha256"] = transfer.pop("acceptance_sha256")
     if (transfer["physical_state_words_hex"] != h["physical_cumulative_words_hex"]
             or transfer["physical_rate_words_hex"] != h["physical_rate_words_hex"]):
         raise ContractError("reference_refresh_accepted_words_changed")
     endpoint = native_frame.snapshot["endpoint"]
-    record = {"schema": "solarlab.accepted-reference-handoff.v1", "kind": "voltage_lift_numeric_handoff",
+    record = {"schema": ("solarlab.reference-state-transfer.v2" if continuing else "solarlab.accepted-reference-handoff.v1"),
+        "kind": "voltage_lift_numeric_handoff",
         "phase": "prepared", "request_sha256": binding.context.request_sha256, "policy_sha256": digest(policy),
         "segment_sha256": binding.segment_sha256, "physical_segment_ordinal": policy["physical_segment_ordinal"],
-        "transfer": transfer, "acceptance": acceptance, "ledger": json.loads(json.dumps(ledger)),
+        "transfer": transfer, ("state_transfer" if continuing else "acceptance"): acceptance,
+        "ledger": json.loads(json.dumps(ledger)),
         "ledger_sha256": digest(ledger), "old_epoch": {"owner": native_frame.owner,
             "generation": native_frame.generation, "nsteps": native_frame.snapshot["native_before"]["nsteps"],
             "endpoint_identity": endpoint["identity"], "coefficient_frame_identity": native_frame.identity},
@@ -4648,7 +4712,9 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
                                         frame_input_profile: str | None = None,
                                         frame_input_parent: Mapping | None = None,
                                         reference_refresh_time: float | None = None,
-                                        physical_tolerance_profile: Mapping | None = None) -> dict:
+                                        physical_tolerance_profile: Mapping | None = None,
+                                        certificate_policy: Mapping | None = None,
+                                        stop_after_segment: str | None = None) -> dict:
     """Prepare the full original protocol; this does not authorize execution."""
     model, old = mapping.model, json.loads(json.dumps(dict(previous_request), allow_nan=False))
     qualification_policy = old.get("qualification_policy")
@@ -4763,6 +4829,13 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
             request, segment_startup_overrides)
     if segment_frame is not None:
         request["segment_frame_policy"] = _segment_frame_policy(request, segment_frame)
+    if certificate_policy is not None:
+        from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+        request["certificate_failure_policy"] = dict(certificate_policy)
+        validate_certificate_policy(request)
+    if stop_after_segment is not None:
+        from scripts.benchmarks.physical_tolerance import run_window_policy
+        request["execution_window"] = run_window_policy(request, stop_after_segment)
     if reference_refresh_time is not None:
         request["reference_refresh_policy"] = _reference_refresh_policy(request, reference_refresh_time)
     if frame_input_profile is not None:
@@ -4787,6 +4860,9 @@ def prepare_voltage_lift_native_request(mapping: AffineVoltageMap,
 
 def validate_voltage_lift_native_request(mapping: AffineVoltageMap, segments, request: Mapping):
     """Fail closed on request/physical/allocation changes before importing IDA."""
+    from scripts.benchmarks.physical_tolerance import validate_certificate_policy, run_segment_count
+    validate_certificate_policy(request)
+    run_segment_count(request)
     physical_profile = "physical_tolerance_policy" in request
     if physical_profile:
         from scripts.benchmarks.physical_tolerance import require_balance_integration
@@ -5035,6 +5111,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             or not str(admission.get("coordinator_message", "")).startswith("msg_")):
         raise ContractError("voltage_lift_native_pilot_not_admitted")
     validate_voltage_lift_native_request(mapping, segments, request)
+    from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+    certificate_policy = validate_certificate_policy(request)
+    science = _ScientificProgress(certificate_policy) if certificate_policy is not None else None
+    offline_charge = certificate_policy is not None and certificate_policy["observation"] == "sealed-history"
     diagnostic = "diagnostic_interval" in request
     if diagnostic and (admission.get("diagnostic_interval_authorized") is not True
                        or admission.get("diagnostic_interval_sha256") != digest(request["diagnostic_interval"])):
@@ -5057,6 +5137,10 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
     if sampling.request_sha256 != request_id:
         raise ContractError("voltage_lift_request_changed_during_snapshot")
     request, segments = sampling.request_copy(), sampling.segments
+    from scripts.benchmarks.physical_tolerance import run_segment_count
+    run_segments = run_segment_count(request)
+    full_protocol = run_segments == len(segments)
+    segments = segments[:run_segments]
     from scripts.benchmarks.native_observation import (
         AcceptedIntervalObserver, observation_record, read_native_basis_packet,
         require_loaded_observation_backend, validate_interval_observation_admission,
@@ -5085,10 +5169,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             prefixes["physical_charge"] = physical_prefix
         charge_accumulator = prepare_charge_accumulator(request, observer_policy)
     previous_observer = None
-    refresh_policy = request.get("reference_refresh_policy")
+    refresh_policy = request.get("reference_refresh_policy") if full_protocol else None
     latest_current_certificate = None
-    signed_prefix = {key: (Fraction(0),)*3 for key in CHARGE_LEDGERS} if diagnostic else None
+    signed_prefix = {key: (Fraction(0),)*3 for key in CHARGE_LEDGERS} if diagnostic or science is not None else None
     first_failure = last_attempt = last_numerical = last_accepted = None
+    deferred_intervals = 0
     history = VoltageLiftHistory(mapping)
     parent_reference = history.reference_record
     z, predecessor = frozen_array(request["z0"]), model.reference
@@ -5142,9 +5227,15 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         record = {"kind": "voltage_lift_current_certificate", "sample_record_sha256": pair[-1]["record_sha256"],
                   "evidence": observation_record(evidence)}
         save(record)
+        if science is not None:
+            if any(v < 0 for v in evidence["combined_current_bound_A"]):
+                raise ContractError("scientific_negative_current_bound")
+            science.note("current", evidence["passed"], record)
+            first_failure = first_failure or science.first_failure
         if not evidence["passed"]:
-            first_failure = first_failure or record
-            raise ContractError("voltage_lift_raw_tangent_current_budget")
+            if science is None:
+                first_failure = first_failure or record
+                raise ContractError("voltage_lift_raw_tangent_current_budget")
         latest_current_certificate = record
         return evidence
 
@@ -5165,9 +5256,14 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         record["record_sha256"] = digest(record)
         pair = (*pair[:-1], record)
         save(record)
+        if science is not None:
+            _scientific_sample_safety(record["state_checks"])
+            science.note("state_accuracy", record["state_checks"]["passed"], record)
+            first_failure = first_failure or science.first_failure
         if not record["state_checks"]["passed"]:
-            first_failure = first_failure or {"phase": "physical_state_quality", "record": record}
-            raise ContractError("voltage_lift_native_or_interpolant_state_quality")
+            if science is None:
+                first_failure = first_failure or {"phase": "physical_state_quality", "record": record}
+                raise ContractError("voltage_lift_native_or_interpolant_state_quality")
         if observer is not None:
             certify_current(observer, pair, native)
         return pair
@@ -5177,6 +5273,11 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                 "time_s": pair[0].time, "origin": pair[2].origin, "segment_id": pair[-1]["segment_id"]}
 
     def refresh_ledger(cursor):
+        if offline_charge:
+            return {"prefixes": None, "physical_charge": None, "upper_accumulator": None, "signed_prefix": None,
+                    "sample_cursor": cursor, "last_accepted": None, "physical_reference_identity": model.reference.identity,
+                    "charge_observation": {"status": "pending", "deferred_intervals": deferred_intervals},
+                    "scientific_progress": science.payload()}
         return {"prefixes": observation_record({k: {"absolute_defects": v.absolute_defects,
                     "reference_errors": prefixes[k].reference_errors} for k in CHARGE_LEDGERS
                     for v in (prefixes[k],)}),
@@ -5184,6 +5285,7 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                    if physical_charge_enabled else {}),
                 "upper_accumulator": None if charge_accumulator is None else observation_record(charge_upper_summary(charge_accumulator)),
                 "signed_prefix": observation_record(signed_prefix), "sample_cursor": cursor,
+                **({"scientific_progress": science.payload()} if science is not None else {}),
                 "last_accepted": last_accepted, "physical_reference_identity": model.reference.identity}
 
     try:
@@ -5370,11 +5472,15 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                     domain = observer.path_domain_evidence(budgets)
                 domain_record = {"kind": "voltage_lift_polynomial_domain", "evidence": observation_record(domain)}
                 save(domain_record)
+                if science is not None:
+                    science.note("path_inventory", domain["passed"], domain_record)
+                    first_failure = first_failure or science.first_failure
                 if not domain["passed"]:
-                    first_failure = first_failure or {"phase": "polynomial_domain", "evidence": observation_record(domain)}
-                    raise ContractError("voltage_lift_polynomial_domain_or_inventory_budget")
+                    if science is None:
+                        first_failure = first_failure or {"phase": "polynomial_domain", "evidence": observation_record(domain)}
+                        raise ContractError("voltage_lift_polynomial_domain_or_inventory_budget")
                 certify_current(observer, left_pair, left_native)
-                if last_accepted is None:
+                if last_accepted is None and science is None:
                     last_accepted = pointer(left_pair)
                 origin = "stop_output" if native["status"] == 1 else "native"
                 right_pair = checked_sample(binding, native, left, origin, observer)
@@ -5414,15 +5520,21 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                         error_allocation = rational(budgets["charge_C"])/12*duration/rational(normalization)/32
                     before_prefix = prefixes
                     completed_before = charge_accumulator.count if diagnostic else None
-                    with timing.phase('observation'):
-                        prefixes, evidence = observer.charge_evidence(left_pair, right_pair, prefixes,
-                            absolute_error=error_allocation, charge_budget=budgets["charge_C"],
-                            charge_accumulator=charge_accumulator)
-                    charge_passed = (physical_charge_passed(request, evidence, frame_identity=frame.identity,
-                                     path_identity=observer.prepared.path.identity,
-                                     map_identity=binding.adapter.mapping.identity,
-                                     map_payload=binding.adapter.mapping.payload()) if physical_charge_enabled
-                                     else evidence["passed"])
+                    if offline_charge:
+                        deferred_intervals += 1
+                        evidence = {"frame_identity": frame.identity, "path_identity": observer.prepared.path.identity,
+                                    "clock": observer.prepared.path.clock.payload(), "charge_observation": "pending"}
+                        charge_passed = False
+                    else:
+                        with timing.phase('observation'):
+                            prefixes, evidence = observer.charge_evidence(left_pair, right_pair, prefixes,
+                                absolute_error=error_allocation, charge_budget=budgets["charge_C"],
+                                charge_accumulator=charge_accumulator)
+                        charge_passed = (physical_charge_passed(request, evidence, frame_identity=frame.identity,
+                                         path_identity=observer.prepared.path.identity,
+                                         map_identity=binding.adapter.mapping.identity,
+                                         map_payload=binding.adapter.mapping.payload()) if physical_charge_enabled
+                                         else evidence["passed"])
                     if diagnostic and not charge_passed:
                         failed = {"kind": "native_interval_failed_charge", "segment_id": segment.id,
                                   "left": pointer(left_pair), "right": pointer(right_pair),
@@ -5459,7 +5571,9 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                                                                   "observation": observation_record(common_evidence)}
                                 raise ContractError("diagnostic_common_prefix_budget")
                         cursor += 1
-                    interval = {"kind": ("voltage_lift_interval_charge_v2" if charge_accumulator is not None
+                    interval = {"kind": ("voltage_lift_interval_deferred" if offline_charge else
+                                         "voltage_lift_interval_certificate" if science is not None else
+                                         "voltage_lift_interval_charge_v2" if charge_accumulator is not None
                                          else "voltage_lift_interval_charge"), "segment_id": segment.id,
                                 "left": pointer(left_pair), "right": pointer(right_pair),
                                 "coefficient_frame_identity": frame.identity,
@@ -5467,17 +5581,22 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
                                 "arithmetic_calls": list(arithmetic.calls),
                                 "endpoint_restore": None, "normal_query_performed": False,
                                 "states_projected": False, "reference_estimates_are_continuum_certificates": False}
-                    if physical_charge_enabled:
+                    if physical_charge_enabled and not offline_charge:
                         interval.update(charge_gate="signed-physical-charge-v1",
                                         physical_charge_error_allocation_C=observation_record(error_allocation))
+                    if science is not None:
+                        interval["scientific_progress"] = science.payload()
+                    if offline_charge:
+                        interval["charge_observation"] = {"status": "pending", "deferred_intervals": deferred_intervals}
                     save(interval)
-                    if not charge_passed:
+                    if not charge_passed and science is None:
                         first_failure = first_failure or interval
                         raise ContractError("voltage_lift_interval_or_prefix_charge_budget")
-                    if diagnostic:
+                    if diagnostic or science is not None and not offline_charge:
                         signed_prefix = {key: tuple(a+b.center for a, b in zip(signed_prefix[key],
                             evidence["ledgers"][key]["signed_integral_C"], strict=True)) for key in CHARGE_LEDGERS}
-                    last_accepted = last_numerical
+                    if science is None:
+                        last_accepted = last_numerical
                     previous_observer = observer
                 finally:
                     active = False
@@ -5526,7 +5645,8 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
             raise ContractError("reference_refresh_missing_boundary")
         result = ({"status": "completed_bounded_native_interval", "complete_protocol": False,
                    "complete_diagnostic_window": True} if diagnostic else
-                  {"status": "completed_bounded_voltage_lift_native_pilot", "complete_protocol": True})
+                  {"status": "completed_bounded_voltage_lift_native_pilot", "complete_protocol": full_protocol,
+                   **({"complete_run_window": True, "execution_window": request["execution_window"]} if not full_protocol else {})})
     except BaseException as error:
         result = {"status": "failed_bounded_voltage_lift_native_pilot", "complete_protocol": False,
                   "reason": str(error), "exception": type(error).__name__, "traceback": traceback.format_exc(),
@@ -5552,12 +5672,24 @@ def run_voltage_lift_native_pilot(mapping: AffineVoltageMap, segments: tuple[Pro
         result.update(charge_gate="signed-physical-charge-v1",
                       physical_charge_policy_sha256=digest(observer_policy["physical_charge"]),
                       physical_charge=observation_record(physical_charge_summary(prefixes["physical_charge"])))
+    if science is not None:
+        result.update(first_failure=first_failure, complete_readback=False,
+                      scientific_progress=science.payload(), scientific_status=science.payload()["status"],
+                      scientific_pass=False, signed_integral_prefix_C=observation_record(signed_prefix))
+        if result["complete_protocol"]:
+            result["cumulative_scope"] = "complete protocol; all scientific failures and positive debts retained across events and reference transfer"
+    if offline_charge:
+        result.update(cumulative_absolute_charge_bounds_C=None, cumulative_observation_reference_bounds_C=None,
+                      signed_integral_prefix_C=None, charge_observation={"status": "pending", "deferred_intervals": deferred_intervals})
+        result["cumulative_scope"] = "charge observation pending for every retained interval; no missing integral or error is represented as zero"
+        if physical_charge_enabled:
+            result["physical_charge"] = None
     if diagnostic:
         result.update(complete_diagnostic_window=result.get("complete_diagnostic_window", False),
                       old_B_prefix_credit=False,
                       original_native_authority_restored=False,
                       signed_integral_prefix_C=observation_record(signed_prefix))
-    if charge_accumulator is not None:
+    if charge_accumulator is not None and not offline_charge:
         with timing.phase('observation'):
             result["cumulative_representation"] = observation_record(charge_upper_summary(charge_accumulator))
     return result

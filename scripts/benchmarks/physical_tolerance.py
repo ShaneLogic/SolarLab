@@ -21,6 +21,55 @@ NONLINEAR = dict(nonlin_conv_coef=1e-8, nonlin_guard="first-correction-wrms-v1",
                  nonlin_trace_capacity=4096, max_nonlin_iters=4, max_conv_fails=10)
 
 
+def certificate_failure_policy(*, observation="online", t1=None):
+    """Explicit new-history semantics; absence keeps every historical stop rule.
+
+    A missing reviewed T1 definition is a pending proof, never a zero tolerance
+    or a pass. This metadata does not admit a run or change IDA controls.
+    """
+    require(type(observation) is str and observation in {"online", "sealed-history"}, "certificate_observation_mode")
+    require(t1 is None, "reviewed_T1_definition_required")
+    return {"schema": "solarlab.certificate-failure-policy.v1",
+            "scientific_failure": "latch-and-continue", "safety_failure": "stop",
+            "observation": observation, "T1": t1,
+            "legacy_charge_role": "retained-diagnostic",
+            "physical_acceptance": "requires-all-proofs"}
+
+
+def validate_certificate_policy(request):
+    if "certificate_failure_policy" not in request:
+        return None
+    value = request["certificate_failure_policy"]
+    require(type(value) is dict and value == certificate_failure_policy(
+        observation=value.get("observation"), t1=value.get("T1")), "certificate_policy_binding")
+    require("diagnostic_interval" not in request, "certificate_complete_protocol_only")
+    return value
+
+
+def run_window_policy(request, last_segment):
+    """A declared prefix of the original protocol, ending on a retained side."""
+    require(validate_certificate_policy(request) is not None, "window_requires_certificate_policy")
+    segments = request["segments"]
+    matches = [i for i, segment in enumerate(segments) if segment["id"] == last_segment]
+    require(len(matches) == 1 and matches[0] < len(segments)-1, "window_segment_boundary")
+    count = matches[0]+1
+    return {"schema": "solarlab.protocol-run-window.v1", "last_segment": last_segment,
+            "segment_count": count, "protocol_sha256": digest(segments),
+            "start_hex": float(segments[0]["start"]).hex(), "end_hex": float(segments[count-1]["end"]).hex(),
+            "full_end_hex": float(segments[-1]["end"]).hex(),
+            "sample_records": sum(len(request["observation_times"][s["id"]]) for s in segments[:count]),
+            "initial_state": "original-protocol-initial-state", "multistep_history_restored": False}
+
+
+def run_segment_count(request):
+    window = request.get("execution_window")
+    if "execution_window" not in request:
+        return len(request["segments"])
+    require(type(window) is dict and window == run_window_policy(request, window.get("last_segment")),
+            "window_binding")
+    return window["segment_count"]
+
+
 def digest(value):
     return sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 

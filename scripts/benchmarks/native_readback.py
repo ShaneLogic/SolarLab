@@ -1198,6 +1198,8 @@ def _frame_word_values(words, size, *, count=4):
 
 def reference_refresh_policy(request):
     """Independently bind the one-refresh policy without importing its producer."""
+    from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+    continuing = validate_certificate_policy(request) is not None
     policy = request.get("reference_refresh_policy")
     if policy is None:
         return None
@@ -1208,12 +1210,15 @@ def reference_refresh_policy(request):
              and "segment_frame_policy" in request and request["controls"].get("calc_initcond") is None
              and request["voltage_lift_map"].get("mapped_input_profile") == "frame-input-expansion12-v1",
              "reference_refresh_scope")
-    expected = {"schema": "solarlab.accepted-reference-refresh-policy.v1", "time_hex": when.hex(),
+    expected = {"schema": ("solarlab.reference-state-transfer-policy.v2" if continuing else
+                           "solarlab.accepted-reference-refresh-policy.v1"), "time_hex": when.hex(),
         "physical_segment_ordinal": len(request["segments"]), "segment_sha256": _digest(segment), "max_refreshes": 1,
         "parent_map_identity": request["map_identity"], "controls_sha256": _digest(request["controls"]),
         "budgets_sha256": _digest(request["budgets"]), "segments_sha256": _digest(request["segments"]),
         "sampling_sha256": _digest((request["observation_times"], request["quadrature"])),
-        "trigger": "exact_fully_accepted_native_endpoint", "native_api": "init_step",
+        "trigger": ("exact_domain_safe_native_endpoint" if continuing else "exact_fully_accepted_native_endpoint"),
+        **({"certificate_failure_policy_sha256": _digest(request["certificate_failure_policy"])} if continuing else {}),
+        "native_api": "init_step",
         "same_owner_generation_increment": 1, "preserve_original_segment_inputs": True,
         "discard_native_multistep_history": True, "restored_seed_prefix_credit": False}
     _require(policy == expected, "reference_refresh_policy_binding")
@@ -1616,8 +1621,10 @@ class SegmentFrameCheck:
     def prepare_refresh(self, record, segment, ordinal, sample, interval, domain, certificate, ledger):
         """Require the already verified acceptance and exact dyadic transfer."""
         policy, h = self.refresh_policy, sample["history"]
+        continuing = "certificate_failure_policy" in self.request
+        proof_key = "state_transfer" if continuing else "acceptance"
         _require(policy is not None and not self.refreshes and record["phase"] == "prepared"
-                 and record["schema"] == "solarlab.accepted-reference-handoff.v1"
+                 and record["schema"] == ("solarlab.reference-state-transfer.v2" if continuing else "solarlab.accepted-reference-handoff.v1")
                  and record["kind"] == "voltage_lift_numeric_handoff"
                  and record["record_sha256"] == _digest({k: v for k, v in record.items() if k != "record_sha256"})
                  and record["request_sha256"] == self.request_id and record["policy_sha256"] == _digest(policy)
@@ -1625,7 +1632,22 @@ class SegmentFrameCheck:
                  and record["segment_sha256"] == _digest(segment) == policy["segment_sha256"]
                  and record["new_epoch"] is None and record["state_or_rate_projected"] is False
                  and record["native_multistep_history_discarded"] is True, "reference_refresh_record")
-        accepted = {"schema": "solarlab.full-interval-refresh-acceptance.v1", "request_sha256": self.request_id,
+        if continuing:
+            # Every saved copy must agree with the reader-owned summary,
+            # including JSON types: 0/0.0 are not a boolean false verdict.
+            saved_ledger = _decode(record["ledger"])
+            _require(type(record.get(proof_key)) is dict and type(saved_ledger) is dict,
+                     "reference_refresh_scientific_progress_type")
+            for progress in (interval.get("scientific_progress"),
+                             record[proof_key].get("scientific_progress"),
+                             saved_ledger.get("scientific_progress")):
+                _require(type(progress) is dict and type(progress.get("passed")) is bool,
+                         "reference_refresh_scientific_progress_type")
+                _require(_digest(progress) == _digest(ledger["scientific_progress"]),
+                         "reference_refresh_scientific_progress")
+        accepted = {"schema": ("solarlab.numeric-reference-transfer-evidence.v2" if continuing else
+                               "solarlab.full-interval-refresh-acceptance.v1"), "request_sha256": self.request_id,
+            **({"scientific_progress": ledger["scientific_progress"]} if continuing else {}),
             "point_identity": h["point_identity"], "time_hex": h["time_hex"],
             "sample_record_sha256": sample["record_sha256"], "history_sha256": _digest(h),
             "interval_record_sha256": _digest(interval), "domain_record_sha256": _digest(domain),
@@ -1634,22 +1656,28 @@ class SegmentFrameCheck:
         observed = _decode(interval["observation"])
         charge_passed = (observed["physical_charge"]["passed"] is True
                          and observed["physical_charge"]["prefix"]["passed"] is True
-                         if "physical_tolerance_policy" in self.request else observed["passed"] is True)
-        _require(record["acceptance"] == accepted and sample["state_checks"]["passed"] is True
-                 and charge_passed
-                 and _decode(domain["evidence"])["passed"] is True
-                 and _decode(certificate["evidence"])["passed"] is True
+                         if "physical_tolerance_policy" in self.request and interval["kind"] != "voltage_lift_interval_deferred"
+                         else observed.get("passed") is True)
+        proof_matches = (_digest(record[proof_key]) == _digest(accepted) if continuing else record[proof_key] == accepted)
+        _require(proof_matches
+                 and (continuing or sample["state_checks"]["passed"] is True and charge_passed
+                      and _decode(domain["evidence"])["passed"] is True
+                      and _decode(certificate["evidence"])["passed"] is True)
                  and certificate["sample_record_sha256"] == sample["record_sha256"]
                  and interval["right"]["record_sha256"] == sample["record_sha256"]
                  and _decode(record["ledger"]) == ledger and record["ledger_sha256"] == _digest(record["ledger"]),
                  "reference_refresh_full_acceptance_or_ledger")
+        if continuing:
+            _require("acceptance" not in record and "acceptance_sha256" not in record["transfer"],
+                     "reference_refresh_not_scientific_acceptance")
         t = record["transfer"]; old, new = t["old_frame"], t["new_frame"]
         _require(old == self.active and t["old_map"] == self.current_map
                  and t["old_frame_identity"] == _digest(old) and t["old_map_identity"] == _digest(self.current_map)
                  and t["time_hex"] == h["time_hex"] == policy["time_hex"]
                  and t["point_identity"] == h["point_identity"]
                  and t["inputs_hex"] == h["inputs_hex"]
-                 and t["acceptance_sha256"] == _digest(accepted), "reference_refresh_original_Point")
+                 and t["state_transfer_sha256" if continuing else "acceptance_sha256"] == _digest(accepted),
+                 "reference_refresh_original_Point")
         try:
             _reference_refresh_point(t["Point"], h, self.request)
         except HistoryVerificationError:
@@ -1903,6 +1931,30 @@ class SegmentFrameCheck:
                 "scientific_qualification": False}
 
 
+class _ScientificCheck:
+    """Reader-owned verdicts; producer flags are compared, never used as oracle."""
+
+    def __init__(self, request):
+        from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+        self.policy = validate_certificate_policy(request)
+        self.failures = set()
+        self.first_failure = None
+
+    def observe(self, gate, value, record):
+        _require(type(value) is bool, "scientific_verdict_type")
+        if not value:
+            self.failures.add(gate)
+            if self.first_failure is None:
+                self.first_failure = {"gate": gate, "record_sha256": _digest(record)}
+
+    def summary(self, *, final=False):
+        return {"schema": "solarlab.scientific-progress.v1",
+                "failed_gates": sorted(self.failures), "first_failure": self.first_failure,
+                "pending_proofs": ["T1"],
+                "status": "failed" if self.failures else "unknown" if final else "pending",
+                "passed": False}
+
+
 class PhysicalChargeCheck:
     """Independent three-channel physical balance from saved words and flux evidence.
 
@@ -2065,7 +2117,17 @@ class PhysicalChargeCheck:
 
 
 class _Protocol:
-    def __init__(self, request, rows):
+    science = None
+    offline_charge = False
+
+    def __init__(self, request, rows, *, charge_observer=None):
+        from scripts.benchmarks.physical_tolerance import run_segment_count
+        self.run_segments = run_segment_count(request)
+        self.full_protocol = self.run_segments == len(request["segments"])
+        self.science = _ScientificCheck(request) if "certificate_failure_policy" in request else None
+        self.offline_charge = self.science is not None and self.science.policy["observation"] == "sealed-history"
+        self.charge_observer = charge_observer
+        _require(charge_observer is None or self.offline_charge, "offline_observer_requires_deferred_history")
         if "physical_tolerance_policy" in request:
             from scripts.benchmarks.physical_tolerance import require_balance_integration
             require_balance_integration(request)
@@ -2115,11 +2177,14 @@ class _Protocol:
         self.refresh_anchor = None
         self.refresh_binding_identity = None
         self.startup = SegmentStartupCheck(request)
+        self.startup.expected = self.startup.expected[:self.run_segments]
         self.segment_frame = SegmentFrameCheck(request)
+        if not self.full_protocol:
+            self.segment_frame.refresh_policy = None
         self.common_clocks = []
         self.diagnostic_grid = []
         self._sample_cache, self._pending_common = {}, []
-        self.signed_integrals = {key: (Fraction(0),)*3 for key in _LEDGERS} if self.diagnostic is not None else None
+        self.signed_integrals = {key: (Fraction(0),)*3 for key in _LEDGERS} if self.diagnostic is not None or self.science is not None else None
 
     def _context(self, row):
         _require(row["request_sha256"] == self.request_id and row["map_identity"] == self.map_id,
@@ -2253,22 +2318,33 @@ class _Protocol:
         _hex_vector(h["input_rates_hex"], 2)
         if self.segment_frame.enabled:
             self.segment_frame.sample(h)
-        _require(row["input_slope_hex"] == h["input_rates_hex"] and row["state_checks"]["passed"] is True
+        _require(row["input_slope_hex"] == h["input_rates_hex"]
+                 and (type(row["state_checks"]["passed"]) is bool if self.science is not None else row["state_checks"]["passed"] is True)
                  and row["state_checks"]["state_identity"] == h["point_identity"]
                  and row["state_checks"]["state_changed"] is False, "sample_state_gate")
         metrics, budgets = row["state_checks"], self.request["budgets"]
+        state_passed = True
         for metric, cap in (("constraint_potential_bound_V", "constraint_potential_V"),
                             ("constraint_charge_bound_C", "constraint_charge_C"),
                             ("contact_max_relative", "contact_relative")):
-            _require(type(metrics[metric]) in (int, float) and 0 <= metrics[metric] <= budgets[cap], "state_gate_values")
+            _require(type(metrics[metric]) in (int, float) and math.isfinite(metrics[metric])
+                     and 0 <= metrics[metric] and (self.science is not None or metrics[metric] <= budgets[cap]), "state_gate_values")
+            state_passed = state_passed and metrics[metric] <= budgets[cap]
         _require(metrics["constraint_charge_bound_C"] == max(metrics["Poisson_absolute_constraint_charge_C"],
                  *_vector(metrics["metal_charge_error_bound_C"], 2), metrics["body_charge_error_bound_C"]),
                  "state_charge_bound_consistency")
         if "c_m3" in self.request["numeric_packet"]["variable_offsets"]:
             for name in ("ion_inventory_relative", "maximum_site_fraction"):
-                _require(0 <= metrics[name] <= budgets[name], "dynamic_state_gate")
+                _require(type(metrics[name]) in (int, float) and math.isfinite(metrics[name])
+                         and 0 <= metrics[name] and (self.science is not None or metrics[name] <= budgets[name]), "dynamic_state_gate")
+                state_passed = state_passed and metrics[name] <= budgets[name]
             _vector(metrics["ion_inventory_change_words"], 2)
             _require(0 <= metrics["minimum_f"] <= metrics["maximum_f"] <= 1, "dynamic_occupancy_gate")
+            if self.science is not None:
+                _require(metrics["maximum_site_fraction"] < 1, "dynamic_vacancy_domain")
+        if self.science is not None:
+            _require(metrics["passed"] is state_passed, "state_certificate_boolean")
+            self.science.observe("state_accuracy", state_passed, row)
         _require(row["physical_rate_consumption"] == "public RateView full mapped words"
                  and row["rate_projection_role"] == "counterfactual_first_word_only"
                  and row["rate_projection"] == h["physical_rate_projection"], "sample_rate_semantics")
@@ -2344,7 +2420,8 @@ class _Protocol:
         h, rate = sample["history"], sample["raw"]["physical_rate"]
         _require(row["sample_record_sha256"] == sample["record_sha256"]
                  and evidence["point_identity"] == h["point_identity"] and evidence["path_identity"] == self.path_id
-                 and evidence["passed"] is True and evidence["native_rate_or_state_changed"] is False
+                 and (type(evidence["passed"]) is bool if self.science is not None else evidence["passed"] is True)
+                 and evidence["native_rate_or_state_changed"] is False
                  and evidence["DAE_accuracy_certified"] is False, "current_certificate_binding")
         rb = evidence["readback"]
         when = _hex(h["time_hex"])
@@ -2386,7 +2463,10 @@ class _Protocol:
         limit = Fraction(float(self.request["budgets"]["current_A"]) / 3)
         _require(evidence["source_and_readback_error_A"] == errors
                  and evidence["combined_current_bound_A"] == combined and evidence["original_allocation_A"] == limit
-                 and all(v <= limit for v in combined), "current_bound_consistency")
+                 and evidence["passed"] is all(v <= limit for v in combined)
+                 and (self.science is not None or all(v <= limit for v in combined)), "current_bound_consistency")
+        if self.science is not None:
+            self.science.observe("current", all(v <= limit for v in combined), row)
         if self.diagnostic is not None:
             key = sample["record_sha256"]
             self._sample_cache[key]["certificate"] = row
@@ -2396,9 +2476,12 @@ class _Protocol:
         return row
 
     def _interval(self, left, right, frame, *, supplied_row=None, commit=True):
+        if self.offline_charge and supplied_row is None:
+            return self._deferred_interval(left, right, frame)
         physical = "physical_tolerance_policy" in self.request
         _require(not physical or commit and self.diagnostic is None, "physical_charge_complete_interval_required")
-        kind = "voltage_lift_interval_charge_v2" if self.charge_refinement is not None else "voltage_lift_interval_charge"
+        kind = ("voltage_lift_interval_certificate" if self.science is not None else
+                "voltage_lift_interval_charge_v2" if self.charge_refinement is not None else "voltage_lift_interval_charge")
         if supplied_row is None and self.diagnostic is not None:
             for common in self._pending_common:
                 self._interval(left, common["sample"], frame, supplied_row=common["prefix"], commit=False)
@@ -2418,7 +2501,7 @@ class _Protocol:
         _require(row["segment_id"] == self.segment["id"] and row["left"] == self._pointer(left)
                  and row["right"] == self._pointer(right) and row["coefficient_frame_identity"] == self.frame_id
                  and evidence["frame_identity"] == self.frame_id and evidence["path_identity"] == self.path_id
-                 and (type(evidence["passed"]) is bool if physical else evidence["passed"] is True)
+                 and (type(evidence["passed"]) is bool if physical or self.science is not None else evidence["passed"] is True)
                  and row["endpoint_restore"] is None
                  and all(row[k] is False for k in ("normal_query_performed", "states_projected",
                                                   "reference_estimates_are_continuum_certificates")),
@@ -2465,7 +2548,7 @@ class _Protocol:
             ledger = evidence["ledgers"][key]
             _require(ledger["endpoint_debited_once"] is True
                      and (type(ledger["passed"]) is bool
-                          and all(type(v) is bool for v in _vector(ledger["row_checks"], 3)) if physical
+                          and all(type(v) is bool for v in _vector(ledger["row_checks"], 3)) if physical or self.science is not None
                           else ledger["passed"] is True and all(v is True for v in _vector(ledger["row_checks"], 3))),
                      "charge_ledger_gate")
             for name in ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C", "signed_saved_defect_C"):
@@ -2483,7 +2566,7 @@ class _Protocol:
                                and 3*error[i] <= budget and 3*cumulative[i] <= budget for i in range(3))
             _require(ledger["original_charge_budget_C"] == budget and ledger["original_reference_share_C"] == reference_share
                      and tuple(ledger["row_checks"]) == old_checks and ledger["passed"] is all(old_checks)
-                     and (physical or all(old_checks)), "charge_budget_binding")
+                     and (physical or self.science is not None or all(old_checks)), "charge_budget_binding")
             components = ledger["error_components_C"]
             _require(set(components) == {"endpoint", "input", "clock_strip", "raw_tangent_departure", "integration"},
                      "charge_error_components")
@@ -2508,14 +2591,14 @@ class _Protocol:
                 _require(absolute == upper_step[3][offset:offset + 6:2]
                          and cumulative == upper_step[3][offset + 1:offset + 6:2], "charge_upper_ledger_prefix")
             next_signed = (tuple(a+b["center"] for a, b in zip(self.signed_integrals[key], integrals))
-                           if self.diagnostic is not None else None)
+                           if self.signed_integrals is not None else None)
             if not commit:
                 _require(_decode(row["signed_integral_centers_C"])[key] == next_signed
                          and _decode(row["reference_error_C"])[key] == cumulative,
                          "common_signed_prefix_or_error")
             if commit:
                 self.prefix[key] = absolute, cumulative
-                if self.diagnostic is not None:
+                if self.signed_integrals is not None:
                     self.signed_integrals[key] = next_signed
         _require(evidence["passed"] is all(evidence["ledgers"][k]["passed"] for k in _LEDGERS),
                  "historical_charge_verdict_changed")
@@ -2535,7 +2618,7 @@ class _Protocol:
             duration = Fraction(*clock["tn"])-Fraction(*clock["predecessor"])
             _require(row.get("charge_gate") == "signed-physical-charge-v1" and type(allocation) is Fraction
                      and allocation == self.physical_charge.allocation(duration), "physical_charge_actual_allocation")
-            _require(physical_passed, "physical_charge_gate")
+            _require(self.science is not None or physical_passed, "physical_charge_gate")
         else:
             _require("physical_charge" not in evidence and "charge_gate" not in row
                      and "physical_charge_error_allocation_C" not in row, "unbound_physical_charge_gate")
@@ -2543,6 +2626,42 @@ class _Protocol:
             self.charge_refinement.commit(upper_step)
         if commit:
             self.intervals += 1
+        if self.science is not None:
+            progress = row.get("scientific_progress")
+            _require(type(progress) is dict and type(progress.get("passed")) is bool, "interval_scientific_progress_type")
+            _require(_digest(progress) == _digest(self.science.summary()), "interval_scientific_progress")
+        return row
+
+    def _deferred_interval(self, left, right, frame):
+        """Missing quadrature is explicit pending work, not a zero-error pass."""
+        row = self.rows.take("voltage_lift_interval_deferred")
+        evidence = _decode(row["observation"])
+        _require(set(evidence) == {"frame_identity", "path_identity", "clock", "charge_observation"}
+                 and evidence["charge_observation"] == "pending" and evidence["frame_identity"] == self.frame_id
+                 and evidence["path_identity"] == self.path_id and row["segment_id"] == self.segment["id"]
+                 and row["left"] == self._pointer(left) and row["right"] == self._pointer(right)
+                 and row["coefficient_frame_identity"] == self.frame_id and row["endpoint_restore"] is None
+                 and all(row[k] is False for k in ("normal_query_performed", "states_projected", "reference_estimates_are_continuum_certificates"))
+                 and "charge_gate" not in row and "physical_charge_error_allocation_C" not in row,
+                 "deferred_interval_binding")
+        clock = evidence["clock"]
+        for key, value in (("predecessor", frame["predecessor"]["internal_t"]), ("tn", frame["endpoint"]["internal_t"]),
+                           ("hused", frame["native_before"]["hused"]), ("segment_start", self.segment["start"]), ("segment_end", self.segment["end"])):
+            _require(Fraction(*clock[key]) == Fraction(value), "deferred_interval_clock")
+        native_left = Fraction(frame["native_before"]["tn"])-Fraction(frame["native_before"]["hused"])
+        _require(clock["owner"] == frame["owner"] and clock["generation"] == frame["generation"]
+                 and clock["nsteps"] == frame["native_before"]["nsteps"] and clock["kused"] == frame["native_before"]["kused"]
+                 and clock["segment_id"] == self.segment["id"] and Fraction(*clock["native_left"]) == native_left
+                 and Fraction(*clock["uncovered_strip"]) == max(Fraction(0), native_left-Fraction(frame["predecessor"]["internal_t"])),
+                 "deferred_interval_epoch")
+        progress = row.get("scientific_progress")
+        _require(type(progress) is dict and type(progress.get("passed")) is bool, "deferred_interval_scientific_progress_type")
+        _require(row["charge_observation"] == {"status": "pending", "deferred_intervals": self.intervals+1}
+                 and _digest(progress) == _digest(self.science.summary()), "deferred_interval_progress")
+        if self.charge_observer is not None:
+            self.charge_observer.consume_interval(row, left, right, self.native_packet_row, self.mapping,
+                                                  self.segment, self.refresh_anchor, self.science)
+        self.intervals += 1
         return row
 
     def _consume_reference_refresh(self, sample, interval, domain, certificate, cursor, frame, old_statistics):
@@ -2556,7 +2675,12 @@ class _Protocol:
             "upper_accumulator": None if self.charge_refinement is None else self.charge_refinement.summary(),
             "signed_prefix": self.signed_integrals, "sample_cursor": cursor,
             **({"physical_charge": self.physical_charge.summary()} if self.physical_charge is not None else {}),
-            "last_accepted": self._pointer(sample), "physical_reference_identity": self.request["voltage_lift_map"]["physical_reference"]}
+            **({"scientific_progress": self.science.summary()} if self.science is not None else {}),
+            "last_accepted": None if self.science is not None else self._pointer(sample),
+            "physical_reference_identity": self.request["voltage_lift_map"]["physical_reference"]}
+        if self.offline_charge:
+            ledger.update(prefixes=None, physical_charge=None, upper_accumulator=None, signed_prefix=None,
+                          charge_observation={"status": "pending", "deferred_intervals": self.intervals})
         self.mapping = self.segment_frame.prepare_refresh(prepared, self.segment, self.ordinal,
             sample, interval, domain, certificate, ledger)
         self.map_id = _digest(self.mapping)
@@ -2593,7 +2717,7 @@ class _Protocol:
             last_time = _hex(restore["Point"]["payload"]["time"])
         last_right = None
         previous_native = None
-        for self.ordinal, self.segment in enumerate(self.request["segments"], 1):
+        for self.ordinal, self.segment in enumerate(self.request["segments"][:self.run_segments], 1):
             self.numeric_ordinal = self.ordinal
             self.rows.checkpoint()
             start, end = self.segment["start"], self.segment["end"]
@@ -2644,6 +2768,7 @@ class _Protocol:
                          and before["num_steps"] == stats["num_steps"], "statistics_between_steps")
                 stats = self._statistics("after_onestep", previous=before)
                 packet_row = self.rows.take("voltage_lift_native_observation_packet")
+                self.native_packet_row = packet_row
                 _require(packet_row["segment_id"] == self.segment["id"], "packet_segment")
                 frame, self.frame_id = _native_packet(packet_row["packet"], self.policy, self.size)
                 if self.segment_frame.enabled:
@@ -2706,15 +2831,35 @@ class _Protocol:
                 self.path_id = domain["path_identity"]
                 if self.segment_frame.enabled:
                     _require(self.path_id == self.segment_frame.path_identity, "segment_frame_full_physical_polynomial")
-                _require(type(self.path_id) is str and len(self.path_id) == 64 and domain["passed"] is True
-                         and all(value is True for value in domain["checks"].values()), "polynomial_domain_gate")
+                _require(type(self.path_id) is str and len(self.path_id) == 64
+                         and type(domain["passed"]) is bool and all(type(v) is bool for v in domain["checks"].values())
+                         and domain["passed"] is all(domain["checks"].values())
+                         and (self.science is not None or domain["passed"] is True), "polynomial_domain_gate")
                 fields = set(self.request["numeric_packet"]["variable_offsets"])
                 _require(set(domain["domain_bounds"]) == fields, "polynomial_domain_fields")
                 _require(set(domain["checks"]) == ({"maximum_site_fraction", "ion_inventory"} if "c_m3" in fields else set()),
                          "polynomial_domain_checks")
-                for bounds in domain["domain_bounds"].values():
+                for name, bounds in domain["domain_bounds"].items():
                     for lo, hi in _vector(bounds, self.nodes):
                         _require(type(lo) is Fraction and type(hi) is Fraction and lo <= hi, "polynomial_domain_bounds")
+                        if self.science is not None:
+                            _require(name not in {"n_m3", "p_m3"} or lo > 0, "polynomial_density_domain")
+                            _require(name != "f" or 0 <= lo <= hi <= 1, "polynomial_occupancy_domain")
+                            _require(name != "c_m3" or 0 <= lo <= hi < self.request["numeric_packet"]["definition"]["ion_capacity"],
+                                     "polynomial_vacancy_domain")
+                if self.science is not None:
+                    if "c_m3" in fields:
+                        metrics, budgets = domain["metrics"], self.request["budgets"]
+                        maximum = max(hi for lo, hi in domain["domain_bounds"]["c_m3"])/Fraction(
+                            self.request["numeric_packet"]["definition"]["ion_capacity"])
+                        _require(metrics["maximum_site_fraction"] == maximum
+                                 and domain["checks"]["maximum_site_fraction"] is (maximum <= budgets["maximum_site_fraction"]),
+                                 "polynomial_site_certificate_boolean")
+                        inventory_ok = (metrics["ion_inventory_absolute_deviation"] == 0
+                                        if metrics.get("ion_inventory_zero_branch") is True else
+                                        0 <= metrics["ion_inventory_relative"] <= budgets["ion_inventory_relative"])
+                        _require(domain["checks"]["ion_inventory"] is inventory_ok, "polynomial_inventory_certificate_boolean")
+                    self.science.observe("path_inventory", domain["passed"], domain_row)
                 self._certificate(left)  # Deliberately re-certified in every new frame.
                 origin = "stop_output" if endpoint["native_status"] == 1 else "native"
                 right = self._sample(then, origin, left["history"]["point_identity"])
@@ -2763,8 +2908,9 @@ class _Protocol:
             self.coverage.append({"segment_id": self.segment["id"], "intervals": segment_intervals,
                                   "requested_samples": cursor, "start_s": start, "end_s": end})
         _require(self.coverage and self.intervals > 0, "empty_protocol")
-        if self.physical_charge is not None:
-            _require(self.physical_charge.intervals == self.intervals and self.physical_charge.summary()["passed"],
+        if self.physical_charge is not None and not self.offline_charge:
+            _require(self.physical_charge.intervals == self.intervals
+                     and (self.science is not None or self.physical_charge.summary()["passed"]),
                      "physical_charge_protocol_prefix")
         if self.segment_frame.refresh_policy is not None:
             _require(len(self.segment_frame.refreshes) == 1 and self.segment_frame.refreshes[0]["actual_initial_step_hex"] is not None,
@@ -2842,7 +2988,7 @@ def execution_output_policy(request, admission=None, *, execution_provenance=Non
 
 def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: int,
                    max_records: int, deadline_monotonic: float, integer_io_policy=None,
-                   execution_admission=None, execution_provenance=None) -> dict:
+                   execution_admission=None, execution_provenance=None, charge_observer=None) -> dict:
     """Verify a finalized, complete protocol, raising on every partial result.
 
     All limits are caller-selected stop rules. A receipt verifies stored words,
@@ -2863,10 +3009,13 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         integer_observed = integer_io_observed(integer_io_policy)
         folder = Path(folder)
         checkpoint()
-        _require(not any((folder / name).exists() for name in ("FirstFailure.json", "RunnerFailure.json", "PrimaryFailure.json",
+        request = _read_json(folder / "NativeRequest.json", max_record_bytes, checkpoint)
+        from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+        continuing = validate_certificate_policy(request) is not None
+        _require((continuing or not (folder / "FirstFailure.json").exists())
+                 and not any((folder / name).exists() for name in ("RunnerFailure.json", "PrimaryFailure.json",
                                                               "LastRecord.tmp", "LastAccepted.tmp", "FirstFailure.tmp")),
                  "failure_or_incomplete_publication")
-        request = _read_json(folder / "NativeRequest.json", max_record_bytes, checkpoint)
         result = _read_json(folder / "NativeResult.json", max_record_bytes, checkpoint, integer_io_policy)
         execution_output = execution_output_policy(
             request, execution_admission, execution_provenance=execution_provenance)
@@ -2887,9 +3036,11 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         completed = (result["status"] == "completed_bounded_native_interval"
                      and result.get("complete_diagnostic_window") is True and result["complete_protocol"] is False
                      if diagnostic else result["status"] == "completed_bounded_voltage_lift_native_pilot"
-                     and result["complete_protocol"] is True)
+                     and (result["complete_protocol"] is True if "execution_window" not in request else
+                          result["complete_protocol"] is False and result.get("complete_run_window") is True
+                          and result.get("execution_window") == request["execution_window"]))
         _require(completed
-                 and result.get("first_failure") is None and history["closed"] is True
+                 and (continuing or result.get("first_failure") is None) and history["closed"] is True
                  and history["container_complete"] is True and history["error"] is None
                  and history["encoding"] == "gzip" and history["path"] == "NativeHistory.jsonl.gz", "incomplete_native_result")
         path = folder / history["path"]
@@ -2899,7 +3050,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         with HistoryReader(path, encoding="gzip", max_record_bytes=max_record_bytes,
                             max_logical_bytes=max_logical_bytes, integer_io_policy=integer_io_policy) as reader:
             rows = _Rows(reader, max_records, checkpoint)
-            protocol = _Protocol(request, rows)
+            protocol = _Protocol(request, rows, charge_observer=charge_observer)
             _require(result["request_sha256"] == protocol.request_id and result["map_identity"] == protocol.map_id
                      and result["observation_policy_sha256"] == protocol.policy_id, "result_request_binding")
             protocol.run()
@@ -2923,7 +3074,22 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         _require(type(counts["residual"]) is int and 0 <= counts["residual"] <= request["budgets"]["residual_calls"]
                  and protocol.steps <= request["budgets"]["native_steps"], "native_work_caps")
         _require(result["last_numerical"] == protocol.final_pointer
-                 and result["last_physically_accepted"] == protocol.final_pointer, "result_final_pointers")
+                 and result["last_physically_accepted"] == (None if continuing else protocol.final_pointer), "result_final_pointers")
+        if continuing:
+            progress = protocol.science.summary()
+            original_progress = result.get("scientific_progress")
+            _require(type(original_progress) is dict and type(original_progress.get("passed")) is bool,
+                     "result_scientific_progress_type")
+            _require(_digest(original_progress) == _digest(progress) and result.get("scientific_status") == progress["status"]
+                     and result.get("scientific_pass") is False and result.get("complete_readback") is False
+                     and result.get("first_failure") == progress["first_failure"]
+                     and _decode(result["signed_integral_prefix_C"]) == (None if protocol.offline_charge else protocol.signed_integrals),
+                     "result_scientific_progress")
+            failure_path = folder / "FirstFailure.json"
+            _require(failure_path.exists() is (progress["first_failure"] is not None), "first_failure_publication")
+            if failure_path.exists():
+                _require(_read_json(failure_path, max_record_bytes, checkpoint, integer_io_policy) == progress["first_failure"],
+                         "first_failure_sidecar_binding")
         attempt = result["last_attempt"]
         _require(attempt["phase"] == "native_return" and attempt["success"] is True
                  and attempt["segment_id"] == protocol.final_pointer["segment_id"]
@@ -2932,17 +3098,25 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                  and attempt["z_hex"] == protocol.final_history["raw_solver_z_hex"]
                  and attempt["zdot_hex"] == protocol.final_history["raw_solver_zdot_hex"], "result_last_attempt")
         for key, (absolute, error) in protocol.prefix.items():
-            _require(_decode(result["cumulative_absolute_charge_bounds_C"][key]) == absolute
-                     and _decode(result["cumulative_observation_reference_bounds_C"][key]) == error, "result_charge_prefix")
+            if protocol.offline_charge:
+                _require(result["cumulative_absolute_charge_bounds_C"] is None
+                         and result["cumulative_observation_reference_bounds_C"] is None,
+                         "deferred_result_cannot_claim_observation")
+            else:
+                _require(_decode(result["cumulative_absolute_charge_bounds_C"][key]) == absolute
+                         and _decode(result["cumulative_observation_reference_bounds_C"][key]) == error, "result_charge_prefix")
+        if protocol.offline_charge:
+            _require(result.get("charge_observation") == {"status": "pending", "deferred_intervals": protocol.intervals},
+                     "deferred_result_interval_count")
         if protocol.physical_charge is not None:
             _require(result.get("charge_gate") == "signed-physical-charge-v1"
                      and result.get("physical_charge_policy_sha256") == _digest(protocol.physical_charge.policy)
-                     and _decode(result.get("physical_charge")) == protocol.physical_charge.summary(),
+                     and _decode(result.get("physical_charge")) == (None if protocol.offline_charge else protocol.physical_charge.summary()),
                      "result_physical_charge_prefix")
         else:
             _require(not any(k in result for k in ("charge_gate", "physical_charge", "physical_charge_policy_sha256")),
                      "unbound_result_physical_charge")
-        if protocol.charge_refinement is not None:
+        if protocol.charge_refinement is not None and not protocol.offline_charge:
             representation = _decode(result["cumulative_representation"])
             _require(type(representation) is dict and representation == protocol.charge_refinement.summary()
                      and type(representation["index"]) is int
@@ -2952,10 +3126,11 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         else:
             _require("cumulative_representation" not in result, "legacy_result_refinement_metadata")
         last = _read_json(folder / "LastRecord.json", max_record_bytes, checkpoint)
-        accepted = _read_json(folder / "LastAccepted.json", max_record_bytes, checkpoint)
+        accepted = None if continuing else _read_json(folder / "LastAccepted.json", max_record_bytes, checkpoint)
         _require({k: last[k] for k in rows.last} == rows.last
                  and last["encoded_byte_offset_after_record"] + 10 == history["encoded_bytes"]
-                 and accepted == {"pointer": last, "right": protocol.final_pointer, "frame": protocol.frame_id},
+                 and (not (folder / "LastAccepted.json").exists() if continuing else
+                      accepted == {"pointer": last, "right": protocol.final_pointer, "frame": protocol.frame_id}),
                  "final_sidecar_binding")
         container_hash, size = hashlib.sha256(), 0
         # A compressed-byte pass supplies the full container digest without a
@@ -2980,7 +3155,13 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                  (before_stat.st_dev, before_stat.st_ino, before_stat.st_size, before_stat.st_mtime_ns) ==
                  (after_stat.st_dev, after_stat.st_ino, after_stat.st_size, after_stat.st_mtime_ns), "container_changed")
         checkpoint()
-        return {"schema": "solarlab.native-history-verification.v1", "verified": True, "complete_protocol": not diagnostic,
+        return {"schema": "solarlab.native-history-verification.v1", "verified": True,
+                "complete_protocol": not diagnostic and protocol.full_protocol,
+                **({"complete_run_window": True, "execution_window": request["execution_window"]} if not protocol.full_protocol else {}),
+                **({"complete_readback": True, "scientific_progress": protocol.science.summary(final=True),
+                    "scientific_status": protocol.science.summary(final=True)["status"], "scientific_pass": False}
+                   if continuing else {}),
+                **({"physical_observation": charge_observer.summary()} if charge_observer is not None else {}),
                 **({"complete_diagnostic_window": True, "common_clocks": protocol.common_clocks,
                     "diagnostic_grid": protocol.diagnostic_grid} if diagnostic else {}),
                 "status": "verified_complete_native_history", "request_sha256": protocol.request_id,
@@ -3001,13 +3182,13 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
                     "quantum_ratio": [1, 1 << 120], "rounded_terms": list(protocol.charge_refinement.rounded),
                     "slack_upper_bounds_C": [[v.numerator, v.denominator] for v in
                         (n * protocol.charge_refinement.quantum for n in protocol.charge_refinement.rounded)]}}
-                   if protocol.charge_refinement is not None else {}),
+                   if protocol.charge_refinement is not None and not protocol.offline_charge else {}),
                 **({"integer_io": {"role": "independent_reader", **integer_io_observed(integer_io_policy)}}
                    if integer_io_policy is not None else {}),
                 **({"physical_charge": {"policy_sha256": _digest(protocol.physical_charge.policy),
                     "prefix": result["physical_charge"], "saved_charge_words_independently_checked": True,
                     "flux": "source-bound independently flux-derived enclosure; no physics replay"}}
-                   if protocol.physical_charge is not None else {}),
+                   if protocol.physical_charge is not None and not protocol.offline_charge else {}),
                 "scope": "stored artifact integrity, complete request coverage and recorded gate consistency; no numerical replay",
                 "scientific_qualification": False}
     except HistoryVerificationError as error:

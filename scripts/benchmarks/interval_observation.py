@@ -187,11 +187,19 @@ class AcceptedClock:
         same = self.segment_id == other.segment_id
         if numeric_handoff is not None:
             h = numeric_handoff
-            if (not isinstance(h, Mapping) or h.get("schema") != "solarlab.accepted-reference-handoff.v1"
+            v2 = isinstance(h, Mapping) and h.get("schema") == "solarlab.reference-state-transfer.v2"
+            proof = h.get("state_transfer" if v2 else "acceptance", {}) if isinstance(h, Mapping) else {}
+            if (not isinstance(h, Mapping) or h.get("schema") not in {"solarlab.accepted-reference-handoff.v1", "solarlab.reference-state-transfer.v2"}
                     or h.get("kind") != "voltage_lift_numeric_handoff"
                     or h.get("phase") != "complete" or not same or self.owner is None
-                    or h["acceptance"].get("schema") != "solarlab.full-interval-refresh-acceptance.v1"
-                    or h["acceptance"]["point_identity"] != h["transfer"]["point_identity"]
+                    or proof.get("schema") != ("solarlab.numeric-reference-transfer-evidence.v2" if v2 else "solarlab.full-interval-refresh-acceptance.v1")
+                    or proof["point_identity"] != h["transfer"]["point_identity"]
+                    or v2 and ("acceptance" in h or "acceptance_sha256" in h["transfer"]
+                               or h["transfer"].get("state_transfer_sha256") != identity(proof)
+                               or proof.get("scientific_progress") != h["ledger"].get("scientific_progress")
+                               or proof.get("scientific_progress", {}).get("status") not in {"failed", "pending"}
+                               or h["transfer"].get("same_complete_Point") is not True
+                               or h.get("native_multistep_history_discarded") is not True)
                     or rational(float.fromhex(h["transfer"]["time_hex"])) != self.tn
                     or h["old_epoch"]["owner"] != self.owner or h["old_epoch"]["generation"] != self.generation
                     or h["old_epoch"]["nsteps"] != self.nsteps

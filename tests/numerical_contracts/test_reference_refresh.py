@@ -140,6 +140,32 @@ def admitted_refresh(refresh_case, monkeypatch):
                            certificate=certificate, ledger=ledger, frame=frame)
 
 
+def promote_reference_transfer_v2(c, *, failed=True, observation="online"):
+    from scripts.benchmarks.physical_tolerance import certificate_failure_policy
+    c.request["certificate_failure_policy"] = certificate_failure_policy(observation=observation)
+    c.request["reference_refresh_policy"] = c.d._reference_refresh_policy(c.request, c.point.time)
+    c.context.request_sha256 = c.d.digest(c.request)
+    c.binding = c.d.VoltageLiftSegmentAdapter(c.d.VoltageLiftAdapter(c.old_mapping), c.context, c.segment)
+    c.sample["request_sha256"] = c.context.request_sha256
+    if failed:
+        c.sample["state_checks"].update(passed=False, contact_max_relative=2e-8)
+    c.sample["record_sha256"] = c.d.digest({k: v for k, v in c.sample.items() if k != "record_sha256"})
+    c.interval["right"]["record_sha256"] = c.sample["record_sha256"]
+    c.interval["kind"] = "voltage_lift_interval_certificate"
+    c.certificate["sample_record_sha256"] = c.sample["record_sha256"]
+    progress = c.d._ScientificProgress(c.request["certificate_failure_policy"])
+    progress.note("state_accuracy", not failed, c.sample)
+    c.interval["scientific_progress"] = progress.payload()
+    c.ledger.update(scientific_progress=progress.payload(), last_accepted=None)
+    if observation == "sealed-history":
+        c.interval.update(kind="voltage_lift_interval_deferred",
+                          observation={"path_identity": "f"*64, "charge_observation": "pending"},
+                          charge_observation={"status": "pending", "deferred_intervals": 7})
+        c.ledger.update(prefixes=None, physical_charge=None, upper_accumulator=None, signed_prefix=None,
+                        charge_observation={"status": "pending", "deferred_intervals": 7})
+    return c
+
+
 def prepare(c):
     return c.d.prepare_voltage_lift_reference_refresh(c.binding, c.point, c.z, c.zdot,
         sample=c.sample, interval=c.interval, domain=c.domain, certificate=c.certificate,
@@ -204,6 +230,107 @@ def independent_reader(c):
     reader.segment = asdict(c.segment)
     reader.refresh_policy, reader.refreshes, reader.frames = reference_refresh_policy(c.request), [], []
     return reader
+
+
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("observation", ["online", "sealed-history"])
+def test_v2_transfer_preserves_failed_or_pending_science_and_exact_words(admitted_refresh, failed, observation):
+    from scripts.benchmarks.native_readback import _decode
+    c = promote_reference_transfer_v2(admitted_refresh, failed=failed, observation=observation)
+    old_point, old_ledger = encode_point(c.point), deepcopy(c.ledger)
+    fresh, prepared, solver, installed, result = initialized(c)
+    binding, returned, statistics, complete = result
+    reader = independent_reader(c)
+    actual = reader.prepare_refresh(prepared, asdict(c.segment), 1, c.sample, c.interval,
+                                    c.domain, c.certificate, _decode(c.ledger))
+    reader.complete_refresh(prepared, complete, statistics)
+    assert actual == fresh.payload()
+    assert complete["schema"] == "solarlab.reference-state-transfer.v2"
+    assert "acceptance" not in complete and "acceptance_sha256" not in complete["transfer"]
+    assert complete["state_transfer"]["schema"] == "solarlab.numeric-reference-transfer-evidence.v2"
+    assert complete["state_transfer"]["scientific_progress"]["status"] == ("failed" if failed else "pending")
+    assert complete["ledger"] == old_ledger and complete["transfer"]["Point"] == old_point == encode_point(c.point)
+    assert complete["transfer"]["physical_state_words_hex"] == c.sample["history"]["physical_cumulative_words_hex"]
+    assert complete["transfer"]["physical_rate_words_hex"] == c.sample["history"]["physical_rate_words_hex"]
+    assert solver.calls == 1 and complete["new_epoch"]["generation"] == 2
+    assert complete["native_multistep_history_discarded"] is True
+
+
+@pytest.mark.parametrize("observation", ["online", "sealed-history"])
+@pytest.mark.parametrize("target", ["interval", "state_transfer", "ledger"])
+@pytest.mark.parametrize("alias", [0, 0.0], ids=["int-zero", "float-zero"])
+def test_v2_reader_rejects_rehashed_progress_alias(admitted_refresh, observation, target, alias):
+    from scripts.benchmarks.native_readback import HistoryVerificationError, _decode
+    c = promote_reference_transfer_v2(admitted_refresh, observation=observation)
+    if target == "interval":
+        c.interval["scientific_progress"]["passed"] = alias
+    _, _, _, prepared = prepare(c)
+    if target in ("state_transfer", "ledger"):
+        prepared[target]["scientific_progress"]["passed"] = alias
+        if target == "ledger":
+            prepared["ledger_sha256"] = c.d.digest(prepared["ledger"])
+        prepared["record_sha256"] = c.d.digest({k: v for k, v in prepared.items() if k != "record_sha256"})
+    reader = independent_reader(c)
+    with pytest.raises(HistoryVerificationError, match="scientific_progress|scientific_acceptance"):
+        reader.prepare_refresh(prepared, asdict(c.segment), 1, c.sample, c.interval,
+                               c.domain, c.certificate, _decode(c.ledger))
+
+
+@pytest.mark.parametrize("mode", ["absent", "null", "false", "valid"])
+def test_refresh_certificate_policy_mode_is_validated_on_both_ends(admitted_refresh, mode):
+    from scripts.benchmarks.native_readback import reference_refresh_policy
+    from scripts.benchmarks.physical_tolerance import certificate_failure_policy
+    c = admitted_refresh
+    if mode != "absent":
+        c.request["certificate_failure_policy"] = {"null": None, "false": False,
+                                                  "valid": certificate_failure_policy()}[mode]
+    if mode in ("null", "false"):
+        with pytest.raises(ValueError, match="certificate_policy_binding"):
+            c.d._reference_refresh_policy(c.request, c.point.time)
+        with pytest.raises(ValueError, match="certificate_policy_binding"):
+            reference_refresh_policy(c.request)
+    else:
+        policy = c.d._reference_refresh_policy(c.request, c.point.time)
+        c.request["reference_refresh_policy"] = policy
+        assert reference_refresh_policy(c.request) == policy
+        assert policy["schema"] == ("solarlab.reference-state-transfer-policy.v2" if mode == "valid"
+                                    else "solarlab.accepted-reference-refresh-policy.v1")
+
+
+@pytest.mark.parametrize("target", ["state_transfer", "ledger"])
+@pytest.mark.parametrize("value", [None, False])
+def test_v2_reader_rejects_malformed_progress_container(admitted_refresh, target, value):
+    from scripts.benchmarks.native_readback import HistoryVerificationError, _decode
+    c = promote_reference_transfer_v2(admitted_refresh)
+    _, _, _, prepared = prepare(c)
+    prepared[target] = value
+    if target == "ledger":
+        prepared["ledger_sha256"] = c.d.digest(value)
+    prepared["record_sha256"] = c.d.digest({k: v for k, v in prepared.items() if k != "record_sha256"})
+    with pytest.raises(HistoryVerificationError, match="scientific_progress_type"):
+        independent_reader(c).prepare_refresh(prepared, asdict(c.segment), 1, c.sample, c.interval,
+                                              c.domain, c.certificate, _decode(c.ledger))
+
+
+@pytest.mark.parametrize("damage", ["state", "generation", "old_owner", "guard_generation"])
+def test_v2_scientific_failure_does_not_hide_native_transfer_failure(admitted_refresh, damage):
+    c = promote_reference_transfer_v2(admitted_refresh)
+    with pytest.raises(ContractError):
+        initialized(c, damage=damage)
+
+
+def test_v2_refresh_policy_binds_each_actual_request_not_shared_N16_ancestry(admitted_refresh):
+    from scripts.benchmarks.native_readback import reference_refresh_policy, HistoryVerificationError
+    c = promote_reference_transfer_v2(admitted_refresh)
+    original = c.request["reference_refresh_policy"]
+    for key, replacement in (("map_identity", "7"*64), ("controls", {**c.request["controls"], "rtol": 1e-5}),
+                             ("budgets", {**c.request["budgets"], "current_A": 2e-9})):
+        request = deepcopy(c.request); request[key] = replacement
+        with pytest.raises(HistoryVerificationError): reference_refresh_policy(request)
+        request["reference_refresh_policy"] = c.d._reference_refresh_policy(request, c.point.time)
+        current = reference_refresh_policy(request)
+        assert current != original and current["time_hex"] == original["time_hex"]
+        assert current["trigger"] == "exact_domain_safe_native_endpoint"
 
 
 def test_refresh_callback_and_weight_epoch_are_coherent(admitted_refresh):
@@ -308,6 +435,38 @@ def test_refresh_clock_and_native_epoch_guards(admitted_refresh, serialized):
             previous_mapping=c.old_mapping, current_mapping=fresh, numeric_handoff=damaged)
 
 
+@pytest.mark.parametrize("damage", [None, "v1_disguise", "no_homomorphism", "science_erased", "words"])
+def test_v2_clock_and_frame_require_distinct_numerical_evidence(admitted_refresh, damage):
+    from scripts.benchmarks.interval_observation import AcceptedClock
+    from scripts.benchmarks.native_observation import require_frame_successor
+    c = promote_reference_transfer_v2(admitted_refresh)
+    fresh, _, _, _, (_, _, _, complete) = initialized(c)
+    before = AcceptedClock(.5, .625, .125, 1, 7, 2, .5, .75, c.segment.id, owner=c.frame.owner)
+    after = AcceptedClock(.625, .6875, .0625, 2, 1, 1, .5, .75, c.segment.id, owner=c.frame.owner)
+    zero = np.zeros(10)
+    current = SimpleNamespace(identity="c"*64, owner=c.frame.owner, generation=2, binding_identity=c.frame.binding_identity,
+        snapshot={"predecessor": {"internal_t": c.point.time, "nsteps": 0, "raw_y": zero.tobytes(), "raw_yp": zero.tobytes()},
+                  "native_before": {"nsteps": 1}})
+    if damage == "v1_disguise": complete["schema"] = "solarlab.accepted-reference-handoff.v1"
+    if damage == "no_homomorphism": complete["transfer"].pop("state_transfer_sha256")
+    if damage == "science_erased": complete["state_transfer"]["scientific_progress"] = {"status": "passed"}
+    if damage == "words": complete["transfer"]["physical_rate_words_hex"][1][0] = (2.**-80).hex()
+    complete["record_sha256"] = c.d.digest({k: v for k, v in complete.items() if k != "record_sha256"})
+    if damage in {None, "words"}:
+        before.require_successor(after, numeric_handoff=complete)
+    else:
+        with pytest.raises((ContractError, KeyError)):
+            before.require_successor(after, numeric_handoff=complete)
+    def frame_check():
+        require_frame_successor(c.frame, current, previous_segment=c.segment, current_segment=c.segment,
+            previous_mapping=c.old_mapping, current_mapping=fresh, numeric_handoff=complete)
+    if damage is None:
+        frame_check()
+    else:
+        with pytest.raises((ContractError, KeyError)):
+            frame_check()
+
+
 def test_refresh_legacy_policy_absence_and_single_cap(admitted_refresh):
     from scripts.benchmarks.native_readback import reference_refresh_policy, HistoryVerificationError
     c = admitted_refresh
@@ -338,6 +497,7 @@ def protocol_for_refresh(c, records):
     ledger = _decode(c.ledger)
     p.prefix = {k: (v["absolute_defects"], v["reference_errors"]) for k, v in ledger["prefixes"].items()}
     p.charge_refinement = SimpleNamespace(summary=lambda: ledger["upper_accumulator"])
+    p.physical_charge = None
     p.signed_integrals = None
     p.frame_id, p.size, p.jacobians, p.diagnostic = c.frame.identity, 10, 0, None
     p.refresh_anchor, p.refresh_binding_identity = None, None
