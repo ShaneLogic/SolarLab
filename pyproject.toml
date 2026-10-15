@@ -139,6 +139,7 @@ only-include = [
     "tests/refactor/test_legacy_behavior_execution.py",
     "tests/refactor/test_legacy_execution_context.py",
     "tests/refactor/test_effective_behavior_identity.py",
+    "tests/refactor/test_configuration_migration.py",
     "tests/refactor/legacy_driver_observer.py",
     "tests/refactor/fixtures/r1_common_state_preparation.json",
     "tests/refactor/fixtures/r1_pair_common_state_preparation.json",

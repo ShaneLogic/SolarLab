@@ -51,6 +51,13 @@
       "LegacyWire",
       "prepare_legacy_wire"
     ],
+    "solarlab.config.migration": [
+      "CONFIGURATION_VERSION",
+      "ConfigurationMigration",
+      "migrate_configuration",
+      "read_configuration_v2",
+      "prepare_v2_legacy_wire"
+    ],
     "solarlab.config.model_parameters": [
       "layer_parameter_source",
       "device_topology",
@@ -194,6 +201,14 @@
       "SourceSet",
       "read_sources"
     ],
+    "solarlab.reproducibility.configuration_migration": [
+      "ConfigurationMigrationPlan",
+      "prepare_configuration_migration",
+      "prepare_registered_configuration_v2",
+      "read_selected_configuration_v2",
+      "load_selected_configuration_v2",
+      "publish_configuration_migration"
+    ],
     "solarlab.units": [
       "UNIT_SCHEMA_VERSION",
       "QuantityError",
@@ -248,6 +263,13 @@
       "LEGACY_WIRE_VERSION",
       "LegacyWire",
       "prepare_legacy_wire"
+    ],
+    "solarlab.config.migration": [
+      "CONFIGURATION_VERSION",
+      "ConfigurationMigration",
+      "migrate_configuration",
+      "prepare_v2_legacy_wire",
+      "read_configuration_v2"
     ],
     "solarlab.config.model_parameters": [
       "device_topology",
@@ -415,6 +437,14 @@
       "load_registry",
       "read_sources",
       "validate_registry_pair"
+    ],
+    "solarlab.reproducibility.configuration_migration": [
+      "ConfigurationMigrationPlan",
+      "load_selected_configuration_v2",
+      "prepare_configuration_migration",
+      "prepare_registered_configuration_v2",
+      "publish_configuration_migration",
+      "read_selected_configuration_v2"
     ],
     "solarlab.sweeps.inputs": [
       "SweepInput"

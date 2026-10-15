@@ -125,6 +125,19 @@ class PreparationContext(Record):
     resource_sources: tuple[str, ...]
 
 
+class _ConfigurationSelectionRef(Record):
+    """Generated data pins; original source/commit references remain intact."""
+
+    path: str
+    sha256: Digest
+    migration_plan_sha256: Digest
+
+    @model_validator(mode="after")
+    def _path(self) -> _ConfigurationSelectionRef:
+        relative_path(self.path)
+        return self
+
+
 class RegistryDocument(Record):
     schema_version: Literal["solarlab.registry-migration.v2"]
     kind: Literal["configuration_matrix", "numerical_refinement"]
@@ -137,6 +150,16 @@ class RegistryDocument(Record):
     sources: Annotated[tuple[SourceRef, ...], Field(min_length=1)]
     preparation_context: PreparationContext | None
     entries: Annotated[tuple[MigrationEntry, ...], Field(min_length=1)]
+    configuration_selection: _ConfigurationSelectionRef | None = None
+
+
+def _registry_mapping(spec: RegistryDocument) -> dict[str, Any]:
+    result = spec.model_dump(mode="json")
+    if spec.configuration_selection is None:
+        # Preserve the original preparation-registry bytes when this new,
+        # optional data selection is absent; no source pin is removed.
+        result.pop("configuration_selection")
+    return result
 
 
 def _rows(document: dict[str, Any], section: str) -> dict[str, dict[str, Any]]:
@@ -189,7 +212,7 @@ class MigrationRegistry:
 
     @property
     def content_sha256(self) -> str:
-        return record_digest(self.spec.model_dump(mode="json"))
+        return record_digest(_registry_mapping(self.spec))
 
     def entry(self, id: str) -> MigrationEntry:
         for entry in self.spec.entries:
@@ -205,7 +228,7 @@ class MigrationRegistry:
         return self.sources.document(self.spec.original_registry).content
 
     def export(self) -> dict[str, Any]:
-        return self.spec.model_dump(mode="json")
+        return _registry_mapping(self.spec)
 
 
 def load_registry(source: SourceDocument, documents: tuple[SourceDocument, ...]) -> MigrationRegistry:
@@ -220,6 +243,8 @@ def load_registry(source: SourceDocument, documents: tuple[SourceDocument, ...])
     original = mapping(sources.document(spec.original_registry))
     companion = mapping(sources.document(spec.companion_registry))
     is_matrix = spec.kind == "configuration_matrix"
+    if not is_matrix and spec.configuration_selection is not None:
+        raise ValueError("only the configuration matrix can select v2 configuration data")
     matrix, refinement = (original, companion) if is_matrix else (companion, original)
     if matrix.get("schema_version") != 1 or refinement.get("schema_version") != "numerical-refinement-registry-v1":
         raise ValueError("V2 source types must match the original V1 registries")

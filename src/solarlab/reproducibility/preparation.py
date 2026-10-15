@@ -84,6 +84,8 @@ class PreparationResult:
 
 def prepare_configuration(registry: MigrationRegistry, id: str, *, defaults: DefaultCatalog,
                           resources: ResourceLibrary) -> PreparationResult:
+    if registry.spec.configuration_selection is not None:
+        raise ValueError("formal v2 data is selected; use load_selected_configuration_v2, not the old migration reader")
     entry = registry.entry(id)
     context = registry.spec.preparation_context
     expected = entry.preparation
