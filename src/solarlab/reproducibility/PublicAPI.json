@@ -36,7 +36,10 @@
       "CACHE_LAYERS",
       "ExecutionManifest",
       "execution_manifest",
-      "verify_execution_manifest"
+      "verify_execution_manifest",
+      "CacheLayerIdentity",
+      "ColdPointBinding",
+      "cold_point_binding"
     ],
     "solarlab.config.inputs": [
       "LayerInput"
@@ -249,6 +252,8 @@
     "solarlab.config.identity": [
       "BuildSource",
       "CACHE_LAYERS",
+      "CacheLayerIdentity",
+      "ColdPointBinding",
       "ExecutionDescription",
       "ExecutionEngine",
       "ExecutionManifest",
@@ -256,6 +261,7 @@
       "IdentityInputs",
       "ModelInputs",
       "RuntimeEnvironment",
+      "cold_point_binding",
       "execution_identity",
       "execution_manifest",
       "input_identity",

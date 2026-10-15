@@ -10,9 +10,10 @@ from typing import Any
 
 from pydantic import ValidationError
 from solarlab.config.identity import (
-    ExecutionDescription, ExecutionEngine, ExecutionManifest, IdentityInputs,
-    RuntimeEnvironment, verify_execution_manifest,
+    ColdPointBinding, ExecutionDescription, ExecutionEngine, ExecutionManifest, IdentityInputs,
+    RuntimeEnvironment, cold_point_binding, verify_execution_manifest,
 )
+from solarlab.contracts.layout import Layout
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.inputs import DeviceInput
@@ -200,6 +201,19 @@ class PreparedSweep:
             verify_execution_manifest(manifest, inputs, execution, engine=engine,
                                       environment=environment, expected_sha256=expected_sha256)
         return prepared
+
+    def prepare_point_binding(
+        self, point_id: str, manifest: ExecutionManifest, inputs: IdentityInputs,
+        execution: ExecutionDescription, *, layout: Layout, topology_plan: SourceDocument,
+        engine: ExecutionEngine, environment: RuntimeEnvironment, expected_sha256: str,
+    ) -> tuple[PreparedDevice | PreparedJVExperiment, ColdPointBinding]:
+        """Fresh data and binding for one point; no factorization/rebind reuse."""
+        prepared = self.consume_point_manifest(point_id, manifest, inputs, execution, engine=engine,
+                                               environment=environment, expected_sha256=expected_sha256)
+        binding = cold_point_binding(inputs, execution, manifest, point_id=point_id,
+            layout=layout, topology_plan=topology_plan, engine=engine, environment=environment,
+            expected_sha256=expected_sha256)
+        return prepared, binding
 
 
 def prepare_sweep(input: SweepInput, defaults: DefaultCatalog, resources: ResourceLibrary, *, sources: tuple[SourceDocument, ...] = (), references: tuple[SweepReference, ...] = ()) -> PreparedSweep:

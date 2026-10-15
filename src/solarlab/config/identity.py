@@ -22,6 +22,7 @@ from solarlab.config.legacy_execution import R1ExecutionContext
 from solarlab.config.model_parameters import (
     device_topology, layer_parameter_source, structured_parameter_source,
 )
+from solarlab.contracts.layout import Layout
 from solarlab.device.resolved import PreparedDevice
 from solarlab.materials.resources import ResourceTable
 from solarlab.materials.source import SourceDocument
@@ -34,6 +35,7 @@ __all__ = [
     "ModelInputs", "IdentityInputs", "Identity", "BuildSource", "RuntimeEnvironment",
     "ExecutionDescription", "ExecutionEngine", "input_identity", "physics_identity", "execution_identity",
     "CACHE_LAYERS", "ExecutionManifest", "execution_manifest", "verify_execution_manifest",
+    "CacheLayerIdentity", "ColdPointBinding", "cold_point_binding",
 ]
 
 CACHE_LAYERS = ("topology_plan", "numeric_parameter_binding", "working_point_initial_state", "numeric_factorization")
@@ -643,3 +645,122 @@ def verify_execution_manifest(
     if manifest.canonical_json != expected.canonical_json:
         raise ValueError("consumer inputs, protocol, state, grid, controls or implementation differ from the manifest")
     return execution_identity(inputs, execution, engine=engine)
+
+
+@dataclass(frozen=True, slots=True)
+class CacheLayerIdentity:
+    """One distinct metadata domain; matching keys never grant reuse."""
+    layer: str
+    canonical_json: bytes | None
+    sha256: str | None = field(init=False)
+    cache_eligible: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        if self.layer not in CACHE_LAYERS:
+            raise ValueError("unknown cache identity layer")
+        if self.canonical_json is None:
+            if self.layer != "numeric_factorization":
+                raise ValueError("only an unconstructed factorization may have no identity")
+            object.__setattr__(self, "sha256", None)
+            return
+        if type(self.canonical_json) is not bytes:
+            raise ValueError("cache identity requires immutable content")
+        data = json.loads(self.canonical_json)
+        if (not isinstance(data, dict) or set(data) != {"schema", "layer", "payload"}
+                or data["schema"] != "solarlab.cache-layer-identity.v1" or data["layer"] != self.layer
+                or not isinstance(data["payload"], dict) or _json_bytes(data) != self.canonical_json):
+            raise ValueError("cache layer identity has the wrong canonical domain")
+        object.__setattr__(self, "sha256", hashlib.sha256(self.canonical_json).hexdigest())
+
+    def export(self) -> dict[str, Any]:
+        return {"layer": self.layer, "sha256": self.sha256,
+                "document": json.loads(self.canonical_json) if self.canonical_json is not None else None,
+                "cache_eligible": self.cache_eligible}
+
+
+@dataclass(frozen=True, slots=True)
+class ColdPointBinding:
+    """Fresh immutable per-point metadata, never a solver binding or LU."""
+    point_id: str
+    input_sha256: str
+    physics_sha256: str
+    execution_sha256: str
+    layers: tuple[CacheLayerIdentity, ...]
+    can_execute: bool = field(default=False, init=False)
+    numerical_reuse: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        _name(self.point_id)
+        for value in (self.input_sha256, self.physics_sha256, self.execution_sha256):
+            if type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+                raise ValueError("point binding requires actual complete identity digests")
+        layers = tuple(self.layers)
+        if any(type(item) is not CacheLayerIdentity for item in layers) or tuple(item.layer for item in layers) != CACHE_LAYERS:
+            raise ValueError("point binding requires all four distinct layers in their declared order")
+        object.__setattr__(self, "layers", layers)
+
+    def layer(self, name: str) -> CacheLayerIdentity:
+        for item in self.layers:
+            if item.layer == name:
+                return item
+        raise ValueError("unknown cache identity layer")
+
+    def export(self) -> dict[str, Any]:
+        return {"schema": "solarlab.cold-point-binding.v1", "point_id": self.point_id,
+                "H_input": self.input_sha256, "H_physics": self.physics_sha256, "H_execution": self.execution_sha256,
+                "layers": [item.export() for item in self.layers], "can_execute": self.can_execute,
+                "numerical_reuse": self.numerical_reuse}
+
+    @property
+    def content_sha256(self) -> str:
+        return hashlib.sha256(_json_bytes(self.export())).hexdigest()
+
+
+def cold_point_binding(
+    inputs: IdentityInputs, execution: ExecutionDescription, manifest: ExecutionManifest, *,
+    point_id: str, layout: Layout, topology_plan: SourceDocument, engine: ExecutionEngine,
+    environment: RuntimeEnvironment, expected_sha256: str, numeric_matrix: SourceDocument | None = None,
+) -> ColdPointBinding:
+    """Separate structure, numeric parameters, state/history and factorization.
+
+    WS3 supplies the actual Layout and complete compiled-plan document; neither
+    is fabricated from a device hash. Layout's own constructor revalidates its
+    identity. Only immutable snapshots are retained here. The first version
+    always cold-builds: no key, even an exact match, enables rebind or LU reuse.
+    A missing matrix has no factorization identity, rather than a made-up LU.
+    """
+    verified = verify_execution_manifest(manifest, inputs, execution, engine=engine,
+                                         environment=environment, expected_sha256=expected_sha256)
+    if type(layout) is not Layout:
+        raise ValueError("point binding requires the actual public Layout contract")
+    actual = Layout(layout.supports, layout.variables, layout.equations)
+    if actual.identity != layout.identity or actual.size != layout.size or dict(actual.offsets) != dict(layout.offsets):
+        raise ValueError("layout identity/offsets differ from their actual declarations")
+    # This is exactly the existing Layout producer's declaration representation;
+    # no new physical-coordinate, unit or layout identity algorithm is invented.
+    declaration = repr((actual.supports, actual.variables, actual.equations))
+    payload = verified.export()["document"]["payload"]
+
+    def layer(name: str, value: dict[str, Any] | None) -> CacheLayerIdentity:
+        return CacheLayerIdentity(name, _json_bytes({"schema": "solarlab.cache-layer-identity.v1",
+                                  "layer": name, "payload": value}) if value is not None else None)
+
+    models = [{"id": item.id, "scope": metadata_value(item.scope),
+               "definition": metadata_value(inputs.registry.get(item.model)),
+               "owned_variables": metadata_value(item.owned_variables), "reads": list(item.read_variables)}
+              for item in inputs.selection.instances]
+    topology = layer("topology_plan", {"layout_sha256": actual.identity, "layout_declarations": declaration,
+        "topology_plan": _source(topology_plan), "device_topology": metadata_value(inputs.selection.topology),
+        "models": models, "evaluation_order": list(inputs.selection.evaluation_order), "implementation": payload["implementation"]})
+    parameters = layer("numeric_parameter_binding", {"topology_sha256": topology.sha256,
+        "H_physics": payload["H_physics"], "effective_binding_sha256": hashlib.sha256(_json_bytes(payload["effective_binding"])).hexdigest(),
+        "actual_grid": _source(execution.grid), "environment": payload["environment"],
+        "engine_sha256": hashlib.sha256(_json_bytes(engine.export())).hexdigest()})
+    state = layer("working_point_initial_state", {"parameters_sha256": parameters.sha256,
+        "H_execution": verified.sha256, "protocol": _source(execution.protocol),
+        "preparation": _source(execution.preparation), "initial_state": _source(execution.initial_state)})
+    factorization = layer("numeric_factorization", None if numeric_matrix is None else {
+        "working_point_sha256": state.sha256, "numeric_controls": _source(execution.numeric_controls),
+        "actual_matrix": _source(numeric_matrix)})
+    return ColdPointBinding(point_id, payload["H_input"], payload["H_physics"], verified.sha256,
+                            (topology, parameters, state, factorization))
