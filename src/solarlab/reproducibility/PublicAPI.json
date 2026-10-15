@@ -228,6 +228,11 @@
       "write_release_bundle",
       "read_release_bundle",
       "verify_release_installation"
+    ],
+    "solarlab.reproducibility.registry_mapping": [
+      "RegistryMapping",
+      "prepare_registry_mapping",
+      "read_registry_mapping"
     ]
   },
   "public_imports": {
@@ -490,6 +495,11 @@
       "snapshot_release_bundle",
       "verify_release_installation",
       "write_release_bundle"
+    ],
+    "solarlab.reproducibility.registry_mapping": [
+      "RegistryMapping",
+      "prepare_registry_mapping",
+      "read_registry_mapping"
     ]
   },
   "checked_consumers": [

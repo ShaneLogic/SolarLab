@@ -138,6 +138,18 @@ class _ConfigurationSelectionRef(Record):
         return self
 
 
+class _PreparationMappingRef(Record):
+    """A generated non-activating mapping, not an input source selection."""
+    path: str
+    sha256: Digest
+    migration_plan_sha256: Digest
+
+    @model_validator(mode="after")
+    def _path(self) -> _PreparationMappingRef:
+        relative_path(self.path)
+        return self
+
+
 class RegistryDocument(Record):
     schema_version: Literal["solarlab.registry-migration.v2"]
     kind: Literal["configuration_matrix", "numerical_refinement"]
@@ -151,6 +163,7 @@ class RegistryDocument(Record):
     preparation_context: PreparationContext | None
     entries: Annotated[tuple[MigrationEntry, ...], Field(min_length=1)]
     configuration_selection: _ConfigurationSelectionRef | None = None
+    preparation_mapping: _PreparationMappingRef | None = None
 
 
 def _registry_mapping(spec: RegistryDocument) -> dict[str, Any]:
@@ -159,6 +172,8 @@ def _registry_mapping(spec: RegistryDocument) -> dict[str, Any]:
         # Preserve the original preparation-registry bytes when this new,
         # optional data selection is absent; no source pin is removed.
         result.pop("configuration_selection")
+    if spec.preparation_mapping is None:
+        result.pop("preparation_mapping")
     return result
 
 
@@ -338,6 +353,8 @@ def preparation_symbols(schema: str) -> tuple[tuple[str, str], tuple[str, str]]:
 def validate_registry_pair(matrix: MigrationRegistry, refinement: MigrationRegistry) -> None:
     if matrix.spec.kind != "configuration_matrix" or refinement.spec.kind != "numerical_refinement":
         raise ValueError("a configuration matrix and numerical registry are required")
+    if matrix.spec.preparation_mapping != refinement.spec.preparation_mapping:
+        raise ValueError("both V2 registries must bind the same non-activating preparation mapping")
     for id in (matrix.spec.original_registry, matrix.spec.companion_registry):
         if matrix.sources.reference(id) != refinement.sources.reference(id) or matrix.sources.document(id) != refinement.sources.document(id):
             raise ValueError("V2 registries refer to different original source snapshots")
