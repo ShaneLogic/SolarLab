@@ -742,6 +742,79 @@ class BallIntegrator:
         # bounds the numerical excess by sqrt(2*length*radius)+rounding_error.
         return AbsoluteIntegralBound(upper, moment, absolute_error)
 
+    def absolute_enclosure(self, function, left, right, absolute_error, *, max_depth=8, max_leaves=256,
+                           decide=None, checkpoint=lambda: None):
+        """New opt-in L1 bounds; existing integral/absolute-bound paths are unchanged.
+
+        A real interval range certifies sign. On a sign-uncertain cell,
+        |integral F| is a lower bound and width*sup|F| is an upper bound.
+        This range upper is deliberately not treated as a lower denominator.
+        Refinement is bounded and stops when the supplied gate can decide.
+        """
+        left, right, absolute_error = map(rational, (left, right, absolute_error))
+        if (left >= right or absolute_error <= 0 or type(max_depth) is not int or not 0 <= max_depth <= 8
+                or type(max_leaves) is not int or not 1 <= max_leaves <= 256):
+            raise ContractError("physical_L1_parameters")
+        def cell(a, b, depth):
+            checkpoint()
+            allocation = absolute_error*(b-a)/(right-left)
+            with self.flint.ctx.workprec(self.bits):
+                mid, rad = (a+b)/2, (b-a)/2
+                domain = self.flint.acb(self.flint.arb(self.flint.fmpq(mid.numerator, mid.denominator),
+                                                     self.flint.fmpq(rad.numerator, rad.denominator)))
+                raw_range = self.flint.acb(function(domain, False))
+                self.calls.append({"evaluations": 1, "purpose": "physical-L1-sign-range", "working_bits": self.bits})
+                if not raw_range.is_finite():
+                    return dict(left=a,right=b,depth=depth,lower=Fraction(0),upper=None,sign="unknown",
+                                reason="nonfinite_interval_range",signed_integral=None,value_range=None)
+                if not raw_range.imag.is_zero():
+                    raise ContractError("physical_L1_requires_real_range")
+                value_range = self.enclosure(raw_range)
+            sign = ("nonnegative" if value_range.center-value_range.radius >= 0 else
+                    "nonpositive" if value_range.center+value_range.radius <= 0 else "unknown")
+            range_upper = (b-a)*value_range.absolute_upper
+            try:
+                signed = self.integrate(function, a, b, allocation)
+            except ContractError as error:
+                if error.reason not in {"observation_integral_evaluation_cap", "observation_integral_radius_exceeds_budget",
+                                        "observation_nonfinite_or_nonreal_ball"}:
+                    raise
+                return dict(left=a,right=b,depth=depth,lower=Fraction(0),upper=range_upper,sign="unknown",
+                            reason=error.reason,signed_integral=None,value_range=value_range)
+            lower = max(Fraction(0), abs(signed.center)-signed.radius)
+            upper = min(range_upper, signed.absolute_upper) if sign != "unknown" else range_upper
+            if lower > upper:
+                raise ContractError("physical_L1_inconsistent_enclosures")
+            return dict(left=a,right=b,depth=depth,lower=lower,upper=upper,sign=sign,reason=None,
+                        signed_integral=signed,value_range=value_range)
+        cells = [cell(left,right,0)]
+        reason = "sign_certified"
+        while True:
+            checkpoint()
+            lower = sum((c["lower"] for c in cells),Fraction(0))
+            upper = None if any(c["upper"] is None for c in cells) else sum((c["upper"] for c in cells),Fraction(0))
+            decision = None if decide is None else decide(lower,upper)
+            if decision is not None and decision not in {"passed","failed","unknown"}:
+                raise ContractError("physical_L1_decision")
+            if decision in {"passed","failed"}:
+                reason = "gate_decided"; break
+            unresolved = [i for i,c in enumerate(cells) if c["sign"] == "unknown"]
+            if not unresolved:
+                break
+            choices = [i for i in unresolved if cells[i]["depth"] < max_depth]
+            if len(cells) >= max_leaves or not choices:
+                reason = "partition_limit"; break
+            index = max(choices,key=lambda i: (cells[i]["upper"] is None,
+                        Fraction(0) if cells[i]["upper"] is None else cells[i]["upper"]-cells[i]["lower"]))
+            old = cells[index];mid = (old["left"]+old["right"])/2
+            cells[index:index+1] = [cell(old["left"],mid,old["depth"]+1),cell(mid,old["right"],old["depth"]+1)]
+        return {"schema":"solarlab.physical-flux-L1.v1","lower":lower,"upper":upper,
+                "status":"unknown" if reason == "partition_limit" or upper is None else "bounded",
+                "stop_reason":reason,"depth":max(c["depth"] for c in cells),"leaves":len(cells),
+                "max_depth":max_depth,"max_leaves":max_leaves,"cells":tuple(cells),
+                "upper_method":"real interval range times cell width; signed integral when sign certified",
+                "mathematical_scope":"same represented physical integrand; input/clock widening is caller-owned"}
+
 
 class SlabPathObserver:
     """Two fixed slab models' physical observations on one declared path.
@@ -860,6 +933,39 @@ class SlabPathObserver:
             raw.append(reservoir+a.polynomial(self.endpoint_carrier_rate[side]+self.raw_metal[side], coordinate))
             tangent.append(reservoir+a.polynomial(self.tangent_metal_polynomial[side], coordinate)+tangent_flux[side])
         return {"raw_polynomial_current": tuple(raw), "same_state_affine_tangent_current": tuple(tangent)}
+
+    def physical_charge_flux(self, arithmetic, coordinate, analytic=False):
+        """Independent body and metal F in A, including both metal terms."""
+        a = arithmetic
+        carrier, _ = self.fluxes(a, coordinate, analytic)
+        body = (a.number(self.area)*(carrier[0]-carrier[-1])
+                +a.polynomial(self.capture_charge_rate[0]+self.capture_charge_rate[-1],coordinate))
+        metal = self.tangent_metal_flux(a,coordinate,analytic)
+        return (body, *(flux+a.polynomial(poly,coordinate) for flux,poly in
+                        zip(metal,self.tangent_metal_polynomial,strict=True)))
+
+    def physical_charge_integrals(self, arithmetic, absolute_error, *, subinterval=None,
+                                  scale_deciders=None, checkpoint=lambda: None):
+        """New offline physical integrals/L1 evidence; no raw-derivative oracle."""
+        self.path.require_covered()
+        first,last = contained_subinterval(self.path.clock,subinterval)
+        a,clock = arithmetic,self.path.clock
+        lower,upper = clock.coordinate(first),clock.coordinate(last)
+        deciders = (None,)*3 if scale_deciders is None else tuple(scale_deciders)
+        if len(deciders) != 3:
+            raise ContractError("physical_flux_decider_channels")
+        signed,bounds = [],[]
+        for index in range(3):
+            checkpoint()
+            def flux(u,analytic,index=index):
+                return a.number(clock.hused)*self.physical_charge_flux(a,u,analytic)[index]
+            signed.append(a.integrate(flux,lower,upper,absolute_error))
+            bounds.append(a.absolute_enclosure(flux,lower,upper,absolute_error,
+                                              decide=deciders[index],checkpoint=checkpoint))
+        return {"path_identity":self.path.identity,"subinterval":(first,last),
+                "physical_flux_integral_C":tuple(signed),"physical_flux_L1":tuple(bounds),
+                "basis":"fixed-uniform-epsilon-Dirichlet-slab-reservoir-carrier-ion-trap-capacitance-v1",
+                "units":"C","DAE_time_accuracy_certified":False}
 
     def integrate(self, arithmetic: BallIntegrator, absolute_error, *, partition_cells=None, subinterval=None):
         """Signed charge integrals and conservative absolute raw/tangent gaps.

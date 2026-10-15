@@ -485,10 +485,11 @@ def plan_fixture(folder):
                     "native_execution_count": 1, "input_ancestor": ancestor})
                 cases[-1]["reference_refresh"] = {"enabled": stage == "full", "max_refreshes": 0 if stage == "probe" else 1,
                     "record_schema": "solarlab.reference-state-transfer.v2", "schedule_ref": "/protocol/reference_refresh_schedule"}
-    return {"schema": "solarlab.g2-route.run-plan.v2", "version": 2, "status": "design_only_not_admitted",
+    return {"schema": "solarlab.g2-route.run-plan.v3", "version": 3, "status": "design_only_not_admitted",
             "authority": {"scientific_execution_authorized": False}, "implementation": {"available_now": False},
             "source_freeze": {k: None for k in ("future_execution_commit", "environment_lock", "review_record", "frozen_gate_spec")},
-            "definitions": {"plan": pin("definition.json", {}), "gate_spec": pin("gate.json", {"status": "proposed_not_frozen"})},
+            "definitions": {"plan": pin("definition.json", {}), "gate_spec": pin("gate.json", {
+                "schema": "solarlab.g2-route.t1-gatespec.v3", "status": "proposed_not_frozen"})},
             "resources": {"WS1_channels": 4, "threads_per_case": 1, "rss_bytes_per_case": 4*1024**3,
                           "WS1_max_declared_rss_bytes": 16*1024**3, "combined_persisted_case_bytes": 4*1024**3,
                           "reader_logical_byte_cap": 32*1024**3},
@@ -528,7 +529,7 @@ def test_route_rejects_wrong_scope_and_references(tmp_path, damage):
 
 
 @pytest.mark.parametrize("damage", ["index", "time", "event_side", "order", "event_pair", "index_bool", "request_samples"])
-def test_v2_route_binds_every_ordered_request_sample(tmp_path, damage):
+def test_v3_route_binds_every_ordered_request_sample(tmp_path, damage):
     from scripts.benchmarks.g2_route import validate
     plan = plan_fixture(tmp_path)
     labels = plan["protocol"]["requested_sample_records"]
@@ -549,8 +550,8 @@ def test_v2_route_binds_every_ordered_request_sample(tmp_path, damage):
         validate(path)
 
 
-@pytest.mark.parametrize("damage", ["unknown_stage", "swapped_ids", "swapped_profile", "float_mesh", "V1"])
-def test_v2_route_binds_id_stage_mesh_profile_and_rejects_V1(tmp_path, damage):
+@pytest.mark.parametrize("damage", ["unknown_stage", "swapped_ids", "swapped_profile", "float_mesh", "V1", "V2"])
+def test_v3_route_binds_id_stage_mesh_profile_and_rejects_old_versions(tmp_path, damage):
     from scripts.benchmarks.g2_route import validate
     plan = plan_fixture(tmp_path)
     if damage == "unknown_stage": plan["cases"][-1]["stage"] = "unrecognized-full-like"
@@ -558,7 +559,8 @@ def test_v2_route_binds_id_stage_mesh_profile_and_rejects_V1(tmp_path, damage):
         plan["cases"][0]["id"], plan["cases"][1]["id"] = plan["cases"][1]["id"], plan["cases"][0]["id"]
     elif damage == "swapped_profile": plan["cases"][0]["profile"] = dict(r=1e-6, alpha=1e-10)
     elif damage == "float_mesh": plan["cases"][0]["mesh_intervals"] = 8.0
-    else: plan.update(schema="solarlab.g2-route.run-plan.v1", version=1)
+    elif damage == "V1": plan.update(schema="solarlab.g2-route.run-plan.v1", version=1)
+    else: plan.update(schema="solarlab.g2-route.run-plan.v2", version=2)
     path = tmp_path / "RunPlan.json"; path.write_text(json.dumps(plan))
     with pytest.raises(ValueError): validate(path)
 
@@ -651,5 +653,150 @@ def test_pending_T1_never_uses_a_loose_L1_upper_bound_as_a_denominator(tmp_path)
     plan["implementation"]["available_now"] = True
     path = tmp_path / "RunPlan.json"; path.write_text(json.dumps(plan))
     result = g2_route.validate(path)
-    assert not result["ready"] and "reviewed_frozen_T1_not_implemented" in result["blockers"]
+    assert not result["ready"] and "definition_not_frozen_gate_spec" in result["blockers"]
+    assert "evaluation_not_admitted" in result["evaluation_blockers"]
     with pytest.raises(ValueError): g2_route.run(path, "B_N8_Main_Probe")
+
+
+def admitted_metadata_plan(tmp_path,monkeypatch):
+    """Complete local metadata fixtures; no real authority or native work."""
+    from test_g2_route_bindings import generation_ancestor,frozen_definition,write_json
+    from scripts.benchmarks import g2_route as g,g2_route_bindings as b
+    plan=plan_fixture(tmp_path)
+    plan.update(status="admitted");plan["authority"]["scientific_execution_authorized"]=True
+    plan["implementation"]["available_now"]=True
+    gate=frozen_definition(tmp_path,"Gate","solarlab.g2-route.t1-gatespec.v3",3)
+    method=frozen_definition(tmp_path,"Method","solarlab.g2-reference-method.v1",1)
+    plan["definitions"].update(gate_spec=gate,evidence_method_contract=method)
+    plan["protocol"]["reference_refresh_schedule"].update(same_owner_generation_increment=1,
+        preserve_original_segment_inputs=True,discard_native_multistep_history=True,restored_seed_prefix_credit=False)
+    plan["resources"].update(probe_wall_cap_s=3600,full_wall_cap_max_s=43200)
+    sources={str(Path(g.__file__).resolve()):hashlib.sha256(Path(g.__file__).read_bytes()).hexdigest()}
+    freeze=plan["source_freeze"]
+    freeze.update(future_execution_commit="d"*40,generation_plan_sha256="e"*64,frozen_gate_spec=gate,
+        frozen_evidence_method_contract=method,source_sha256=sources,method_versions=g.METHODS,
+        environment_lock=write_json(tmp_path/"FixtureEnvironment.json",{"fixture_only":True}))
+    request_hashes={}
+    for case in plan["cases"]:
+        ancestor=generation_ancestor(case["mesh_intervals"],case["id"].split("_")[2],monkeypatch)
+        case["input_ancestor"]=write_json(tmp_path/(case["id"]+"Ancestor.json"),ancestor)
+        request=b.build_effective_request(ancestor,case,source_commit="d"*40,generation_plan_sha256="e"*64,gate_spec=gate)
+        request_pin=write_json(tmp_path/(case["id"]+"Request.json"),request)
+        request_hashes[case["id"]]=b.digest(request)
+        case["execution"]={"request":request_pin,"effective_input_digest":b.digest(request),"channel":0,
+            "directory":str(tmp_path/case["id"]),"wall_s":100 if case["stage"] == "probe" else 300,
+            "supervision":supervision_fixture(tmp_path),"forecast":{"feasible":True,"estimated_s":100,"slow_hold_model":"fixture"},
+            "native_admission":{"fixture_only":True},"max_record_bytes":65536,"integer_io_policy":None}
+    review={"fixture_only":True,"accepted":True,"execution_commit":"d"*40,"method_versions":g.METHODS,
+        "gate_spec_sha256":gate["sha256"],"evidence_method_contract_sha256":method["sha256"],
+        "source_sha256":sources,"request_sha256s":request_hashes}
+    freeze["review_record"]=write_json(tmp_path/"FixtureSourceReview.json",review)
+    path=tmp_path/"FixtureRunPlan.json";write_json(path,plan)
+    return path,plan
+
+
+def test_run_admission_does_not_require_unreviewed_evaluator(tmp_path,monkeypatch):
+    from scripts.benchmarks import g2_route as g
+    path,plan=admitted_metadata_plan(tmp_path,monkeypatch)
+    value=g.validate(path,executable=True,case_id="B_N8_Main_Probe")
+    assert value["run_ready"] and not value["evaluation_ready"]
+    with pytest.raises(ValueError,match="evaluation_not_admitted"):
+        g.validate(path,executable=True,purpose="evaluate")
+    monkeypatch.setattr(g,"_runtime",lambda *args:(_ for _ in ()).throw(AssertionError("unreviewed evaluation reached runtime")))
+    with pytest.raises(ValueError,match="evaluation_not_admitted"):
+        g.observe(path,"B_N8_Main_Probe")
+
+
+@pytest.mark.parametrize("damage",[None,"source","review_bool"])
+def test_evaluation_requires_its_own_exact_source_review(tmp_path,monkeypatch,damage):
+    from scripts.benchmarks import g2_route as g
+    from test_g2_route_bindings import write_json
+    path,plan=admitted_metadata_plan(tmp_path,monkeypatch)
+    root=Path(g.__file__).resolve().parent
+    sources={str(root/name):hashlib.sha256((root/name).read_bytes()).hexdigest() for name in g.EVALUATOR_FILES}
+    if damage == "source": sources[str(root/"t1_gate.py")]="0"*64
+    review={"fixture_only":True,"accepted":1 if damage == "review_bool" else True,"evaluation_source_review":True,
+        "source_sha256":sources,"gate_spec_sha256":plan["definitions"]["gate_spec"]["sha256"],
+        "evidence_method_contract_sha256":plan["definitions"]["evidence_method_contract"]["sha256"]}
+    plan["evaluation_freeze"]={"status":"admitted","source_sha256":sources,
+        "review_record":write_json(tmp_path/"FixtureEvaluatorReview.json",review)}
+    write_json(path,plan)
+    assert g.validate(path,executable=True)["run_ready"]
+    if damage:
+        with pytest.raises(ValueError,match="evaluation_review_binding|evaluator_source_changed"):
+            g.validate(path,executable=True,purpose="evaluate")
+    else:
+        assert g.validate(path,executable=True,purpose="evaluate")["evaluation_ready"]
+
+
+def test_run_finishes_with_sealed_producer_output_without_observe(tmp_path,monkeypatch):
+    from contextlib import nullcontext
+    from scripts.benchmarks import g2_route as g,native_runner
+    path,plan=admitted_metadata_plan(tmp_path,monkeypatch)
+    context=g.validate(path,executable=True,case_id="B_N8_Main_Probe")
+    case=next(c for c in plan["cases"] if c["id"] == "B_N8_Main_Probe")
+    request=g._pinned(case["execution"]["request"])
+    monkeypatch.setattr(g,"_runtime",lambda *args:(case,request,None,(),lambda:None))
+    monkeypatch.setattr(g,"_channel",lambda *args:nullcontext())
+    monkeypatch.setattr(g,"_observe",lambda *args:(_ for _ in ()).throw(AssertionError("producer started evaluation")))
+    pending={"complete_run_window":True,"complete_protocol":False,"scientific_pass":False,"charge_observation":{"status":"pending"}}
+    monkeypatch.setattr(native_runner,"run_recorded",lambda *args,**kwargs:dict(pending))
+    assert g.run(path,case["id"]) == pending
+
+
+@pytest.mark.parametrize("damage",["body","bytes","review_hash","version_alias"])
+def test_frozen_definition_is_only_a_status_and_freeze_copy(tmp_path,damage):
+    from test_g2_route_bindings import frozen_definition
+    from scripts.benchmarks import g2_route as g
+    ref=frozen_definition(tmp_path,"Definition",g.T1_SPEC_SCHEMA,3)
+    value=g._pinned(ref)
+    if damage == "body": value["fixture_only"]=False
+    elif damage == "bytes": value["freeze"]["reviewed_bytes"]+=1
+    elif damage == "review_hash": value["freeze"]["review_records"][0]["sha256"]="0"*64
+    else: value["version"]=3.0
+    with pytest.raises(ValueError):g._frozen_definition(value,g.T1_SPEC_SCHEMA,3)
+
+
+@pytest.mark.parametrize("notes,rule",[("reviewed explanation","prospective only"),
+    (["reviewed explanation"],["prospective only"]),("explanation",["rule"]),([],"")])
+def test_freeze_explanations_preserve_exact_reviewed_body(tmp_path,notes,rule):
+    from scripts.benchmarks import g2_route
+    from test_g2_route_bindings import frozen_definition
+    ref=frozen_definition(tmp_path,"Definition",g2_route.T1_SPEC_SCHEMA,3)
+    value=g2_route._pinned(ref)
+    value["freeze"].update(notes=notes,plan_rule=rule)
+    assert g2_route._frozen_definition(value,g2_route.T1_SPEC_SCHEMA,3) is value
+    value["fixture_only"]=False
+    with pytest.raises(ValueError,match="definition_reviewed_body_changed"):
+        g2_route._frozen_definition(value,g2_route.T1_SPEC_SCHEMA,3)
+
+
+@pytest.mark.parametrize("field,bad",[("notes",None),("notes",True),("notes",["text",0]),
+    ("plan_rule",{}),("plan_rule",1),("unlisted","")])
+def test_freeze_rejects_unlisted_keys_and_nontext_explanations(tmp_path,field,bad):
+    from scripts.benchmarks import g2_route
+    from test_g2_route_bindings import frozen_definition
+    ref=frozen_definition(tmp_path,"Definition",g2_route.T1_SPEC_SCHEMA,3)
+    value=g2_route._pinned(ref);value["freeze"][field]=bad
+    with pytest.raises(ValueError,match="definition_freeze"):
+        g2_route._frozen_definition(value,g2_route.T1_SPEC_SCHEMA,3)
+
+
+@pytest.mark.parametrize("bad_review",[None,[],False,0,"not a review object"])
+def test_nondict_evaluator_review_blocks_only_evaluation(tmp_path,monkeypatch,bad_review):
+    from scripts.benchmarks import g2_route
+    from test_g2_route_bindings import write_json
+    path,plan=admitted_metadata_plan(tmp_path,monkeypatch)
+    sources={str(Path(g2_route.__file__).resolve().parent/name):
+        hashlib.sha256((Path(g2_route.__file__).resolve().parent/name).read_bytes()).hexdigest()
+        for name in g2_route.EVALUATOR_FILES}
+    raw=(json.dumps(bad_review)+"\n").encode();review_path=tmp_path/"InvalidReview.json";review_path.write_bytes(raw)
+    plan["evaluation_freeze"]={"status":"admitted","source_sha256":sources,
+        "review_record":{"path":str(review_path),"bytes":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}}
+    write_json(path,plan)
+    value=g2_route.validate(path,executable=True)
+    assert value["run_ready"] is True and value["evaluation_ready"] is False
+    assert value["evaluation_blockers"] == ["g2_route_evaluation_review_root"]
+    monkeypatch.setattr(g2_route,"_runtime",lambda *args:(_ for _ in ()).throw(AssertionError("invalid review reached runtime")))
+    with pytest.raises(ValueError,match="evaluation_review_root"):
+        g2_route.observe(path,"B_N8_Main_Probe")

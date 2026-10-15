@@ -28,7 +28,11 @@ def certificate_failure_policy(*, observation="online", t1=None):
     or a pass. This metadata does not admit a run or change IDA controls.
     """
     require(type(observation) is str and observation in {"online", "sealed-history"}, "certificate_observation_mode")
-    require(t1 is None, "reviewed_T1_definition_required")
+    if t1 is not None:
+        require(type(t1) is dict and set(t1) == {"schema", "sha256"}
+                and t1["schema"] in {"solarlab.g2-route.t1-gatespec.v2", "solarlab.g2-route.t1-gatespec.v3"}
+                and type(t1["sha256"]) is str and len(t1["sha256"]) == 64
+                and all(c in "0123456789abcdef" for c in t1["sha256"]), "reviewed_T1_definition_required")
     return {"schema": "solarlab.certificate-failure-policy.v1",
             "scientific_failure": "latch-and-continue", "safety_failure": "stop",
             "observation": observation, "T1": t1,
@@ -40,8 +44,8 @@ def validate_certificate_policy(request):
     if "certificate_failure_policy" not in request:
         return None
     value = request["certificate_failure_policy"]
-    require(type(value) is dict and value == certificate_failure_policy(
-        observation=value.get("observation"), t1=value.get("T1")), "certificate_policy_binding")
+    require(type(value) is dict and digest(value) == digest(certificate_failure_policy(
+        observation=value.get("observation"), t1=value.get("T1"))), "certificate_policy_binding")
     require("diagnostic_interval" not in request, "certificate_complete_protocol_only")
     return value
 
@@ -139,6 +143,35 @@ def controls(previous, policy):
     return result
 
 
+def route_controls_policy(request, *, case_id, source_commit, run_plan_sha256):
+    """One prospective G2-R max-step change; all physical controls stay bound.
+
+    The original preparation/previous-controls records remain historical data.
+    Git/source and plan admission are checked by the route, not created here.
+    """
+    names = ("Coarse", "Main", "Strict")
+    expected_ids = {f"B_N8_{name}_{stage}" for name in names for stage in ("Probe", "Full")}
+    expected_ids.add("B_N16_Strict_Full")
+    require(case_id in expected_ids, "route_case")
+    mesh = 16 if "N16" in case_id else 8
+    profile = dict(zip(("r", "alpha"), PROFILES[names.index(case_id.split("_")[2])]))
+    require(request["numeric_packet"]["intervals"] == mesh
+            and request["numeric_packet"]["nodes"] == mesh+1
+            and request["physical_tolerance_policy"]["size"] == 5*(mesh+1)
+            and digest(request["physical_tolerance_policy"]["profile"]) == digest(profile), "route_profile_geometry")
+    for value, size in ((source_commit, 40), (run_plan_sha256, 64)):
+        require(type(value) is str and len(value) == size and all(c in "0123456789abcdef" for c in value),
+                "route_source_plan_pin")
+    before = controls(request["previous_controls"], request["physical_tolerance_policy"])
+    if "startup_step_policy" in request:
+        before["first_step"] = request["startup_step_policy"]["value"]
+    require(before.get("max_step") == (.02 if mesh == 16 else .1), "route_ancestral_max_step")
+    return {"schema": "solarlab.g2-route.controls.v1", "case_id": case_id,
+            "source_commit": source_commit, "run_plan_sha256": run_plan_sha256,
+            "parent_controls_sha256": digest(before), "previous_max_step_s": before["max_step"],
+            "max_step_s": .02, "other_controls_changed": False}
+
+
 def validate_request(request):
     policy = request.get("physical_tolerance_policy")
     require(type(policy) is dict, "missing_policy")
@@ -158,6 +191,13 @@ def validate_request(request):
                 and startup.get("application") == "every_protocol_initialization"
                 and (applied.get("max_step", 0) == 0 or value <= applied["max_step"]), "startup_binding")
         applied["first_step"] = value
+    if "g2_route_controls" in request:
+        route = request["g2_route_controls"]
+        require(type(route) is dict, "route_controls_type")
+        expected_route = route_controls_policy(request, case_id=route.get("case_id"),
+            source_commit=route.get("source_commit"), run_plan_sha256=route.get("run_plan_sha256"))
+        require(digest(route) == digest(expected_route), "route_controls_binding")
+        applied["max_step"] = expected_route["max_step_s"]
     require(request["controls"] == applied, "controls_binding")
     require(request["weight_certificate"] == expected, "weight_certificate")
     require(request["budgets"] == request["original_budgets"], "historical_budgets_changed")

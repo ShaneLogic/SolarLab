@@ -23,8 +23,11 @@ import time
 
 METHODS = {"certificate": "solarlab.certificate-failure-policy.v1",
            "transfer": "solarlab.reference-state-transfer.v2", "observer": "solarlab.sealed-charge-observation.v1"}
-# Filled only after independent definition review and prospective freeze.
-T1_IMPLEMENTATION = None
+RUN_PLAN_SCHEMA = "solarlab.g2-route.run-plan.v3"
+T1_SPEC_SCHEMA = "solarlab.g2-route.t1-gatespec.v3"
+EVIDENCE_METHOD_SCHEMA = "solarlab.g2-reference-method.v1"
+# A run binds frozen definitions. Evaluation separately binds reviewed code.
+EVALUATOR_FILES = ("g2_route.py", "t1_gate.py", "native_readback.py", "native_observation.py", "interval_observation.py")
 
 
 def _require(value, reason):
@@ -94,12 +97,94 @@ def _validate_supervision(plan, execution):
     return value
 
 
-def validate(plan_path, *, executable=False, case_id=None):
+def _resolved_descriptor(value):
+    return (type(value) is dict and type(value.get("path")) is str
+            and type(value.get("bytes")) is int and value["bytes"] >= 0
+            and type(value.get("sha256")) is str and len(value["sha256"]) == 64
+            and all(c in "0123456789abcdef" for c in value["sha256"]))
+
+
+def _frozen_definition(value, schema, version):
+    """Verify Commander's copy against the exact reviewed author document."""
+    _require(type(value) is dict and value.get("schema") == schema and type(value.get("version")) is int
+             and value["version"] == version and value.get("status") == "frozen", "frozen_definition_schema")
+    freeze = value.get("freeze")
+    keys = {"frozen_at", "frozen_by", "reviewed_path", "reviewed_sha256", "reviewed_bytes", "review_records", "user_records"}
+    explanations = {"notes", "plan_rule"}
+    _require(type(freeze) is dict and keys <= set(freeze) <= keys | explanations
+             and type(freeze["frozen_at"]) is str and freeze["frozen_at"]
+             and type(freeze["frozen_by"]) in (str, dict) and bool(freeze["frozen_by"]), "definition_freeze_record")
+    _require(all(type(freeze[k]) is str or type(freeze[k]) is list
+                 and all(type(item) is str for item in freeze[k])
+                 for k in explanations & set(freeze)), "definition_freeze_explanation_type")
+    reviewed_ref = {"path": freeze["reviewed_path"], "sha256": freeze["reviewed_sha256"], "bytes": freeze["reviewed_bytes"]}
+    _require(_resolved_descriptor(reviewed_ref), "definition_reviewed_descriptor")
+    reviewed = _pinned(reviewed_ref)
+    _require(type(reviewed) is dict and _digest({k: v for k, v in value.items() if k not in {"status", "freeze"}})
+             == _digest({k: v for k, v in reviewed.items() if k != "status"}), "definition_reviewed_body_changed")
+    _require(type(freeze["review_records"]) is list and freeze["review_records"]
+             and type(freeze["user_records"]) is list and freeze["user_records"], "definition_review_user_records")
+    for review in freeze["review_records"]:
+        _require(type(review) is dict and set(review) == {"path", "sha256"}, "definition_review_record_fields")
+        _pinned(review, decode=False)
+    return value
+
+
+def _definition_bindings(plan, blockers, *, include_plan=True):
+    """Pending author documents cannot supply frozen run authority."""
+    bound = {}
+    for key in ("plan", "gate_spec", "evidence_method_contract"):
+        if key == "plan" and not include_plan:
+            continue
+        ref = plan["definitions"].get(key)
+        if not _resolved_descriptor(ref):
+            _require(ref is None or type(ref) is dict and
+                     (ref.get("status", "").startswith("pending") or ref.get("sha256") is None),
+                     "invalid_definition_descriptor_" + key)
+            blockers.append("unresolved_definition_" + key)
+            continue
+        value = _pinned(ref, decode=key != "plan")
+        if key != "plan":
+            schema = T1_SPEC_SCHEMA if key == "gate_spec" else EVIDENCE_METHOD_SCHEMA
+            _require(value.get("schema") == schema
+                     and ref.get("schema", schema) == schema, "definition_schema_" + key)
+            if value.get("status") != "frozen":
+                blockers.append("definition_not_frozen_" + key)
+            else:
+                _frozen_definition(value, schema, 3 if key == "gate_spec" else 1)
+        bound[key] = value
+    return bound
+
+
+def _evaluation_blockers(plan):
+    """No evaluator code is imported before its separate source review."""
+    freeze = plan.get("evaluation_freeze")
+    if type(freeze) is not dict or freeze.get("status") != "admitted":
+        return ["evaluation_not_admitted"]
+    if not _resolved_descriptor(freeze.get("review_record")) or type(freeze.get("source_sha256")) is not dict:
+        return ["evaluation_review_or_source_pending"]
+    review = _pinned(freeze["review_record"])
+    _require(type(review) is dict, "evaluation_review_root")
+    sources = freeze["source_sha256"]
+    root = Path(__file__).resolve().parent
+    _require(all(str(root / name) in sources for name in EVALUATOR_FILES), "evaluator_required_sources")
+    _require(review.get("accepted") is True and review.get("evaluation_source_review") is True
+             and review.get("source_sha256") == sources
+             and review.get("gate_spec_sha256") == plan["definitions"]["gate_spec"]["sha256"]
+             and review.get("evidence_method_contract_sha256") == plan["definitions"]["evidence_method_contract"]["sha256"],
+             "evaluation_review_binding")
+    for path, expected in sources.items():
+        _require(hashlib.sha256(_read(path, 16*1024*1024)).hexdigest() == expected, "evaluator_source_changed")
+    return []
+
+
+def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
     """Metadata-only validation, including all labelled samples and case slots."""
     raw = _read(plan_path)
     plan = json.loads(raw)
-    _require(plan.get("schema") == "solarlab.g2-route.run-plan.v2" and type(plan.get("version")) is int
-             and plan["version"] == 2, "plan_schema_V2_required")
+    _require(purpose in {"run", "evaluate"}, "admission_purpose")
+    _require(plan.get("schema") == RUN_PLAN_SCHEMA and type(plan.get("version")) is int
+             and plan["version"] == 3, "plan_schema_V3_required")
     resources = plan["resources"]
     _require(resources["WS1_channels"] == 4 and resources["threads_per_case"] == 1
              and resources["rss_bytes_per_case"] <= 4*1024**3
@@ -163,29 +248,33 @@ def validate(plan_path, *, executable=False, case_id=None):
         if "max_channels" in stage:
             _require(0 < stage["max_channels"] <= 4 and len(stage.get("parallel_cases", [])) <= 4, "stage_channel_cap")
     # These definitions are inputs, never imports from historical source_path.
-    _pinned(plan["definitions"]["plan"], decode=False)
-    _pinned(plan["definitions"]["gate_spec"])
     freeze = plan["source_freeze"]
     blockers = []
+    definitions = _definition_bindings(plan, blockers)
     if plan.get("status") != "admitted" or plan["authority"].get("scientific_execution_authorized") is not True:
         blockers.append("run_plan_not_admitted")
     if plan["implementation"].get("available_now") is not True:
         blockers.append("implementation_not_reviewed")
-    for key in ("future_execution_commit", "environment_lock", "review_record", "frozen_gate_spec"):
+    for key in ("future_execution_commit", "environment_lock", "review_record", "frozen_gate_spec",
+                "frozen_evidence_method_contract"):
         if not freeze.get(key):
             blockers.append("unresolved_"+key)
-    if T1_IMPLEMENTATION is None:
-        blockers.append("reviewed_frozen_T1_not_implemented")
     if not blockers:
         commit = freeze["future_execution_commit"]
         _require(type(commit) is str and len(commit) == 40 and all(c in "0123456789abcdef" for c in commit), "execution_commit")
         gate, review = _pinned(freeze["frozen_gate_spec"]), _pinned(freeze["review_record"])
-        _require(gate.get("status") == "frozen" and gate.get("schema") == T1_IMPLEMENTATION, "gate_unfrozen_or_unsupported")
+        method = _pinned(freeze["frozen_evidence_method_contract"])
+        _require(gate == definitions["gate_spec"] and method == definitions["evidence_method_contract"]
+                 and freeze["frozen_gate_spec"]["sha256"] == plan["definitions"]["gate_spec"]["sha256"]
+                 and freeze["frozen_evidence_method_contract"]["sha256"] == plan["definitions"]["evidence_method_contract"]["sha256"],
+                 "frozen_definition_binding")
         _require(freeze.get("method_versions") == METHODS and review.get("accepted") is True
                  and review.get("execution_commit") == commit and review.get("method_versions") == METHODS
                  and review.get("gate_spec_sha256") == freeze["frozen_gate_spec"]["sha256"]
+                 and review.get("evidence_method_contract_sha256") == freeze["frozen_evidence_method_contract"]["sha256"]
                  and review.get("source_sha256") == freeze.get("source_sha256"), "source_review_binding")
-        _require(str(Path(__file__).resolve()) in freeze["source_sha256"], "actual_entry_not_source_bound")
+        if purpose == "run":
+            _require(str(Path(__file__).resolve()) in freeze["source_sha256"], "actual_entry_not_source_bound")
         for path, expected in freeze["source_sha256"].items():
             _require(hashlib.sha256(_read(path, 16*1024*1024)).hexdigest() == expected, "actual_source_changed")
         _pinned(freeze["environment_lock"])
@@ -198,6 +287,7 @@ def validate(plan_path, *, executable=False, case_id=None):
             from scripts.benchmarks.physical_tolerance import validate_certificate_policy, run_segment_count
             policy = validate_certificate_policy(request)
             _require(policy is not None and policy["observation"] == "sealed-history"
+                     and policy["T1"] == {"schema": T1_SPEC_SCHEMA, "sha256": freeze["frozen_gate_spec"]["sha256"]}
                      and request["physical_tolerance_policy"]["profile"] == case["profile"]
                      and request["numeric_packet"]["nodes"] == case["nodes"]
                      and len(request["z0"]) == case["coordinates"] and request["controls"]["max_step"] == .02
@@ -205,6 +295,9 @@ def validate(plan_path, *, executable=False, case_id=None):
                      and run_segment_count(request) == (2 if stage == "probe" else 3), "effective_case_input")
             _require(_digest(request["segments"]) == _digest(segments)
                      and _digest(_labelled_samples(request)) == _digest(labels), "effective_ordered_sample_tags")
+            from scripts.benchmarks.g2_route_bindings import effective_issues
+            ancestor = ancestors[(case["input_ancestor"]["path"], case["input_ancestor"]["sha256"])]
+            _require(not effective_issues(request, ancestor, case, plan), "effective_request_derivation")
             _require(execution["effective_input_digest"] == _digest(request)
                      and review.get("request_sha256s", {}).get(case["id"]) == _digest(request), "effective_input_review")
             _require(type(execution["channel"]) is int and 0 <= execution["channel"] < 4
@@ -216,10 +309,19 @@ def validate(plan_path, *, executable=False, case_id=None):
                 forecast = execution["forecast"]
                 _require(forecast.get("feasible") is True and forecast.get("slow_hold_model")
                          and execution["wall_s"] == math.ceil(3*forecast["estimated_s"]), "full_forecast_required")
+    try:
+        evaluation = _evaluation_blockers(plan)
+    except (ValueError, KeyError, OSError) as error:
+        if purpose == "evaluate":
+            raise
+        evaluation = [str(error)]  # A bad evaluator binding cannot authorize evaluation or block a producer.
+    selected = blockers + (evaluation if purpose == "evaluate" else [])
     if executable:
-        _require(not blockers, ",".join(blockers))
-    return {"plan": plan, "plan_sha256": hashlib.sha256(raw).hexdigest(), "ready": not blockers,
-            "blockers": blockers, "case_ids": list(cases), "sample_records": {k: v["sample_records"] for k, v in cases.items()}}
+        _require(not selected, ",".join(selected))
+    return {"plan": plan, "plan_sha256": hashlib.sha256(raw).hexdigest(), "ready": not selected,
+            "run_ready": not blockers, "evaluation_ready": not blockers and not evaluation,
+            "blockers": selected, "evaluation_blockers": evaluation,
+            "case_ids": list(cases), "sample_records": {k: v["sample_records"] for k, v in cases.items()}}
 
 
 def _runtime(context, case_id):
@@ -295,7 +397,11 @@ def _observe(context, case, request, mapping, checkpoint):
     writer = HistoryWriter(target / "Charge.jsonl.gz", encoding="gzip", total_output_bytes=remaining,
                            max_record_bytes=execution["max_record_bytes"], integer_io_policy=execution.get("integer_io_policy"))
     try:
-        observer = SealedChargeObserver(mapping, request, writer.append, checkpoint)
+        run_id = execution["native_admission"].get("operation_id")
+        _require(type(run_id) is str and run_id, "observation_operation_identity")
+        gate_ref = context["plan"]["source_freeze"]["frozen_gate_spec"]
+        observer = SealedChargeObserver(mapping, request, writer.append, checkpoint,
+            t1_context={"spec":_pinned(gate_ref),"spec_sha256":gate_ref["sha256"],"run_id":run_id,"case_id":case["id"]})
         result = verify_history(folder, max_record_bytes=execution["max_record_bytes"],
             max_logical_bytes=resources["reader_logical_byte_cap"], max_records=execution["max_records"],
             deadline_monotonic=time.perf_counter()+execution["wall_s"], integer_io_policy=execution.get("integer_io_policy"),
@@ -338,13 +444,11 @@ def run(plan_path, case_id):
             input_names=("NativeRequest.json",), max_record_bytes=execution["max_record_bytes"],
             integer_io_policy=execution.get("integer_io_policy"))
         checkpoint()
-        if not (result["complete_protocol"] or result.get("complete_run_window")):
-            return result
-        return _observe(context, case, request, mapping, checkpoint)
+        return result  # Sealed producer evidence; observe has separate admission.
 
 
 def observe(plan_path, case_id):
-    context = validate(plan_path, executable=True, case_id=case_id)
+    context = validate(plan_path, executable=True, case_id=case_id, purpose="evaluate")
     execution = next(c for c in context["plan"]["cases"] if c["id"] == case_id)["execution"]
     with _channel(context["plan"], execution):
         case, request, mapping, _, checkpoint = _runtime(context, case_id)
@@ -352,12 +456,9 @@ def observe(plan_path, case_id):
 
 
 def compare(plan_path):
-    context = validate(plan_path, executable=True)
-    # A frozen T1 implementation must also supply the reviewed reference/scale
-    # proof. Pending proof must never be converted into an aggregate pass.
-    _require(T1_IMPLEMENTATION is not None, "comparison_definition_pending")
-    return {"plan_sha256": context["plan_sha256"], "scientific_status": "unknown",
-            "scientific_pass": False, "reason": "reviewed complete reference and scale proof required"}
+    context = validate(plan_path, executable=True, purpose="evaluate")
+    return {"plan_sha256": context["plan_sha256"], "scientific_status": "not_evaluated",
+            "scientific_pass": False, "reason": "comparison implementation is a separate future task"}
 
 
 def main(argv=None):

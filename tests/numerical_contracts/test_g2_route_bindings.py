@@ -15,6 +15,18 @@ def write_json(path, value):
     return b.read_json(path)[1]
 
 
+def frozen_definition(folder,name,schema,version):
+    """Synthetic copy/review contract, never a Commander approval record."""
+    author={"schema":schema,"version":version,"status":"pending_review","fixture_only":True}
+    reviewed=write_json(folder/(name+"Author.json"),author)
+    proof=write_json(folder/(name+"Review.json"),{"fixture_only":True})
+    doc=dict(author,status="frozen",freeze=dict(frozen_at="2026-10-14T00:00:00+00:00",frozen_by="manufactured-fixture",
+        reviewed_path=reviewed["path"],reviewed_sha256=reviewed["sha256"],reviewed_bytes=reviewed["bytes"],
+        review_records=[{k:proof[k] for k in ("path","sha256")}],user_records=["manufactured-not-user-authorization"]))
+    ref=write_json(folder/(name+"Frozen.json"),doc);ref["schema"]=schema
+    return ref
+
+
 def request(mesh=8, profile="Main", *, s0=False):
     size = (3 if s0 else 5)*(mesh+1)
     segments = [dict(id="dark_equilibrium_hold", start=0., end=.1, voltage=[0, 0], photons=[0, 0]),
@@ -68,11 +80,11 @@ def bundle(tmp_path):
     write_json(n16_path,dict(accepted=True,source_input_acceptance_only=True,fixture="manufactured",
         cases={"B":dict(request=n16["input_ancestor"],canonical_request_sha256=b.digest(saved[n16["id"]]),
                         actual_initial_identity=saved[n16["id"]]["actual_initial_identity"])}))
-    gate = write_json(tmp_path/"Gate.json",dict(status="proposed_not_frozen"))
+    gate = write_json(tmp_path/"Gate.json",dict(schema="solarlab.g2-route.t1-gatespec.v3",status="proposed_not_frozen"))
     root = tmp_path/"repo"
     (root/"scripts/benchmarks").mkdir(parents=True)
-    (root/"scripts/benchmarks/g2_route.py").write_text('T1_IMPLEMENTATION = None\nSCHEMA="solarlab.g2-route.run-plan.v2"\n')
-    plan = dict(schema=b.PLAN_SCHEMA,version=2,status="design_only_not_admitted",cases=cases,
+    (root/"scripts/benchmarks/g2_route.py").write_text('T1_SPEC_SCHEMA="solarlab.g2-route.t1-gatespec.v3"\nEVALUATOR_FILES=("t1_gate.py",)\nSCHEMA="solarlab.g2-route.run-plan.v3"\n')
+    plan = dict(schema=b.PLAN_SCHEMA,version=3,status="design_only_not_admitted",cases=cases,
         authority=dict(scientific_execution_authorized=False),implementation=dict(entrypoint_proposal="scripts/benchmarks/g2_route.py"),
         source_freeze={k:None for k in ("future_execution_commit","frozen_gate_spec","review_record","environment_lock")},
         definitions=dict(gate_spec=gate), conditional_S0=dict(reference=s0_acceptance),
@@ -96,7 +108,7 @@ def test_actual_callable_reports_all_missing_bindings_without_promoting_ancestry
     assert result["status"] == "not_admitted" and result["execution_authorized"] is False
     assert "T1_not_frozen" in result["missing"]
     assert "source_freeze.future_execution_commit" in result["missing"]
-    assert "reviewed_entry_does_not_support_RunPlanV2" not in result["missing"]
+    assert "reviewed_entry_does_not_support_RunPlanV3" not in result["missing"]
     assert len(result["cases"]) == 7
     for c in result["cases"]:
         assert c["effective_request"] is None and c["effective_case_binding"] is None
@@ -257,3 +269,121 @@ def test_four_channel_disk_capacity_counts_one_filesystem_but_all_copies(tmp_pat
     assert result["disk_capacity_sufficient"] is sufficient
     assert result["per_case"][0]["wall_cap_s"] == 3600 and result["per_case"][1]["wall_cap_s"] is None
     assert not (tmp_path/"active").exists() and not (tmp_path/"archive").exists()
+
+
+def generation_ancestor(mesh, profile, monkeypatch):
+    """Complete synthetic policy operands; no physical constructor or history."""
+    from scripts.benchmarks import physical_tolerance as p, coupled_device_prototype as d, native_observation as o
+    r = request(mesh, profile)
+    n = mesh+1
+    names = ("c_m3", "f", "n_m3", "p_m3", "phi_V")
+    fields = {k:{"high":[.5 if k == "f" else 0. if k == "phi_V" else 2.]*n,"low":[0.]*n} for k in names}
+    packet = dict(nodes=n, intervals=mesh, column_scaling=[1.]*(5*n),
+        variable_offsets={k:[j*n,(j+1)*n] for j,k in enumerate(names)}, physical_reference_fields=fields,
+        initial_reference={"payload":{"fields":{k:{w:[x.hex() for x in values] for w,values in pair.items()}
+                                               for k,pair in fields.items()}}},
+        definition=dict(id="DynamicAcceptorIonPublicDeviceV1",dynamic=True,temperature=300.,area=1.,length=1.,
+                        epsilon=5.,ni=2.,ion_initial=20.,trap_density=4.))
+    r.update(case_id="DynamicAcceptorIonPublicDeviceV1",numeric_packet=packet,prior_request_sha256="a"*64,native_admission=False)
+    r["physical_tolerance_policy"] = p.make_policy(packet,b.PROFILES[profile])
+    r["weight_certificate"] = deepcopy(r["physical_tolerance_policy"])
+    r["previous_controls"] = dict(rtol=1e-9,atol=[1e-10]*(5*n),max_step=.02 if mesh == 16 else .1,
+                                  first_step=0.,calc_initcond=None)
+    r["controls"] = p.controls(r["previous_controls"],r["physical_tolerance_policy"])
+    r["startup_step_policy"] = d._voltage_lift_startup_step(r["previous_controls"],r["prior_request_sha256"],7.8125e-7)
+    r["controls"]["first_step"] = 7.8125e-7
+    r["segment_startup_policy"] = p.segment_startup_policy(r,{"slow_state_hold":{"first_step":2.**-32}})
+    r["voltage_lift_map"]["mapped_input_profile"] = "frame-input-expansion12-v1"
+    r["map_identity"] = b.digest(r["voltage_lift_map"])
+    r["segment_frame_policy"] = d._segment_frame_policy(r,"fixed-affine-state-rate-v1")
+    monkeypatch.setattr(d,"_frame_input_parent_binding",lambda value:{"fixture_only":"synthetic bound capacity ancestry"})
+    r["frame_input_policy"] = d._frame_input_policy(r,"frame-input-expansion12-v1")
+    r["reference_refresh_policy"] = d._reference_refresh_policy(r,float.fromhex("0x1.7a4c1c85a8b06p-2"))
+    r["interval_observation"] = o.prepare_interval_observation_policy(r,binding_identity="b"*64,
+        header_sha256="c"*64,backend_modules={})
+    return r
+
+
+@pytest.mark.parametrize("case_id",sorted(b.CASE_IDS))
+def test_effective_generation_changes_only_declared_controls_and_preserves_initial_words(case_id,monkeypatch):
+    from scripts.benchmarks.physical_tolerance import run_segment_count,validate_request
+    mesh=16 if "N16" in case_id else 8;profile=case_id.split("_")[2];probe=case_id.endswith("Probe")
+    ancestor=generation_ancestor(mesh,profile,monkeypatch);before=deepcopy(ancestor)
+    case=dict(id=case_id,stage="probe" if probe else "full",profile=b.PROFILES[profile])
+    r=b.build_effective_request(ancestor,case,source_commit="1"*40,generation_plan_sha256="2"*64,gate_spec={"sha256":"3"*64})
+    assert ancestor == before
+    assert r["controls"] == dict(ancestor["controls"],max_step=.02)
+    assert r["previous_controls"] == ancestor["previous_controls"]
+    assert run_segment_count(r) == (2 if probe else 3)
+    assert len(b.sample_labels(r,run_segment_count(r))) == (66 if probe else 131)
+    assert len(r["z0"]) == 5*(mesh+1) and r["zdot0"][0].hex() == "-0x0.0p+0"
+    for key in ("numeric_packet","voltage_lift_map","initial_preparation","initial_segment_frame","actual_initial_identity"):
+        assert b.digest(r[key]) == b.digest(ancestor[key])
+    assert r["certificate_failure_policy"]["T1"] == {"schema":"solarlab.g2-route.t1-gatespec.v3","sha256":"3"*64}
+    assert r["certificate_failure_policy"]["observation"] == "sealed-history"
+    assert ("reference_refresh_policy" not in r) is probe
+    if not probe:
+        assert r["reference_refresh_policy"]["schema"] == "solarlab.reference-state-transfer-policy.v2"
+        assert r["reference_refresh_policy"]["certificate_failure_policy_sha256"] == b.digest(r["certificate_failure_policy"])
+    assert validate_request(r) == r["physical_tolerance_policy"]
+
+
+@pytest.mark.parametrize("damage",["max_step","parent_controls","profile","numeric_alias"])
+def test_effective_controls_fail_closed(damage,monkeypatch):
+    from scripts.benchmarks.physical_tolerance import validate_request
+    ancestor=generation_ancestor(8,"Main",monkeypatch)
+    case=dict(id="B_N8_Main_Full",stage="full",profile=b.PROFILES["Main"])
+    r=b.build_effective_request(ancestor,case,source_commit="1"*40,generation_plan_sha256="2"*64,gate_spec={"sha256":"3"*64})
+    if damage == "max_step": r["controls"]["max_step"] = .1
+    elif damage == "parent_controls": r["g2_route_controls"]["parent_controls_sha256"] = "f"*64
+    elif damage == "profile": r["g2_route_controls"]["case_id"] = "B_N8_Strict_Full"
+    else: r["g2_route_controls"]["other_controls_changed"] = 0
+    with pytest.raises(ValueError): validate_request(r)
+
+
+def test_generation_pending_definition_dry_run_does_not_create_files(bundle):
+    output=bundle[0].parent/"EffectiveRequests"
+    result=b.generate_effective(bundle[0],repository=bundle[2],output=output,n16_acceptance=bundle[3])
+    assert result["status"] == "not_admitted" and result["generated_requests"] == 0
+    assert "source_commit_not_bound" in result["missing"]
+    assert not output.exists()
+    with pytest.raises(ValueError,match="generation_not_ready"):
+        b.generate_effective(bundle[0],repository=bundle[2],output=output,publish=True,n16_acceptance=bundle[3])
+
+
+def test_generation_is_deterministic_and_publication_exclusive(bundle,monkeypatch):
+    path,plan,root,n16,_=bundle
+    plan["definitions"]["plan"]=write_json(path.parent/"FormalPlan.json",{"fixture_only":True})
+    plan["definitions"]["gate_spec"]=frozen_definition(path.parent,"Gate","solarlab.g2-route.t1-gatespec.v3",3)
+    plan["definitions"]["evidence_method_contract"]=frozen_definition(path.parent,"Method","solarlab.g2-reference-method.v1",1)
+    plan["source_freeze"]["future_execution_commit"]="1"*40
+    for case in plan["cases"]:
+        r=generation_ancestor(case["mesh_intervals"],case["id"].split("_")[2],monkeypatch)
+        case["input_ancestor"]=write_json(path.parent/(case["id"]+".json"),r)
+        if "N16" in case["id"]:
+            write_json(n16,dict(accepted=True,source_input_acceptance_only=True,fixture_only=True,
+                cases={"B":dict(request=case["input_ancestor"],canonical_request_sha256=b.digest(r),actual_initial_identity=r["actual_initial_identity"])}))
+    write_json(path,plan)
+    monkeypatch.setattr(b,"committed_request_sources",lambda *args:{"fixture-only-source":"f"*64})
+    output=path.parent/"EffectiveRequests"
+    first=b.generate_effective(path,repository=root,output=output,n16_acceptance=n16)
+    assert first == b.generate_effective(path,repository=root,output=output,n16_acceptance=n16)
+    assert not output.exists() and len(first["cases"]) == 7
+    published=b.generate_effective(path,repository=root,output=output,publish=True,n16_acceptance=n16)
+    assert published["execution_authorized"] is False and len(list(output.iterdir())) == 8
+    for case in published["cases"]:
+        r,_=b.pinned(case["request"])
+        assert b.digest(r) == case["effective_input_digest"]
+    with pytest.raises(ValueError,match="output_already_exists"):
+        b.generate_effective(path,repository=root,output=output,publish=True,n16_acceptance=n16)
+
+
+@pytest.mark.parametrize("fault",["missing","changed"])
+def test_committed_source_guard_rejects_missing_or_different_blob(monkeypatch,fault):
+    def git(argv,**kwargs):
+        if argv[1] == "rev-parse": return "d"*40+"\n"
+        if fault == "missing": raise b.subprocess.CalledProcessError(128,argv)
+        return b"different committed fixture bytes"
+    monkeypatch.setattr(b.subprocess,"check_output",git)
+    with pytest.raises(ValueError,match="committed_source_missing|uncommitted_generation_source"):
+        b.committed_request_sources(Path(b.__file__).resolve().parents[2],"d"*40)

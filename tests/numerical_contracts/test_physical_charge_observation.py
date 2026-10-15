@@ -455,5 +455,113 @@ class PhysicalFluxSignTests(unittest.TestCase):
             self.assertEqual(arithmetic.integration_count, 4)
 
 
+class T1PhysicalFluxBounds(unittest.TestCase):
+    def arithmetic(self):
+        from scripts.benchmarks.interval_observation import BallIntegrator
+        return BallIntegrator()
+
+    def test_sign_partition_includes_constant_zero_and_crossing(self):
+        for kind, exact in (("zero",F(0)),("constant",F(3)),("crossing",F(1,4))):
+            a=self.arithmetic()
+            def fn(z,analytic):
+                return a.number(0) if kind == "zero" else a.number(-3) if kind == "constant" else z-a.number(F(1,2))
+            result=a.absolute_enclosure(fn,F(0),F(1),F(1,10**20))
+            self.assertLessEqual(result["lower"],exact);self.assertGreaterEqual(result["upper"],exact)
+            self.assertIn(result["status"],("bounded","unknown"))
+            self.assertLessEqual(result["depth"],8);self.assertLessEqual(result["leaves"],256)
+            if kind != "crossing":self.assertEqual(result["status"],"bounded")
+            elif result["status"] == "unknown":self.assertEqual(result["stop_reason"],"partition_limit")
+
+    def test_partition_cap_is_unknown_and_lower_can_decide(self):
+        a=self.arithmetic();fn=lambda z,analytic:z*(a.number(1)-z)
+        result=a.absolute_enclosure(fn,F(0),F(1),F(1,10**20),max_depth=0)
+        self.assertEqual(result["status"],"unknown")
+        self.assertLessEqual(result["lower"],F(1,6));self.assertGreaterEqual(result["upper"],F(1,6))
+        decided=a.absolute_enclosure(fn,F(0),F(1),F(1,10**20),
+            decide=lambda lo,hi:"passed" if lo >= F(1,8) else "unknown")
+        self.assertEqual(decided["stop_reason"],"gate_decided");self.assertEqual(decided["leaves"],1)
+
+    def test_nonreal_and_invalid_partition_are_rejected(self):
+        from scripts.benchmarks.contract_prototype import ContractError as RealContractError
+        a=self.arithmetic()
+        with self.assertRaises(RealContractError):
+            a.absolute_enclosure(lambda z,analytic:a.flint.acb(1,1),0,1,F(1,100))
+        with self.assertRaises(RealContractError):
+            a.absolute_enclosure(lambda z,analytic:z,0,1,F(1,100),max_depth=True)
+
+    def test_physical_flux_includes_both_metal_terms_without_forcing_sum_zero(self):
+        from scripts.benchmarks.interval_observation import SlabPathObserver as RealObserver, Polynomial as Poly
+        a=self.arithmetic();slab=object.__new__(RealObserver)
+        slab.area=F(3);slab.capture_charge_rate=(Poly((F(4),)),Poly((F(5),)))
+        slab.tangent_metal_polynomial=(Poly((F(3),)),Poly((F(7),)))
+        slab.fluxes=lambda ar,z,analytic:((ar.number(2),ar.number(1)),())
+        slab.tangent_metal_flux=lambda ar,z,analytic:(ar.number(2),ar.number(-1))
+        slab.path=NS(identity="manufactured-path",require_covered=lambda:None,
+            clock=NS(predecessor=F(0),tn=F(2),hused=F(2),coordinate=lambda t:(t-2)/2))
+        value=slab.physical_charge_integrals(a,F(1,10**20),subinterval=(F(1,2),F(3,2)))
+        self.assertEqual(tuple(x.center for x in value["physical_flux_integral_C"]),(12,5,6))
+        for row,exact in zip(value["physical_flux_L1"],(12,5,6)):
+            self.assertLessEqual(row["lower"],exact);self.assertGreaterEqual(row["upper"],exact)
+
+
+class T1PieceWitnesses(unittest.TestCase):
+    def fixture(self):
+        from scripts.benchmarks import native_observation as o
+        from scripts.benchmarks.interval_observation import Polynomial,Enclosure
+        tiny=F(1,2**180);factor=1+tiny
+        forms={k:NS(identity=k) for k in ("body_charge","metal_charge")}
+        calls=[]
+        def action(name,point):
+            calls.append((name,point.time))
+            values=[factor*F(point.time)] if name == "body_charge" else [2*factor*F(point.time),-3*factor*F(point.time)]
+            return action_result([Enclosure(v) for v in values])
+        model=NS(linear_forms={"state":forms},linear_action=action)
+        clock=NS(predecessor=F(0),tn=F(1),hused=F(1),coordinate=lambda x:x-1)
+        path=NS(identity="manufactured-path",clock=clock,action=lambda form:
+            (Polynomial((factor,factor)),) if form.identity == "body_charge" else
+            (Polynomial((2*factor,2*factor)),Polynomial((-3*factor,-3*factor))))
+        observed=[]
+        def integrals(arithmetic,allocation,*,subinterval,checkpoint,scale_deciders=None):
+            observed.append(subinterval);duration=subinterval[1]-subinterval[0]
+            return {"physical_flux_integral_C":tuple(Enclosure(v*duration,F(1,10**7)) for v in (1,2,-3)),
+                    "physical_flux_L1":tuple({"lower":abs(v*duration),"upper":abs(v*duration),"fixture_only":True} for v in (1,2,-3))}
+        observer=object.__new__(o.AcceptedIntervalObserver)
+        observer.prepared=NS(path=path)
+        observer.binding=NS(context=NS(request_copy=lambda:{}))
+        observer.observer=NS(model=model,physical_charge_integrals=integrals,
+            strip_current_debit=lambda *a,**k:{"same_state_affine_tangent":(F(3,10**7),)*3})
+        observer.arithmetic=NS(calls=[])
+        return o,observer,(NS(time=0.),),(NS(time=1.),object()),factor,calls,observed
+
+    def test_cut_actions_preserve_low_words_and_four_error_terms(self):
+        from unittest.mock import patch
+        o,observer,left,right,factor,calls,observed=self.fixture()
+        with patch.object(o,"physical_charge_policy",lambda request:{}),patch.object(o,"propagated_input_error",
+                lambda *a,**k:{"tangent_charge_integral_error_C":(F(2,10**7),)*3}):
+            row=observer.t1_piece_evidence(left,right,F(1,4),F(3,4),absolute_error=F(1,1000))
+            whole=observer.t1_piece_evidence(left,right,F(0),F(1),absolute_error=F(1,1000))
+        value=row["channels"]["device"]
+        self.assertEqual(F(*value["delta_Q_enclosure_C"]["center"]),factor/2)
+        self.assertEqual(sum(F(*x) for x in value["uncertainty_components_C"].values()),F(6,10**7))
+        self.assertEqual(F(*value["quadrature_component_upper_C"]),F(1,10**7))
+        self.assertEqual(observed,[(F(1,4),F(3,4)),(F(0),F(1))])
+        self.assertEqual(len(calls),4)  # Only the full interval uses saved endpoint actions.
+        self.assertEqual(row["endpoint_action_source"]["left"],"exact-retained-polynomial")
+        self.assertEqual(whole["endpoint_action_source"]["right"],"saved-state")
+
+    def test_partial_integral_failure_is_retained_as_missing_uncertainty(self):
+        from unittest.mock import patch
+        from scripts.benchmarks.contract_prototype import ContractError as RealContractError
+        o,observer,left,right,*_=self.fixture()
+        def fail(*args,**kwargs):raise RealContractError("observation_integral_radius_exceeds_budget")
+        observer.observer.physical_charge_integrals=fail
+        with patch.object(o,"physical_charge_policy",lambda request:{}),patch.object(o,"propagated_input_error",
+                lambda *a,**k:{"tangent_charge_integral_error_C":(F(2,10**7),)*3}):
+            value=observer.t1_piece_evidence(left,right,F(1,4),F(3,4),absolute_error=F(1,1000))
+        self.assertEqual(value["status"],"unknown")
+        self.assertIsNone(value["channels"]["device"]["integral_F_enclosure_C"])
+        self.assertIsNone(value["channels"]["device"]["uncertainty_components_C"]["physical_integrand_and_quadrature"])
+
+
 if __name__ == "__main__":
     unittest.main()

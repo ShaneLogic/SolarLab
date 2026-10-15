@@ -895,6 +895,74 @@ class AcceptedIntervalObserver:
         return readback_current_evidence(self.binding, self.prepared, pair, native["z"], native["zdot"],
                                          self.arithmetic, current_budget, observer=self.observer)
 
+    def t1_piece_evidence(self, left_pair, right_pair, first, last, *, absolute_error, checkpoint=lambda: None,
+                          scale_deciders=None):
+        """Opt-in exact cut actions and physical F; never prorate a parent integral."""
+        clock, path, model = self.prepared.path.clock, self.prepared.path, self.observer.model
+        first,last = contained_subinterval(clock,(first,last))
+        if first >= last or rational(left_pair[0].time) != clock.predecessor or rational(right_pair[0].time) != clock.tn:
+            raise ContractError("T1_piece_endpoint_clock")
+        request = self.binding.context.request_copy()
+        physical_charge_policy(request)
+        # Endpoint charges are independent full-word actions. Internal cuts
+        # use exact actions on the retained physical polynomial, not rounded
+        # binary64 reconstruction or saved-metal derivatives.
+        def charges(when):
+            point = left_pair[0] if when == clock.predecessor else right_pair[0] if when == clock.tn else None
+            values = []
+            for name in ("body_charge","metal_charge"):
+                if point is not None:
+                    values.extend(public_action_enclosures(model.linear_action(name,point)))
+                else:
+                    values.extend(Enclosure(poly.at(clock.coordinate(when)))
+                                  for poly in path.action(model.linear_forms["state"][name]))
+            return tuple(values)
+        left,right = charges(first),charges(last)
+        delta = tuple(Enclosure(b.center-a.center,b.radius+a.radius) for a,b in zip(left,right,strict=True))
+        inputs = propagated_input_error(self.binding,self.prepared,subinterval=(first,last))
+        strip = self.observer.strip_current_debit(self.arithmetic,subinterval=(first,last))["same_state_affine_tangent"]
+        try:
+            observed = self.observer.physical_charge_integrals(self.arithmetic,absolute_error,
+                subinterval=(first,last),checkpoint=checkpoint,scale_deciders=scale_deciders)
+            flux,bounds = observed["physical_flux_integral_C"],observed["physical_flux_L1"]
+            problem = None
+        except ContractError as error:
+            if error.reason not in {"observation_integral_evaluation_cap", "observation_integral_radius_exceeds_budget",
+                                    "observation_nonfinite_or_nonreal_ball"}:
+                raise
+            flux,bounds,problem = (None,)*3,(None,)*3,error.reason
+        def pair(x):
+            x=rational(x);return [x.numerator,x.denominator]
+        def enc(x):
+            return {"center":pair(x.center),"absolute_error_bound":pair(x.radius)}
+        channels = {}
+        for index,name in enumerate(("device","left_metal","right_metal")):
+            f,bound = flux[index],bounds[index]
+            input_error,clock_error = inputs["tangent_charge_integral_error_C"][index],strip[index]
+            extra = input_error+clock_error
+            channels[name] = {"delta_Q_enclosure_C":enc(delta[index]),
+                "integral_F_enclosure_C":None if f is None else enc(f),
+                "uncertainty_components_C":{"saved_charge_evaluation":pair(delta[index].radius),
+                    "physical_integrand_and_quadrature":None if f is None else pair(f.radius),
+                    "input_representation":pair(input_error),"clock_strip":pair(clock_error)},
+                "quadrature_component_upper_C":None if f is None else pair(f.radius),
+                "integral_abs_F_lower_C":None if bound is None else pair(max(Fraction(0),bound["lower"]-extra)),
+                "integral_abs_F_upper_C":None if bound is None or bound["upper"] is None else pair(bound["upper"]+extra),
+                "integral_abs_F_evidence":None if bound is None else observation_record(bound),
+                "scale_input_clock_widening_C":pair(extra),"missing_reason":problem,
+                "L1_scope":{"path_identity":path.identity,"t_left":pair(first),"t_right":pair(last),
+                            "hused":pair(clock.hused),"native_tn":pair(clock.tn)},
+                "left_charge_enclosure_C":enc(left[index]),"right_charge_enclosure_C":enc(right[index]),
+                "coverage_ownership":{"saved_charge_evaluation":"two complete-word state actions or exact polynomial cuts",
+                    "physical_integrand_and_quadrature":"physical F integral evaluation, including Qquad",
+                    "input_representation":"same-path propagated input evaluation bound",
+                    "clock_strip":"declared clock strip bound","Qquad":"subset of combined physical_integrand_and_quadrature"}}
+        return {"channels":channels,"path_identity":path.identity,
+                "endpoint_action_source":{"left":"saved-state" if first == clock.predecessor else "exact-retained-polynomial",
+                                          "right":"saved-state" if last == clock.tn else "exact-retained-polynomial"},
+                "form_identities":{name:model.linear_forms["state"][name].identity for name in ("body_charge","metal_charge")},
+                "arithmetic_calls":list(self.arithmetic.calls),"status":"unknown" if problem else "computed"}
+
     def path_domain_evidence(self, budgets):
         """Retain the original site/inventory gates on the whole named path."""
         model, path = self.observer.model, self.prepared.path
@@ -1120,7 +1188,7 @@ class SealedChargeObserver:
     charge increments, positive errors and cumulative arithmetic before emit.
     """
 
-    def __init__(self, mapping, request, emit, checkpoint):
+    def __init__(self, mapping, request, emit, checkpoint, *, t1_context=None):
         from scripts.benchmarks.coupled_device_prototype import AffineSamplingContext
         from scripts.benchmarks.native_readback import _Protocol
         from scripts.benchmarks.physical_tolerance import validate_certificate_policy
@@ -1138,6 +1206,23 @@ class SealedChargeObserver:
             self.prefixes["physical_charge"] = physical
         self.accumulator = prepare_charge_accumulator(request, request["interval_observation"])
         self.last_point, self.previous, self.intervals = mapping.model.reference, None, 0
+        self.t1_context,self.t1_pieces = t1_context,0
+        if t1_context is not None:
+            from scripts.benchmarks.t1_gate import CandidateSpec,fixed_windows
+            from scripts.benchmarks.g2_route_bindings import sample_labels,CASE_IDS
+            spec = t1_context["spec"]
+            if (spec["schema"] != "solarlab.g2-route.t1-gatespec.v3" or spec["status"] != "frozen"
+                    or policy["T1"] != {"schema":spec["schema"],"sha256":t1_context["spec_sha256"]}
+                    or any(type(t1_context[k]) is not str or not t1_context[k] for k in ("run_id","case_id"))
+                    or t1_context["case_id"] not in CASE_IDS):
+                raise ContractError("sealed_T1_definition_or_run_binding")
+            mesh = 16 if "N16" in t1_context["case_id"] else 8
+            if mapping.model.intervals != mesh or mapping.model.layout.size != 5*(mesh+1):
+                raise ContractError("sealed_T1_case_geometry")
+            self.t1_spec = CandidateSpec.from_document(spec,t1_context["spec_sha256"])
+            self.t1_windows = fixed_windows(sample_labels(request))
+            if self.t1_spec.Qref != Fraction(physical_charge_policy(request)["Qref_C"]):
+                raise ContractError("sealed_T1_Qref_binding")
 
     def consume_interval(self, deferred, left, right, packet_row, map_payload, segment, handoff, science):
         from copy import deepcopy
@@ -1196,10 +1281,80 @@ class SealedChargeObserver:
         # This is the reader's charge arithmetic, not physical_charge_passed.
         checker._interval(left, right, packet, supplied_row=rendered)
         self.checkpoint()
-        self.emit({"kind": "sealed_voltage_lift_charge", "request_sha256": digest(self.request),
-                   "source_interval_sha256": digest(deferred), "interval": rendered})
+        sealed = {"kind": "sealed_voltage_lift_charge", "request_sha256": digest(self.request),
+                  "source_interval_sha256": digest(deferred), "interval": rendered}
+        if self.t1_context is None:
+            self.emit(sealed)
+        else:
+            self._emit_t1(sealed,observer,(self.last_point,),(right_point,increment),allocation)
         self.last_point, self.previous = right_point, observer
         self.intervals += 1
+
+    def _emit_t1(self, sealed, observer, left_pair, right_pair, allocation):
+        """Append source-bound T1 data, retaining the original sealed interval."""
+        from copy import deepcopy
+        from scripts.benchmarks.t1_gate import from_sealed_charge,digest as t1_digest,q,operands,verdict
+        from scripts.benchmarks.physical_tolerance import physical_charge_error_allocation
+        clock = observer.prepared.path.clock
+        policy = self.request["interval_observation"]["arithmetic"]
+        native = from_sealed_charge(sealed,run_id=self.t1_context["run_id"])
+        deciders = [None]
+        for name in ("left_metal","right_metal"):
+            value = operands(native["channels"][name])
+            extra = value["components"]["input_representation"]+value["components"]["clock_strip"]
+            def decide(lo,hi,value=value,extra=extra):
+                lower=max(value["qabs"][0],max(Fraction(0),lo-extra),self.t1_spec.Q0)
+                upper=None if hi is None else max(value["qabs"][1],hi+extra,self.t1_spec.Q0)
+                return verdict(abs(value["b"])+value["u"],value["quad"],lower,upper,
+                               self.t1_spec.epsilon_metal,self.t1_spec.quadrature_share)["status"]
+            deciders.append(decide)
+        # A separate arithmetic ledger keeps old C call/uncertainty evidence unchanged.
+        observer.arithmetic = BallIntegrator(**{k:policy[k] for k in ("bits","evaluations","depth")})
+        whole = observer.t1_piece_evidence(left_pair,right_pair,clock.predecessor,clock.tn,
+            absolute_error=allocation,checkpoint=self.checkpoint,scale_deciders=deciders)
+        native.update(case_id=self.t1_context["case_id"],input_digest=digest(self.request),
+                      path_identity=observer.prepared.path.identity,
+                      native_clock=deepcopy(sealed["interval"]["observation"]["physical_charge"]["clock"]),
+                      owner_generation={"owner":observer.frame.owner,"generation":observer.frame.generation})
+        for name,row in native["channels"].items():
+            extra = whole["channels"][name]
+            for key in ("delta_Q_enclosure_C","integral_F_enclosure_C"):
+                if extra[key] is not None:
+                    a,b=row[key],extra[key]
+                    if abs(q(a["center"])-q(b["center"])) > q(a["absolute_error_bound"])+q(b["absolute_error_bound"]):
+                        raise ContractError("sealed_T1_native_operand_disagreement")
+            for key in ("integral_abs_F_lower_C","integral_abs_F_upper_C","integral_abs_F_evidence",
+                        "scale_input_clock_widening_C","coverage_ownership","missing_reason","L1_scope"):
+                row[key] = extra[key]
+            row["left_charge_enclosure_C"],row["right_charge_enclosure_C"] = extra["left_charge_enclosure_C"],extra["right_charge_enclosure_C"]
+        sealed["t1_evidence"] = native
+        self.emit(sealed)
+        whole["channels"] = deepcopy(native["channels"])
+        for index,(left_tag,right_tag,window_left,window_right) in enumerate(self.t1_windows):
+            if left_tag["segment"] != native["segment_id"]:
+                continue
+            first,last = max(window_left,clock.predecessor),min(window_right,clock.tn)
+            if first >= last:
+                continue
+            self.checkpoint()
+            if first == clock.predecessor and last == clock.tn:
+                evidence = whole
+            else:
+                observer.arithmetic = BallIntegrator(**{k:policy[k] for k in ("bits","evaluations","depth")})
+                evidence = observer.t1_piece_evidence(left_pair,right_pair,first,last,
+                    absolute_error=physical_charge_error_allocation(self.request,last-first),checkpoint=self.checkpoint)
+            piece = {k:deepcopy(native[k]) for k in ("run_id","case_id","request_sha256","input_digest","native_interval_id",
+                       "source_id","frame_id","map_id","segment_id","owner_generation","native_clock")}
+            piece.update(schema="solarlab.g2-window-piece.v1",window_index=index,
+                window_key={"left":left_tag,"right":right_tag},parent_sha256=t1_digest(native),
+                t_left_hex=float(first).hex(),t_right_hex=float(last).hex(),
+                event_side="left" if last == q(observer.prepared.path.clock.segment_end) else "interior",
+                channels=evidence["channels"],endpoint_action_source=evidence["endpoint_action_source"],
+                form_identities=evidence["form_identities"],path_identity=evidence["path_identity"],
+                arithmetic_calls=evidence["arithmetic_calls"],status=evidence["status"])
+            piece["piece_id"] = t1_digest(piece)
+            self.emit({"kind":"t1_fixed_window_piece","evidence":piece})
+            self.t1_pieces += 1
 
     def summary(self):
         check = self.checker
@@ -1210,7 +1365,10 @@ class SealedChargeObserver:
                 "signed_integrals": observation_record(check.signed_integrals),
                 "arithmetic": self.request["interval_observation"]["arithmetic"],
                 "independent_saved_word_and_ledger_check": True,
-                "scientific_status": check.science.summary(final=True)["status"], "scientific_pass": False}
+                "scientific_status": check.science.summary(final=True)["status"], "scientific_pass": False,
+                **({"T1_evidence":{"schema":"solarlab.g2-window-piece.v1","pieces":self.t1_pieces,
+                                    "gate_spec_sha256":self.t1_context["spec_sha256"],"qualification":False}}
+                   if self.t1_context is not None else {})}
 
 
 def prepare_interval_observation_policy(request, *, binding_identity, header_sha256, backend_modules,
