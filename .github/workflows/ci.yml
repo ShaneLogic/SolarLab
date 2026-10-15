@@ -154,6 +154,9 @@ jobs:
         python: ["3.11.16", "3.13.15"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The release-bundle test compares the build commit with HEAD^.
+          fetch-depth: 2
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.12.13"
@@ -184,6 +187,10 @@ jobs:
           tests/refactor/test_registry_mapping.py
           tests/refactor/test_configuration_schema_export.py
           tests/refactor/test_configuration_input_types.py::test_json_mode_matches_public_metadata_and_preserves_default
+      # Separate process: the pool budgets include the parent process family RSS.
+      - name: Runtime store, execution pool and services
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
           tests/runtime/test_event_service.py
