@@ -519,6 +519,15 @@ def execution_identity(
 _EXECUTION_ROLES = ("protocol", "preparation", "initial_state", "grid", "numeric_controls")
 
 
+def _manifest_bytes(value: Any) -> bytes:
+    # Complete implementation content needs a larger transport envelope than
+    # the original identity summaries. Their 8 MiB domain remains unchanged.
+    result = json.dumps(_json_value(value), sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    if len(result) > 2**26:
+        raise ValueError("execution manifest exceeds 64 MiB")
+    return result
+
+
 def _content_record(source: SourceDocument) -> dict[str, Any]:
     return {**_source(source), "content_hex": source.content.hex()}
 
@@ -558,12 +567,12 @@ class ExecutionManifest:
 
     def __post_init__(self) -> None:
         _commit(self.current_repository_head)
-        if type(self.canonical_json) is not bytes or len(self.canonical_json) > 2**23:
+        if type(self.canonical_json) is not bytes or len(self.canonical_json) > 2**26:
             raise ValueError("manifest requires bounded immutable JSON bytes")
         value = json.loads(self.canonical_json)
         if (not isinstance(value, dict) or set(value) != {
             "schema", "execution_identity", "content_roles", "implementation_content",
-        } or value["schema"] != "solarlab.execution-manifest.v1" or _json_bytes(value) != self.canonical_json):
+        } or value["schema"] != "solarlab.execution-manifest.v1" or _manifest_bytes(value) != self.canonical_json):
             raise ValueError("manifest is not in its canonical versioned domain")
         document = value["execution_identity"]
         if not isinstance(document, dict) or set(document) != {"schema", "zero_policy", "payload"}:
@@ -611,7 +620,7 @@ def execution_manifest(
     value = {"schema": "solarlab.execution-manifest.v1", "execution_identity": json.loads(identity.canonical_json),
              "content_roles": {name: _content_record(getattr(execution, name)) for name in _EXECUTION_ROLES},
              "implementation_content": [_content_record(source) for source in execution.implementation.files]}
-    return ExecutionManifest(_json_bytes(value), execution.current_repository_head)
+    return ExecutionManifest(_manifest_bytes(value), execution.current_repository_head)
 
 
 def verify_execution_manifest(

@@ -217,6 +217,14 @@
       "QuantityError",
       "normalize_quantity",
       "supported_units"
+    ],
+    "solarlab.reproducibility.release": [
+      "ReleaseFile",
+      "ReleaseBundle",
+      "snapshot_release_bundle",
+      "write_release_bundle",
+      "read_release_bundle",
+      "verify_release_installation"
     ]
   },
   "public_imports": {
@@ -468,6 +476,14 @@
       "UNIT_SCHEMA_VERSION",
       "normalize_quantity",
       "supported_units"
+    ],
+    "solarlab.reproducibility.release": [
+      "ReleaseBundle",
+      "ReleaseFile",
+      "read_release_bundle",
+      "snapshot_release_bundle",
+      "verify_release_installation",
+      "write_release_bundle"
     ]
   },
   "checked_consumers": [

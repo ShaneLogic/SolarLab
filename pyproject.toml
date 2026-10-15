@@ -131,6 +131,7 @@ only-include = [
     "tests/refactor/test_structured_registry_preparation.py",
     "tests/refactor/test_execution_identity_preparation.py",
     "tests/refactor/test_execution_manifest.py",
+    "tests/refactor/test_release_bundle.py",
     "tests/refactor/test_jv_protocol_preparation.py",
     "tests/refactor/test_sweep_preparation.py",
     "tests/refactor/fixtures/jv_reference_requests.json",
