@@ -144,7 +144,8 @@ jobs:
 
   packages:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Package/refactor checks run about 8 min plus 1.5 min runtime pools.
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: .
