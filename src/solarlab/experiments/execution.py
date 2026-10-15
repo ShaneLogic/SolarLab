@@ -29,7 +29,7 @@ import uuid
 from solarlab.io.artifacts import ArtifactPayload, _parse_document
 from solarlab.io.run_store import AttemptToken, RunStore, StateConflict
 from solarlab.experiments.worker import (
-    PROGRESS_BYTES, TERMINAL_BYTES, ResourceLimits, WorkerBinding, WorkerRequest,
+    PROGRESS_BYTES, TERMINAL_BYTES, ManifestBinding, ResourceLimits, WorkerBinding, WorkerRequest,
     _atomic_json, _child_main, _directory_bytes, _name, _object, _process_info, _regular_bytes, _sha,
 )
 
@@ -64,6 +64,7 @@ class _Job:
     binding: WorkerBinding
     limits: ResourceLimits
     enqueued: float
+    execution: ManifestBinding | None = None
     token: AttemptToken | None = None
     process: Any = None
     directory: Path | None = None
@@ -207,7 +208,8 @@ class ProcessSupervisor:
         if self._closing or self._closed:
             raise RuntimeError("supervisor is closing or closed")
 
-    def submit(self, run_id: str, worker_id: str, request: WorkerRequest, limits: ResourceLimits) -> JobHandle:
+    def submit(self, run_id: str, worker_id: str, request: WorkerRequest, limits: ResourceLimits, *,
+               execution: ManifestBinding | None = None) -> JobHandle:
         if type(request) is not WorkerRequest or type(limits) is not ResourceLimits:
             raise ValueError("explicit immutable request documents and resource limits are required")
         if worker_id not in self._workers:
@@ -218,6 +220,13 @@ class ProcessSupervisor:
             raise ValueError("request resource limit exceeds the explicit shared capacity")
         document = request.to_document()
         metadata = {"transport": document, "worker_binding": asdict(binding), "limits": asdict(limits)}
+        if execution is not None:
+            if type(execution) is not ManifestBinding:
+                raise ValueError("explicit trusted manifest binding required")
+            execution.validate_request(request)
+            if len(execution.manifest.canonical_json) * 4 + 16384 > limits.output_bytes:
+                raise ValueError("output allowance cannot retain the complete execution manifest")
+            metadata["execution_manifest"] = execution.summary()
         identity = {key: document[key] for key in ("H_input", "H_physics", "H_execution")}
         with self._condition:
             self._check_open()
@@ -237,7 +246,7 @@ class ProcessSupervisor:
                 raise QueueFull("shared active reservations and pending queue are full")
             record = self.store.enqueue(run_id, opaque_identity=identity, input_metadata=metadata)
             handle = JobHandle(self.store.store_id, run_id, record["current_attempt_id"])
-            job = _Job(handle, record["generation"], request, binding, limits, time.monotonic())
+            job = _Job(handle, record["generation"], request, binding, limits, time.monotonic(), execution)
             self._known[handle.attempt_id] = job
             self._pending.append(job)
             self._condition.notify_all()
@@ -317,6 +326,13 @@ class ProcessSupervisor:
         job.started = time.monotonic()
         job.directory = self.work_root / (self.store.store_id + "-" + job.handle.attempt_id)
         job.directory.mkdir(mode=0o700)
+        if job.execution is not None:
+            # This owned launch input remains available even if the child
+            # crashes before returning or refuses the actual environment.
+            with (job.directory / "execution-manifest.json").open("xb") as stream:
+                stream.write(job.execution.manifest.canonical_json)
+                stream.flush()
+                os.fsync(stream.fileno())
         _atomic_json(job.directory / "launch.json", {"schema": "solarlab.process-intent.v1", "token": asdict(job.token),
             "request_sha256": hashlib.sha256(job.request.to_bytes()).hexdigest(), "binding": asdict(job.binding),
             "limits": asdict(job.limits), "started_monotonic": job.started, "owner_pid": os.getpid()})
@@ -325,7 +341,7 @@ class ProcessSupervisor:
         job.header = self._context.RawArray("q", (0, 0, -1, -1))
         job.buffer = self._context.RawArray("B", PROGRESS_BYTES)
         job.process = self._context.Process(target=_child_main, args=(job.request.to_bytes(), job.binding, job.limits,
-            str(job.directory), asdict(job.token), job.stop, job.lock, job.header, job.buffer), daemon=True)
+            str(job.directory), asdict(job.token), job.stop, job.lock, job.header, job.buffer, job.execution), daemon=True)
         self._active[job.handle.attempt_id] = job
         job.process.start()
         job.pid = job.process.pid

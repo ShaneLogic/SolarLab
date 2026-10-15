@@ -381,7 +381,8 @@
       "prepare_spatial_experiment"
     ],
     "solarlab.io.artifacts": [
-      "ArtifactIntegrityError"
+      "ArtifactIntegrityError",
+      "bytes_artifact"
     ],
     "solarlab.io.run_store": [
       "RunStore",
@@ -500,6 +501,18 @@
       "RegistryMapping",
       "prepare_registry_mapping",
       "read_registry_mapping"
+    ],
+    "solarlab.experiments.worker": [
+      "ManifestBinding",
+      "ResourceLimits",
+      "WorkerBinding",
+      "WorkerContext",
+      "WorkerRequest",
+      "WorkerResult"
+    ],
+    "solarlab.experiments.execution": [
+      "JobHandle",
+      "ProcessSupervisor"
     ]
   },
   "checked_consumers": [

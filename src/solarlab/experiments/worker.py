@@ -9,25 +9,33 @@ is replaceable UI metadata. Required state history must be an artifact.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import importlib
 import importlib.util
+import importlib.metadata
 import inspect
 import math
 import os
+import platform
 from pathlib import Path
 import re
 import resource
 import stat
 import subprocess
 import sys
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
-from solarlab.io.artifacts import ArtifactPayload, _json_document, _parse_document
+from solarlab.io.artifacts import ArtifactPayload, _json_document, _parse_document, bytes_artifact
 from solarlab.materials.source import SourceDocument
 
-__all__ = ["WorkerRequest", "WorkerBinding", "ResourceLimits", "WorkerResult", "WorkerContext", "CooperativeStop"]
+if TYPE_CHECKING:
+    from solarlab.config.identity import (
+        ExecutionDescription, ExecutionEngine, ExecutionManifest, IdentityInputs, RuntimeEnvironment,
+    )
+
+__all__ = ["WorkerRequest", "WorkerBinding", "ResourceLimits", "WorkerResult", "WorkerContext", "CooperativeStop",
+           "ManifestBinding", "observe_environment"]
 
 PROGRESS_BYTES = 4096
 REQUEST_BYTES = 262144
@@ -50,6 +58,70 @@ def _object(value: Any) -> str:
     if type(value) is not dict:
         raise ValueError("an explicit strict JSON object is required")
     return _json_document(value)
+
+
+def observe_environment(packages: tuple[str, ...], names: tuple[str, ...]) -> RuntimeEnvironment:
+    """Observe dependency versions and exact environment values in this process.
+
+    A missing variable is JSON null, distinct from an empty string. Callers
+    choose the dependency/key coverage; no values are taken from a manifest.
+    """
+    from solarlab.config.identity import RuntimeEnvironment
+
+    return RuntimeEnvironment(platform.python_implementation(), platform.python_version(),
+        platform.system(), platform.machine(),
+        tuple((name, importlib.metadata.version(name)) for name in packages),
+        tuple((name, _json_document(os.environ.get(name))) for name in names))
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestBinding:
+    """Trusted per-job W11 data, separate from untrusted request transport.
+
+    Spawn transfers these existing immutable preparation records, never a
+    model or native handle. The child revalidates them and observes its own
+    runtime. This is not a serialized object loader or scientific admission.
+    """
+
+    manifest: ExecutionManifest
+    inputs: IdentityInputs
+    execution: ExecutionDescription
+    engine: ExecutionEngine
+    expected_sha256: str
+    environment: tuple[tuple[str, str | None], ...]
+
+    def __post_init__(self) -> None:
+        from solarlab.config.identity import (
+            ExecutionDescription, ExecutionEngine, ExecutionManifest, IdentityInputs, verify_execution_manifest,
+        )
+
+        _sha(self.expected_sha256)
+        if (type(self.manifest) is not ExecutionManifest or type(self.inputs) is not IdentityInputs
+                or type(self.execution) is not ExecutionDescription or type(self.engine) is not ExecutionEngine):
+            raise ValueError("manifest consumption requires the actual W11 preparation records")
+        snapshot = tuple(sorted(self.environment))
+        if (len({key for key, _ in snapshot}) != len(snapshot)
+                or any(type(key) is not str or re.fullmatch(r"[A-Z][A-Z0-9_]*", key) is None
+                       or value is not None and type(value) is not str for key, value in snapshot)):
+            raise ValueError("explicit unique child environment keys and string/null values are required")
+        if any(key in {"PYTHONPATH", "PYTHONHOME", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES"} for key, _ in snapshot):
+            raise ValueError("a manifest cannot select code through environment injection")
+        object.__setattr__(self, "environment", snapshot)
+        if self.execution.environment.settings != tuple((key, _json_document(value)) for key, value in snapshot):
+            raise ValueError("child environment settings differ from the execution description")
+        verify_execution_manifest(self.manifest, self.inputs, self.execution, engine=self.engine,
+            environment=self.execution.environment, expected_sha256=self.expected_sha256)
+
+    def validate_request(self, request: WorkerRequest) -> None:
+        identity = self.manifest.export()["document"]["execution_identity"]
+        if (request.execution_identity.sha256 != self.manifest.execution_sha256
+                or request.H_input != identity["payload"]["H_input"]
+                or request.H_physics != identity["payload"]["H_physics"]):
+            raise ValueError("worker request does not belong to this execution manifest")
+
+    def summary(self) -> dict[str, Any]:
+        return {"manifest_sha256": self.expected_sha256, "H_execution": self.manifest.execution_sha256,
+                "engine": self.engine.name, "current_repository_head": self.execution.current_repository_head}
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,12 +278,35 @@ class WorkerContext:
     multiprocessing pool because its process is daemonic.
     """
 
-    def __init__(self, stop: Any, lock: Any, header: Any, buffer: Any, limits: ResourceLimits) -> None:
+    def __init__(self, stop: Any, lock: Any, header: Any, buffer: Any, limits: ResourceLimits,
+                 execution: ManifestBinding | None = None) -> None:
         self._stop, self._lock, self._header, self._buffer = stop, lock, header, buffer
         self._limits = limits
         self._counts: tuple[int | None, int | None] = (None, None)
         self._progress = b""
         self._revision = 0
+        self._execution = execution
+        self._manifest_consumed = False
+
+    def consume_manifest(self, request: WorkerRequest, *, engine: str) -> ManifestBinding:
+        """Real child-side validation before an explicitly selected executor."""
+        from solarlab.config.identity import verify_execution_manifest
+
+        binding = self._execution
+        if binding is None:
+            raise ValueError("this worker requires a complete execution manifest")
+        if binding.engine.name != engine:
+            raise ValueError("wrong execution engine; fallback is forbidden")
+        binding.validate_request(request)
+        # Re-run the existing preparation constructors after trusted spawn
+        # transport. Do not reconstruct any trusted fact from manifest claims.
+        inputs = replace(binding.inputs)
+        environment = observe_environment(tuple(key for key, _ in binding.execution.environment.packages),
+                                          tuple(key for key, _ in binding.environment))
+        verify_execution_manifest(binding.manifest, inputs, binding.execution, engine=binding.engine,
+                                  environment=environment, expected_sha256=binding.expected_sha256)
+        self._manifest_consumed = True
+        return binding
 
     @property
     def cancelled(self) -> bool:
@@ -336,10 +431,11 @@ def _directory_bytes(path: Path) -> int:
 def _child_main(
     raw: bytes, binding: WorkerBinding, limits: ResourceLimits, directory: str,
     token: dict[str, Any], stop: Any, lock: Any, header: Any, buffer: Any,
+    execution: ManifestBinding | None = None,
 ) -> None:
     """Importable spawn entry. The allowlist binding comes only from parent code."""
     path = Path(directory)
-    context = WorkerContext(stop, lock, header, buffer, limits)
+    context = WorkerContext(stop, lock, header, buffer, limits, execution)
     state = "failed"
     result: dict[str, Any] = {}
     artifacts: list[dict[str, Any]] = []
@@ -354,6 +450,14 @@ def _child_main(
         _atomic_json(path / "started.json", {"token": token, "pid": os.getpid(), "pgid": os.getpgrp(), "os_identity": identity})
         request = WorkerRequest.from_bytes(raw)
         binding.validate_request(request)
+        if execution is not None:
+            if any(name in sys.modules for name in ("scipy", "perovskite_sim")):
+                raise ValueError("engine imports preceded the isolated worker environment")
+            for name, value in execution.environment:
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
         spec = importlib.util.find_spec(binding.module)
         if spec is None or spec.origin is None or Path(spec.origin).suffix != ".py" or hashlib.sha256(Path(spec.origin).read_bytes()).hexdigest() != binding.source_sha256:
             raise ValueError("worker source content changed since trusted registration")
@@ -366,6 +470,12 @@ def _child_main(
         if type(output) is not WorkerResult:
             raise ValueError("worker must return a validated WorkerResult")
         output = WorkerResult(output.result_json, output.artifacts)
+        if execution is not None:
+            if not context._manifest_consumed:
+                raise ValueError("worker returned without consuming its execution manifest")
+            output = WorkerResult(output.result_json, (*output.artifacts, ("execution_manifest", bytes_artifact(
+                execution.manifest.canonical_json, metadata={"schema": "solarlab.execution-manifest.v1",
+                    "manifest_sha256": execution.expected_sha256, "scientific_qualification": False}))))
         for name, observed, cap in zip(("accepted_steps", "calls"), context._counts, (limits.accepted_steps, limits.calls)):
             if cap is not None and observed is None:
                 raise ValueError("requested counter is unobserved: " + name)
