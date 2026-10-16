@@ -13,6 +13,7 @@ import ctypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import fcntl
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -36,6 +37,10 @@ THREAD_VARIABLES = (
 
 class LauncherError(ValueError):
     """An invalid plan, occupied slot, or incomplete supervision operation."""
+
+    def __init__(self, message, *, pipeline_deadline=None):
+        super().__init__(message)
+        self.pipeline_deadline = pipeline_deadline
 
 
 def require(condition, message):
@@ -70,6 +75,7 @@ class Limits:
     @classmethod
     def from_execution(cls, execution):
         supervision = execution["supervision"]
+        _pipeline_parameters(supervision)
         result = cls(
             positive_number(execution["wall_s"], "wall_s"),
             positive_integer(supervision["rss_bytes"], "rss_bytes"),
@@ -84,6 +90,75 @@ class Limits:
     @property
     def cleanup_s(self):
         return self.term_grace_s + self.kill_wait_s + self.receipt_reserve_s
+
+
+def _pipeline_parameters(supervision):
+    """Validate the optional pair without forbidding later quarantine cleanup."""
+    fields = {"pipeline_started_unix_ns", "pipeline_wall_s"}
+    present = fields.intersection(supervision)
+    if not present:
+        return None
+    require(present == fields, "pipeline_started_unix_ns and pipeline_wall_s must be supplied together")
+    start = positive_integer(supervision["pipeline_started_unix_ns"], "pipeline_started_unix_ns")
+    wall = supervision["pipeline_wall_s"]
+    positive_number(wall, "pipeline_wall_s")
+    # Never convert a Unix nanosecond identity, or its sum, through binary64.
+    duration_ns = math.floor(Fraction(wall) * 10**9)
+    require(duration_ns > 0, "pipeline_wall_s is below one nanosecond")
+    return start, wall, start + duration_ns
+
+
+def _refresh_pipeline_deadline(state):
+    """Map wall time conservatively; clock adjustments can only shorten work."""
+    monotonic_ns = time.monotonic_ns()
+    unix_ns = time.time_ns()
+    after_ns = time.monotonic_ns()
+    candidate = monotonic_ns + state["pipeline_deadline_unix_ns"] - unix_ns
+    state["adopted_deadline_monotonic_ns"] = min(
+        state["adopted_deadline_monotonic_ns"], candidate)
+    state["deadline_source"] = (
+        "pipeline" if state["adopted_deadline_monotonic_ns"] < state["stage_deadline_monotonic_ns"] else "stage")
+    state["last_clock_sample"] = {
+        "unix_ns": unix_ns, "monotonic_ns": monotonic_ns, "after_monotonic_ns": after_ns}
+    state["remaining_pipeline_ns"] = state["pipeline_deadline_unix_ns"] - unix_ns
+    state["remaining_effective_ns"] = state["adopted_deadline_monotonic_ns"] - after_ns
+    # The existing process/IO APIs take seconds. Round the exact deadline down,
+    # so that this conversion cannot give the case an extra rounding interval.
+    return math.nextafter(float(Fraction(state["adopted_deadline_monotonic_ns"], 10**9)), -math.inf)
+
+
+def _pipeline_deadline(supervision, started, limits):
+    parameters = _pipeline_parameters(supervision)
+    if parameters is None:
+        return None
+    start, wall, end = parameters
+    stage_end = math.floor(Fraction(started) * 10**9) + math.floor(Fraction(limits.wall_s) * 10**9)
+    state = {
+        "schema": "solarlab.g2-route.pipeline-deadline.v1",
+        "pipeline_started_unix_ns": start, "pipeline_wall_s": wall,
+        "pipeline_deadline_unix_ns": end,
+        "stage_deadline_monotonic_ns": stage_end,
+        "adopted_deadline_monotonic_ns": stage_end,
+        "minimum_launch_reserve_ns": math.ceil(sum(Fraction(supervision[key]) for key in
+            ("poll_s", "term_grace_s", "kill_wait_s", "receipt_reserve_s")) * 10**9),
+        "clock_mapping": "Unix sampled after monotonic lower bound; subsequent samples never extend deadline",
+        "bootstrap_reserve_source": "supervision.poll_s; work must retain TERM/KILL/receipt reserves",
+    }
+    _refresh_pipeline_deadline(state)
+    state["initial_clock_sample"] = dict(state["last_clock_sample"])
+    if start > state["last_clock_sample"]["unix_ns"]:
+        raise LauncherError("pipeline start is in the future", pipeline_deadline=state)
+    return state
+
+
+def _require_pipeline_launch_budget(state, checkpoint):
+    deadline = _refresh_pipeline_deadline(state)
+    state["remaining_at_" + checkpoint + "_ns"] = state["remaining_effective_ns"]
+    if state["remaining_pipeline_ns"] <= 0:
+        raise LauncherError("pipeline deadline expired before launch", pipeline_deadline=state)
+    if state["remaining_effective_ns"] <= state["minimum_launch_reserve_ns"]:
+        raise LauncherError("insufficient pipeline budget for bootstrap and cleanup", pipeline_deadline=state)
+    return deadline
 
 
 def _slot_path(directory, channel):
@@ -304,7 +379,9 @@ def supervise(*, command, execution, channel_directory, case_id, plan_sha256,
             "cancel and output paths must differ")
     require(not receipt_path.exists() and not log_path.exists(), "supervision output already exists")
     require(not cancel_path.exists(), "case cancelled before launch")
-    deadline = started + limits.wall_s
+    pipeline = _pipeline_deadline(policy, started, limits)
+    deadline = (started + limits.wall_s if pipeline is None else
+                _require_pipeline_launch_budget(pipeline, "preflight"))
     work_deadline = deadline - limits.cleanup_s
     require(time.monotonic() < work_deadline, "no time left for case bootstrap")
     env = dict(os.environ)
@@ -322,6 +399,9 @@ def supervise(*, command, execution, channel_directory, case_id, plan_sha256,
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
         env[CHANNEL_FD_ENV] = str(fd)
         with log_path.open("xb", buffering=0) as log:
+            if pipeline is not None:
+                deadline = _require_pipeline_launch_budget(pipeline, "before_popen")
+                work_deadline = deadline - limits.cleanup_s
             process = subprocess.Popen(command, cwd=REPOSITORY, env=env,
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True, pass_fds=(fd,))
@@ -341,6 +421,9 @@ def supervise(*, command, execution, channel_directory, case_id, plan_sha256,
                                      "elapsed_s": time.monotonic()-started, "pgid": pgid})
 
             while True:
+                if pipeline is not None:
+                    deadline = _refresh_pipeline_deadline(pipeline)
+                    work_deadline = deadline - limits.cleanup_s
                 now = time.monotonic()
                 if now >= deadline - limits.receipt_reserve_s:
                     reason = reason or "wall_limit"
@@ -427,6 +510,8 @@ def supervise(*, command, execution, channel_directory, case_id, plan_sha256,
 
         # A final process inventory is positive evidence; a missing/failed
         # observation is not interpreted as an empty process group.
+        if pipeline is not None:
+            deadline = _refresh_pipeline_deadline(pipeline)
         try:
             table = _process_table(max(0, deadline-time.monotonic()))
             remaining = [row for row in table.values() if row["pgid"] == pgid]
@@ -475,7 +560,10 @@ def supervise(*, command, execution, channel_directory, case_id, plan_sha256,
                   "rss_measurement": "sampled sum of process-group RSS; ps KiB converted to bytes",
                   "thread_environment": {name: env[name] for name in THREAD_VARIABLES},
                   "scientific_status": "not_evaluated", "scientific_pass": None}
-        if result["wall_s"] >= limits.wall_s and reason == "completed":
+        if pipeline is not None:
+            result["pipeline_deadline"] = pipeline
+        if (result["wall_s"] >= limits.wall_s or
+                pipeline is not None and time.monotonic() >= deadline) and reason == "completed":
             result["process_outcome"] = "wall_limit"
         if not closed:
             remaining = closure.get("remaining_owned_processes", [
@@ -662,7 +750,10 @@ def main(argv=None):
                           ("case_id", "process_outcome", "exit_code", "scientific_status", "wall_through_receipt_s")}))
         return 0 if result["process_outcome"] == "completed" else 1
     except (ValueError, KeyError, OSError) as error:
-        print(json.dumps({"status": "refused", "error": str(error)}), file=sys.stderr)
+        refused = {"status": "refused", "error": str(error)}
+        if isinstance(error, LauncherError) and error.pipeline_deadline is not None:
+            refused.update(pipeline_deadline=error.pipeline_deadline, process_started=False)
+        print(json.dumps(refused), file=sys.stderr)
         return 2
 
 

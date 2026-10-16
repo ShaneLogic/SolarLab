@@ -1355,6 +1355,27 @@ def test_protocol_timing_tracks_only_manufactured_producer(tmp_path):
     assert receipt["peak_process_RSS_bytes"] > 0
 
 
+@pytest.mark.skipif(
+    "sys.platform != 'darwin'",
+    reason="actual BLASGetThreading probe requires macOS Accelerate",
+)
+def test_macos_accelerate_thread_probe(monkeypatch):
+    """Exercise the real getter; the mocked contract below stays portable."""
+    for key in be.THREAD_ENVIRONMENT:
+        monkeypatch.setenv(key, "1")
+    receipt = be.runtime_threads()
+    try:
+        be._runtime_thread_end(receipt)
+        assert receipt["getter"] == "BLASGetThreading"
+        assert receipt["measured_mode"] == receipt["final_measured_mode"] == 1
+        assert receipt["checked_ns"] <= receipt["final_checked_ns"]
+    finally:
+        library = be.ctypes.CDLL(receipt["library"])
+        library.BLASSetThreading.argtypes = [be.ctypes.c_int]
+        library.BLASSetThreading.restype = be.ctypes.c_int
+        library.BLASSetThreading(receipt["before_mode"])
+
+
 def test_actual_thread_getter_receipt_and_failure(monkeypatch):
     class Function:
         def __init__(self, operation):

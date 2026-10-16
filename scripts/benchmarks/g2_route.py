@@ -79,7 +79,17 @@ def _validate_supervision(plan, execution):
     value = execution.get("supervision")
     fields = {"poll_s", "term_grace_s", "kill_wait_s", "receipt_reserve_s",
               "rss_bytes", "artifact_bytes", "closure_path", "cancel_path"}
-    _require(type(value) is dict and set(value) == fields, "supervision_fields")
+    pipeline_fields = {"pipeline_started_unix_ns", "pipeline_wall_s"}
+    _require(type(value) is dict and set(value) in (fields, fields | pipeline_fields), "supervision_fields")
+    if pipeline_fields <= set(value):
+        start = value["pipeline_started_unix_ns"]
+        _require(type(start) is int and start >= 0, "supervision_pipeline_started_unix_ns")
+        pipeline_wall = value["pipeline_wall_s"]
+        try:
+            valid_wall = type(pipeline_wall) in (int, float) and math.isfinite(pipeline_wall) and pipeline_wall > 0
+        except OverflowError:
+            valid_wall = False
+        _require(valid_wall, "supervision_pipeline_wall_s")
     for name in ("poll_s", "term_grace_s", "kill_wait_s", "receipt_reserve_s"):
         _require(type(value[name]) in (int, float) and math.isfinite(value[name]) and value[name] > 0,
                  "supervision_" + name)

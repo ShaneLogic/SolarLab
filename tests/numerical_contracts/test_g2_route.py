@@ -596,6 +596,116 @@ def test_supervision_fields_checked_during_metadata_validation(tmp_path, damage)
             validate(path)
 
 
+@pytest.mark.parametrize("pipeline", [None, (0, 1), (2**53 + 1, 12.), (10**18 + 1, .001)])
+def test_pipeline_supervision_optional_pair_preserves_values_without_admission(tmp_path, pipeline):
+    from scripts.benchmarks.g2_route import _validate_supervision, validate
+    plan = plan_fixture(tmp_path)
+    execution = {"wall_s": 10., "supervision": supervision_fixture(tmp_path)}
+    if pipeline is not None:
+        execution["supervision"].update(pipeline_started_unix_ns=pipeline[0], pipeline_wall_s=pipeline[1])
+    before = deepcopy(execution)
+    assert _validate_supervision(plan, execution) is execution["supervision"]
+    assert execution == before
+    plan["cases"][0]["execution"] = execution
+    path = tmp_path / "RunPlan.json"
+    path.write_text(json.dumps(plan))
+    assert not validate(path)["ready"]
+
+
+@pytest.mark.parametrize("remove,change,wall_s", [
+    ("pipeline_started_unix_ns", {}, 10.),
+    ("pipeline_wall_s", {}, 10.),
+    (None, {"pipeline_started_unix_ns": -1}, 10.),
+    (None, {"pipeline_started_unix_ns": True}, 10.),
+    (None, {"pipeline_started_unix_ns": 1.}, 10.),
+    (None, {"pipeline_started_unix_ns": None}, 10.),
+    (None, {"pipeline_wall_s": True}, 10.),
+    (None, {"pipeline_wall_s": 0}, 10.),
+    (None, {"pipeline_wall_s": -1.}, 10.),
+    (None, {"pipeline_wall_s": float("inf")}, 10.),
+    (None, {"pipeline_wall_s": float("nan")}, 10.),
+    (None, {"pipeline_wall_s": None}, 10.),
+    (None, {"pipeline_wall_s": "12"}, 10.),
+    (None, {"pipeline_wall_s": 10**400}, 10.),
+    (None, {"unknown": 1}, 10.),
+    ("poll_s", {}, 10.),
+    (None, {"rss_bytes": 5*1024**3}, 10.),
+    (None, {"artifact_bytes": 5*1024**3}, 10.),
+    (None, {"receipt_reserve_s": 8.}, 10.),
+    (None, {}, 3.),
+    (None, {}, 0.),
+])
+def test_pipeline_supervision_refuses_bad_pairs_and_preserves_stage_guards(tmp_path, remove, change, wall_s):
+    from scripts.benchmarks.g2_route import validate
+    plan = plan_fixture(tmp_path)
+    supervision = supervision_fixture(tmp_path)
+    supervision.update(pipeline_started_unix_ns=10**18 + 1, pipeline_wall_s=12.)
+    if remove is not None:
+        del supervision[remove]
+    supervision.update(change)
+    plan["cases"][0]["execution"] = {"wall_s": wall_s, "supervision": supervision}
+    path = tmp_path / "RunPlan.json"
+    path.write_text(json.dumps(plan))
+    with pytest.raises(ValueError, match="supervision"):
+        validate(path)
+
+
+def test_pipeline_supervision_BE4_context_runs_under_actual_launcher(tmp_path, monkeypatch, record_property):
+    import sys
+    from scripts.benchmarks import g2_reference_be as be, g2_route_launcher as launcher
+    from test_g2_reference_be import runtime_fixture
+
+    # The two original clocks are created before Popen. Thread getters are
+    # manufactured; this checks runtime plumbing without any scientific body.
+    original_unix_ns = time.time_ns()
+    manifest, plan, _, pin = runtime_fixture(tmp_path, monkeypatch)
+    execution = plan["cases"][0]["execution"]
+    execution["supervision"].update(pipeline_started_unix_ns=original_unix_ns, pipeline_wall_s=60.)
+    manifest_path = tmp_path / "SyntheticRuntimeManifest.json"
+    plan_path = Path(manifest["plan"]["path"])
+    code = '''import json,sys,time
+from pathlib import Path
+from scripts.benchmarks import g2_reference_be as be,g2_route
+assert be.validate_route_supervision is g2_route._validate_supervision
+assert be.route_channel is g2_route._channel
+be._boot_identity=lambda: "manufactured-boot"
+be.runtime_threads=lambda: {
+    "library":"/manufactured/libBLAS.dylib","getter":"BLASGetThreading",
+    "before_mode":1,"measured_mode":1,"required_single_thread_mode":1,
+    "thread_environment":{k:"1" for k in be.THREAD_ENVIRONMENT},
+    "python_executable":str(Path(sys.executable).resolve()),"python_version":sys.version,
+    "checked_ns":time.monotonic_ns()}
+be._runtime_thread_end=lambda r: r.update(final_measured_mode=1,final_checked_ns=time.monotonic_ns())
+def forbidden(*args,**kwargs):
+    raise AssertionError("synthetic supervision must not enter a scientific body")
+be.prepare_B_backend=be.run_reference=be.conservative_be_step=forbidden
+plan=json.loads(Path(sys.argv[1]).read_bytes())
+manifest=json.loads(Path(sys.argv[2]).read_bytes())
+with be.supervised_stage(manifest,plan,"run") as runtime:
+    runtime.directory.mkdir()
+    runtime.return_code=0
+'''
+    execution["command"] = [sys.executable, "-B", "-c", code, str(plan_path), str(manifest_path)]
+    plan_path.write_bytes(be.canonical(plan))
+    manifest["plan"] = pin(plan_path)
+    manifest_path.write_bytes(be.canonical(manifest))
+    outcome = launcher.supervise(**launcher.load_case(plan_path, manifest["case_id"], "run"))
+    assert outcome["process_outcome"] == "completed"
+    assert outcome["closure"]["all_named_owned_processes_and_groups_absent"]
+    assert outcome["pipeline_deadline"]["pipeline_started_unix_ns"] == original_unix_ns
+    assert outcome["scientific_pass"] is None
+    receipt = json.loads((Path(manifest["directory"]) / "RuntimeReceipt.json").read_bytes())
+    assert receipt["schema"] == "solarlab.g2-reference-runtime.v2"
+    assert receipt["outcome"] == "returned" and receipt["return_code"] == 0
+    assert receipt["first_failure"] is None
+    assert receipt["execution"]["supervision"] == execution["supervision"]
+    assert receipt["pipeline_clock"] == execution["pipeline"]["clock"]
+    assert receipt["scientific_pass"] is False and receipt["followup_stages_executed_implicitly"] is False
+    record_property("manufactured_BLAS_getters", True)
+    record_property("BE4_runtime_receipt", receipt)
+    record_property("launcher_closure_receipt", outcome)
+
+
 def test_supervised_channel_requires_inherited_fd(tmp_path, monkeypatch):
     from scripts.benchmarks.g2_route import _channel
     monkeypatch.delenv("SOLARLAB_G2_ROUTE_CHANNEL_FD", raising=False)
