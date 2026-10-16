@@ -27,7 +27,8 @@ RUN_PLAN_SCHEMA = "solarlab.g2-route.run-plan.v3"
 T1_SPEC_SCHEMA = "solarlab.g2-route.t1-gatespec.v3"
 EVIDENCE_METHOD_SCHEMA = "solarlab.g2-reference-method.v1"
 # A run binds frozen definitions. Evaluation separately binds reviewed code.
-EVALUATOR_FILES = ("g2_route.py", "t1_gate.py", "native_readback.py", "native_observation.py", "interval_observation.py")
+EVALUATOR_FILES = ("g2_route.py", "t1_gate.py", "native_readback.py", "native_observation.py", "interval_observation.py",
+                   "g2_compare.py", "qualification_comparison.py", "g2_reference_be.py", "g2_reference_error.py")
 
 
 def _require(value, reason):
@@ -178,6 +179,274 @@ def _evaluation_blockers(plan):
     return []
 
 
+def _admitted_cases(plan, cases):
+    """A phase grants exactly its declared cases; dormant execution is null."""
+    admission = plan.get("admission")
+    if admission is None:
+        selected = []
+    else:
+        _require(type(admission) is dict and set(admission) == {"stage", "admitted_case_ids"}
+                 and type(admission["stage"]) is str and admission["stage"] in {"probes", "full"}, "admission_fields")
+        selected = admission["admitted_case_ids"]
+        expected = {name for name, case in cases.items()
+                    if case["stage"] == ("probe" if admission["stage"] == "probes" else "full")}
+        _require(type(selected) is list and all(type(name) is str for name in selected)
+                 and len(selected) == len(set(selected)) and set(selected) == expected,
+                 "admission_case_ids")
+    for name, case in cases.items():
+        if name not in selected:
+            _require((admission is None or "execution" in case) and case.get("execution") is None,
+                     "unadmitted_case_execution:" + name)
+    return selected
+
+
+def _positive_pin(reference, reason):
+    _require(_resolved_descriptor(reference) and reference["bytes"] > 0
+             and Path(reference["path"]).is_absolute(), reason)
+    value = _pinned(reference)
+    _require(type(value) is dict, reason + "_root")
+    return value
+
+
+def _probe_runtime_receipt(receipt, execution, receipt_pin, producer_pin, case_id):
+    """Verify the existing launcher's saved facts without inspecting processes."""
+    from scripts.benchmarks.g2_route_launcher import CHANNEL_PROTOCOL, Limits, REPOSITORY
+    limits = vars(Limits.from_execution(execution))
+    command = execution.get("command")
+    if command is None:
+        command = [str(REPOSITORY / ".venv/bin/python"), "-m", "scripts.benchmarks.g2_route", "run",
+                   "--plan", str(Path(producer_pin["path"]).resolve()), "--case", case_id]
+    _require(receipt.get("schema") == "solarlab.g2-route.launcher-result.v1"
+             and receipt.get("case_id") == case_id and receipt.get("plan_sha256") == producer_pin["sha256"]
+             and type(receipt.get("channel")) is int and receipt["channel"] == execution["channel"]
+             and receipt.get("channel_protocol") == CHANNEL_PROTOCOL
+             and receipt.get("command") == command and receipt.get("cwd") == str(REPOSITORY),
+             "full_probe_runtime_binding")
+    _require(receipt.get("process_outcome") == receipt.get("termination_reason") == "completed"
+             and type(receipt.get("exit_code")) is int and receipt["exit_code"] == 0
+             and all(key in receipt and receipt[key] is None for key in ("exit_signal", "cancellation_signal", "error"))
+             and receipt.get("signals_sent") == []
+             and receipt.get("artifact_limit_exceeded", False) is False
+             and receipt.get("channel_reusable", True) is True
+             and receipt.get("quarantine_path") is None, "full_probe_runtime_outcome")
+    observed, closure = receipt.get("observed_pids"), receipt.get("closure")
+    _require(all(type(receipt.get(key)) is int and receipt[key] > 0 for key in ("pid", "pgid", "session_id"))
+             and receipt["pid"] == receipt["pgid"] == receipt["session_id"]
+             and type(observed) is list and all(type(pid) is int and pid > 0 for pid in observed)
+             and observed == sorted(set(observed)) and receipt["pid"] in observed
+             and type(closure) is dict and closure.get("schema") == "solarlab.owned-tool-process-closure.v1"
+             and type(closure.get("pgid")) is int and closure["pgid"] == receipt["pgid"]
+             and type(closure.get("after_tool_exit_code")) is int and closure["after_tool_exit_code"] == 0
+             and closure.get("process_group_absent") is True
+             and closure.get("all_named_owned_processes_and_groups_absent") is True
+             and closure.get("remaining_group_members") == [] and closure.get("remaining_owned_processes") == []
+             and closure.get("error") is None, "full_probe_runtime_closure")
+    checks = closure.get("checks")
+    _require(type(checks) is list and all(type(row) is dict and type(row.get("pid")) is int
+                 and row.get("pid_absent") is True and row.get("same_id_process_group_absent") is True for row in checks)
+             and [row["pid"] for row in checks] == observed, "full_probe_runtime_closure_checks")
+    recorded_limits = receipt.get("limits")
+    _require(type(recorded_limits) is dict and set(recorded_limits) == set(limits)
+             and all(type(recorded_limits[key]) is int if key in {"rss_bytes", "artifact_bytes"}
+                     else type(recorded_limits[key]) in (int, float) for key in limits)
+             and all(recorded_limits[key] == value for key, value in limits.items()), "full_probe_runtime_limits")
+    wall = receipt.get("wall_s")
+    _require(type(wall) in (int, float) and 0 < wall < limits["wall_s"] <= 3600
+             and type(receipt.get("receipt_initial_write_s")) in (int, float)
+             and 0 <= receipt["receipt_initial_write_s"] <= wall, "full_probe_runtime_wall")
+    if "wall_through_receipt_s" in receipt:
+        _require(type(receipt["wall_through_receipt_s"]) in (int, float)
+                 and wall <= receipt["wall_through_receipt_s"] < limits["wall_s"], "full_probe_runtime_complete_wall")
+    _require(type(receipt.get("peak_group_rss_bytes")) is int
+             and 0 <= receipt["peak_group_rss_bytes"] <= limits["rss_bytes"]
+             and all(type(receipt.get(key)) is int and 0 <= receipt[key] <= limits["artifact_bytes"] for key in
+                     ("peak_artifact_bytes", "artifact_bytes_before_receipt", "receipt_bytes", "artifact_bytes"))
+             and receipt["receipt_bytes"] == receipt_pin["bytes"]
+             and receipt["artifact_bytes"] == receipt["artifact_bytes_before_receipt"] + receipt["receipt_bytes"]
+             and receipt["peak_artifact_bytes"] >= receipt["artifact_bytes"], "full_probe_runtime_resources")
+    last, rss_peak, artifact_peak = (receipt.get(key) for key in ("last_samples", "rss_peak_sample", "artifact_peak_sample"))
+    _require(type(last) is list and len(last) <= 2
+             and ((not last and rss_peak is artifact_peak is None and receipt["peak_group_rss_bytes"] == 0)
+                  or (last and type(rss_peak) is dict and type(artifact_peak) is dict)), "full_probe_runtime_samples")
+    for sample in last + ([] if rss_peak is None else [rss_peak, artifact_peak]):
+        _require(type(sample) is dict and type(sample.get("elapsed_s")) in (int, float)
+                 and 0 <= sample["elapsed_s"] <= wall
+                 and type(sample.get("rss_bytes")) is int and 0 <= sample["rss_bytes"] <= receipt["peak_group_rss_bytes"]
+                 and type(sample.get("artifact_bytes")) is int and 0 <= sample["artifact_bytes"] <= receipt["peak_artifact_bytes"]
+                 and type(sample.get("members")) is list, "full_probe_runtime_sample_bounds")
+        _require(all(type(member) is dict and type(member.get("pid")) is int and member["pid"] in observed
+                     and type(member.get("pgid")) is int and member["pgid"] == receipt["pgid"]
+                     and type(member.get("rss_bytes")) is int and member["rss_bytes"] >= 0 for member in sample["members"])
+                 and sum(member["rss_bytes"] for member in sample["members"]) == sample["rss_bytes"],
+                 "full_probe_runtime_sample_members")
+    _require(receipt["peak_group_rss_bytes"] == (0 if rss_peak is None else rss_peak["rss_bytes"])
+             and receipt["peak_artifact_bytes"] == max(receipt["artifact_bytes"],
+                 0 if artifact_peak is None else artifact_peak["artifact_bytes"]), "full_probe_runtime_sample_maxima")
+
+
+def _full_probe_evidence(plan, cases):
+    """Read existing receipts/JSON only, never the sealed history stream."""
+    evidence = plan.get("probe_evidence")
+    probes = {name for name, case in cases.items() if case["stage"] == "probe"}
+    _require(type(evidence) is dict and set(evidence) == probes, "full_probe_receipts_required")
+    checked = {}
+    for name in sorted(probes):
+        refs = evidence[name]
+        required = {"runtime_receipt", "sealed_result", "producer_plan", "independent_readback"}
+        _require(type(refs) is dict and required <= set(refs)
+                 and set(refs) <= required | {"runtime_timing"},
+                 "full_probe_evidence_fields")
+        values = {key: _positive_pin(ref, "full_probe_" + key) for key, ref in refs.items()}
+        receipt, result, producer = (values[key] for key in ("runtime_receipt", "sealed_result", "producer_plan"))
+        source = producer.get("source_freeze")
+        _require(type(source) is dict and type(producer.get("authority")) is dict
+                 and type(producer.get("admission")) is dict
+                 and producer.get("schema") == RUN_PLAN_SCHEMA and type(producer.get("version")) is int
+                 and producer["version"] == 3
+                 and producer.get("status") == "admitted"
+                 and producer.get("authority", {}).get("scientific_execution_authorized") is True
+                 and producer.get("admission", {}).get("stage") == "probes"
+                 and set(producer["admission"].get("admitted_case_ids", [])) == probes
+                 and source.get("future_execution_commit") == plan["source_freeze"].get("future_execution_commit")
+                 and source.get("source_sha256") == plan["source_freeze"].get("source_sha256"),
+                 "full_probe_producer_source")
+        prior = validate(refs["producer_plan"]["path"], executable=True, case_id=name)
+        _require(prior["plan_sha256"] == refs["producer_plan"]["sha256"], "full_probe_plan_changed")
+        matches = [case for case in producer.get("cases", []) if case.get("id") == name]
+        _require(len(matches) == 1 and type(matches[0].get("execution")) is dict,
+                 "full_probe_producer_case")
+        execution = matches[0]["execution"]
+        _require(type(execution.get("directory")) is str and Path(execution["directory"]).is_absolute()
+                 and type(execution.get("supervision")) is dict, "full_probe_execution")
+        directory = Path(execution["directory"])
+        _require(Path(refs["runtime_receipt"]["path"]).resolve()
+                 == Path(execution["supervision"]["closure_path"]).resolve()
+                 and Path(refs["sealed_result"]["path"]).resolve() == (directory / "NativeResult.json").resolve(),
+                 "full_probe_receipt_paths")
+        request = _positive_pin(execution.get("request"), "full_probe_request")
+        _require(_digest(request) == execution.get("effective_input_digest")
+                 and result.get("request_sha256") == execution["effective_input_digest"]
+                 and _digest(request["segments"]) == _digest(plan["protocol"]["segments"])
+                 and _digest(_labelled_samples(request)) == _digest(plan["protocol"]["requested_sample_records"]),
+                 "full_probe_input_and_labels")
+        from scripts.benchmarks.g2_route_bindings import effective_issues
+        ancestor = _positive_pin(cases[name]["input_ancestor"], "full_probe_ancestor")
+        _require(not effective_issues(request, ancestor, cases[name], producer), "full_probe_effective_request")
+        _probe_runtime_receipt(receipt, execution, refs["runtime_receipt"], refs["producer_plan"], name)
+        _require(result.get("status") == "completed_bounded_voltage_lift_native_pilot"
+                 and result.get("complete_run_window") is True and result.get("complete_protocol") is False
+                 and _digest(result.get("execution_window")) == _digest(request.get("execution_window"))
+                 and request.get("execution_window", {}).get("sample_records") == 66,
+                 "full_probe_complete_window")
+        history = result.get("history", {})
+        _require(type(history) is dict and history.get("closed") is True and history.get("container_complete") is True
+                 and history.get("writer_error") is None
+                 and all(type(history.get(key)) is int and history[key] > 0
+                         for key in ("logical_bytes", "encoded_bytes", "records"))
+                 and type(history.get("logical_sha256")) is str and len(history["logical_sha256"]) == 64
+                 and all(c in "0123456789abcdef" for c in history["logical_sha256"]), "full_probe_history_seal")
+        if "runtime_timing" in values:
+            timing = values["runtime_timing"]
+            _require(timing.get("schema") == "solarlab.native-aggregate-timing.v1"
+                     and timing.get("recorded_call_outcome") == "returned_completed"
+                     and Path(refs["runtime_timing"]["path"]).resolve() == (directory / "RuntimeTiming.json").resolve(),
+                     "full_probe_timing")
+        if "independent_readback" in values:
+            reader = values["independent_readback"]
+            _require(reader.get("schema") == "solarlab.native-history-verification.v1"
+                     and reader.get("verified") is True and reader.get("complete_readback") is True
+                     and reader.get("complete_run_window") is True
+                     and reader.get("request_sha256") == result["request_sha256"]
+                     and Path(refs["independent_readback"]["path"]).resolve() == (directory / "RunResult.json").resolve()
+                     and reader.get("history", {}).get("eof_seen") is True
+                     and reader["history"].get("crc_verified") is True
+                     and all(type(reader["history"].get(key)) is type(history[key])
+                             and reader["history"][key] == history[key] for key in
+                             ("logical_sha256", "logical_bytes", "encoded_bytes", "records")),
+                     "full_probe_independent_readback")
+        checked[name] = values
+    return checked
+
+
+def _measurement_value(record, path):
+    _require(type(path) is list and 0 < len(path) <= 8
+             and all(type(key) is str and key for key in path), "forecast_measurement_path")
+    for key in path:
+        _require(type(record) is dict and key in record, "forecast_measurement_missing")
+        record = record[key]
+    _require(type(record) in (int, float) and math.isfinite(record) and record >= 0,
+             "forecast_measurement_number")
+    return record
+
+
+def _full_forecast(plan, case, probes):
+    """Bind actual phase clocks; whole-call bootstrap/closeout proxies are conservative."""
+    from scripts.benchmarks.g2_route_bindings import forecast_cap
+    execution, phases = case["execution"], {"bootstrap", "native", "online_safety", "observer", "io", "closeout"}
+    forecast = execution.get("forecast")
+    _require(type(forecast) is dict and forecast.get("feasible") is True
+             and type(forecast.get("mesh_intervals")) is int
+             and forecast["mesh_intervals"] == case["mesh_intervals"]
+             and type(forecast.get("slow_hold_model")) is str and forecast["slow_hold_model"].strip()
+             and _digest(forecast.get("probe_evidence")) == _digest(plan["probe_evidence"]),
+             "full_forecast_evidence")
+    measured, work = forecast.get("measured_throughput"), forecast.get("phase_work_units")
+    _require(type(measured) is dict and set(measured) == phases and type(work) is dict and set(work) == phases,
+             "full_forecast_measured_phases")
+    clocks = {
+        "bootstrap": {("runtime_receipt", ("wall_s",), "s")},
+        "native": {("sealed_result", ("elapsed_s",), "s"),
+                   ("runtime_timing", ("phases", "ida_calls", "exclusive_ns"), "ns")},
+        "online_safety": {("sealed_result", ("elapsed_s",), "s"),
+                          ("runtime_timing", ("phases", "observation", "exclusive_ns"), "ns")},
+        "observer": {("independent_readback", ("elapsed_s",), "s")},
+        "io": {("runtime_timing", ("phases", name, "exclusive_ns"), "ns")
+               for name in ("history_io", "artifact_io")},
+        "closeout": {("runtime_receipt", ("wall_s",), "s")},
+    }
+    for phase in phases:
+        row = measured[phase]
+        _require(type(row) is dict and set(row) == {"probe_case_id", "source", "seconds_path", "time_unit",
+                 "work_path", "seconds", "work_units", "units_per_s"}
+                 and all(type(row[key]) is str for key in ("probe_case_id", "source", "time_unit"))
+                 and row["probe_case_id"] in probes
+                 and row["probe_case_id"] == "B_N8_" + case["id"].split("_")[2] + "_Probe"
+                 and row["source"] in {"runtime_receipt", "sealed_result", "runtime_timing", "independent_readback"}
+                 and row["source"] in probes[row["probe_case_id"]] and row["time_unit"] in {"s", "ns"},
+                 "full_forecast_throughput_fields")
+        _require(type(row["seconds_path"]) is list and all(type(key) is str for key in row["seconds_path"])
+                 and (row["source"], tuple(row["seconds_path"]), row["time_unit"]) in clocks[phase],
+                 "full_forecast_phase_clock")
+        source = probes[row["probe_case_id"]][row["source"]]
+        seconds = _measurement_value(source, row["seconds_path"])
+        if row["time_unit"] == "ns":
+            _require(type(seconds) is int, "forecast_integer_nanoseconds")
+            seconds = seconds / 10**9
+        units = 1 if row["work_path"] is None else _measurement_value(source, row["work_path"])
+        _require(seconds > 0 and units > 0
+                 and all(type(row[key]) in (int, float) and math.isfinite(row[key]) for key in
+                         ("seconds", "work_units", "units_per_s"))
+                 and row["seconds"] == seconds and row["work_units"] == units
+                 and row["units_per_s"] == units / seconds,
+                 "full_forecast_actual_throughput")
+        _require(type(work[phase]) in (int, float) and math.isfinite(work[phase]) and work[phase] >= units
+                 and type(forecast.get("phase_seconds", {}).get(phase)) in (int, float)
+                 and forecast["phase_seconds"][phase] >= work[phase] / row["units_per_s"],
+                 "full_forecast_phase_work")
+    cap = forecast_cap(forecast)
+    _require(forecast["work_counts"]["accepted_steps"] >=
+             math.ceil((case["horizon_s"][1] - case["horizon_s"][0]) / plan["protocol"]["max_step_s"]),
+             "full_forecast_step_lower_bound")
+    _require(work["native"] >= forecast["work_counts"]["accepted_steps"], "full_forecast_native_work")
+    if case["mesh_intervals"] == 16:
+        _require(type(forecast.get("N16_uncertainty")) in (str, dict) and bool(forecast["N16_uncertainty"]),
+                 "full_forecast_N16_uncertainty")
+    _require(type(forecast.get("estimated_s")) in (int, float)
+             and forecast["estimated_s"] == sum(forecast["phase_seconds"].values())
+             and execution["wall_s"] == cap, "full_forecast_wall_binding")
+    return cap
+
+
 def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
     """Metadata-only validation, including all labelled samples and case slots."""
     raw = _read(plan_path)
@@ -204,6 +473,7 @@ def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
     expected_ids.add("B_N16_Strict_Full")
     cases = {c["id"]: c for c in plan["cases"]}
     _require(set(cases) == expected_ids and len(plan["cases"]) == len(cases), "seven_declared_cases")
+    admitted = _admitted_cases(plan, cases)
     from scripts.benchmarks.physical_tolerance import PROFILES
     ancestors, case_stages = {}, {}
     for name, case in cases.items():
@@ -235,7 +505,7 @@ def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
                  and refresh.get("record_schema") == "solarlab.reference-state-transfer.v2"
                  and refresh.get("max_refreshes") == (0 if probe else 1)
                  and refresh.get("schedule_ref") == "/protocol/reference_refresh_schedule", "case_refresh_scope")
-        if "supervision" in case.get("execution", {}):
+        if name in admitted and type(case.get("execution")) is dict and "supervision" in case["execution"]:
             _validate_supervision(plan, case["execution"])
     schedule = plan["protocol"]["reference_refresh_schedule"]
     _require(schedule.get("time_hex") == "0x1.7a4c1c85a8b06p-2"
@@ -250,6 +520,11 @@ def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
     # These definitions are inputs, never imports from historical source_path.
     freeze = plan["source_freeze"]
     blockers = []
+    if plan.get("admission") is None:
+        blockers.append("unresolved_admission_stage")
+    elif case_id is not None:
+        _require(case_id in admitted, "case_not_in_admitted_stage")
+    probes = _full_probe_evidence(plan, cases) if (plan.get("admission") or {}).get("stage") == "full" else None
     definitions = _definition_bindings(plan, blockers)
     if plan.get("status") != "admitted" or plan["authority"].get("scientific_execution_authorized") is not True:
         blockers.append("run_plan_not_admitted")
@@ -278,7 +553,7 @@ def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
         for path, expected in freeze["source_sha256"].items():
             _require(hashlib.sha256(_read(path, 16*1024*1024)).hexdigest() == expected, "actual_source_changed")
         _pinned(freeze["environment_lock"])
-        for case in (cases.values() if case_id is None else [cases[case_id]]):
+        for case in (cases[name] for name in admitted):
             stage = case_stages[case["id"]]
             execution = case.get("execution")
             _require(type(execution) is dict, "case_execution_unresolved")
@@ -306,9 +581,7 @@ def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
             _require(type(execution["wall_s"]) in (int, float) and math.isfinite(execution["wall_s"])
                      and 0 < execution["wall_s"] <= maximum, "case_wall_cap")
             if stage == "full":
-                forecast = execution["forecast"]
-                _require(forecast.get("feasible") is True and forecast.get("slow_hold_model")
-                         and execution["wall_s"] == math.ceil(3*forecast["estimated_s"]), "full_forecast_required")
+                _full_forecast(plan, case, probes)
     try:
         evaluation = _evaluation_blockers(plan)
     except (ValueError, KeyError, OSError) as error:
@@ -321,7 +594,9 @@ def validate(plan_path, *, executable=False, case_id=None, purpose="run"):
     return {"plan": plan, "plan_sha256": hashlib.sha256(raw).hexdigest(), "ready": not selected,
             "run_ready": not blockers, "evaluation_ready": not blockers and not evaluation,
             "blockers": selected, "evaluation_blockers": evaluation,
-            "case_ids": list(cases), "sample_records": {k: v["sample_records"] for k, v in cases.items()}}
+            "case_ids": list(cases), "admitted_case_ids": admitted,
+            "admission_stage": None if plan.get("admission") is None else plan["admission"]["stage"],
+            "sample_records": {k: v["sample_records"] for k, v in cases.items()}}
 
 
 def _runtime(context, case_id):
@@ -387,6 +662,7 @@ def _observe(context, case, request, mapping, checkpoint):
     from scripts.benchmarks.native_history import HistoryWriter, integer_json_dumps
     from scripts.benchmarks.native_readback import verify_history
     from scripts.benchmarks.native_observation import SealedChargeObserver
+    from scripts.benchmarks.g2_compare import case_metadata, normalize_ida_sample
     from scripts.benchmarks.native_runner import output_bytes
     execution, resources = case["execution"], context["plan"]["resources"]
     folder = Path(execution["directory"])
@@ -402,17 +678,25 @@ def _observe(context, case, request, mapping, checkpoint):
         gate_ref = context["plan"]["source_freeze"]["frozen_gate_spec"]
         observer = SealedChargeObserver(mapping, request, writer.append, checkpoint,
             t1_context={"spec":_pinned(gate_ref),"spec_sha256":gate_ref["sha256"],"run_id":run_id,"case_id":case["id"]})
+        comparison_context = case_metadata(request, case["id"])
+        comparison_context["run_id"] = run_id
+        writer.append({"kind":"sealed_g2_context","request_sha256":_digest(request),"evidence":comparison_context})
+        def retain_sample(tag, sample, certificate):
+            checkpoint()
+            writer.append({"kind":"sealed_g2_sample","request_sha256":_digest(request),
+                           "evidence":normalize_ida_sample(request,tag,sample,certificate)})
         result = verify_history(folder, max_record_bytes=execution["max_record_bytes"],
             max_logical_bytes=resources["reader_logical_byte_cap"], max_records=execution["max_records"],
             deadline_monotonic=time.perf_counter()+execution["wall_s"], integer_io_policy=execution.get("integer_io_policy"),
             execution_admission=execution["native_admission"], execution_provenance=execution.get("execution_provenance"),
-            charge_observer=observer)
+            charge_observer=observer, sample_sink=retain_sample)
         checkpoint()
         writer.finish()
         result.update(plan_sha256=context["plan_sha256"], case_id=case["id"], methods=METHODS,
                       observed_history={"path": "Observation/Charge.jsonl.gz", "records": writer.records,
                           "logical_sha256": writer.logical_sha256, "logical_bytes": writer.logical_bytes,
-                          "encoded_bytes": writer.encoded_bytes, "closed": writer.closed})
+                          "encoded_bytes": writer.encoded_bytes, "closed": writer.closed,
+                          "container_complete":writer.closed})
         raw = (integer_json_dumps(result, execution.get("integer_io_policy"), indent=2)+"\n").encode()
         _require(output_bytes(folder, ())+len(raw) <= resources["combined_persisted_case_bytes"], "combined_output_cap")
         with (folder / "RunResult.json").open("xb") as stream:
@@ -455,10 +739,10 @@ def observe(plan_path, case_id):
         return _observe(context, case, request, mapping, checkpoint)
 
 
-def compare(plan_path):
+def compare(plan_path, *, be_layout=None):
     context = validate(plan_path, executable=True, purpose="evaluate")
-    return {"plan_sha256": context["plan_sha256"], "scientific_status": "not_evaluated",
-            "scientific_pass": False, "reason": "comparison implementation is a separate future task"}
+    from scripts.benchmarks.g2_compare import compare_plan
+    return compare_plan(context, be_layout=be_layout)
 
 
 def main(argv=None):
@@ -476,7 +760,12 @@ def main(argv=None):
             result = globals()[args.action](args.plan, args.case)
         else:
             result = compare(args.plan)
-        print(json.dumps(result, sort_keys=True, indent=2))
+        if args.action == "compare":
+            from scripts.benchmarks.native_history import integer_json_dumps
+            from scripts.benchmarks.t1_gate import INTEGER_POLICY
+            print(integer_json_dumps(result, INTEGER_POLICY, sort_keys=True, indent=2))
+        else:
+            print(json.dumps(result, sort_keys=True, indent=2))
         return 0
     except (ValueError, KeyError, OSError) as error:
         print(json.dumps({"status": "refused", "reason": str(error)}))

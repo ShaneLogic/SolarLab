@@ -393,12 +393,337 @@ def reference_status(reference, *, spec, labels, problem_identity):
         return unknown
 
 
+def _acceptance_pin(reference, *, decode=True):
+    """A5 FilePin: positive byte count and complete bytes, not a future path."""
+    require(type(reference) is dict and {"path", "sha256", "bytes"} <= set(reference)
+            and type(reference["path"]) is str and reference["path"]
+            and Path(reference["path"]).is_absolute()
+            and type(reference["bytes"]) is int and reference["bytes"] > 0
+            and type(reference["sha256"]) is str and len(reference["sha256"]) == 64
+            and all(c in "0123456789abcdef" for c in reference["sha256"]), "acceptance_file_pin")
+    if decode:
+        require(Path(reference["path"]).suffix == ".json", "acceptance_JSON_metadata_required")
+        value = _pin(reference["path"], reference)
+        require(type(value) is dict, "acceptance_JSON_root")
+        return value
+    path = Path(reference["path"])
+    require(path.is_file() and path.stat().st_size <= 8*1024**2, "acceptance_file_bound")
+    raw = path.read_bytes()
+    require(len(raw) == reference["bytes"] and hashlib.sha256(raw).hexdigest() == reference["sha256"],
+            "acceptance_file_identity")
+    return raw
+
+
+def _acceptance_pair(value):
+    require(type(value) is list and len(value) == 2 and all(type(x) is int for x in value)
+            and value[1] > 0, "acceptance_rational_pair")
+    result = q(value)
+    require(result >= 0, "acceptance_nonnegative_error")
+    return result
+
+
+def _acceptance_quantity(key):
+    require(type(key) is str, "acceptance_quantity_key")
+    if key in {"q", "f"}:
+        return key, "C"
+    if key in {"port/left", "port/right"}:
+        return "port_" + key.split("/")[1], "A"
+    parts = key.split("/")
+    units = {"phi_V": "V", "n_m3": "m^-3", "p_m3": "m^-3", "c_m3": "m^-3", "f": "1"}
+    require(len(parts) == 3 and parts[0] == "state" and parts[1] in units
+            and parts[2] in {str(i) for i in range(9)}, "acceptance_quantity_key")
+    return parts[1], units[parts[1]]
+
+
+def _acceptance_header(review, schema, required):
+    require(type(review) is dict and required <= set(review), "acceptance_required_fields")
+    require(review["schema"] == schema and type(review["version"]) is int and review["version"] == 1
+            and review["scientific_pass"] is False and review["execution_authorized"] is False,
+            "acceptance_version_or_scope_flags")
+    require(review["claim_kind"] == "conditional_uncertainty_estimate", "acceptance_claim_upgrade")
+    reviewer = review["reviewer"]
+    require(type(reviewer) is dict and {"id", "role", "evidence_author", "independent", "review_record"} <= set(reviewer)
+            and all(type(reviewer[key]) is str and reviewer[key].strip() for key in ("id", "role", "evidence_author"))
+            and reviewer["role"] == "independent_science" and reviewer["independent"] is True
+            and reviewer["id"] != reviewer["evidence_author"], "acceptance_independent_reviewer")
+    _acceptance_pin(reviewer["review_record"], decode=False)
+    keys = review["accepted_quantities"]
+    require(type(keys) is list and all(type(key) is str for key in keys)
+            and keys == sorted(set(keys)) and len(keys) <= 49
+            and type(review["quantity_bindings"]) is dict and set(review["quantity_bindings"]) == set(keys),
+            "acceptance_exact_quantity_bindings")
+    for key in keys:
+        _acceptance_quantity(key)
+    require(type(review["verdict"]) is str and review["verdict"] in {"accepted", "rejected", "unknown"}
+            and (bool(keys) if review["verdict"] == "accepted" else not keys), "acceptance_verdict_quantities")
+    conditions, seen = review["conditions"], set()
+    require(type(conditions) is list, "acceptance_conditions")
+    for condition in conditions:
+        require(type(condition) is dict and {"id", "statement", "status", "evidence"} <= set(condition)
+                and type(condition["id"]) is str and condition["id"].strip() and condition["id"] not in seen
+                and type(condition["statement"]) is str and condition["statement"].strip()
+                and type(condition["status"]) is str
+                and condition["status"] in {"satisfied", "supported_under_U1", "open", "violated", "not_applicable"}
+                and type(condition["evidence"]) is list, "acceptance_condition_fields")
+        seen.add(condition["id"])
+        for evidence in condition["evidence"]:
+            _acceptance_pin(evidence, decode=False)
+        if review["verdict"] == "accepted":
+            require(condition["status"] not in {"open", "violated"}, "acceptance_condition_unresolved:" + condition["id"])
+    require(review["verdict"] == "accepted", "acceptance_verdict_" + review["verdict"])
+    return keys
+
+
+def _acceptance_history(binding, *, case_id, labels, expected=None):
+    """A5 full HistoryBinding, using the existing method-specific receipts."""
+    fields = {"case_id", "run_id", "source_identity", "input_sha256", "run_result", "history_manifest",
+              "independent_readback", "logical_sha256", "logical_bytes", "records", "encoded_bytes",
+              "closed", "container_complete", "labels_sha256"}
+    require(type(binding) is dict and fields <= set(binding)
+            and binding["case_id"] == case_id and binding["closed"] is True and binding["container_complete"] is True
+            and all(type(binding[key]) is str and binding[key] for key in ("run_id", "source_identity", "input_sha256"))
+            and all(type(binding[key]) is int and binding[key] > 0 for key in ("logical_bytes", "encoded_bytes", "records"))
+            and binding["labels_sha256"] == digest(labels), "acceptance_history_fields")
+    for key in ("logical_sha256", "input_sha256", "labels_sha256"):
+        require(type(binding[key]) is str and len(binding[key]) == 64
+                and all(c in "0123456789abcdef" for c in binding[key]), "acceptance_history_digest")
+    if expected is not None:
+        require(all(binding.get(key) == value for key, value in expected.items()), "acceptance_history_source_identity")
+    result = _acceptance_pin(binding["run_result"])
+    descriptor = _acceptance_pin(binding["history_manifest"])
+    reader = _acceptance_pin(binding["independent_readback"])
+    history = descriptor.get("observed_history", descriptor.get("history", descriptor))
+    require(type(history) is dict and history.get("closed") is True and history.get("writer_error") is None,
+            "acceptance_history_closed")
+    names = ("logical_sha256", "logical_bytes", "encoded_bytes", "records")
+    require(all(type(history.get(key)) is type(binding[key]) and history[key] == binding[key] for key in names),
+            "acceptance_history_descriptor")
+    be = case_id.startswith("BE_")
+    if be:
+        require(reader.get("schema") == "solarlab.g2-reference-be-history.v1"
+                and result.get("schema") == "solarlab.g2-reference-be-history.v1"
+                and reader.get("method") == result.get("method") == "conservative-backward-euler"
+                and reader.get("structural_pass") is True and reader.get("numerical_complete") is True
+                and reader.get("case_id") == case_id and type(reader.get("tagged_observations")) is int
+                and reader["tagged_observations"] == len(labels)
+                and digest([row["tag"] for row in reader["observations"]]) == digest(labels)
+                and result.get("numerical_complete") is True and result.get("status") == "completed",
+                "acceptance_BE_semantic_readback")
+        actual = reader["observed_history"]
+        identity = {key: result[key] for key in ("case_id", "input_sha256", "method_contract_sha256", "plan_sha256",
+                    "source_commit", "environment_identity", "schedule_identity", "source_identity",
+                    "initial_point_identity", "controls_sha256")}
+        require(all(type(value) is str and value for value in identity.values()) and digest(identity) == binding["run_id"]
+                and identity.get("case_id") == case_id and identity.get("source_identity") == binding["source_identity"]
+                and identity.get("input_sha256") == binding["input_sha256"], "acceptance_BE_run_identity")
+    else:
+        require(reader.get("schema") == "solarlab.native-history-verification.v1"
+                and reader.get("verified") is True and reader.get("complete_protocol") is True
+                and reader.get("complete_readback") is True and reader.get("case_id") == case_id
+                and reader.get("request_sha256") == binding["input_sha256"]
+                and result.get("request_sha256") == binding["input_sha256"]
+                and result.get("status") == "completed_bounded_voltage_lift_native_pilot"
+                and result.get("complete_protocol") is True, "acceptance_IDA_semantic_readback")
+        actual = reader["history"]
+        require(actual.get("eof_seen") is True and actual.get("crc_verified") is True
+                and actual.get("container_complete") is True and type(actual.get("partial_tail_bytes")) is int
+                and actual["partial_tail_bytes"] == 0,
+                "acceptance_IDA_container")
+        operations = [result.get(name, {}).get("admission_binding") for name in
+                      ("execution_wall_policy", "execution_output_policy")]
+        require(any(type(item) is dict and item.get("operation_id") == binding["run_id"] for item in operations)
+                or result.get("run_id") == binding["run_id"], "acceptance_IDA_run_identity")
+    require(type(actual) is dict and all(type(actual.get(key)) is type(binding[key])
+            and actual[key] == binding[key] for key in names), "acceptance_history_readback")
+    sealed = result["observed_history" if be else "history"]
+    require(type(sealed) is dict and sealed.get("closed") is True and sealed.get("writer_error") is None
+            and all(type(sealed.get(key)) is type(binding[key]) and sealed[key] == binding[key] for key in names),
+            "acceptance_history_run_result")
+    for key in ("container_sha256", "encoded_sha256", "encoding"):
+        present = [doc[key] for doc in (binding, history, actual, sealed) if key in doc]
+        require(not present or all(value == present[0] for value in present), "acceptance_container_identity")
+    return binding
+
+
+def _acceptance_quantity_binding(binding, record, record_pin, *, key, labels, strict=False):
+    name, unit = _acceptance_quantity(key)
+    require(type(binding) is dict and {"reviewed_record", "coverage", "claim_kind", "value", "radius_accounting"} <= set(binding)
+            and digest(binding["reviewed_record"]) == digest(record_pin)
+            and binding["claim_kind"] == record["claim_kind"] == "conditional_uncertainty_estimate",
+            "acceptance_quantity_binding")
+    actual = _acceptance_pin(binding["reviewed_record"])
+    require(digest(actual) == digest(record), "acceptance_reviewed_quantity_bytes")
+    coverage = binding["coverage"]
+    require(type(coverage) is dict and {"kind", "records", "labels_sha256", "unit", "norm"} <= set(coverage)
+            and coverage["kind"] == "full_protocol" and type(coverage["records"]) is int
+            and coverage["records"] == len(labels) == 131 and coverage["labels_sha256"] == digest(labels)
+            and coverage["unit"] == unit and coverage["norm"] == record["norm_and_coverage"]["norm"]
+            and record["quantity_and_unit"] == {"quantity": name, "unit": unit}, "acceptance_quantity_coverage")
+    require(_acceptance_pair(binding["value"]) == _acceptance_pair(record["conditional_estimate_value"]),
+            "acceptance_quantity_value")
+    ownership = binding["radius_accounting"]
+    require(type(ownership) is dict and {"r_R_included_in_E_R", "r_R_source", "tagwise_ownership_record"} <= set(ownership)
+            and ownership["r_R_included_in_E_R"] is True
+            and ownership["r_R_source"] == "per_record/<tag>/computed_value/radius",
+            "acceptance_radius_accounting")
+    proof = _acceptance_pin(ownership["tagwise_ownership_record"])
+    require(proof.get("quantity_key") == key and digest(proof.get("per_record")) == digest(record["per_record"]),
+            "acceptance_tagwise_ownership_record")
+    require(digest([row["tag"] for row in record["per_record"]]) == digest(labels), "acceptance_tagwise_labels")
+    if strict:
+        require(ownership.get("r_S_included_in_E_S") is True, "acceptance_Strict_radius_ownership")
+    return ownership
+
+
+def _accepted_strict_E2(reference, *, spec, labels, problem_identity):
+    require(type(reference) is dict and reference.get("schema") == "solarlab.g2-strict-reference.v1",
+            "Strict_reference_schema")
+    e2 = _acceptance_pin(reference["e2_file"])
+    review = _acceptance_pin(reference["independent_review"])
+    require(e2.get("schema") == "solarlab.g2-E2-transfer.v1"
+            and e2.get("target_problem_identity") == problem_identity
+            and digest(e2.get("labels")) == digest(labels) and len(labels) == 131
+            and e2["gate_spec"]["sha256"] == spec.sha256, "Strict_E2_scope")
+    required = {"schema", "version", "reviewed_e2_file", "inputs", "accepted_quantities", "quantity_bindings",
+                "claim_kind", "reviewer", "verdict", "conditions", "target_problem_identity", "same_problem_evidence",
+                "scope", "scientific_pass", "execution_authorized"}
+    accepted = _acceptance_header(review, "solarlab.g2-strict-reference-acceptance.v1", required)
+    require(digest(review["reviewed_e2_file"]) == digest(reference["e2_file"])
+            and review["target_problem_identity"] == problem_identity
+            and review["scope"] == {"route":"G2-R", "reference_case_id":"B_N8_Strict_Full", "coverage":"full131, both event sides"}
+            and type(e2.get("evidence_author")) is str and e2["evidence_author"]
+            and review["reviewer"]["evidence_author"] == e2["evidence_author"], "Strict_E2_review")
+    inputs = e2["inputs"]
+    require(type(inputs) is dict and set(inputs) == {"E_R_acceptance", "IDA_Strict_sealed_history", "BE_reference_history"}
+            and digest(review["inputs"]) == digest(inputs), "Strict_E2_input_binding")
+    identity = e2["strict_source_and_run_identity"]
+    require(type(identity) is dict and identity.get("case_id") == "B_N8_Strict_Full"
+            and all(type(identity.get(k)) is str and identity[k] for k in ("source_id", "request_sha256", "run_id")),
+            "Strict_E2_execution_identity")
+    strict_history = _acceptance_history(inputs["IDA_Strict_sealed_history"], case_id="B_N8_Strict_Full", labels=labels,
+        expected={"source_identity":identity["source_id"], "input_sha256":identity["request_sha256"], "run_id":identity["run_id"]})
+    er_review = _acceptance_pin(inputs["E_R_acceptance"])
+    from scripts.benchmarks.g2_compare import read_error_records
+    er = read_error_records(er_review["reviewed_error_file"], inputs["E_R_acceptance"],
+        method_pin=e2["method_contract"], problem_identity=e2["BE_error_problem_identity"], labels=labels)
+    require(er["status"] == "accepted_for_E2", "Strict_E2_E_R_acceptance:" + str(er.get("reason")))
+    require(digest(inputs["BE_reference_history"]) == digest(er["reference_history"]), "Strict_E2_same_L2_history")
+    proof = _acceptance_pin(review["same_problem_evidence"])
+    require(proof.get("target_problem_identity") == problem_identity
+            and proof.get("reference_error_problem_identity") == e2["BE_error_problem_identity"], "Strict_E2_problem_ID_correspondence")
+    strict_request = _acceptance_pin(proof["IDA_Strict_input"])
+    reference_request = _acceptance_pin(proof["BE_reference_input"])
+    require(digest(strict_request) == strict_history["input_sha256"]
+            and digest(reference_request) == er["reference_history"]["input_sha256"]
+            and physical_problem_identity(strict_request) == physical_problem_identity(reference_request) == problem_identity,
+            "Strict_E2_model_mesh_initial_rates_inputs_protocol")
+    require(all(type(request["numeric_packet"].get("intervals")) is int
+                and type(request["numeric_packet"].get("nodes")) is int
+                and request["numeric_packet"]["intervals"] == 8 and request["numeric_packet"]["nodes"] == 9
+                and len(request["numeric_packet"]["x_m"]) == 9
+                and all(len(request["initial_segment_frame"][key]) == 12
+                        and all(len(row) == 45 for row in request["initial_segment_frame"][key])
+                        for key in ("physical_handoff_words_hex", "physical_rate_handoff_words_hex"))
+                for request in (strict_request, reference_request)), "Strict_E2_N8_initial_word_shape")
+    from scripts.benchmarks.g2_route_bindings import sample_labels
+    from scripts.benchmarks.g2_reference_error import target_identity
+    source = reference_request["voltage_lift_map"]["physical_model"]
+    point = reference_request["initial_preparation"]["point_identity"]
+    require(source == strict_request["voltage_lift_map"]["physical_model"] == strict_history["source_identity"]
+            and source == er["reference_history"]["source_identity"]
+            and point == strict_request["initial_preparation"]["point_identity"]
+            and target_identity(source, point, reference_request["segments"]) == e2["BE_error_problem_identity"]
+            and digest(sample_labels(strict_request)) == digest(sample_labels(reference_request)) == digest(labels),
+            "Strict_E2_source_and_label_correspondence")
+    require(type(e2.get("quantity_records")) is dict and set(accepted) <= set(e2["quantity_records"])
+            and set(accepted) <= set(e2["quantities"]), "Strict_E2_quantity_descriptors")
+    for key in accepted:
+        require(key in er["quantities"] and er["quantities"][key]["usable_for_E2"], "Strict_E2_quantity_E_R_not_accepted")
+        row, source_record = e2["quantities"][key], er["quantities"][key]["record"]
+        require(digest(row["source_BE_acceptance"]) == digest(inputs["E_R_acceptance"])
+                and digest(row["source_BE_error"]) == digest(er["quantities"][key]["pin"])
+                and digest(row["strict_source_and_run_identity"]) == digest({k:v for k,v in identity.items() if k != "case_id"}),
+                "Strict_E2_quantity_source_binding")
+        _acceptance_quantity_binding(review["quantity_bindings"][key], row, e2["quantity_records"][key],
+                                     key=key, labels=labels, strict=True)
+        name, unit = _acceptance_quantity(key)
+        strict_E2_values(e2, key, quantity=name, unit=unit)
+        if key in {"q", "f"}:
+            responses = e2.get("strict_responses")
+            require(type(responses) is list and len(responses) == len(labels)
+                    and digest([response["tag"] for response in responses]) == digest(labels),
+                    "Strict_E2_response_coverage")
+        for index, (measured, supporting) in enumerate(zip(row["per_record"], source_record["per_record"], strict=True)):
+            require(digest(measured["tag"]) == digest(supporting["tag"]), "Strict_E2_tagwise_support")
+            cs, rs = enclosure(measured["strict_value"])
+            cr, rr = enclosure(measured["reference_value"])
+            owned = measured["ownership"]
+            error = _acceptance_pair(supporting["computation"]["E_R"])
+            require(cr == q(supporting["computed_value"]["center"])
+                    and rr == _acceptance_pair(supporting["computed_value"]["radius"])
+                    and owned["E_R_includes_r_R"] is True
+                    and _acceptance_pair(owned["E_R"]) == error
+                    and _acceptance_pair(owned["r_R_marginal"]) == 0
+                    and _acceptance_pair(owned["r_S_in_U_read"]) == rs
+                    and _acceptance_pair(owned["D_center_difference"]) == abs(cs-cr), "Strict_E2_tagwise_radius_ownership")
+            total = abs(cs-cr)+rs+error+_acceptance_pair(owned["U_map"])+_acceptance_pair(owned["subtraction_arithmetic_bound"])
+            require(_acceptance_pair(measured["conditional_estimate_value"]) == total, "Strict_E2_tagwise_arithmetic")
+            if key in {"q", "f"}:
+                require(enclosure(responses[index][key + "_C"]) == (cs, rs), "Strict_E2_charge_response_binding")
+    return {"status":"accepted", "reason":None, "e2":e2, "accepted_quantities":accepted}
+
+
+def accepted_strict_E2(reference, *, spec, labels, problem_identity):
+    """Invalid or absent v1 authority is a reasoned unknown, never a thrown gate."""
+    try:
+        return _accepted_strict_E2(reference, spec=spec, labels=labels, problem_identity=problem_identity)
+    except (KeyError, TypeError, ValueError, OSError, AttributeError, OverflowError) as error:
+        return {"status":"unknown_reference_error", "reason":str(error), "e2":None, "accepted_quantities":[]}
+
+
+def strict_E2_values(e2, key, *, quantity, unit):
+    """The accepted claim uses its exact per-tag values and exclusive slot."""
+    row = e2["quantities"][key]
+    require(row.get("schema") == "solarlab.g2-reference-evidence.v1"
+            and row.get("status") == "computed_pending_review" and row.get("quantity_key") == key
+            and row.get("claim_kind") == "conditional_uncertainty_estimate"
+            and row.get("rigorous_bound_value") is None and row.get("diagnostic_value") is None
+            and row.get("target_problem_identity") == e2["target_problem_identity"]
+            and row.get("quantity_and_unit") == {"quantity":quantity,"unit":unit}, "Strict_E2_quantity")
+    require(type(row["norm_and_coverage"]["records"]) is int
+            and row["norm_and_coverage"] == {"norm":"max_abs_tagged131","records":131,"labels_sha256":digest(e2["labels"])}
+            and digest([r["tag"] for r in row["per_record"]]) == digest(e2["labels"]), "Strict_E2_coverage")
+    values = [q(r["conditional_estimate_value"]) for r in row["per_record"]]
+    require(all(v >= 0 for v in values) and all(r.get("status") == "computed_pending_review" for r in row["per_record"])
+            and q(row["conditional_estimate_value"]) == max(values)
+            and digest(row["estimated_or_enclosed_value"]) == digest({"value_field":"conditional_estimate_value",
+                "value":row["conditional_estimate_value"],"unit":unit}), "Strict_E2_values")
+    return values
+
+
 def reference_status_v3(reference, *, spec, labels, problem_identity):
     """Consume reviewed typed q/f evidence; do not compute BE/E1/E2/E3 here."""
     unknown = {"status":"unknown","reason":"unknown_reference_error","Qsig_C":None,"claim_kind":None}
     if not reference:
         return unknown
     try:
+        require(type(reference) is dict, "V3_reference_root")
+        if reference.get("schema") == "solarlab.g2-strict-reference.v1":
+            acceptance = accepted_strict_E2(reference,spec=spec,labels=labels,problem_identity=problem_identity)
+            if acceptance["status"] != "accepted":
+                return {**unknown, "detail":acceptance["reason"]}
+            e2, accepted = acceptance["e2"], acceptance["accepted_quantities"]
+            require({"q","f"} <= set(accepted), "Strict_E2_q_f_not_accepted")
+            rows = e2["strict_responses"]
+            require(digest([r["tag"] for r in rows]) == digest(labels)
+                    and all(enclosure(rows[0][k]) == (0,0) for k in ("q_C","f_C")), "Strict_E2_response_coverage")
+            signal = min(max(abs_bounds(*enclosure(row[k]))[0] for row in rows) for k in ("q_C","f_C"))
+            eq, ef = (max(strict_E2_values(e2,key,quantity=key,unit="C")) for key in ("q","f"))
+            return {"status":"eligible","reason":"independently_accepted_Strict_E2","Qsig_C":pair(signal),
+                    "E_q_C":pair(eq),"E_f_C":pair(ef),"claim_kind":"conditional_uncertainty_estimate",
+                    "method_contract":e2["method_contract"],"independent_review":reference["independent_review"],
+                    "strict_acceptance_sha256":reference["independent_review"]["sha256"],"e2_file":reference["e2_file"],
+                    "proof_recomputed_by_this_gate":False,"independent_proof_validity_is_external_prerequisite":True}
         require(reference["case_id"] == "B_N8_Strict_Full" and reference["problem_identity"] == problem_identity,
                 "V3_reference_problem")
         require(reference["unit"] == "C" and digest(reference["labels"]) == digest(labels) and len(labels) == 131,
@@ -412,7 +737,7 @@ def reference_status_v3(reference, *, spec, labels, problem_identity):
         _frozen_definition(method,EVIDENCE_METHOD_SCHEMA,1)
         review = _pin(reference["independent_review"]["path"],reference["independent_review"])
         source_digest = digest({k:v for k,v in reference.items() if k != "independent_review"})
-        require(review.get("accepted") is True and review.get("independent_reference_error_review") is True
+        require(type(review) is dict and review.get("accepted") is True and review.get("independent_reference_error_review") is True
                 and review.get("evidence_sha256") == source_digest and review.get("gate_spec_sha256") == spec.sha256
                 and review.get("method_contract_sha256") == reference["method_contract"]["sha256"]
                 and type(review.get("reviewer")) is str and review["reviewer"]
@@ -851,9 +1176,9 @@ def F_time(value):
     return Fraction(value)
 
 
-def evaluate_sealed(manifest_path, *, max_record_bytes, max_logical_bytes, max_records, wall_s,
-                    max_output_bytes=64*1024**2, rss_bytes=4*1024**3, require_admission=False):
-    """Bounded HistoryReader pass; only manufactured histories run in authoring."""
+def read_sealed_evidence(manifest_path, *, max_record_bytes, max_logical_bytes, max_records, wall_s,
+                         max_output_bytes=64*1024**2, rss_bytes=4*1024**3, require_admission=False):
+    """One admitted bounded pass, reusable by comparison without another decode."""
     from scripts.benchmarks.native_history import HistoryReader, integer_json_dumps
     from scripts.benchmarks.native_readback import _json
     from scripts.benchmarks.g2_route_bindings import sample_labels
@@ -892,6 +1217,7 @@ def evaluate_sealed(manifest_path, *, max_record_bytes, max_logical_bytes, max_r
     require(Path(expected["path"]).stat().st_size == expected["encoded_bytes"], "encoded_size")
     scales = manifest.get("scales", {})
     intervals, pieces, logical = [], [], hashlib.sha256()
+    comparison_context, comparison_samples = None, []
     retained = 0
     with HistoryReader(Path(expected["path"]), encoding="gzip", max_record_bytes=max_record_bytes,
                        max_logical_bytes=max_logical_bytes, integer_io_policy=expected.get("integer_io_policy")) as reader:
@@ -911,6 +1237,17 @@ def evaluate_sealed(manifest_path, *, max_record_bytes, max_logical_bytes, max_r
             elif row.get("kind") == "t1_fixed_window_piece":
                 normalized = row["evidence"]
                 pieces.append(normalized)
+            elif row.get("kind") in {"sealed_g2_context","sealed_g2_sample"}:
+                require(row["request_sha256"] == digest(request), "comparison_observation_input")
+                normalized = row["evidence"]
+                if row["kind"] == "sealed_g2_context":
+                    require(comparison_context is None and normalized["case_id"] == manifest["case_id"]
+                            and normalized["run_id"] == manifest["run_id"]
+                            and normalized["request_sha256"] == digest(request), "comparison_context_identity")
+                    comparison_context = normalized
+                else:
+                    require(comparison_context is not None and len(comparison_samples)<131, "comparison_sample_count")
+                    comparison_samples.append(normalized)
             else:
                 raise InvalidT1Data("unsupported_T1_evidence_record")
             retained += len(integer_json_dumps(normalized, INTEGER_POLICY).encode())
@@ -921,6 +1258,19 @@ def evaluate_sealed(manifest_path, *, max_record_bytes, max_logical_bytes, max_r
         history = {"records": reader.complete_lines, "logical_bytes": reader.logical_bytes,
                    "logical_sha256": logical.hexdigest(), "eof_seen": True, "crc_verified": True}
     checkpoint()
+    return {"manifest":manifest,"spec":spec,"request":request,"labels":labels,
+            "intervals":intervals,"pieces":pieces,"history":history,"checkpoint":checkpoint,
+            "comparison_context":comparison_context,"comparison_samples":comparison_samples,"retained_bytes":retained}
+
+
+def evaluate_sealed(manifest_path, *, max_record_bytes, max_logical_bytes, max_records, wall_s,
+                    max_output_bytes=64*1024**2, rss_bytes=4*1024**3, require_admission=False):
+    from scripts.benchmarks.native_history import integer_json_dumps
+    data = read_sealed_evidence(manifest_path,max_record_bytes=max_record_bytes,
+        max_logical_bytes=max_logical_bytes,max_records=max_records,wall_s=wall_s,
+        max_output_bytes=max_output_bytes,rss_bytes=rss_bytes,require_admission=require_admission)
+    manifest,spec,request,labels,intervals,pieces,history,checkpoint = (
+        data[k] for k in ("manifest","spec","request","labels","intervals","pieces","history","checkpoint"))
     result = evaluate(intervals, pieces, labels=labels, spec=spec, case_id=manifest["case_id"],
                       run_id=manifest["run_id"], problem_identity=manifest["problem_identity"], reference=manifest.get("reference"),
                       source_id=manifest["source_id"], request_sha256=digest(request),

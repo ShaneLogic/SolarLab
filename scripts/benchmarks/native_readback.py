@@ -2119,14 +2119,17 @@ class PhysicalChargeCheck:
 class _Protocol:
     science = None
     offline_charge = False
+    sample_sink = None
 
-    def __init__(self, request, rows, *, charge_observer=None):
+    def __init__(self, request, rows, *, charge_observer=None, sample_sink=None):
         from scripts.benchmarks.physical_tolerance import run_segment_count
         self.run_segments = run_segment_count(request)
         self.full_protocol = self.run_segments == len(request["segments"])
         self.science = _ScientificCheck(request) if "certificate_failure_policy" in request else None
         self.offline_charge = self.science is not None and self.science.policy["observation"] == "sealed-history"
         self.charge_observer = charge_observer
+        self.sample_sink = sample_sink
+        self._comparison_samples = {}
         _require(charge_observer is None or self.offline_charge, "offline_observer_requires_deferred_history")
         if "physical_tolerance_policy" in request:
             from scripts.benchmarks.physical_tolerance import require_balance_integration
@@ -2375,6 +2378,8 @@ class _Protocol:
                      and row["native_getter_used"] is False and row["native_output"] is False,
                      "polynomial_sample_binding")
         self.samples += 1
+        if self.sample_sink is not None and when in self.request["observation_times"][self.segment["id"]]:
+            self._comparison_samples[row["record_sha256"]] = {"sample": row, "certificate": None, "tag": None}
         if self.diagnostic is not None:
             _require(h["inputs_hex"] == self.diagnostic["accepted"]["inputs_hex"]
                      and h["input_rates_hex"] == self.diagnostic["accepted"]["input_rates_hex"],
@@ -2473,6 +2478,12 @@ class _Protocol:
             for common in self.common_clocks:
                 if common["sample"]["record_sha256"] == key and common["certificate"] is None:
                     common["certificate"] = row
+        if self.sample_sink is not None and sample["record_sha256"] in self._comparison_samples:
+            retained = self._comparison_samples[sample["record_sha256"]]
+            retained["certificate"] = row
+            if retained["tag"] is not None:
+                self.sample_sink(retained["tag"], retained["sample"], row)
+                del self._comparison_samples[sample["record_sha256"]]
         return row
 
     def _interval(self, left, right, frame, *, supplied_row=None, commit=True):
@@ -2916,6 +2927,8 @@ class _Protocol:
             _require(len(self.segment_frame.refreshes) == 1 and self.segment_frame.refreshes[0]["actual_initial_step_hex"] is not None,
                      "reference_refresh_incomplete")
         self.startup.finish(complete=True)
+        if self.sample_sink is not None:
+            _require(not self._comparison_samples, "comparison_sample_certificate_missing")
         if self.diagnostic is not None:
             _require(len(self.common_clocks) == 5 and all(c["certificate"] is not None for c in self.common_clocks)
                      and not self._pending_common, "complete_diagnostic_common_evidence")
@@ -2924,6 +2937,18 @@ class _Protocol:
     def _requested(self, pointer):
         row = self.rows.take("requested_sample")
         _require(row == {"kind": "requested_sample", **pointer}, "requested_sample_pointer")
+        if self.sample_sink is not None:
+            retained = self._comparison_samples[pointer["record_sha256"]]
+            times = self.request["observation_times"][self.segment["id"]]
+            index = times.index(pointer["time_s"])
+            retained["tag"] = {"segment": self.segment["id"], "index": index,
+                "time_hex": float(pointer["time_s"]).hex(),
+                "event_side": "right" if index == 0 else "left" if index == len(times)-1 else "interior",
+                "protocol_initial": self.ordinal == 1 and index == 0,
+                "protocol_terminal": self.ordinal == len(self.request["segments"]) and index == len(times)-1}
+            if retained["certificate"] is not None:
+                self.sample_sink(retained["tag"], retained["sample"], retained["certificate"])
+                del self._comparison_samples[pointer["record_sha256"]]
         if self.diagnostic is not None:
             prefix = self.rows.take("native_interval_common_prefix")
             sample = self._sample_cache[pointer["record_sha256"]]
@@ -2988,7 +3013,8 @@ def execution_output_policy(request, admission=None, *, execution_provenance=Non
 
 def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: int,
                    max_records: int, deadline_monotonic: float, integer_io_policy=None,
-                   execution_admission=None, execution_provenance=None, charge_observer=None) -> dict:
+                   execution_admission=None, execution_provenance=None, charge_observer=None,
+                   sample_sink=None) -> dict:
     """Verify a finalized, complete protocol, raising on every partial result.
 
     All limits are caller-selected stop rules. A receipt verifies stored words,
@@ -3050,7 +3076,7 @@ def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: in
         with HistoryReader(path, encoding="gzip", max_record_bytes=max_record_bytes,
                             max_logical_bytes=max_logical_bytes, integer_io_policy=integer_io_policy) as reader:
             rows = _Rows(reader, max_records, checkpoint)
-            protocol = _Protocol(request, rows, charge_observer=charge_observer)
+            protocol = _Protocol(request, rows, charge_observer=charge_observer, sample_sink=sample_sink)
             _require(result["request_sha256"] == protocol.request_id and result["map_identity"] == protocol.map_id
                      and result["observation_policy_sha256"] == protocol.policy_id, "result_request_binding")
             protocol.run()

@@ -546,6 +546,7 @@ def test_V3_sealed_supplement_cannot_replace_original_signed_operands():
 
 
 def test_L1_retained_cell_proof_detects_rehashed_bound_or_sign_tampering():
+    pytest.importorskip("flint")
     from scripts.benchmarks.interval_observation import BallIntegrator
     from scripts.benchmarks.native_observation import observation_record
     a=BallIntegrator();proof=a.absolute_enclosure(lambda z,analytic:a.number(1),-1,0,F(1,10**20))
@@ -613,6 +614,7 @@ def test_V3_manufactured_admission_then_real_HistoryReader_roundtrip(tmp_path,mo
 
 def test_sealed_T1_emitter_preserves_C_and_splits_actual_fixed_windows(monkeypatch):
     """Exercise the real writer adapter with an explicit exact toy action provider."""
+    pytest.importorskip("flint")
     from types import SimpleNamespace
     from scripts.benchmarks import physical_tolerance
     from scripts.benchmarks.native_observation import SealedChargeObserver
@@ -724,6 +726,7 @@ def test_G_piece_corruption_is_not_classified_as_missing(damage):
 
 
 def G_widening_witness(input_error=F(1,2), clock_error=F(0), widening=F(0)):
+    pytest.importorskip("flint")
     from scripts.benchmarks.interval_observation import BallIntegrator
     from scripts.benchmarks.native_observation import observation_record
     arithmetic = BallIntegrator()

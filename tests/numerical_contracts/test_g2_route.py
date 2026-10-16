@@ -482,10 +482,11 @@ def plan_fixture(folder):
                 cases.append({"id": f"B_N{mesh}_{name}_{stage.title()}", "stage": stage,
                     "mesh_intervals": mesh, "nodes": mesh+1, "coordinates": 5*(mesh+1), "profile": profile,
                     "horizon_s": [0, .2 if stage == "probe" else 9.2], "sample_records": 66 if stage == "probe" else 131,
-                    "native_execution_count": 1, "input_ancestor": ancestor})
+                    "native_execution_count": 1, "input_ancestor": ancestor, "execution": None})
                 cases[-1]["reference_refresh"] = {"enabled": stage == "full", "max_refreshes": 0 if stage == "probe" else 1,
                     "record_schema": "solarlab.reference-state-transfer.v2", "schedule_ref": "/protocol/reference_refresh_schedule"}
     return {"schema": "solarlab.g2-route.run-plan.v3", "version": 3, "status": "design_only_not_admitted",
+            "admission": {"stage": "probes", "admitted_case_ids": sorted(c["id"] for c in cases if c["stage"] == "probe")},
             "authority": {"scientific_execution_authorized": False}, "implementation": {"available_now": False},
             "source_freeze": {k: None for k in ("future_execution_commit", "environment_lock", "review_record", "frozen_gate_spec")},
             "definitions": {"plan": pin("definition.json", {}), "gate_spec": pin("gate.json", {
@@ -687,6 +688,10 @@ def admitted_metadata_plan(tmp_path,monkeypatch):
             "directory":str(tmp_path/case["id"]),"wall_s":100 if case["stage"] == "probe" else 300,
             "supervision":supervision_fixture(tmp_path),"forecast":{"feasible":True,"estimated_s":100,"slow_hold_model":"fixture"},
             "native_admission":{"fixture_only":True},"max_record_bytes":65536,"integer_io_policy":None}
+        case["execution"]["supervision"].update(closure_path=str(tmp_path/(case["id"]+"-RuntimeReceipt.json")),
+            cancel_path=str(tmp_path/(case["id"]+"-Cancel")))
+        if case["stage"] == "full":
+            case["execution"] = None
     review={"fixture_only":True,"accepted":True,"execution_commit":"d"*40,"method_versions":g.METHODS,
         "gate_spec_sha256":gate["sha256"],"evidence_method_contract_sha256":method["sha256"],
         "source_sha256":sources,"request_sha256s":request_hashes}
@@ -800,3 +805,238 @@ def test_nondict_evaluator_review_blocks_only_evaluation(tmp_path,monkeypatch,ba
     monkeypatch.setattr(g2_route,"_runtime",lambda *args:(_ for _ in ()).throw(AssertionError("invalid review reached runtime")))
     with pytest.raises(ValueError,match="evaluation_review_root"):
         g2_route.observe(path,"B_N8_Main_Probe")
+
+
+def write_probe_receipt(path, receipt):
+    """Use the actual metadata encoder, never the launcher process entry."""
+    from scripts.benchmarks.g2_route_launcher import _encode_receipt
+    raw = _encode_receipt(receipt, receipt["artifact_bytes_before_receipt"], 2**63-1)
+    path.write_bytes(raw)
+    return {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def full_metadata_plan(tmp_path, monkeypatch):
+    """Pinned manufactured probe receipts, with no history or native run."""
+    from copy import deepcopy
+    from scripts.benchmarks import g2_route as g
+    from scripts.benchmarks.g2_route_launcher import CHANNEL_PROTOCOL, Limits, REPOSITORY
+    from test_g2_route_bindings import write_json
+    path, probe = admitted_metadata_plan(tmp_path, monkeypatch)
+    producer_pin = write_json(path, probe)
+    plan = deepcopy(probe)
+    plan["admission"] = {"stage": "full", "admitted_case_ids": sorted(
+        case["id"] for case in plan["cases"] if case["stage"] == "full")}
+    evidence = {}
+    for case in probe["cases"]:
+        if case["stage"] != "probe":
+            continue
+        execution = case["execution"]
+        directory = Path(execution["directory"]); directory.mkdir()
+        request = g._pinned(execution["request"])
+        history = dict(logical_bytes=1000, encoded_bytes=500, records=20,
+                       logical_sha256="a"*64, closed=True, container_complete=True, writer_error=None)
+        native = dict(fixture_only=True, status="completed_bounded_voltage_lift_native_pilot",
+            request_sha256=execution["effective_input_digest"], complete_run_window=True, complete_protocol=False,
+            execution_window=request["execution_window"], history=history, elapsed_s=4,
+            counts={"native_steps": 2, "residual": 4, "jacobian": 1},
+            scientific_status="failed", scientific_progress={"first_failure": {"gate": "manufactured_T1_failure"}})
+        pid = 1000000001  # Invented identifier; no process inspection or signalling.
+        sample = {"elapsed_s": 2, "rss_bytes": 2048, "artifact_bytes": 4096,
+                  "members": [{"pid": pid, "pgid": pid, "rss_bytes": 2048}]}
+        receipt = dict(fixture_only=True, schema="solarlab.g2-route.launcher-result.v1", case_id=case["id"],
+            plan_sha256=producer_pin["sha256"], process_outcome="completed", termination_reason="completed",
+            exit_code=0, exit_signal=None, cancellation_signal=None, signals_sent=[], error=None,
+            wall_s=10, receipt_initial_write_s=.01, limits=vars(Limits.from_execution(execution)),
+            command=[str(REPOSITORY/".venv/bin/python"), "-m", "scripts.benchmarks.g2_route", "run",
+                     "--plan", str(path.resolve()), "--case", case["id"]], cwd=str(REPOSITORY),
+            pid=pid, pgid=pid, session_id=pid, channel=execution["channel"], channel_protocol=CHANNEL_PROTOCOL,
+            observed_pids=[pid], peak_group_rss_bytes=2048, peak_artifact_bytes=8192, artifact_bytes_before_receipt=8192,
+            last_samples=[sample], rss_peak_sample=sample, artifact_peak_sample=sample,
+            closure={"schema": "solarlab.owned-tool-process-closure.v1", "pgid": pid, "after_tool_exit_code": 0,
+                "process_group_absent": True, "all_named_owned_processes_and_groups_absent": True,
+                "remaining_group_members": [], "remaining_owned_processes": [],
+                "checks": [{"pid": pid, "pid_absent": True, "same_id_process_group_absent": True}]})
+        timing = dict(fixture_only=True, schema="solarlab.native-aggregate-timing.v1",
+            recorded_call_outcome="returned_completed", phases={"history_io": {"calls": 2, "exclusive_ns": 10**9}})
+        reader = dict(fixture_only=True, schema="solarlab.native-history-verification.v1",
+            verified=True, complete_readback=True, complete_run_window=True,
+            request_sha256=native["request_sha256"], history=dict(history, eof_seen=True, crc_verified=True), elapsed_s=3)
+        evidence[case["id"]] = {
+            "runtime_receipt": write_probe_receipt(Path(execution["supervision"]["closure_path"]), receipt),
+            "sealed_result": write_json(directory/"NativeResult.json", native), "producer_plan": producer_pin,
+            "runtime_timing": write_json(directory/"RuntimeTiming.json", timing),
+            "independent_readback": write_json(directory/"RunResult.json", reader)}
+    plan["probe_evidence"] = evidence
+    for case in plan["cases"]:
+        if case["stage"] == "probe":
+            case["execution"] = None
+            continue
+        request_path = tmp_path/(case["id"]+"Request.json")
+        request = json.loads(request_path.read_text())
+        request_pin = write_json(request_path, request)
+        chosen = "B_N8_" + case["id"].split("_")[2] + "_Probe"
+        measured = {}
+        for phase, source, seconds_path, time_unit, work_path, seconds, units in (
+            ("bootstrap", "runtime_receipt", ["wall_s"], "s", None, 10, 1),
+            ("native", "sealed_result", ["elapsed_s"], "s", ["counts", "native_steps"], 4, 2),
+            ("online_safety", "sealed_result", ["elapsed_s"], "s", ["counts", "native_steps"], 4, 2),
+            ("observer", "independent_readback", ["elapsed_s"], "s", None, 3, 1),
+            ("io", "runtime_timing", ["phases", "history_io", "exclusive_ns"], "ns", ["phases", "history_io", "calls"], 1, 2),
+            ("closeout", "runtime_receipt", ["wall_s"], "s", None, 10, 1)):
+            measured[phase] = dict(probe_case_id=chosen, source=source, seconds_path=seconds_path,
+                time_unit=time_unit, work_path=work_path, seconds=seconds, work_units=units, units_per_s=units/seconds)
+        forecast = dict(feasible=True, mesh_intervals=case["mesh_intervals"],
+            slow_hold_model="manufactured conservative work model; no real forecast",
+            phase_seconds={phase: row["seconds"]*2 for phase, row in measured.items()},
+            phase_work_units={phase: row["work_units"]*2 for phase, row in measured.items()},
+            measured_throughput=measured, probe_evidence=deepcopy(evidence),
+            work_counts={"accepted_steps": 500, "residual_calls": 1000, "jacobian_calls": 250},
+            N16_uncertainty="manufactured explicit uncertain N8 proxy")
+        forecast["phase_work_units"]["native"] = 500
+        forecast["phase_seconds"]["native"] = 500 / measured["native"]["units_per_s"]
+        forecast["estimated_s"] = sum(forecast["phase_seconds"].values())
+        case["execution"] = dict(request=request_pin, effective_input_digest=g._digest(request),
+            channel=0, directory=str(tmp_path/case["id"]), wall_s=3*forecast["estimated_s"],
+            supervision=supervision_fixture(tmp_path), forecast=forecast,
+            native_admission={"fixture_only": True}, max_record_bytes=65536, integer_io_policy=None)
+    target = tmp_path/"FullPlan.json"; write_json(target, plan)
+    return target, plan
+
+
+def test_H_probes_admit_only_three_cases_with_null_dormant_execution(tmp_path, monkeypatch):
+    from scripts.benchmarks import g2_route as g
+    path, plan = admitted_metadata_plan(tmp_path, monkeypatch)
+    found = g.validate(path, executable=True)
+    assert found["admission_stage"] == "probes"
+    assert set(found["admitted_case_ids"]) == {f"B_N8_{name}_Probe" for name in ("Coarse", "Main", "Strict")}
+    assert all(case["execution"] is None for case in plan["cases"] if case["stage"] == "full")
+    with pytest.raises(ValueError, match="case_not_in_admitted_stage"):
+        g.validate(path, executable=True, case_id="B_N16_Strict_Full")
+
+
+@pytest.mark.parametrize("execution", [{}, {"wall_s": None}, False])
+def test_H_unadmitted_execution_is_rejected(tmp_path, monkeypatch, execution):
+    from scripts.benchmarks import g2_route as g
+    from test_g2_route_bindings import write_json
+    path, plan = admitted_metadata_plan(tmp_path, monkeypatch)
+    next(case for case in plan["cases"] if case["stage"] == "full")["execution"] = execution
+    write_json(path, plan)
+    with pytest.raises(ValueError, match="unadmitted_case_execution"):
+        g.validate(path)
+
+
+def test_H_full_phase_requires_three_probe_receipts(tmp_path, monkeypatch):
+    from scripts.benchmarks import g2_route as g
+    from test_g2_route_bindings import write_json
+    path, plan = admitted_metadata_plan(tmp_path, monkeypatch)
+    plan["admission"] = {"stage": "full", "admitted_case_ids": sorted(case["id"] for case in plan["cases"] if case["stage"] == "full")}
+    for case in plan["cases"]: case["execution"] = None
+    write_json(path, plan)
+    with pytest.raises(ValueError, match="full_probe_receipts_required"):
+        g.validate(path)
+
+
+def test_H_full_phase_binds_measured_forecast_and_retains_scientific_failure(tmp_path, monkeypatch):
+    from scripts.benchmarks import g2_route as g
+    path, plan = full_metadata_plan(tmp_path, monkeypatch)
+    value = g.validate(path, executable=True)
+    assert value["admission_stage"] == "full" and len(value["admitted_case_ids"]) == 4
+    assert all(g._pinned(refs["sealed_result"])["scientific_status"] == "failed" for refs in plan["probe_evidence"].values())
+
+
+@pytest.mark.parametrize("damage", ["missing_probe", "receipt_hash", "closure", "exit_alias", "source", "unsealed", "reader", "throughput", "seconds_path", "profile", "steps", "wall", "cap", "slow_model"])
+def test_H_full_phase_rejects_unbound_probe_or_forecast(tmp_path, monkeypatch, damage):
+    from scripts.benchmarks import g2_route as g
+    from test_g2_route_bindings import write_json
+    path, plan = full_metadata_plan(tmp_path, monkeypatch)
+    refs = plan["probe_evidence"]["B_N8_Coarse_Probe"]
+    case = next(case for case in plan["cases"] if case["id"] == "B_N8_Coarse_Full")
+    if damage == "missing_probe": del plan["probe_evidence"]["B_N8_Main_Probe"]
+    elif damage == "receipt_hash": refs["runtime_receipt"]["sha256"] = "0"*64
+    elif damage in {"closure", "exit_alias", "source"}:
+        value = g._pinned(refs["runtime_receipt"])
+        if damage == "closure": value["closure"]["all_named_owned_processes_and_groups_absent"] = False
+        elif damage == "exit_alias": value["exit_code"] = False
+        else: value["plan_sha256"] = "0"*64
+        refs["runtime_receipt"] = write_json(Path(refs["runtime_receipt"]["path"]), value)
+    elif damage in {"unsealed", "reader"}:
+        name = "sealed_result" if damage == "unsealed" else "independent_readback"
+        value = g._pinned(refs[name]); value["history"]["closed" if damage == "unsealed" else "crc_verified"] = False
+        refs[name] = write_json(Path(refs[name]["path"]), value)
+    elif damage == "throughput": case["execution"]["forecast"]["measured_throughput"]["native"]["units_per_s"] *= 2
+    elif damage == "seconds_path": case["execution"]["forecast"]["measured_throughput"]["native"]["seconds_path"] = ["not_measured"]
+    elif damage == "profile": case["execution"]["forecast"]["measured_throughput"]["native"]["probe_case_id"] = "B_N8_Main_Probe"
+    elif damage == "steps": case["execution"]["forecast"]["work_counts"]["accepted_steps"] = 4
+    elif damage == "wall": case["execution"]["wall_s"] += 1
+    elif damage == "cap": case["execution"]["forecast"]["phase_seconds"]["native"] = 20000
+    else: case["execution"]["forecast"]["slow_hold_model"] = ""
+    write_json(path, plan)
+    with pytest.raises(ValueError): g.validate(path, executable=True)
+
+
+@pytest.mark.parametrize("stage", ["probes", "full"])
+def test_I_dormant_execution_key_must_be_explicit_null(tmp_path, monkeypatch, stage):
+    from scripts.benchmarks import g2_route as g
+    from test_g2_route_bindings import write_json
+    factory = admitted_metadata_plan if stage == "probes" else full_metadata_plan
+    path, plan = factory(tmp_path, monkeypatch)
+    dormant = next(case for case in plan["cases"] if case["execution"] is None)
+    del dormant["execution"]
+    write_json(path, plan)
+    with pytest.raises(ValueError, match="unadmitted_case_execution"):
+        g.validate(path, executable=True)
+
+
+def test_I_design_only_missing_admission_does_not_grant_execution(tmp_path):
+    from scripts.benchmarks import g2_route as g
+    from test_g2_route_bindings import write_json
+    plan = plan_fixture(tmp_path); del plan["admission"]
+    for case in plan["cases"]: del case["execution"]
+    path = tmp_path/"DesignOnly.json"; write_json(path, plan)
+    found = g.validate(path)
+    assert not found["ready"] and "unresolved_admission_stage" in found["blockers"]
+
+
+@pytest.mark.parametrize("damage", ["exit_signal", "signal_missing", "exit_alias", "termination_reason", "error",
+    "group_not_absent", "remaining_members", "remaining_owned", "PID_check", "missing_checks", "after_exit",
+    "RSS_over_cap", "RSS_type", "artifact_over_cap", "peak_artifact_over_cap", "sample_RSS", "limits",
+    "wall", "complete_wall", "case", "plan", "channel", "command", "quarantine"])
+def test_I_full_admission_rejects_contradictory_completed_receipt(tmp_path, monkeypatch, damage):
+    from copy import deepcopy
+    from scripts.benchmarks import g2_route as g
+    from test_g2_route_bindings import write_json
+    path, plan = full_metadata_plan(tmp_path, monkeypatch)
+    refs = plan["probe_evidence"]["B_N8_Coarse_Probe"]
+    receipt = g._pinned(refs["runtime_receipt"])
+    producer = g._pinned(refs["producer_plan"])
+    execution = next(case["execution"] for case in producer["cases"] if case["id"] == "B_N8_Coarse_Probe")
+    if damage == "exit_signal": receipt["exit_signal"] = 9
+    elif damage == "signal_missing": del receipt["exit_signal"]
+    elif damage == "exit_alias": receipt["exit_code"] = False
+    elif damage == "termination_reason": receipt["termination_reason"] = "rss_limit"
+    elif damage == "error": receipt["error"] = "recorded supervision failure"
+    elif damage == "group_not_absent": receipt["closure"]["process_group_absent"] = False
+    elif damage == "remaining_members": receipt["closure"]["remaining_group_members"] = [{"pid": 1000000001}]
+    elif damage == "remaining_owned": receipt["closure"]["remaining_owned_processes"] = [{"pid": 1000000001}]
+    elif damage == "PID_check": receipt["closure"]["checks"][0]["pid_absent"] = False
+    elif damage == "missing_checks": del receipt["closure"]["checks"]
+    elif damage == "after_exit": receipt["closure"]["after_tool_exit_code"] = 9
+    elif damage == "RSS_over_cap": receipt["peak_group_rss_bytes"] = execution["supervision"]["rss_bytes"]+1
+    elif damage == "RSS_type": receipt["peak_group_rss_bytes"] = 2048.0
+    elif damage == "artifact_over_cap": receipt["artifact_bytes_before_receipt"] = execution["supervision"]["artifact_bytes"]+1
+    elif damage == "peak_artifact_over_cap": receipt["peak_artifact_bytes"] = execution["supervision"]["artifact_bytes"]+1
+    elif damage == "sample_RSS": receipt["last_samples"][0]["rss_bytes"] = execution["supervision"]["rss_bytes"]+1
+    elif damage == "limits": receipt["limits"]["rss_bytes"] += 1
+    elif damage == "wall": receipt["wall_s"] = execution["wall_s"]
+    elif damage == "complete_wall": receipt["wall_through_receipt_s"] = execution["wall_s"]+1
+    elif damage == "case": receipt["case_id"] = "B_N8_Strict_Probe"
+    elif damage == "plan": receipt["plan_sha256"] = "0"*64
+    elif damage == "channel": receipt["channel"] = (execution["channel"]+1)%4
+    elif damage == "command": receipt["command"][-1] = "B_N8_Strict_Probe"
+    else: receipt["channel_reusable"] = False
+    refs["runtime_receipt"] = write_probe_receipt(Path(refs["runtime_receipt"]["path"]), receipt)
+    for case in plan["cases"]:
+        if case["stage"] == "full": case["execution"]["forecast"]["probe_evidence"] = deepcopy(plan["probe_evidence"])
+    write_json(path, plan)
+    with pytest.raises(ValueError, match="full_probe_runtime_"):
+        g.validate(path, executable=True)

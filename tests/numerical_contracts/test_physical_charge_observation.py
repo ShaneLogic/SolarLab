@@ -17,6 +17,8 @@ from typing import Mapping
 import unittest
 import __future__
 
+import pytest
+
 
 REPO = Path(__file__).resolve().parents[2]
 SOURCE = REPO / "scripts/benchmarks"
@@ -457,6 +459,7 @@ class PhysicalFluxSignTests(unittest.TestCase):
 
 class T1PhysicalFluxBounds(unittest.TestCase):
     def arithmetic(self):
+        pytest.importorskip("flint")
         from scripts.benchmarks.interval_observation import BallIntegrator
         return BallIntegrator()
 
