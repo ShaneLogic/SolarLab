@@ -122,24 +122,12 @@ def test_zero_band_to_band_channels_leave_srh_bitwise():
     assert np.array_equal(evaluation.total.d_rate_dp, evaluation.srh.d_rate_dp)
 
 
-@pytest.mark.filterwarnings("ignore:invalid value encountered in multiply:RuntimeWarning")
 def test_blocked_capture_leg_switches_srh_off_exactly():
-    """M state: the rate vanishes; the historical tangent keeps 0*inf = NaN.
-
-    With tau_n = +inf the quotient-rule form gives dR/dp = (n - R tau_n)/D =
-    NaN on every node, exactly as the legacy engine (bitwise, NaN included).
-    """
-
-    from perovskite_sim.physics import recombination as legacy
-
     n, p = _states(20)
     evaluation = BulkRecombinationReaction(_coefficients(20, tau_n_s=math.inf)).evaluate(n, p)
     assert np.all(evaluation.srh.rate == 0.0)
     assert np.all(evaluation.srh.d_rate_dn == 0.0)
-    assert np.all(np.isnan(evaluation.srh.d_rate_dp))
-    old = legacy.srh_recombination_derivatives(n, p, 1.0e20, math.inf, 5e-8, 3.0e9, 4.0e8)
-    assert evaluation.srh.d_rate_dp.tobytes() == np.asarray(old.hole_density_derivative).tobytes()
-    assert evaluation.srh.rate.tobytes() == np.asarray(old.rate).tobytes()
+    assert np.all(evaluation.srh.d_rate_dp == 0.0)
 
 
 def test_unowned_nodes_are_bitwise_the_pure_lifetime_law():
@@ -359,3 +347,20 @@ def test_neutral_model_rejects_inconsistent_ownership():
         NeutralExplicitDefectModel((species,), np.ones(3, dtype=bool), (("l", DIGEST),))
     with pytest.raises(ValueError):
         NeutralExplicitDefectModel((species, species), owned, (("l", DIGEST),))
+
+
+def test_finite_lifetime_overflow_is_not_a_disabled_srh_channel():
+    value = np.array([float(2**600)])
+    with np.errstate(over='ignore'):
+        with pytest.raises(FloatingPointError, match='finite-lifetime SRH'):
+            lifetime_srh_recombination(value, value, 1.0, value, value, 1.0, 1.0)
+
+
+def test_nonfinite_reaction_output_cannot_pass_the_domain_guard():
+    from dataclasses import replace
+    coefficients = replace(_coefficients(1), radiative_m3_s=np.array([1e300]))
+    with np.errstate(over='ignore', invalid='ignore'):
+        evaluation = BulkRecombinationReaction(coefficients).evaluate(np.array([1e20]), np.array([1e20]))
+    assert not evaluation.in_domain()
+    with pytest.raises(ValueError, match='finite'):
+        evaluation.require_domain()

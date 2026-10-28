@@ -149,7 +149,7 @@ class BulkRecombinationEvaluation:
         return CarrierSources(source, source, d_dn, d_dp)
 
     def in_domain(self) -> bool:
-        """Non-negative densities and strictly positive finite SRH denominators."""
+        """Non-negative densities, valid denominators, and finite rates/tangents."""
 
         denominators = self.srh_denominators_s_m3
         return bool(
@@ -157,13 +157,17 @@ class BulkRecombinationEvaluation:
             and np.all(self.hole_density_m3 >= 0.0)
             and np.all(denominators[np.isfinite(denominators)] > 0.0)
             and not np.any(np.isnan(denominators))
+            and all(np.all(np.isfinite(channel.rate))
+                    and (not channel.has_derivatives or
+                         np.all(np.isfinite(channel.d_rate_dn)) and np.all(np.isfinite(channel.d_rate_dp)))
+                    for channel in (self.srh, self.radiative, self.auger, self.total))
         )
 
     def require_domain(self) -> None:
         if not self.in_domain():
             raise RecombinationDomainError(
                 "bulk recombination evaluated outside its domain: densities must be "
-                "non-negative and every SRH denominator positive"
+                "non-negative, every SRH denominator positive, and rates/tangents finite"
             )
 
 

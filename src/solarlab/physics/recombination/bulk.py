@@ -89,15 +89,25 @@ def lifetime_srh_from_denominator(
     observation) without computing it twice.
     """
 
+    blocked = np.equal(tau_n, np.inf) | np.equal(tau_p, np.inf)
+    if np.any(~np.isfinite(denominator) & ~blocked):
+        raise FloatingPointError("finite-lifetime SRH denominator overflow or nonfinite value")
     numerator = n * p - ni_sq
-    rate = numerator / denominator
+    with np.errstate(invalid="ignore"):
+        rate = numerator / denominator
+    rate = np.where(blocked, 0.0, rate)
     if not derivatives:
         return _result(rate, None, None)
-    return _result(
-        rate,
-        (p - rate * tau_p) / denominator,
-        (n - rate * tau_n) / denominator,
-    )
+    with np.errstate(invalid="ignore"):
+        d_dn = (p - rate * tau_p) / denominator
+        d_dp = (n - rate * tau_n) / denominator
+    if np.any(blocked):
+        # A blocked capture leg (tau = +inf) makes R vanish identically, so
+        # both exact partials are 0; the quotient-rule form would evaluate
+        # 0 * inf = NaN there (N-class difference, only on these nodes).
+        d_dn = np.where(blocked, 0.0, d_dn)
+        d_dp = np.where(blocked, 0.0, d_dp)
+    return _result(rate, d_dn, d_dp)
 
 
 def radiative_recombination(n: Any, p: Any, ni_sq: Any, B_rad: Any, *, derivatives: bool = True) -> RecombinationRate:
