@@ -11,7 +11,7 @@ from collections.abc import Callable
 import math
 
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from scipy.sparse import csc_matrix
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
@@ -43,7 +43,7 @@ def production_convergence_norm(
     if convergence_policy != POISSON_CONTACT_BALANCE_V1:
         raise ValueError("unknown production convergence policy")
     count = device.node_count
-    fixed = np.zeros(3 * count, dtype=bool)
+    fixed: NDArray[np.bool_] = np.zeros(3 * count, dtype=bool)
     fixed[:count] = True
     for carrier, offset in (("n", count), ("p", 2 * count)):
         for side, node in (("left", 0), ("right", count - 1)):
