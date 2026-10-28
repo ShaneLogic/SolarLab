@@ -85,6 +85,7 @@ class SteadyState1D:
     newton: NewtonResult
     preparation: tuple[NewtonResult, ...] = ()
     density_basin_initializations: int = 0
+    density_basin_stages: tuple[tuple[float, float], ...] = ()
 
     def __post_init__(self) -> None:
         for name, shape in (
@@ -100,6 +101,13 @@ class SteadyState1D:
             raise ValueError("an unaccepted Newton result cannot be a steady point")
         if type(self.density_basin_initializations) is not int or self.density_basin_initializations < 0:
             raise ValueError("density_basin_initializations must be a nonnegative integer")
+        stages = tuple((float(voltage), float(light)) for voltage, light in self.density_basin_stages)
+        if len(stages) != self.density_basin_initializations or any(
+            not math.isfinite(voltage) or not math.isfinite(light) or light <= 0.0
+            for voltage, light in stages
+        ):
+            raise ValueError("density_basin_stages must record each positive-light initialization")
+        object.__setattr__(self, "density_basin_stages", stages)
 
     @property
     def converged(self) -> bool:
@@ -230,12 +238,12 @@ def _solve_point(
 
 def _point_result(
     problem: DC1DProblem, result: NewtonResult, preparation: tuple[NewtonResult, ...] = (),
-    density_basin_initializations: int = 0,
+    density_basin_stages: tuple[tuple[float, float], ...] = (),
 ) -> SteadyState1D:
     return SteadyState1D(
         problem.device.state(result.state, voltage_V=problem.voltage_V), problem.current_density(result.state),
         problem.contact_current_density(result.state), problem.voltage_V,
-        problem.generation_scale, result, preparation, density_basin_initializations,
+        problem.generation_scale, result, preparation, len(density_basin_stages), density_basin_stages,
     )
 
 
@@ -255,7 +263,7 @@ def _density_basin_seed(problem: DC1DProblem, u: np.ndarray) -> np.ndarray:
     increment = factorize(matrix).solve(-residual)
     trial_n, trial_p = n + increment[:count], p + increment[count:]
     if not all(np.all(np.isfinite(value)) and np.all(value > 0.0) for value in (trial_n, trial_p)):
-        raise ValueError("cold density preparation did not produce finite positive carriers")
+        raise ValueError("density preparation did not produce finite positive carriers")
     seed = np.array(u, copy=True)
     for offset, density, trial, delta, sign in (
         (count, n, trial_n, increment[:count], 1.0),
@@ -346,15 +354,18 @@ def solve_steady_state(
         for value in np.linspace(0.0, voltage_V, bias_count + 1)[1:]
     )
     previous_voltage = 0.0
-    density_initializations = 0
+    density_stages: list[tuple[float, float]] = []
     for index, (voltage, light) in enumerate(points):
         u = device.rebase_coordinates(u, previous_voltage, voltage)
-        if index == 0 and light > 0.0:
+        # Every prescribed light increment can refill depleted carriers by
+        # orders of magnitude. Prepare in physical density coordinates from
+        # the previous accepted point, then certify with coupled Newton.
+        if index < len(light_steps) and light > 0.0:
             u = _density_basin_seed(DC1DProblem(device, voltage, light), u)
-            density_initializations += 1
+            density_stages.append((voltage, light))
         problem, result = _solve_point(device, u, voltage, light, controls)
         u = result.state
         previous_voltage = voltage
         if index != len(points) - 1:
             preparation.append(result)
-    return _point_result(problem, result, tuple(preparation), density_initializations)
+    return _point_result(problem, result, tuple(preparation), tuple(density_stages))

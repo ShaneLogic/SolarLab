@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ from solarlab.solvers.nonlinear.production import (
     production_steady_linearization,
     production_steady_problem,
 )
+from solarlab.solvers.nonlinear import steady_1d as steady_solver
 from solarlab.solvers.nonlinear.steady_1d import (
     SteadyOptions, SteadyStateError, solve_equilibrium, solve_steady_state,
 )
@@ -96,6 +98,8 @@ def test_compiles_real_prepared_configuration_and_named_geometry(prepared, devic
 def test_real_dark_equilibrium_has_common_fermi_and_zero_every_face(device, dark):
     problem = DC1DProblem(device)
     assert dark.converged
+    assert dark.density_basin_initializations == 0
+    assert dark.density_basin_stages == ()
     assert dark.newton.termination == Termination.CONVERGED
     assert all(result.accepted for result in dark.preparation)
     assert all(gate.passed for gate in dark.physical_gates)
@@ -115,6 +119,11 @@ def test_real_illumination_obeys_current_continuity_and_photon_budget(device, li
     output = -device.voltage_polarity * light.current_density_A_m2
     assert light.converged
     assert light.generation_scale == 1.0
+    assert light.density_basin_initializations == 5
+    assert light.density_basin_stages == tuple(
+        (0.0, value) for value in (1e-8, 1e-6, 1e-4, 1e-2, 1.0)
+    )
+    assert all(point.accepted for point in light.preparation)
     assert np.min(output) > 0.0
     assert np.max(output) <= device.generation_limit_A_m2 * (1.0 + 1e-10)
     assert np.ptp(light.current_density_A_m2) < 1e-8
@@ -134,7 +143,7 @@ def test_refined_fixed_reservoir_device_starts_from_dark_with_unchanged_gates(pr
     assert all(channel.kind == "fixed_reservoir" for channel in compiled.channels)
     result = solve_steady_state(compiled)
     assert result.converged
-    assert result.density_basin_initializations == 1
+    assert result.density_basin_initializations == 5
     assert all(gate.passed for gate in result.physical_gates)
     currents = np.r_[result.current_density_A_m2, result.contact_current_density_A_m2]
     assert np.ptp(currents) < 1e-8
@@ -210,6 +219,8 @@ def test_real_biased_warm_start_preserves_physical_state_and_contact_precision(d
     assert biased.converged
     assert biased.state.voltage_V == 0.05
     assert biased.voltage_V == 0.05
+    assert biased.density_basin_initializations == 0
+    assert biased.density_basin_stages == ()
     assert np.ptp(biased.current_density_A_m2) < 1e-8
     assert biased.state.electron_density_m3[-1] == device.channel("n", "right").reservoir_density_m3
 
@@ -223,6 +234,8 @@ def test_reversed_junction_and_potential_gauge(prepared):
         compiled = compile_device_1d(edited(prepared, document))
         assert compiled.voltage_polarity == (-1.0 if reverse else 1.0)
         result = solve_steady_state(compiled)
+        assert result.density_basin_initializations == 5
+        assert all(point.accepted for point in result.preparation)
         assert np.min(-compiled.voltage_polarity * result.current_density_A_m2) > 0.0
         assert np.ptp(result.current_density_A_m2) < 1e-8
         assert result.state.potential_V[0] == pytest.approx(gauge, abs=1e-13)
@@ -245,7 +258,10 @@ def test_production_finite_and_blocking_contact_channels(prepared, contact_kind)
     equilibrium = solve_equilibrium(compiled)
     result = solve_steady_state(compiled)
     assert equilibrium.converged and result.converged
-    assert result.density_basin_initializations == 1
+    assert result.density_basin_initializations == 5
+    assert result.density_basin_stages == tuple(
+        (0.0, value) for value in (1e-8, 1e-6, 1e-4, 1e-2, 1.0)
+    )
     assert np.ptp(np.r_[result.current_density_A_m2, result.contact_current_density_A_m2]) < 1e-8
     assert all(gate.passed for gate in result.physical_gates)
     rng = np.random.default_rng(44)
@@ -262,6 +278,42 @@ def test_production_finite_and_blocking_contact_channels(prepared, contact_kind)
     if contact_kind == "selective":
         assert compiled.channel("n", "left").kind == "blocking"
         assert compiled.channel("p", "right").kind == "blocking"
+
+
+def test_failed_light_stage_preserves_failure_and_never_advances(prepared, light, monkeypatch):
+    document = prepared.to_input().editing_data()
+    document["settings"]["flat_band_contacts"] = True
+    compiled = compile_device_1d(edited(prepared, document))
+    failed = replace(
+        light.newton, state=np.full(light.state.u.shape, np.nan), accepted=False,
+        termination=Termination.LINE_SEARCH_FAILED, message="injected failed light stage",
+    )
+    original_point = steady_solver._solve_point
+    original_seed = steady_solver._density_basin_seed
+    seed_inputs = []
+    accepted = []
+
+    def record_seed(problem, u):
+        seed_inputs.append((problem.generation_scale, np.array(u, copy=True)))
+        return original_seed(problem, u)
+
+    def stop_second_light(device, u, voltage_V, generation_scale, options, **kwargs):
+        if generation_scale == 1e-6:
+            raise SteadyStateError("injected second light stage", failed)
+        problem, result = original_point(device, u, voltage_V, generation_scale, options, **kwargs)
+        accepted.append(result)
+        return problem, result
+
+    monkeypatch.setattr(steady_solver, "_density_basin_seed", record_seed)
+    monkeypatch.setattr(steady_solver, "_solve_point", stop_second_light)
+    with pytest.raises(SteadyStateError) as failure:
+        solve_steady_state(compiled)
+    assert failure.value.result is failed
+    assert not failed.accepted
+    assert [generation for generation, _ in seed_inputs] == [1e-8, 1e-6]
+    assert all(point.accepted for point in accepted)
+    np.testing.assert_array_equal(seed_inputs[-1][1], accepted[-1].state)
+    assert all(np.all(np.isfinite(u)) for _, u in seed_inputs)
 
 
 def test_local_model_injection_has_independent_partials_and_real_solution(prepared, device, light):
