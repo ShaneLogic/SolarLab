@@ -50,8 +50,9 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 **New-core development on `devel`:** the [1D research workflow](examples/research_1d/README.md)
 runs configuration, a real Poisson/drift-diffusion assembly, the new steady
 Newton solver, J–V, parameter sweeps and lossless result reading. It includes
-an executable local recombination-model extension. This verified execution
-slice supports ion-free classical DC; mesh/voltage-grid scientific acceptance
+an executable local recombination-model extension, direct solved Voc brackets,
+and bounded steady J–V jobs through the shared process supervisor. This verified
+execution slice supports ion-free classical DC; mesh/voltage-grid scientific acceptance
 and the remaining refactor are in progress. The broader application features
 described below include the existing `perovskite_sim` engine and do not imply
 that those capabilities have migrated to the new core.

@@ -25,7 +25,11 @@ uv sync --frozen --extra dev --python 3.13
 
 The delivery's existing environment is CPython **3.13.15**, NumPy **2.5.3**,
 SciPy **1.18.1**, Pydantic **2.13.5**, and threadpoolctl **3.6.0**. The commands
-below use that existing `.venv`; a fresh uv synchronization was not claimed.
+below use that existing `.venv`. An independent fresh, offline wheel installation
+of commit `d735482` ran the steady, sweep, reader and model-extension examples
+outside checkout imports. Later source commit `67aabde` passed the enabled CI
+jobs on Linux with CPython 3.11.16 and 3.13.15; those checks are separate from
+the earlier installed artifact.
 Each run saves the actual Python executable digest, installed dependency
 versions, loaded numerical-library digests, thread settings, source-file
 digests and lock/configuration digests. Uncommitted source bytes are included;
@@ -154,6 +158,35 @@ only. It does not certify mesh error, FF, PCE or an exactly zero numerical
 current. Failed refinement attempts and accepted endpoints remain available
 in the result or error. The API requires a unique actual current bracket and
 retains the curve's solver controls.
+
+## Explicit solver controls and process execution
+
+`SteadyOptions()` retains the historical `historical_max_row_v1` stopping
+policy. An independently reviewed internal alternative is explicit:
+
+```python
+from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
+
+options = SteadyOptions(convergence_policy="poisson_contact_balance_v1")
+curve = run_steady_jv(compiled, voltages, options=options)
+```
+
+The alternative keeps every Poisson and fixed-contact limit and applies one
+joint absolute carrier-balance budget. It preserves the residual weights,
+Newton merit, work budgets and independent physical gates. Saved results name
+the selected policy, and direct Voc checks that policy and recomputes the
+physical gates. This internal stopping rule does not qualify mesh accuracy or
+change final Jsc, Voc, FF, PCE or hysteresis acceptance targets.
+
+The actual process worker is available in `solarlab.experiments.jv.worker`
+through `SteadyJVProtocol`, `prepare_steady_jv_job`,
+`steady_jv_worker_binding` and `read_steady_jv_job`. It requires an explicit
+prepared device and committed implementation-source binding, then submits to
+the existing shared `ProcessSupervisor`. The supervisor owns the attempt,
+publishes the eight arrays and execution manifest, and commits one terminal
+outcome. Invalid requests and cancellation use the existing runtime controls;
+readback never starts a solver. The in-process sweep commands above retain
+their documented execution mode.
 
 ## Adding a local model
 
