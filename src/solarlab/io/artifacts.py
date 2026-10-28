@@ -175,29 +175,32 @@ All writers/recovery use the RunStore advisory lock. This is not a sandbox for
     objects_fd: int
     partial_fd: int
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, read_only: bool = False) -> None:
         if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
             raise NotImplementedError("this file publisher requires POSIX no-follow operations")
         if not root.is_absolute() or root.resolve() != root:
             raise ValueError("store root must be an explicit canonical absolute local path")
-        root.mkdir(mode=0o700, exist_ok=True)  # Never create parents outside the root.
+        if not read_only:
+            root.mkdir(mode=0o700, exist_ok=True)  # Never create parents outside the root.
         self.root = root
         self._fds: list[int] = []
         try:
             self.root_fd = self._open_dir(root)
             for name in ("objects", "partial"):
-                try:
-                    os.mkdir(name, mode=0o700, dir_fd=self.root_fd)
-                except FileExistsError:
-                    pass
+                if not read_only:
+                    try:
+                        os.mkdir(name, mode=0o700, dir_fd=self.root_fd)
+                    except FileExistsError:
+                        pass
                 setattr(self, name + "_fd", self._open_dir(name, self.root_fd))
             self.lock_fd = os.open(
-                ".writer.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
+                ".writer.lock", (os.O_RDONLY if read_only else os.O_CREAT | os.O_RDWR) | os.O_NOFOLLOW,
                 0o600, dir_fd=self.root_fd,
             )
             self._fds.append(self.lock_fd)
             self._regular(self.lock_fd, require_single_link=True)
-            os.fsync(self.root_fd)
+            if not read_only:
+                os.fsync(self.root_fd)
         except BaseException:
             self.close()
             raise

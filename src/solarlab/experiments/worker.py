@@ -9,7 +9,7 @@ is replaceable UI metadata. Required state history must be an artifact.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import importlib
 import importlib.util
@@ -35,11 +35,12 @@ if TYPE_CHECKING:
     )
 
 __all__ = ["WorkerRequest", "WorkerBinding", "ResourceLimits", "WorkerResult", "WorkerContext", "CooperativeStop",
-           "ManifestBinding", "observe_environment"]
+           "ManifestBinding", "RunSpec", "observe_environment"]
 
 PROGRESS_BYTES = 4096
 REQUEST_BYTES = 262144
 TERMINAL_BYTES = 262144
+RUN_SPEC_BYTES = REQUEST_BYTES + 8192
 
 
 def _name(value: str) -> str:
@@ -198,6 +199,85 @@ class ResourceLimits:
         for cap in (self.accepted_steps, self.calls):
             if cap is not None and (type(cap) is not int or not 0 <= cap < 2**63):
                 raise ValueError("counter cap must be a nonnegative int64 or explicitly unrequested")
+
+
+@dataclass(frozen=True, slots=True)
+class RunSpec:
+    """Serializable bounded invocation of an already trusted worker.
+
+    A restored declaration is data, not a loader for trusted Python objects.
+    Submission requires the independently reconstructed W11 ManifestBinding.
+    The initial-state reference retains its producer's meaning: a legacy seed
+    recipe is not promoted to a supplied or qualified working point.
+    """
+
+    worker_id: str
+    request: WorkerRequest
+    limits: ResourceLimits
+    manifest_sha256: str
+    initial_state_id: str
+    initial_state_sha256: str
+
+    def __post_init__(self) -> None:
+        _name(self.worker_id)
+        if type(self.request) is not WorkerRequest or type(self.limits) is not ResourceLimits:
+            raise ValueError("RunSpec requires immutable request documents and explicit budgets")
+        _sha(self.manifest_sha256)
+        _sha(self.initial_state_sha256)
+        if type(self.initial_state_id) is not str or not self.initial_state_id.strip() or len(self.initial_state_id) > 4096:
+            raise ValueError("the actual initial-state source identity is required")
+        if len(self.to_bytes()) > RUN_SPEC_BYTES:
+            raise ValueError("RunSpec exceeds the bounded declaration transport")
+
+    @classmethod
+    def from_binding(cls, worker_id: str, request: WorkerRequest, limits: ResourceLimits,
+                     execution: ManifestBinding) -> RunSpec:
+        if type(execution) is not ManifestBinding:
+            raise ValueError("RunSpec requires an independently prepared execution manifest")
+        initial = execution.execution.initial_state
+        result = cls(worker_id, request, limits, execution.expected_sha256, initial.id, initial.sha256)
+        result.validate(execution)
+        return result
+
+    def validate(self, execution: ManifestBinding) -> None:
+        if type(execution) is not ManifestBinding:
+            raise ValueError("restored RunSpec requires an independently prepared manifest binding")
+        execution.validate_request(self.request)
+        initial = execution.execution.initial_state
+        if (self.manifest_sha256 != execution.expected_sha256
+                or self.initial_state_id != initial.id or self.initial_state_sha256 != initial.sha256):
+            raise ValueError("RunSpec manifest or initial-state source differs from the actual binding")
+
+    def to_document(self) -> dict[str, Any]:
+        return {"schema": "solarlab.run-spec.v1", "worker_id": self.worker_id,
+                "request": self.request.to_document(), "limits": asdict(self.limits),
+                "manifest_sha256": self.manifest_sha256,
+                "initial_state": {"id": self.initial_state_id, "sha256": self.initial_state_sha256}}
+
+    def to_bytes(self) -> bytes:
+        return _object(self.to_document()).encode()
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> RunSpec:
+        if type(raw) is not bytes or len(raw) > RUN_SPEC_BYTES:
+            raise ValueError("invalid bounded RunSpec transport")
+        value = _parse_document(raw.decode())
+        if type(value) is not dict or set(value) != {
+            "schema", "worker_id", "request", "limits", "manifest_sha256", "initial_state",
+        } or value["schema"] != "solarlab.run-spec.v1":
+            raise ValueError("unknown RunSpec fields or schema")
+        if type(value["initial_state"]) is not dict or set(value["initial_state"]) != {"id", "sha256"}:
+            raise ValueError("incomplete RunSpec initial-state reference")
+        if type(value["limits"]) is not dict or set(value["limits"]) != {
+            "wall_seconds", "rss_bytes", "output_bytes", "accepted_steps", "calls",
+        }:
+            raise ValueError("incomplete RunSpec budgets")
+        result = cls(value["worker_id"], WorkerRequest.from_bytes(_object(value["request"]).encode()),
+                     ResourceLimits(**value["limits"]), value["manifest_sha256"],
+                     value["initial_state"]["id"], value["initial_state"]["sha256"])
+        if result.to_bytes() != raw:
+            raise ValueError("RunSpec differs from its canonical content")
+        return result
 
 
 @dataclass(frozen=True, slots=True)

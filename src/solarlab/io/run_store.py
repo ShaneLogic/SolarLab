@@ -8,8 +8,9 @@ decision, and queued attempts remain queued. A retry creates a new attempt;
 each attempt has exactly one terminal event. A run reflects its current attempt.
 
 H_input/H_physics/H_execution are opaque upstream strings, not identities
-computed or scientifically validated here. This component remains
-prepared_pending_dependencies for P03-05/P05-01 and runtime integration.
+computed or scientifically validated here. Read-only handles never migrate or
+recover data. Completed bundles preserve prior results without upgrading their
+scientific labels; executor and schema admission remain upstream decisions.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from solarlab.io.artifacts import (
     ArtifactIntegrityError, ArtifactPayload, _ArtifactFiles, _json_document,
     _load_npy, _parse_document,
 )
+from solarlab.io.storage import require_local_storage
 
 __all__ = ["RunStore", "AttemptToken", "StateConflict", "StaleAttempt"]
 
@@ -139,33 +141,50 @@ No process is launched/killed, no environment is inferred, and no recovery is
 implicit. POSIX local filesystems supporting SQLite WAL, fsync and hard links
 are required. Keep the root private to cooperating store users. File/DB
 atomicity and hostile replacement of the root are not promised.
+
+``read_only`` opens a query-only live reader. ``immutable`` additionally
+requires a closed checkpointed database without WAL/journal and creates no
+sidecars; its owner must keep that historical database closed to future writers.
 """
 
-    def __init__(self, root: str | Path, *, timeout: float = 5.0) -> None:
+    def __init__(self, root: str | Path, *, timeout: float = 5.0,
+                 read_only: bool = False, immutable: bool = False) -> None:
         if type(timeout) not in {int, float} or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         import fcntl
 
+        if type(read_only) is not bool or type(immutable) is not bool or immutable and not read_only:
+            raise ValueError("immutable requires explicit read_only mode")
+        if not immutable:
+            require_local_storage(Path(root))
+        self.read_only = read_only
+        self.immutable = immutable
         self._fcntl = fcntl
         self._timeout = timeout
         self._mutex = threading.Lock()
         self._closed = False
-        self._files = _ArtifactFiles(Path(root))
+        self._files = _ArtifactFiles(Path(root), read_only=read_only)
         self.root = self._files.root
         self.database_path = self.root / "store.sqlite3"
         self._db: sqlite3.Connection
         try:
             with self._guard():
                 self._files.check_database_files()
-                try:
-                    fd = os.open("store.sqlite3", os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
-                                 0o600, dir_fd=self._files.root_fd)
-                except FileExistsError:
-                    pass
+                if immutable and any((self.root / name).exists() for name in ("store.sqlite3-wal", "store.sqlite3-journal")):
+                    raise StateConflict("immutable old results require a closed checkpointed database without WAL/journal")
+                if read_only:
+                    uri = self.database_path.as_uri() + "?mode=ro" + ("&immutable=1" if immutable else "")
+                    self._db = sqlite3.connect(uri, uri=True, timeout=timeout, isolation_level=None, check_same_thread=False)
                 else:
-                    os.close(fd)
-                self._db = sqlite3.connect(self.database_path, timeout=timeout,
-                                           isolation_level=None, check_same_thread=False)
+                    try:
+                        fd = os.open("store.sqlite3", os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                                     0o600, dir_fd=self._files.root_fd)
+                    except FileExistsError:
+                        pass
+                    else:
+                        os.close(fd)
+                    self._db = sqlite3.connect(self.database_path, timeout=timeout,
+                                               isolation_level=None, check_same_thread=False)
                 self._db.row_factory = sqlite3.Row
                 self._initialize()
         except BaseException:
@@ -186,7 +205,8 @@ atomicity and hostile replacement of the root are not promised.
             deadline = time.monotonic() + self._timeout
             while True:
                 try:
-                    self._fcntl.flock(self._files.lock_fd, self._fcntl.LOCK_EX | self._fcntl.LOCK_NB)
+                    kind = self._fcntl.LOCK_SH if self.read_only else self._fcntl.LOCK_EX
+                    self._fcntl.flock(self._files.lock_fd, kind | self._fcntl.LOCK_NB)
                     locked = True
                     break
                 except BlockingIOError:
@@ -202,6 +222,8 @@ atomicity and hostile replacement of the root are not promised.
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
+        if self.read_only:
+            raise StateConflict("read-only RunStore cannot change historical records")
         self._db.execute("BEGIN IMMEDIATE")
         try:
             yield
@@ -218,6 +240,12 @@ atomicity and hostile replacement of the root are not promised.
         fresh = application == 0 and version == 0 and not tables
         if not fresh and (application != _APPLICATION_ID or version != _SCHEMA_VERSION):
             raise StateConflict("unknown database/schema; no destructive or implicit migration")
+        if self.read_only:
+            if fresh:
+                raise StateConflict("read-only RunStore requires an existing schema")
+            self._db.execute("PRAGMA query_only=ON")
+            self.store_id = _identifier(self._db.execute("SELECT store_id FROM store_meta WHERE singleton=1").fetchone()[0])
+            return
         self._db.execute("PRAGMA foreign_keys=ON")
         mode = self._db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
         if mode != "wal":
@@ -524,6 +552,8 @@ atomicity and hostile replacement of the root are not promised.
         The caller decides to invalidate old ownership. This method observes no
         OS process and does not authorize releasing a native execution slot.
         """
+        if self.read_only:
+            raise StateConflict("read-only RunStore cannot recover attempts")
         with self._guard():
             runs = [dict(row) for row in self._db.execute("SELECT * FROM runs ORDER BY run_id")]
             interrupted, queued = [], []
@@ -565,6 +595,8 @@ atomicity and hostile replacement of the root are not promised.
         """
         if type(cleanup) is not bool:
             raise ValueError("cleanup must be explicit boolean")
+        if cleanup and self.read_only:
+            raise StateConflict("read-only RunStore cannot collect artifacts")
         with self._guard():
             rows = self._db.execute("SELECT artifact_id FROM artifacts ORDER BY artifact_id").fetchall()
             issues, removed, retained = [], [], []
@@ -617,3 +649,13 @@ atomicity and hostile replacement of the root are not promised.
                 """SELECT p.*,r.state,r.current_attempt_id FROM sweep_points p
                    JOIN runs r ON r.run_id=p.run_id WHERE sweep_id=? ORDER BY point_id""",
                 (_identifier(sweep_id),))]
+
+    def archive_run(self, run_id: str, destination: str | Path, *, max_bytes: int = 256 * 1024**2) -> dict[str, Any]:
+        """Publish a completed immutable bundle, never an active DB or WAL.
+
+        The snapshot is prepared on local store disk. Publication does not
+        overwrite a target and is idempotent by bytes; old attempts survive.
+        """
+        from solarlab.io.run_bundle import archive_run
+
+        return archive_run(self, run_id, Path(destination), max_bytes=max_bytes)

@@ -29,11 +29,15 @@ import uuid
 from solarlab.io.artifacts import ArtifactPayload, _parse_document
 from solarlab.io.run_store import AttemptToken, RunStore, StateConflict
 from solarlab.experiments.worker import (
-    PROGRESS_BYTES, TERMINAL_BYTES, ManifestBinding, ResourceLimits, WorkerBinding, WorkerRequest,
+    PROGRESS_BYTES, TERMINAL_BYTES, ManifestBinding, ResourceLimits, RunSpec, WorkerBinding, WorkerRequest,
     _atomic_json, _child_main, _directory_bytes, _name, _object, _process_info, _regular_bytes, _sha,
 )
 
-__all__ = ["ProcessSupervisor", "JobHandle", "ExecutionReceipt", "QueueFull"]
+__all__ = ["ProcessSupervisor", "JobHandle", "ExecutionReceipt", "QueueFull", "ScanPoint", "ScanSpec", "ScanRunner"]
+
+SCAN_BYTES = 1024**2  # Match the shared strict metadata codec's 1 MiB bound.
+MAX_SCAN_POINTS = 1024
+_TERMINAL = {"succeeded", "failed", "cancelled"}
 
 
 class QueueFull(RuntimeError):
@@ -54,6 +58,72 @@ class ExecutionReceipt:
     @property
     def data(self) -> dict[str, Any]:
         return _parse_document(self.document_json)
+
+
+@dataclass(frozen=True, slots=True)
+class ScanPoint:
+    point_id: str
+    run_id: str
+    coordinates_json: str
+    spec: RunSpec
+
+    def __post_init__(self) -> None:
+        _name(self.point_id)
+        _name(self.run_id)
+        if type(self.spec) is not RunSpec:
+            raise ValueError("a scan point requires an explicit RunSpec")
+        if type(self.coordinates_json) is not str or len(self.coordinates_json.encode()) > 16384:
+            raise ValueError("scan coordinates require a bounded JSON object")
+        object.__setattr__(self, "coordinates_json", _object(_parse_document(self.coordinates_json)))
+
+    def to_document(self) -> dict[str, Any]:
+        return {"point_id": self.point_id, "run_id": self.run_id,
+                "coordinates": _parse_document(self.coordinates_json), "spec": self.spec.to_document()}
+
+
+@dataclass(frozen=True, slots=True)
+class ScanSpec:
+    """An ordered declaration of at most 1 MiB; unsubmitted points use no slots."""
+
+    scan_id: str
+    points: tuple[ScanPoint, ...]
+
+    def __post_init__(self) -> None:
+        _name(self.scan_id)
+        points = tuple(self.points)
+        if not 1 <= len(points) <= MAX_SCAN_POINTS or any(type(p) is not ScanPoint for p in points):
+            raise ValueError("a scan requires between 1 and 1024 explicit point declarations")
+        if len({p.point_id for p in points}) != len(points) or len({p.run_id for p in points}) != len(points):
+            raise ValueError("scan point and run IDs must be unique within the declaration")
+        object.__setattr__(self, "points", points)
+        if sum(len(p.spec.to_bytes()) + len(p.coordinates_json.encode()) for p in points) > SCAN_BYTES:
+            raise ValueError("scan declaration exceeds 1 MiB; it was not truncated")
+        if len(self.to_bytes()) > SCAN_BYTES:
+            raise ValueError("scan declaration exceeds 1 MiB; it was not truncated")
+
+    def to_bytes(self) -> bytes:
+        return _object({"schema": "solarlab.scan-spec.v1", "scan_id": self.scan_id,
+                        "points": [p.to_document() for p in self.points]}).encode()
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> ScanSpec:
+        if type(raw) is not bytes or len(raw) > SCAN_BYTES:
+            raise ValueError("invalid bounded scan transport")
+        value = _parse_document(raw.decode())
+        if (type(value) is not dict or set(value) != {"schema", "scan_id", "points"}
+                or value["schema"] != "solarlab.scan-spec.v1" or type(value["points"]) is not list
+                or not 1 <= len(value["points"]) <= MAX_SCAN_POINTS):
+            raise ValueError("unknown or incomplete scan declaration")
+        points = []
+        for point in value["points"]:
+            if type(point) is not dict or set(point) != {"point_id", "run_id", "coordinates", "spec"}:
+                raise ValueError("invalid scan point fields")
+            points.append(ScanPoint(point["point_id"], point["run_id"], _object(point["coordinates"]),
+                                    RunSpec.from_bytes(_object(point["spec"]).encode())))
+        result = cls(value["scan_id"], tuple(points))
+        if result.to_bytes() != raw:
+            raise ValueError("scan differs from its canonical declaration")
+        return result
 
 
 @dataclass
@@ -109,6 +179,8 @@ class ProcessSupervisor:
         soft_grace_seconds: float = 0.2, terminate_grace_seconds: float = 0.2,
         poll_seconds: float = 0.025,
     ) -> None:
+        if multiprocessing.current_process().daemon:
+            raise ValueError("workers cannot create nested supervisors or scans")
         if not isinstance(store, RunStore) or not workers or any(type(w) is not WorkerBinding for w in workers):
             raise ValueError("a real store and explicit trusted worker allowlist are required")
         if len({w.id for w in workers}) != len(workers):
@@ -146,6 +218,7 @@ class ProcessSupervisor:
         self._done: dict[str, ExecutionReceipt] = {}
         self._recovery: dict[str, dict[str, Any]] = {}
         self._unknown_history: set[str] = set()
+        self._scans: dict[str, ScanRunner] = {}
         self._closing = False
         self._closed = False
         self._fatal: BaseException | None = None
@@ -208,8 +281,8 @@ class ProcessSupervisor:
         if self._closing or self._closed:
             raise RuntimeError("supervisor is closing or closed")
 
-    def submit(self, run_id: str, worker_id: str, request: WorkerRequest, limits: ResourceLimits, *,
-               execution: ManifestBinding | None = None) -> JobHandle:
+    def _submission(self, worker_id: str, request: WorkerRequest, limits: ResourceLimits,
+                    execution: ManifestBinding | None) -> tuple[dict[str, Any], dict[str, Any]]:
         if type(request) is not WorkerRequest or type(limits) is not ResourceLimits:
             raise ValueError("explicit immutable request documents and resource limits are required")
         if worker_id not in self._workers:
@@ -228,6 +301,12 @@ class ProcessSupervisor:
                 raise ValueError("output allowance cannot retain the complete execution manifest")
             metadata["execution_manifest"] = execution.summary()
         identity = {key: document[key] for key in ("H_input", "H_physics", "H_execution")}
+        return identity, metadata
+
+    def submit(self, run_id: str, worker_id: str, request: WorkerRequest, limits: ResourceLimits, *,
+               execution: ManifestBinding | None = None) -> JobHandle:
+        identity, metadata = self._submission(worker_id, request, limits, execution)
+        binding = self._workers[worker_id]
         with self._condition:
             self._check_open()
             try:
@@ -251,6 +330,25 @@ class ProcessSupervisor:
             self._pending.append(job)
             self._condition.notify_all()
             return handle
+
+    def scan(self, spec: ScanSpec, *, executions: tuple[ManifestBinding, ...], max_in_flight: int) -> ScanRunner:
+        """Parent-side coordination using this exact server/sweep resource owner.
+
+        No coordinator process or second pool is created. The caller drives
+        ``advance`` or bounded ``wait``; only admitted points occupy capacity.
+        """
+        with self._condition:
+            self._check_open()
+            if type(spec) is not ScanSpec:
+                raise ValueError("an explicit immutable scan declaration is required")
+            previous = self._scans.get(spec.scan_id)
+            if previous is not None:
+                if previous.spec != spec or previous.executions != tuple(executions) or previous.max_in_flight != max_in_flight:
+                    raise StateConflict("scan coordinator already exists with different inputs or capacity")
+                return previous
+            runner = ScanRunner(self, spec, tuple(executions), max_in_flight=max_in_flight)
+            self._scans[spec.scan_id] = runner
+            return runner
 
     def cancel(self, handle: JobHandle, *, reason: str = "cancel_requested") -> bool:
         if type(reason) is not str or not reason.strip():
@@ -811,3 +909,296 @@ class ProcessSupervisor:
 
     def __exit__(self, *error: Any) -> None:
         self.close()
+
+
+class ScanRunner:
+    """Bounded parent coordination, persisted declarations and explicit retries.
+
+    RunStore remains the sole attempt/terminal authority. A scan's status is a
+    derived view of those rows, never a second mutable terminal. Every point
+    starts a fresh worker with its own manifest; state and numerical bindings
+    are not carried from a preceding point. Scientific qualification belongs
+    to the worker's retained result and is never inferred from process success.
+    """
+
+    def __init__(self, supervisor: ProcessSupervisor, spec: ScanSpec, executions: tuple[ManifestBinding, ...], *,
+                 max_in_flight: int) -> None:
+        if multiprocessing.current_process().daemon:
+            raise ValueError("workers cannot create nested supervisors or scans")
+        if type(supervisor) is not ProcessSupervisor or type(spec) is not ScanSpec:
+            raise ValueError("scans must share an existing ProcessSupervisor")
+        if type(max_in_flight) is not int or not 1 <= max_in_flight <= supervisor.max_active + supervisor.max_pending:
+            raise ValueError("scan in-flight bound must fit the shared finite capacity")
+        if len(executions) != len(spec.points):
+            raise ValueError("every point requires its independently prepared manifest binding")
+        self.supervisor, self.spec, self.executions = supervisor, spec, tuple(executions)
+        self.max_in_flight = max_in_flight
+        self._submitted: set[str] = set()
+        self._reused: set[str] = set()
+        self._metadata = []
+        self._path = supervisor.work_root / ("scan-" + supervisor.store.store_id + "-" + spec.scan_id + ".json")
+        self._cancel_path = self._path.with_suffix(".cancel.json")
+        self._sha256 = hashlib.sha256(spec.to_bytes()).hexdigest()
+        with supervisor._condition:
+            supervisor._check_open()
+            # Check the whole declaration before persisting or starting any point.
+            for point, binding in zip(spec.points, self.executions):
+                point.spec.validate(binding)
+                self._metadata.append(supervisor._submission(point.spec.worker_id, point.spec.request, point.spec.limits, binding))
+            for index in range(len(spec.points)):
+                self._existing(index)
+            known = {p["point_id"]: p for p in supervisor.store.sweep_points(spec.scan_id)}
+            if set(known) - {p.point_id for p in spec.points}:
+                raise StateConflict("stored scan has points outside this declaration")
+            for point in spec.points:
+                previous = known.get(point.point_id)
+                if previous is not None and (previous["run_id"] != point.run_id
+                        or previous["opaque_execution_identity"] != point.spec.request.execution_identity.sha256
+                        or _object(previous["coordinates"]) != point.coordinates_json):
+                    raise StateConflict("stored scan association differs from this declaration")
+            self._persist(self._path, _parse_document(spec.to_bytes().decode()))
+            self._cancel_reason()  # Refuse malformed cancellation intent before scheduling.
+
+    @property
+    def declaration_path(self) -> Path:
+        return self._path
+
+    def _persist(self, path: Path, value: dict[str, Any]) -> None:
+        raw = _object(value).encode()
+        if path.exists() or path.is_symlink():
+            if _regular_bytes(path, SCAN_BYTES) != raw:
+                raise StateConflict("scan declaration or cancellation intent already has different content")
+            return
+        guard = self.supervisor._output_guard(len(raw), 65536)
+        if guard["would_exceed"]:
+            raise ValueError("shared output capacity cannot retain scan metadata")
+        _atomic_json(path, value)
+
+    def _cancel_reason(self) -> str | None:
+        if not self._cancel_path.exists() and not self._cancel_path.is_symlink():
+            return None
+        value = self.supervisor._read_json(self._cancel_path)
+        if (set(value) != {"schema", "scan_sha256", "reason"} or value["schema"] != "solarlab.scan-cancel.v1"
+                or value["scan_sha256"] != self._sha256 or type(value["reason"]) is not str or not value["reason"].strip()):
+            raise ValueError("invalid persisted scan cancellation intent")
+        return value["reason"]
+
+    def _existing(self, index: int) -> dict[str, Any] | None:
+        point = self.spec.points[index]
+        try:
+            row = self.supervisor.store.get_run(point.run_id)
+        except KeyError:
+            return None
+        identity, metadata = self._metadata[index]
+        expected = {"identity_kind": "opaque_upstream", "identity": identity, "input_metadata": metadata}
+        if _object(row["request"]) != _object(expected):
+            raise StateConflict("scan point differs from the complete stored execution request, manifest, worker or budgets")
+        return row
+
+    def _owned(self, run_id: str) -> bool:
+        pool = self.supervisor
+        return (any(job.handle.run_id == run_id for job in pool._active.values())
+                or any(item["launch"]["token"]["run_id"] == run_id for item in pool._recovery.values()))
+
+    def _bind(self, point: ScanPoint) -> None:
+        self.supervisor.store.bind_sweep_point(self.spec.scan_id, point.point_id, run_id=point.run_id,
+                                               coordinates=_parse_document(point.coordinates_json))
+
+    def _verify_success(self, index: int, row: dict[str, Any]) -> None:
+        """Reuse requires actual committed artifacts and a joined local receipt."""
+        point, binding = self.spec.points[index], self.executions[index]
+        pool = self.supervisor
+        receipt = pool._done.get(row["current_attempt_id"])
+        attempt = pool.store.attempts(point.run_id)[-1]
+        if receipt is None:
+            raise StateConflict("completed point has no retained owned-process receipt")
+        evidence = receipt.data
+        token = {"store_id": pool.store.store_id, "run_id": point.run_id,
+                 "attempt_id": attempt["attempt_id"], "owner_id": attempt["owner_id"], "generation": attempt["generation"]}
+        # Restart retains a post-write overrun separately from the earlier audit.
+        # Its presence fences reuse even when that earlier audit still says False.
+        if (evidence.get("token") != token or evidence.get("store_state") != "succeeded"
+                or evidence.get("terminal_committed") is not True or evidence.get("process_exit_observed") is not True
+                or evidence.get("process_joined") is not True or evidence.get("exitcode") != 0
+                or evidence.get("finalization", {}).get("finalization_overrun") is True
+                or "finalization_overrun" in evidence):
+            raise StateConflict("completed point lacks a successful closed resource receipt")
+        audit = evidence.get("finalization", {})
+        resources = evidence.get("resources", {})
+        if audit.get("token") != token or audit.get("finalization_overrun") is not False:
+            raise StateConflict("completed point lacks its complete final resource audit")
+        for name, value, limit in (
+            ("wall_seconds", audit.get("owned_wall_after_audit_seconds"), point.spec.limits.wall_seconds),
+            ("rss_bytes", resources.get("child_peak_rss_bytes"), point.spec.limits.rss_bytes),
+            ("output_bytes", resources.get("output_bytes"), point.spec.limits.output_bytes),
+            ("accepted_steps", resources.get("accepted_steps"), point.spec.limits.accepted_steps),
+            ("calls", resources.get("calls"), point.spec.limits.calls),
+        ):
+            if limit is not None and (type(value) not in {int, float} or not math.isfinite(value) or not 0 <= value <= limit):
+                raise StateConflict("completed point lacks an in-budget measurement: " + name)
+        result = attempt["result"]
+        if (result["process"]["token"] != token or result["process"]["process_joined"] is not True
+                or result["process"]["process_exit_observed"] is not True or result["process"]["exitcode"] != 0
+                or _object(result["worker_result"]) != _object(evidence["worker_result"])):
+            raise StateConflict("completed point result differs from its owned receipt")
+        references = attempt["terminal"]["artifacts"]
+        if [item["artifact_id"] for item in references] != evidence.get("terminal_artifacts"):
+            raise StateConflict("completed point terminal differs from its owned receipt")
+        manifest_count = 0
+        for item in references:
+            record = pool.store.artifact(item["artifact_id"])
+            content = pool.store.read_artifact(item["artifact_id"])
+            if (record["run_id"] != point.run_id or record["attempt_id"] != attempt["attempt_id"]
+                    or record["generation"] != attempt["generation"] or record["manifest_sha256"] != item["manifest_sha256"]):
+                raise StateConflict("completed artifact belongs to another attempt or generation")
+            if record["name"] == "execution_manifest":
+                if content != binding.manifest.canonical_json:
+                    raise StateConflict("completed point has a different complete execution manifest")
+                manifest_count += 1
+        if manifest_count != 1:
+            raise StateConflict("completed point requires exactly one verified execution manifest artifact")
+
+    def advance(self) -> dict[str, Any]:
+        """Admit only available points, or finish an explicit durable cancellation."""
+        pool = self.supervisor
+        with pool._condition:
+            pool._check_open()
+            reason = self._cancel_reason()
+            in_flight = sum(job.handle.run_id in {p.run_id for p in self.spec.points}
+                            for job in (*pool._active.values(), *pool._pending))
+            for index, point in enumerate(self.spec.points):
+                row = self._existing(index)
+                if reason is not None:
+                    if row is None:
+                        identity, metadata = self._metadata[index]
+                        row = pool.store.enqueue(point.run_id, opaque_identity=identity, input_metadata=metadata)
+                    self._bind(point)
+                    if row["state"] not in _TERMINAL:
+                        handle = JobHandle(pool.store.store_id, point.run_id, row["current_attempt_id"])
+                        if handle.attempt_id in pool._known:
+                            pool.cancel(handle, reason=reason)
+                        else:
+                            # A declared/unstarted point needs no process slot.
+                            # Recovered running ownership is fenced, never signalled here.
+                            pool.store.cancel(point.run_id, expected_attempt_id=handle.attempt_id,
+                                              expected_generation=row["generation"], reason=reason)
+                    continue
+                if row is not None and row["state"] in _TERMINAL:
+                    self._bind(point)
+                    if row["state"] == "succeeded" and not self._owned(point.run_id):
+                        self._verify_success(index, row)
+                        if row["current_attempt_id"] not in self._submitted:
+                            self._reused.add(row["current_attempt_id"])
+                    continue
+                if row is not None and row["current_attempt_id"] in pool._known:
+                    continue
+                if row is not None and row["state"] == "running":
+                    raise StateConflict("interrupted point needs explicit owned-process reconciliation before resume")
+                if in_flight >= self.max_in_flight:
+                    continue
+                try:
+                    handle = pool.submit(point.run_id, point.spec.worker_id, point.spec.request,
+                                         point.spec.limits, execution=self.executions[index])
+                except QueueFull:
+                    break  # Server/other scans own the remaining shared capacity.
+                self._submitted.add(handle.attempt_id)
+                try:
+                    self._bind(point)
+                except (StateConflict, sqlite3.Error, OSError):
+                    # The monitor still shares this lock: revoke the queued
+                    # child before a failed association can reach execution.
+                    try:
+                        pool.cancel(handle, reason="scan_association_failed")
+                    finally:
+                        job = pool._known[handle.attempt_id]
+                        if job in pool._pending:
+                            pool._pending.remove(job)  # Retain the DB row if storage itself failed.
+                    raise
+                in_flight += 1
+            return self.snapshot()
+
+    def snapshot(self) -> dict[str, Any]:
+        """Detached aggregate view; original numerical and qualification fields survive."""
+        pool = self.supervisor
+        with pool._condition:
+            points = []
+            for index, point in enumerate(self.spec.points):
+                row = self._existing(index)
+                value: dict[str, Any] = {"point_id": point.point_id, "run_id": point.run_id,
+                    "coordinates": _parse_document(point.coordinates_json), "limits": asdict(point.spec.limits),
+                    "initial_state": {"id": point.spec.initial_state_id, "sha256": point.spec.initial_state_sha256},
+                    "manifest_sha256": point.spec.manifest_sha256, **self._metadata[index][0],
+                    "state": "declared", "reason": "waiting_for_capacity", "attempt_id": None,
+                    "reused": False, "closure_pending": False, "result": None, "attempts": []}
+                if row is not None:
+                    attempts = pool.store.attempts(point.run_id)
+                    attempt = attempts[-1]
+                    result = attempt["result"]
+                    reason = row["state"]
+                    if result is not None:
+                        reason = result.get("worker_result", result).get("reason", "completed" if row["state"] == "succeeded" else row["state"])
+                    value.update(state=row["state"], reason=reason, attempt_id=attempt["attempt_id"],
+                        generation=attempt["generation"], reused=attempt["attempt_id"] in self._reused,
+                        closure_pending=self._owned(point.run_id), result=result,
+                        attempts=[{"attempt_id": a["attempt_id"], "state": a["state"], "generation": a["generation"]} for a in attempts])
+                points.append(value)
+            complete = all(p["state"] in _TERMINAL and not p["closure_pending"] for p in points)
+            state = "succeeded" if all(p["state"] == "succeeded" for p in points) else "failed"
+            if self._cancel_reason() is not None:
+                state = "cancelled"
+            return {"schema": "solarlab.scan-status.v1", "scan_id": self.spec.scan_id, "scan_sha256": self._sha256,
+                    "state": state if complete else "running", "complete": complete, "points": points,
+                    "max_in_flight": self.max_in_flight, "coordinator_uses_process_slot": False,
+                    "scientific_qualification_inferred": False}
+
+    def wait(self, timeout: float) -> dict[str, Any]:
+        if type(timeout) not in {int, float} or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("scan wait requires a positive finite timeout")
+        pool = self.supervisor
+        deadline = time.monotonic() + timeout
+        with pool._condition:
+            while True:
+                result = self.advance()
+                if result["complete"]:
+                    return result
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("scan remains resumable; caller wait timeout is not execution cancellation")
+                pool._condition.wait(min(remaining, pool._poll))
+
+    def cancel(self, *, reason: str) -> bool:
+        if type(reason) is not str or not reason.strip() or len(reason.encode()) > 4096:
+            raise ValueError("scan cancellation requires a bounded explicit reason")
+        pool = self.supervisor
+        with pool._condition:
+            pool._check_open()
+            if self.snapshot()["complete"]:
+                return False
+            self._persist(self._cancel_path, {"schema": "solarlab.scan-cancel.v1", "scan_sha256": self._sha256, "reason": reason})
+            self.advance()
+            return True
+
+    def retry(self, point_id: str, *, expected_attempt_id: str) -> JobHandle:
+        """Explicit one-point retry; old failures survive and no retry loop exists."""
+        pool = self.supervisor
+        with pool._condition:
+            pool._check_open()
+            if self._cancel_reason() is not None:
+                raise StateConflict("a cancelled scan stays cancelled; retry explicitly under a new scan declaration")
+            index = next((i for i, p in enumerate(self.spec.points) if p.point_id == point_id), None)
+            if index is None:
+                raise KeyError(point_id)
+            row = self._existing(index)
+            point = self.spec.points[index]
+            if row is None or row["current_attempt_id"] != expected_attempt_id or row["state"] not in {"failed", "cancelled"}:
+                raise StateConflict("retry requires the exact current failed/cancelled attempt")
+            if self._owned(point.run_id):
+                raise StateConflict("retry cannot precede the owned process's observed exit")
+            attempt = pool.store.attempts(point.run_id)[-1]
+            receipt = pool._done.get(expected_attempt_id)
+            closed = receipt is not None and receipt.data.get("process_exit_observed") is True
+            reconciled = (pool.work_root / (pool.store.store_id + "-" + expected_attempt_id) / "reconciled.json").exists()
+            if attempt["started_ns"] is not None and not closed and not reconciled:
+                raise StateConflict("retry requires positive previous process closure")
+            queued = pool.store.retry(point.run_id, expected_attempt_id=expected_attempt_id, expected_generation=row["generation"])
+            return JobHandle(pool.store.store_id, point.run_id, queued["current_attempt_id"])
