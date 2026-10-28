@@ -466,12 +466,30 @@ including the row replaced by the inventory constraint, and the electronic
 physical controls. The ion balance and face-flux controls are internal numerical
 limits; they do not establish scientific qualification.
 
-The compiler records the original ionic inputs and the explicit electronic
-component projection. Zero ion diffusivity retains population, background and
-storage in assembly; the connected-domain steady solver rejects zero or
-disconnected diffusivity. Multilayer, negative/dual-ion, shared-site and dynamic
-ion cases are outside this delivered slice. The result records
-`qualification: false`; final scientific acceptance remains open.
+A three-layer HTL/absorber/ETL example confines the mobile population to an
+explicitly declared absorber domain:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.ionic_steady --multilayer \
+  --output outputs/ionic_multilayer_steady.json
+```
+
+This case uses 37 electrical nodes and 13 ion nodes, including both absorber
+interface planes. The 124-coordinate cold solve at 2 mV converged in 12 Newton
+iterations with zero reported relative inventory error; it solves all four
+fields together. Ion charge and storage use physical domain cell volumes,
+projected onto the electrical grid. Interface weights come from the actual
+geometry. Ion flux is zero outside the declared domain and at its blocking
+endpoints.
+
+The compiler records original ionic inputs and the explicit electronic
+component projection. Multilayer callers must supply `ion_domain_layer` and
+`ion_domain_endpoints=("blocking", "blocking")`; undeclared additional ion domains
+are refused. Zero diffusivity retains population, background and storage in
+assembly; the connected-domain steady solver rejects zero or disconnected
+diffusivity. Negative/dual-ion, shared-site and dynamic ion cases remain outside
+this delivered slice. The result records `qualification: false`; final mesh,
+time and scientific acceptance remain open.
 
 ## Adding a local model
 
