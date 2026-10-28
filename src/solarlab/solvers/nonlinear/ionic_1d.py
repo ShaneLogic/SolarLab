@@ -1,7 +1,7 @@
-"""Inventory-constrained, jointly coupled finite-site ion research steady solve.
+"""Mobile inventory and per-cell immobile closure for coupled finite-site ions.
 
-One dependent balance per blocking species is replaced by the physical inventory
-declared in the compiled input. All original balances remain diagnostic and
+One balance per mobile species or every cell of an immobile species is closed
+by its declared physical inventory/profile. All original balances remain diagnostic and
 are checked independently. No density projection or electronic-only solve
 occurs here; every Newton system contains 3N electronic coordinates and M
 coordinates per species, with explicit mapping into the electrical grid.
@@ -22,6 +22,10 @@ from scipy.sparse import csc_matrix
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
+from solarlab.equations.ionic_closure import (
+    declared_immobile_profiles, immobile_profile_binding, ion_mobility_partition,
+    ionic_closure_residual, ionic_closure_jacobian,
+)
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, Matrix, ResidualScaling, SolveBudget, StepControl
 from solarlab.solvers.nonlinear.production import (
@@ -29,12 +33,12 @@ from solarlab.solvers.nonlinear.production import (
 )
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
 
-__all__ = ["ConstrainedIonic1DProblem", "IonicSteadyOptions", "IonicSteadyResult", "solve_ionic_steady_state"]
+__all__ = ["ConstrainedIonic1DProblem", "IonicSteadyOptions", "IonicSteadyResult", "solve_ionic_steady_state", "ionic_steady_control_record"]
 
 
 @dataclass(frozen=True)
 class ConstrainedIonic1DProblem:
-    """Original coupled rows plus one physical number-inventory row per species."""
+    """Original rows with mobile inventory or immobile per-cell physical closure."""
 
     original: Ionic1DProblem
     inventory_row_node: int
@@ -43,10 +47,7 @@ class ConstrainedIonic1DProblem:
         device = self.original.device
         if type(self.inventory_row_node) is not int or not 0 <= self.inventory_row_node < device.ion_node_count:
             raise ValueError("inventory_row_node must name an ion-domain node")
-        for species in device.ion_species_names:
-            if np.any(getattr(device, f"{species}_ion_diffusivity_faces_m2_s") <= 0.0):
-                raise CapabilityError(
-                    f"ionic steady solve requires one connected positive-D domain per species; {species} zero D is underdetermined")
+        ion_mobility_partition(device)
         manifest = device.binding_manifest
         domain = manifest.get("ion_domain")
         component_binding = manifest.get("electronic_component")
@@ -81,6 +82,16 @@ class ConstrainedIonic1DProblem:
         return 3 * self.original.device.node_count + self.inventory_row_node
 
     @property
+    def immobile_species(self) -> tuple[str, ...]:
+        return ion_mobility_partition(self.original.device)[1]
+
+    @property
+    def profile_constraint_rows(self) -> dict[str, tuple[int, ...]]:
+        return {species: tuple(range(block.start, block.stop))
+                for species, block in zip(self.original.device.ion_species_names, self.original.device.ion_species_slices)
+                if species in self.immobile_species}
+
+    @property
     def inventory_target_m2(self) -> float:
         return self.original.device.reference_inventory_m2
 
@@ -99,6 +110,8 @@ class ConstrainedIonic1DProblem:
         return targets
 
     def residual(self, y: np.ndarray) -> np.ndarray:
+        if self.immobile_species:
+            return ionic_closure_residual(self.original, y, self.inventory_row_node)
         result = self.original.residual(y)
         device = self.original.device
         _, _, _, populations = device.fields_by_species(y, voltage_V=self.original.voltage_V)
@@ -108,6 +121,8 @@ class ConstrainedIonic1DProblem:
         return result
 
     def jacobian(self, y: np.ndarray) -> csc_matrix:
+        if self.immobile_species:
+            return ionic_closure_jacobian(self.original, y, self.inventory_row_node)
         matrix = self.original.jacobian(y).tolil()
         device = self.original.device
         # The actual physical storage derivative supplies d(sum(W_P*P))/da.
@@ -176,6 +191,15 @@ class IonicSteadyResult:
     wall_s: float
     error: str | None = None
     qualification: bool = False
+
+
+def ionic_steady_control_record(device: CompiledIonicDevice1D, options: IonicSteadyOptions) -> dict[str, object]:
+    """Retain old positive-D controls; bind declared profiles only for zero D."""
+    recorded = asdict(options)
+    binding = immobile_profile_binding(device)
+    if binding is not None:
+        recorded["ion_closure"] = binding
+    return recorded
 
 
 def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str, object]:
@@ -283,6 +307,16 @@ def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str,
             "maximum_summed_site_fraction": float(np.max(occupied)),
             "minimum_vacancy_fraction": float(np.min(1.0 - occupied)),
         }
+    profiles = declared_immobile_profiles(device)
+    if profiles:
+        result["immobile_profiles"] = {"binding": immobile_profile_binding(device), "species": {
+            species: {"constraint_rows": problem.profile_constraint_rows[species],
+                      "target_density_m3": target,
+                      "actual_density_m3": populations[device.ion_species_names.index(species)],
+                      "cell_particle_error_m2": device.ion_geometry.cell_measures_m *
+                          (populations[device.ion_species_names.index(species)] - target),
+                      "relative_error": float(np.max(abs(populations[device.ion_species_names.index(species)] - target) / target))}
+            for species, target in profiles.items()}}
     return result
 
 
@@ -310,6 +344,13 @@ def _checks(diagnostics: dict[str, object], options: IonicSteadyOptions) -> tupl
             value, limit = float(cast(float, negative[name])), limits[name]
             outcomes.append(GateOutcome("negative_" + name, math.isfinite(value) and value <= limit,
                                         value, limit, "independent negative-species numerical control; qualification remains false"))
+    if "immobile_profiles" in diagnostics:
+        local = cast(dict[str, dict[str, object]], diagnostics["immobile_profiles"])
+        for species, values in cast(dict[str, dict[str, object]], local["species"]).items():
+            value = float(cast(float, values["relative_error"]))
+            limit = options.inventory_relative_tolerance
+            outcomes.append(GateOutcome(species + "_immobile_profile_relative_error", math.isfinite(value) and value <= limit,
+                                        value, limit, "declared physical target per cell; no average or profile projection"))
     return tuple(outcomes)
 
 
@@ -342,7 +383,7 @@ def solve_ionic_steady_state(
     if (initial.domain_inventories_m2 != checked.domain_inventories_m2
             or any(abs(checked.domain_inventories_m2[species] - target)
                    > options.inventory_relative_tolerance * target
-                   for species, target in problem.inventory_targets_m2.items())):
+                   for species, target in problem.inventory_targets_m2.items() if species not in problem.immobile_species)):
         raise ValueError("initial physical inventory must match the declared prepared-domain inventory")
     ion_count = device.ion_node_count
     electronic = options.electronic
@@ -353,6 +394,10 @@ def solve_ionic_steady_state(
     ).row_weights, np.full(ion_count * device.ion_species_count, 2 * ion_count / options.ion_balance_tolerance_m2_s)]
     for species, row in problem.constraint_rows.items():
         weights[row] = 1.0 / (options.inventory_relative_tolerance * problem.inventory_targets_m2[species])
+    for species, block in zip(device.ion_species_names, device.ion_species_slices):
+        if species in problem.immobile_species:
+            target = getattr(device, species + "_ion_reference_m3")
+            weights[block] = 1.0 / (options.inventory_relative_tolerance * device.ion_geometry.cell_measures_m * target)
     steps = np.r_[production_coordinates(device.electronic_component,
                                          potential_step_V=electronic.potential_step_V,
                                          quasi_fermi_step=electronic.quasi_fermi_step).max_step,
@@ -403,5 +448,5 @@ def solve_ionic_steady_state(
     candidate = np.array(last, copy=True)
     candidate.setflags(write=False)
     return IonicSteadyResult(state, accepted, termination, newton, initial, candidate, diagnostics, checks,
-                             asdict(options), device.identity, device.original_prepared_sha256,
+                             ionic_steady_control_record(device, options), device.identity, device.original_prepared_sha256,
                              device.binding_manifest, counts, time.monotonic() - started, error)

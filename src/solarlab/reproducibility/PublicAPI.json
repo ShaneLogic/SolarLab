@@ -372,7 +372,8 @@
       "ConstrainedIonic1DProblem",
       "IonicSteadyOptions",
       "IonicSteadyResult",
-      "solve_ionic_steady_state"
+      "solve_ionic_steady_state",
+      "ionic_steady_control_record"
     ],
     "solarlab.experiments.transient_results": [
       "CapturedTransientRun",
@@ -428,6 +429,33 @@
       "solve_ionic_impedance",
       "write_ionic_impedance_result",
       "read_ionic_impedance_result"
+    ],
+    "solarlab.equations.ionic_closure": [
+      "ion_mobility_partition",
+      "declared_immobile_profiles",
+      "immobile_profile_binding",
+      "ionic_closure_residual",
+      "ionic_closure_jacobian"
+    ],
+    "solarlab.experiments.jv.ionic_steady": [
+      "IonicSteadyJVOptions",
+      "IonicSteadyJVAttempt",
+      "IonicSteadyJVResult",
+      "run_ionic_steady_jv",
+      "write_ionic_steady_jv",
+      "read_ionic_steady_jv"
+    ],
+    "solarlab.experiments.ionic_transient_worker": [
+      "IonicTransientJob",
+      "prepare_ionic_transient_job",
+      "ionic_transient_worker_binding",
+      "run_ionic_transient_worker",
+      "read_ionic_transient_job"
+    ],
+    "solarlab.experiments.ionic_transient_results": [
+      "ionic_initial_document",
+      "ionic_transient_payload",
+      "validate_ionic_history"
     ]
   },
   "public_imports": {
@@ -870,7 +898,8 @@
       "ConstrainedIonic1DProblem",
       "IonicSteadyOptions",
       "IonicSteadyResult",
-      "solve_ionic_steady_state"
+      "solve_ionic_steady_state",
+      "ionic_steady_control_record"
     ],
     "solarlab.experiments.transient_results": [
       "CapturedTransientRun",
@@ -917,6 +946,33 @@
       "solve_ionic_impedance",
       "write_ionic_impedance_result",
       "read_ionic_impedance_result"
+    ],
+    "solarlab.equations.ionic_closure": [
+      "ion_mobility_partition",
+      "declared_immobile_profiles",
+      "immobile_profile_binding",
+      "ionic_closure_residual",
+      "ionic_closure_jacobian"
+    ],
+    "solarlab.experiments.jv.ionic_steady": [
+      "IonicSteadyJVOptions",
+      "IonicSteadyJVAttempt",
+      "IonicSteadyJVResult",
+      "run_ionic_steady_jv",
+      "write_ionic_steady_jv",
+      "read_ionic_steady_jv"
+    ],
+    "solarlab.experiments.ionic_transient_worker": [
+      "IonicTransientJob",
+      "prepare_ionic_transient_job",
+      "ionic_transient_worker_binding",
+      "run_ionic_transient_worker",
+      "read_ionic_transient_job"
+    ],
+    "solarlab.experiments.ionic_transient_results": [
+      "ionic_initial_document",
+      "ionic_transient_payload",
+      "validate_ionic_history"
     ]
   },
   "checked_consumers": [

@@ -20,9 +20,10 @@ import numpy as np
 
 from solarlab.contracts import frozen_array
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
+from solarlab.equations.ionic_closure import immobile_profile_binding
 from solarlab.experiments.transient import TransientOptions, TransientProtocol
 from solarlab.solvers.nonlinear.ionic_1d import (
-    ConstrainedIonic1DProblem, IonicSteadyOptions, _checks, _diagnostics,
+    ConstrainedIonic1DProblem, IonicSteadyOptions, _checks, _diagnostics, ionic_steady_control_record,
 )
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import (
@@ -86,7 +87,7 @@ def _admit_evidence(
                 or result["original_prepared_identity"] != compiled.original_prepared_sha256
                 or result["binding_manifest"] != compiled.binding_manifest):
             raise ValueError("initial artifact belongs to a different compiled device or source binding")
-        if result["solver_controls"] != asdict(controls):
+        if result["solver_controls"] != ionic_steady_control_record(compiled, controls):
             raise ValueError("initial steady controls differ from the recorded solve")
         voltage, generation = summary["voltage_V"], summary["generation_scale"]
         if (type(voltage) not in (int, float) or type(generation) not in (int, float)
@@ -347,6 +348,9 @@ time steps, and all dynamic ion continuity rows remain in residual and J.
     provenance = {"source_path": initial.source_path, "source_sha256": initial.source_sha256,
                   "state_sha256": state_digest(admitted.u), "generation_scale": generation0,
                   "steady_controls": asdict(initial.steady_controls), "admission_checks": initial_checks}
+    profile_binding = immobile_profile_binding(compiled)
+    if profile_binding is not None:
+        provenance["ion_closure"] = profile_binding
     recorded = asdict(options)
     recorded["stopping_norm"] = "max(electronic_balance_norm(scaled_BE[:3N]),sum(abs(scaled_BE[3N:]))/M)"
     if compiled.ion_species_count == 2:

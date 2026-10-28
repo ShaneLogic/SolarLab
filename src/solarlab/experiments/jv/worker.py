@@ -48,6 +48,7 @@ _THREADS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
 _PACKAGES = ("numpy", "scipy", "pydantic", "threadpoolctl")
 _ADAPTERS = ("solarlab/experiments/jv/worker.py", "solarlab/experiments/jv/steady.py",
              "solarlab/sweeps/steady_worker.py", "solarlab/experiments/transient_worker.py",
+             "solarlab/experiments/ionic_transient_worker.py", "solarlab/experiments/ionic_transient_results.py",
              "solarlab/experiments/worker.py", "solarlab/experiments/execution.py")
 
 

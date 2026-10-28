@@ -198,6 +198,9 @@ jobs:
           tests/integration/test_shared_site_ionic_solvers_1d.py
           tests/integration/test_ionic_small_signal_1d.py
           tests/integration/test_ionic_impedance_1d.py
+          tests/integration/test_immobile_ions_1d.py
+          tests/integration/test_ionic_steady_jv_1d.py
+          tests/runtime/test_ionic_transient_worker.py
           tests/unit/experiments/test_steady_jv_metrics.py
           tests/unit/experiments/test_operating_points.py
           tests/integration/test_core_1d.py

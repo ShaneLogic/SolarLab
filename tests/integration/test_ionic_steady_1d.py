@@ -15,7 +15,6 @@ from solarlab.config.resolve_device import resolve_device
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
 from solarlab.device.inputs import DeviceInput
-from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.physics.ions import WHOLE_FLUX_STERIC_V1
 from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, _diagnostics, solve_ionic_steady_state
@@ -161,7 +160,25 @@ def test_mismatched_component_or_policy_binding_is_refused(case):
                                  options=controls(device.node_count), initial_state=wrong)
 
 
-def test_zero_diffusion_is_explicitly_underdetermined_for_one_constraint():
+def _assert_declared_immobile_closure(device):
+    original = Ionic1DProblem(device, voltage_V=0.002)
+    problem = ConstrainedIonic1DProblem(original, device.ion_node_count - 1)
+    block = device.ion_species_slices[0]
+    assert problem.immobile_species == ("positive",)
+    assert problem.profile_constraint_rows == {"positive": tuple(range(block.start, block.stop))}
+    state = device.initial_state(voltage_V=0.002)
+    candidate = state.u.copy()
+    candidate[block.start] += 0.02
+    density = device.state(candidate, voltage_V=0.002).positive_ion_density_m3
+    expected = device.ion_geometry.cell_measures_m * (density - device.positive_ion_reference_m3)
+    np.testing.assert_array_equal(original.residual(candidate)[block], 0.0)
+    np.testing.assert_array_equal(problem.residual(candidate)[block], expected)
+    assert expected[0] > 0.0
+    np.testing.assert_array_equal(problem.jacobian(candidate)[block, :].toarray(),
+                                  -original.storage_jacobian(candidate)[block, :].toarray())
+
+
+def test_zero_diffusion_uses_declared_per_cell_population_constraints():
     prepared = prepare_single_ion_device(diffusion_only=True)
     data = prepared.to_input().editing_data()
     data["layers"][0]["parameters"]["D_ion"] = 0.0
@@ -169,8 +186,7 @@ def test_zero_diffusion_is_explicitly_underdetermined_for_one_constraint():
                               prepared.resources, sources=prepared.sources)
     device = compile_ionic_device_1d(changed, intervals_per_layer=12)
     assert device.reference_inventory_m2 > 0.0
-    with pytest.raises(CapabilityError, match="positive-D"):
-        solve_ionic_steady_state(device, voltage_V=0.002, generation_scale=0.0, options=controls(device.node_count))
+    _assert_declared_immobile_closure(device)
 
 
 def test_failed_bounded_attempt_is_retained_without_projection_or_retry(case):
@@ -346,7 +362,7 @@ def test_multilayer_rebound_index_manifest_is_refused(multilayer_case):
         ConstrainedIonic1DProblem(Ionic1DProblem(changed), device.ion_node_count - 1)
 
 
-def test_multilayer_zero_D_keeps_inventory_but_refuses_the_steady_closure(multilayer_case):
+def test_multilayer_zero_D_keeps_inventory_and_constrains_each_domain_cell(multilayer_case):
     prepared, original_device, _, _, _ = multilayer_case
     data = prepared.to_input().editing_data()
     layer = next(layer for layer in data["layers"] if layer["id"] == original_device.domain_layer_id)
@@ -356,6 +372,4 @@ def test_multilayer_zero_D_keeps_inventory_but_refuses_the_steady_closure(multil
     device = compile_ionic_device_1d(changed, intervals_per_layer=(12, 12, 12),
                                      ion_domain_layer="absorber", ion_domain_endpoints=("blocking", "blocking"))
     assert device.reference_inventory_m2 == original_device.reference_inventory_m2
-    with pytest.raises(CapabilityError, match="positive-D"):
-        solve_ionic_steady_state(device, voltage_V=0.002, generation_scale=0.0,
-                                 options=controls(device.ion_node_count))
+    _assert_declared_immobile_closure(device)

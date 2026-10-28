@@ -25,6 +25,7 @@ from scipy.sparse import csc_matrix
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.equations.dc_1d import CapabilityError, _quasi_fermi_potential_tangents
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
+from solarlab.equations.ionic_closure import declared_immobile_profiles, immobile_profile_binding
 from solarlab.physics.ions import ion_face_flux_jacobian
 
 __all__ = ["IonicACSystem", "IonicSmallSignal1D", "build_ionic_small_signal"]
@@ -45,7 +46,7 @@ def _source_pins() -> dict[str, str]:
     names = (__name__, "solarlab.equations.ionic_1d", "solarlab.equations.dc_1d",
              "solarlab.physics.ions.migration", "solarlab.physics.ions.finite_site",
              "solarlab.physics.ions.shared_site", "solarlab.physics.transport.electrochemical_flux",
-             "solarlab.physics.electrostatics.poisson")
+             "solarlab.physics.electrostatics.poisson", "solarlab.equations.ionic_closure")
     result = {}
     for name in names:
         path = sys.modules[name].__file__
@@ -75,6 +76,7 @@ class IonicACSystem:
     original_rows_enforced: tuple[int, ...]
     coordinate_form: str
     coordinate_lift_per_V: np.ndarray
+    immobile_constraint_rows: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
     @property
     def coordinate_representation(self) -> str:
@@ -187,6 +189,8 @@ class IonicSmallSignal1D:
             rhs_rate = drive * voltage
             known = {index: 0.0j for index in known}
         rows: dict[str, int] = {}
+        profile_rows: dict[str, tuple[int, ...]] = {}
+        profiles = declared_immobile_profiles(device)
         enforced: np.ndarray = np.ones(device.state_size, dtype=bool)
         if ion_mode == "frozen":
             for index in range(3 * N, device.state_size):
@@ -197,6 +201,16 @@ class IonicSmallSignal1D:
             enforced[3 * N:] = False
         elif frequency == 0.0:
             for species, block in zip(device.ion_species_names, device.ion_species_slices):
+                if species in profiles:
+                    local_rows = tuple(range(block.start, block.stop))
+                    for row in local_rows:
+                        gradient = -self.storage_jacobian[row, :].toarray()[0]
+                        nonzero = np.flatnonzero(gradient)
+                        J.rows[row], J.data[row] = nonzero.tolist(), gradient[nonzero].tolist()
+                        K.rows[row], K.data[row] = [], []
+                        rhs[row] = rhs_rate[row] = 0.0j
+                    profile_rows[species] = local_rows
+                    continue
                 if np.any(getattr(device, species + "_ion_diffusivity_faces_m2_s") <= 0.0):
                     raise CapabilityError("zero-Hz mobile ions require one connected positive-D domain per species")
                 row = block.start
@@ -208,7 +222,7 @@ class IonicSmallSignal1D:
                 rows[species] = row
         return IonicACSystem(frequency, voltage, ion_mode, J.tocsc(), K.tocsc(), rhs,
                              rhs_rate, known, rows, tuple(int(index) for index in np.flatnonzero(enforced)),
-                             self.coordinate_form, self.coordinate_lift_per_V)
+                             self.coordinate_form, self.coordinate_lift_per_V, profile_rows)
 
     def original_residual(self, fixed_perturbation: ArrayLike, frequency_Hz: float, *, voltage_phasor_V: complex = 1.0) -> np.ndarray:
         frequency, voltage = _frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
@@ -388,7 +402,7 @@ class IonicSmallSignal1D:
                  + omega * float(np.sum(abs(gauss)))) / abs(voltage)
         if _source_pins() != self.source_sha256:
             raise RuntimeError("ionic AC physical source changed during observation")
-        return {
+        result: dict[str, object] = {
             "frequency_Hz": frequency, "voltage_phasor_V": voltage, "ion_mode": ion_mode,
             "coordinate_form": form, "coordinate_representation": form, "solve_coordinate_perturbation": solve_coordinates,
             "coordinate_lift_per_V": self.coordinate_lift_per_V,
@@ -418,6 +432,16 @@ class IonicSmallSignal1D:
             "working_state_identity": self.working_state_identity, "source_sha256": dict(self.source_sha256),
             "physical_certificate_status": "not_evaluated",
         }
+        profiles = declared_immobile_profiles(device)
+        if profiles:
+            result["immobile_profile_binding"] = immobile_profile_binding(device)
+            result["immobile_density_perturbation_relative_per_V"] = {
+                species: float(np.max(abs(densities[device.ion_species_names.index(species)]) / target)) / abs(voltage)
+                for species, target in profiles.items()}
+            result["immobile_base_profile_relative_error"] = {
+                species: float(np.max(abs(populations[device.ion_species_names.index(species)] - target) / target))
+                for species, target in profiles.items()}
+        return result
 
 
 def build_ionic_small_signal(compiled: CompiledIonicDevice1D, state: IonicState1D, *, generation_scale: float = 0.0, coordinate_form: str = "moving_boundary_lift_v1") -> IonicSmallSignal1D:

@@ -597,6 +597,53 @@ failure evidence. Shared sites require equal capacities and the original
 diffusion-only model; other shared-site combinations are refused. This
 bounded example does not establish mesh/time or final scientific qualification.
 
+## Immobile ionic populations
+
+An exactly zero diffusivity preserves the declared population in every ion
+cell. The target comes from the compiled `P0` or `P0_neg` profile; changing a
+Newton initial guess does not change that physical target. Shared-site
+coordinates may move while the corresponding physical population stays fixed.
+
+```sh
+.venv/bin/python -B -m examples.research_1d.immobile_ions \
+  --kind shared_mixed --output-directory outputs/immobile_shared
+```
+
+The bounded mixed example has 13 electrical nodes and five ion nodes. It
+solves a dark 2 mV steady state, four driven time steps, and 0/1 Hz responses.
+`--kind single` exercises the single-species fully immobile case. These two
+cases have actual run evidence; the `shared_full` variant has assembly checks
+but is outside the recorded end-to-end witnesses. Partly disconnected
+zero/positive-diffusivity networks remain unsupported. No artificial mobility,
+clipping, or redistribution is used to obtain a steady state. Final scientific
+qualification remains open.
+
+## Equilibrium ionic J-V
+
+Use the accepted shared-site steady file from the earlier example:
+
+```sh
+JV_INITIAL=outputs/shared_site_ionic/Steady.json
+JV_INITIAL_SHA=$(shasum -a 256 "$JV_INITIAL" | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_jv solve \
+  --kind shared --voltages .001 .002 .003 --generation-scale 0 \
+  --initial-policy saved_accepted --initial-result "$JV_INITIAL" \
+  --initial-sha256 "$JV_INITIAL_SHA" --output outputs/ionic_jv.json
+JV_RESULT_SHA=$(shasum -a 256 outputs/ionic_jv.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_jv read \
+  --result outputs/ionic_jv.json --sha256 "$JV_RESULT_SHA"
+```
+
+Each point solves the coupled steady equations and preserves each mobile
+species' inventory. The preceding accepted state is only a numerical guess;
+the first failed point stops the curve and retains its candidate and checks.
+This is an equilibrium curve, with no scan-rate or hysteresis interpretation.
+The three dark points above are verified. A direct change from the saved dark
+state to generation scale 1 at 2 mV stagnated and remains a recorded failure;
+illuminated ionic J-V is not yet validated by this example. Missing short/open
+circuit brackets leave the corresponding photovoltaic metrics unavailable.
+The current driver requires positive diffusivity in one blocking domain.
+
 ## Ionic small-signal response
 
 Use the accepted `Steady.json` from the shared-site example above. AC rechecks
@@ -632,6 +679,34 @@ domain. They retain the first failed frequency and leave later requested
 frequencies unattempted. Result reading validates the saved bytes and does not
 solve. These checks do not establish mesh convergence, general contact/domain
 support, or final scientific qualification.
+
+## Ionic transient process jobs
+
+From a committed checkout, run the shared-site example through the same process
+supervisor and durable result store:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.process_ionic_transient run \
+  --build-source-commit "$(git rev-parse HEAD)" \
+  --store outputs/ionic_process_store --work outputs/ionic_process_work \
+  --run-id shared-history
+.venv/bin/python -B -m examples.research_1d.process_ionic_transient read \
+  --store outputs/ionic_process_store --run-id shared-history
+```
+
+The child performs an actual coupled cold steady solve followed by four
+2-to-4 mV time steps. Add `--failure-case` with a fresh store/work directory
+to exercise the deliberately insufficient Newton budget: the failed run
+retains its initial state, first accepted step and first failed driven step.
+Its reader returns exit status 2 while preserving the available data.
+
+Readback exposes 26 logical arrays with explicit units, including both species,
+cell inventories and full-face/terminal currents. They are stored in fixed
+same-unit groups within the existing artifact limit. Independent reads compare
+the original child and committed payloads without importing a solver. Queued
+cancellation creates a cancelled terminal without a fabricated history. This
+verified process case uses the existing positive-diffusivity shared-site model;
+zero-diffusivity jobs and an ionic HTTP/browser entry are not covered here.
 
 ## Transient HTTP jobs
 

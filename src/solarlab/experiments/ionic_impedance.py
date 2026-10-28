@@ -110,6 +110,7 @@ def _frequencies(values: ArrayLike, controls: FrequencyOptions) -> np.ndarray:
 def _source_pins() -> dict[str, str]:
     names = (
         __name__, "solarlab.equations.ionic_small_signal", "solarlab.equations.ionic_1d",
+        "solarlab.equations.ionic_closure",
         "solarlab.equations.dc_1d", "solarlab.device.compile_ionic_1d",
         "solarlab.physics.ions.migration", "solarlab.physics.ions.shared_site",
         "solarlab.physics.ions.finite_site", "solarlab.discretization.bernoulli",
@@ -148,6 +149,8 @@ def _checks(
     compiled: CompiledIonicDevice1D, observed: dict[str, Any], linear: FrequencySolution,
     voltage: complex, ion_mode: str, controls: IonicImpedanceOptions,
 ) -> tuple[GateOutcome, ...]:
+    from solarlab.equations.ionic_closure import declared_immobile_profiles
+
     def check(name: str, value: float, limit: float) -> GateOutcome:
         return GateOutcome(name, math.isfinite(value) and value <= limit, value, limit,
                            "prospective numerical AC control; physical status not_evaluated")
@@ -166,6 +169,7 @@ def _checks(
               controls.current_absolute_tolerance_A_m2_V + controls.current_relative_tolerance * scale),
     ]
     inventories, ratios = {}, {}
+    immobile_profiles = declared_immobile_profiles(compiled)
     for species in compiled.ion_species_names:
         density = np.asarray(observed["ion_density_perturbation_m3"][species], dtype=complex)
         if density.shape != (compiled.ion_node_count,):
@@ -177,6 +181,10 @@ def _checks(
         ratio = abs(inventory) / (target * abs(voltage))
         inventories[species], ratios[species] = inventory, ratio
         results.append(check(f"{species}_inventory_relative_per_V", ratio, controls.inventory_relative_tolerance_per_V))
+        if species in immobile_profiles:
+            local_ratio = float(np.max(abs(density) / immobile_profiles[species])) / abs(voltage)
+            results.append(check(f"{species}_immobile_density_relative_per_V", local_ratio,
+                                 controls.inventory_relative_tolerance_per_V))
         if ion_mode == "frozen":
             results.append(check(f"{species}_frozen_density_response", float(np.max(abs(density))), 0.0))
     if ion_mode == "frozen":
@@ -273,6 +281,8 @@ def solve_ionic_impedance(
                     or not np.array_equal(observed["solve_coordinate_perturbation"], solved.solution)):
                 raise ValueError("ionic AC observation must retain its exact raw solve coordinates")
             observed["inventory_constraint_rows"] = system.constraint_rows
+            if system.immobile_constraint_rows:
+                observed["immobile_constraint_rows"] = system.immobile_constraint_rows
             checks = _checks(compiled, observed, solved, voltage, ion_mode, controls)
             checkpoint()
             accepted = all(item.passed for item in checks)
