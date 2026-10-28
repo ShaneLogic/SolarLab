@@ -104,7 +104,7 @@ def compile_ionic_device_1d(
     right = component.node_count - 1 if domain_index == len(layers) - 1 else component.geometry.interfaces[domain_index].shared_node
     if left is None or right is None:
         raise CapabilityError("first_ionic_1d: domain endpoints require actual shared electrostatic nodes")
-    indices = np.arange(left, right + 1, dtype=np.intp)
+    indices: np.ndarray = np.arange(left, right + 1, dtype=np.intp)
     ion_geometry = half_endpoint_geometry(component.nodes_m[indices])
     count = ion_geometry.node_count
     scaled_diffusion = ion_diffusivity_at_temperature(diffusion, component.parameters.temperature_K, activation)
