@@ -597,6 +597,42 @@ failure evidence. Shared sites require equal capacities and the original
 diffusion-only model; other shared-site combinations are refused. This
 bounded example does not establish mesh/time or final scientific qualification.
 
+## Ionic small-signal response
+
+Use the accepted `Steady.json` from the shared-site example above. AC rechecks
+that saved state and solves the coupled complex linear system without another
+steady solve:
+
+```sh
+AC_INITIAL=outputs/shared_site_ionic/Steady.json
+AC_INITIAL_SHA=$(shasum -a 256 "$AC_INITIAL" | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_impedance solve \
+  --kind shared --initial-result "$AC_INITIAL" --initial-sha256 "$AC_INITIAL_SHA" \
+  --frequencies 0 .01 1 1000 --ion-mode mobile --output outputs/ionic_ac.json
+AC_RESULT_SHA=$(shasum -a 256 outputs/ionic_ac.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_impedance read \
+  --result outputs/ionic_ac.json --sha256 "$AC_RESULT_SHA"
+```
+
+Choose a new output path for each calculation. `--ion-mode frozen` holds both
+ionic populations fixed at the same operating profile; it retains their DC
+charge and reports zero ionic perturbation current. `--kind positive` and
+`--kind independent` use the corresponding saved steady examples.
+
+Phasors use `exp(+i omega t)`. The voltage phasor is a linear normalization,
+not a finite-amplitude drive. Outputs include complex admittance density
+(S/m²), impedance-area product (Ω m²), species perturbations and all-face
+conduction/displacement currents. Small solve coordinates and their known
+voltage lift are retained separately to avoid losing small currents to
+floating-point cancellation. Zero frequency enforces each mobile species'
+inventory; finite frequencies retain the full storage matrix.
+
+The bounded examples cover fixed carrier reservoirs and one blocking ionic
+domain. They retain the first failed frequency and leave later requested
+frequencies unattempted. Result reading validates the saved bytes and does not
+solve. These checks do not establish mesh convergence, general contact/domain
+support, or final scientific qualification.
+
 ## Transient HTTP jobs
 
 Start the co-installed steady and ion-free transient service:

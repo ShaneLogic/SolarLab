@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, and bounded single-ion assembly, steady solving and driven transients; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, plus bounded positive, independent dual-ion and shared-site assembly, steady/time solving and mobile/frozen small signal; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -415,6 +415,19 @@
       "StepControl",
       "Vector",
       "state_digest"
+    ],
+    "solarlab.equations.ionic_small_signal": [
+      "IonicACSystem",
+      "IonicSmallSignal1D",
+      "build_ionic_small_signal"
+    ],
+    "solarlab.experiments.ionic_impedance": [
+      "IonicImpedanceOptions",
+      "IonicImpedanceAttempt",
+      "IonicImpedanceResult",
+      "solve_ionic_impedance",
+      "write_ionic_impedance_result",
+      "read_ionic_impedance_result"
     ]
   },
   "public_imports": {
@@ -891,6 +904,19 @@
     ],
     "solarlab.solvers.nonlinear.problem": [
       "SolveBudget"
+    ],
+    "solarlab.equations.ionic_small_signal": [
+      "IonicACSystem",
+      "IonicSmallSignal1D",
+      "build_ionic_small_signal"
+    ],
+    "solarlab.experiments.ionic_impedance": [
+      "IonicImpedanceOptions",
+      "IonicImpedanceAttempt",
+      "IonicImpedanceResult",
+      "solve_ionic_impedance",
+      "write_ionic_impedance_result",
+      "read_ionic_impedance_result"
     ]
   },
   "checked_consumers": [
