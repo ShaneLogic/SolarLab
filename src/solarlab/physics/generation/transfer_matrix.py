@@ -24,7 +24,7 @@ photon budget and never enters generation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -414,7 +414,7 @@ def tmm_absorbed_photon_flux_per_cell(
         raise ValueError(f"faces must be 1-D with at least 2 entries, got shape {faces.shape}")
     C = tmm_cumulative_absorptance(layers, wavelengths, faces, layer_boundaries, n_ambient, n_substrate)
     dC = C[1:, :] - C[:-1, :]
-    return np.trapezoid(dC * spectral_flux[None, :], x=wavelengths, axis=1)
+    return cast(np.ndarray, np.trapezoid(dC * spectral_flux[None, :], x=wavelengths, axis=1))
 
 
 def tmm_absorption_profile(
