@@ -797,8 +797,29 @@ The installed catalog declares positive, independent dual-ion and shared-site
 devices. The actual HTTP witness covers the shared-site model with positive
 diffusivities in one blocking absorber domain. Its request bytes, fixed
 numerical controls, selected device, catalog, source and result bindings are
-checked. Illuminated or zero-diffusivity HTTP jobs, multiple domains and an
-ionic browser page remain outside this entry's verified scope.
+checked. Illuminated or zero-diffusivity HTTP jobs and multiple domains remain
+outside this entry's verified scope.
+
+## Ionic transient browser entry
+
+With the ionic HTTP service above on port 8000, start the frontend as described
+in **Browser research entry**, then open
+`http://127.0.0.1:5173/?view=ionic-transient`. Choose an installed device, enter
+the explicit samples and separate initial-steady/time-step work budgets, then
+select **Run ionic transient**.
+
+The page displays electrical and ionic grids, species densities and
+inventories, and conduction, displacement and total currents. Requested samples
+remain visible alongside accepted, failed and unattempted outcomes. Initial
+states have no invented time-step currents; photovoltaic metrics and final
+scientific qualification remain unavailable for this dark transient workflow.
+
+The bookmark and **Open stored attempt** form reopen the exact store/run/attempt.
+Refresh and reconnect only read its saved data. The actual browser witness
+covers the shared-site positive-diffusivity model, one completed submission,
+and reopening both completed and failed-prefix HTTP histories. The opt-in
+GET-only live test takes an explicit endpoint and saved attempt IDs; ordinary
+frontend tests do not submit these numerical jobs.
 
 ## Transient HTTP jobs
 

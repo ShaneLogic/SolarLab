@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 from numbers import Real
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -123,7 +123,7 @@ class CompiledMultipleIonicDevice1D:
                 raise ValueError("domain identities, endpoints or inventories differ from their binding")
             original = [entry for entry in declarations if isinstance(entry, dict)
                         and entry.get("layer") == domain.domain_layer_id]
-            local = [entry for entry in domain.binding_manifest["original_ionic_inputs"]
+            local = [entry for entry in cast(list[dict[str, Any]], domain.binding_manifest["original_ionic_inputs"])
                      if entry["layer"] == domain.domain_layer_id]
             if len(original) != 1 or original != local:
                 raise ValueError("an isolated domain must preserve all its original ionic parameters")
@@ -241,9 +241,9 @@ class CompiledMultipleIonicDevice1D:
                     or any(not np.array_equal(getattr(actual, name), getattr(required, name))
                            for name in ("u", "positive_ion_density_m3", "negative_ion_density_m3"))):
                 raise ValueError("ionic component identities, coordinates or physical inventories disagree")
-        for actual in (state.electronic_state, *[value.electronic_state for value in state.domain_component_states]):
-            if (actual.device_sha256 != expected.electronic_state.device_sha256
-                    or any(not np.array_equal(getattr(actual, name), getattr(expected.electronic_state, name))
+        for electronic_actual in (state.electronic_state, *[value.electronic_state for value in state.domain_component_states]):
+            if (electronic_actual.device_sha256 != expected.electronic_state.device_sha256
+                    or any(not np.array_equal(getattr(electronic_actual, name), getattr(expected.electronic_state, name))
                            for name in ("u", "potential_V", "electron_density_m3", "hole_density_m3"))):
                 raise ValueError("electronic component identity or physical fields disagree")
 
