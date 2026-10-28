@@ -508,11 +508,21 @@
       "WorkerBinding",
       "WorkerContext",
       "WorkerRequest",
-      "WorkerResult"
+      "WorkerResult",
+      "RunSpec"
     ],
     "solarlab.experiments.execution": [
       "JobHandle",
-      "ProcessSupervisor"
+      "ProcessSupervisor",
+      "QueueFull"
+    ],
+    "solarlab.experiments.protocol": [
+      "protocol_schema",
+      "working_point_schema"
+    ],
+    "solarlab.experiments.results": [
+      "array_schema",
+      "result_schema"
     ]
   },
   "checked_consumers": [

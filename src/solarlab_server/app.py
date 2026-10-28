@@ -1,4 +1,4 @@
-"""Explicit local read service, prepared_pending_dependencies for P06-06.
+"""Explicit local routes over a read handle and optional shared execution owner.
 
 The factory has no import-time/file/network side effects. ASGI lifespan opens
 and closes its own handle to an EXISTING local RunStore; the coordinating
@@ -9,8 +9,9 @@ separate integration work.
 
 Runs and attempt records include stored opaque execution metadata and results.
 Event pages span a run's history; SSE URLs explicitly select one attempt.
-Legacy result/error/done framing, submission, configuration editing and registry
-routes remain upstream integration obligations.
+Submission requires an explicit source-checked legacy execution catalog.
+Server shutdown and subscriber disconnect never cancel the external owner.
+Unregistered experiments and the new scientific engine remain unavailable.
 """
 
 from __future__ import annotations
@@ -20,34 +21,29 @@ from contextlib import asynccontextmanager
 import math
 from pathlib import Path
 import sqlite3
-from typing import Any, cast
+from typing import cast
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Request
 from starlette.concurrency import run_in_threadpool
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import JSONResponse
 
 from solarlab.io.artifacts import ArtifactIntegrityError
 from solarlab.io.run_store import RunStore, StateConflict
-from solarlab_server.configuration import ConfigurationPreviewContext, router as configuration_router
-from solarlab_server.events import MAX_SEQUENCE, attempt_record, event_stream, replay_cursor
-from solarlab_server.schema import router as schema_router
+from solarlab_server.configuration import ConfigurationPreviewContext
+from solarlab_server.job_service import JobService
+from solarlab_server.routes.configs import router as configuration_router
+from solarlab_server.routes.jobs import router as jobs_router
+from solarlab_server.routes.materials import router as materials_router
+from solarlab_server.routes.schema import router as schema_router
+from solarlab_server.routes.results import install_results, verified_artifact
+from solarlab_server.routes.legacy import install_legacy
 
 
 def _store(request: Request) -> RunStore:
     return cast(RunStore, request.app.state.run_store)
 
 
-def _verified_artifact(
-    store: RunStore, artifact_id: str, maximum_bytes: int,
-) -> tuple[dict[str, Any], bytes]:
-    record = store.artifact(artifact_id)
-    if record["phase"] != "committed":
-        raise StateConflict("artifact is not a committed result")
-    if record["size_bytes"] > maximum_bytes:
-        raise HTTPException(413, detail="artifact exceeds this reader's byte limit")
-    # Return this verified independent byte snapshot, never a file that would
-    # be opened again after validation. Metadata-only reads also validate it.
-    return record, store.read_artifact(artifact_id)
+_verified_artifact = verified_artifact  # Preserve the previous internal reader name.
 
 
 def create_app(
@@ -55,6 +51,7 @@ def create_app(
     poll_interval: float = 0.1, keepalive_interval: float = 15.0,
     max_artifact_bytes: int = 16 * 1024**2,
     configuration_preview: ConfigurationPreviewContext | None = None,
+    job_service: JobService | None = None,
 ) -> FastAPI:
     """Build a local reader; start/stop its owned handle with ASGI lifespan.
 
@@ -64,6 +61,8 @@ def create_app(
     ``Last-Event-ID`` precedence. Artifact bodies are exact validated bytes.
     Preview POSTs resolve DTOs only when the caller supplies trusted catalog
     and resource data through ``configuration_preview``; they never execute.
+    ``job_service`` explicitly adds checked legacy submissions through an
+    existing shared supervisor. Its lifecycle is owned by the caller.
     """
     if type(event_page_size) is not int or not 1 <= event_page_size <= 1000:
         raise ValueError("event_page_size must be between 1 and 1000")
@@ -77,12 +76,16 @@ def create_app(
     root = Path(store_root)
     if not root.is_absolute():
         raise ValueError("store_root must be an explicit absolute local path")
+    if job_service is not None:
+        if type(job_service) is not JobService or job_service.supervisor.store.root != root:
+            raise ValueError("job service must share this exact local store and external process owner")
+        job_service.catalog.verify()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if not (root / "store.sqlite3").is_file():
             raise ValueError("the read service requires an existing RunStore")
-        store = await run_in_threadpool(RunStore, root)
+        store = await run_in_threadpool(RunStore, root, read_only=True)
         app.state.run_store = store
         try:
             yield
@@ -93,8 +96,11 @@ def create_app(
     app = FastAPI(title="SolarLab stored runs", lifespan=lifespan)
     app.state.run_store = None
     app.state.configuration_preview = configuration_preview
+    app.state.job_service = job_service
     app.include_router(schema_router)
     app.include_router(configuration_router)
+    app.include_router(materials_router)
+    app.include_router(jobs_router)
 
     @app.exception_handler(KeyError)
     async def not_found(request: Request, error: KeyError) -> JSONResponse:
@@ -117,63 +123,8 @@ def create_app(
     async def unavailable(request: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"detail": "stored data temporarily unavailable"}, status_code=503)
 
-    @app.get("/runs/{run_id}")
-    def run(request: Request, run_id: str) -> JSONResponse:
-        store = _store(request)
-        return JSONResponse(store.get_run(run_id), headers={"X-RunStore-ID": store.store_id})
-
-    @app.get("/runs/{run_id}/attempts/{attempt_id}")
-    def attempt(request: Request, run_id: str, attempt_id: str) -> JSONResponse:
-        store = _store(request)
-        return JSONResponse(attempt_record(store, run_id, attempt_id),
-                            headers={"X-RunStore-ID": store.store_id})
-
-    @app.get("/runs/{run_id}/events")
-    def events(
-        request: Request, run_id: str,
-        after: int = Query(0, ge=0, le=MAX_SEQUENCE),
-        limit: int = Query(event_page_size, ge=1, le=event_page_size),
-    ) -> JSONResponse:
-        store = _store(request)
-        store.get_run(run_id)
-        page = store.events(after=after, limit=limit, run_id=run_id)
-        return JSONResponse({"store_id": store.store_id, "events": page,
-                             "next_cursor": page[-1]["sequence"] if page else after},
-                            headers={"X-RunStore-ID": store.store_id})
-
-    @app.get("/runs/{run_id}/attempts/{attempt_id}/events")
-    async def stream(
-        request: Request, run_id: str, attempt_id: str,
-        after: int = Query(0, ge=0, le=MAX_SEQUENCE),
-        last_event_id: str | None = Header(None, alias="Last-Event-ID"),
-    ) -> Response:
-        store = _store(request)
-        await run_in_threadpool(attempt_record, store, run_id, attempt_id)
-        cursor, terminal_acknowledged = await run_in_threadpool(
-            replay_cursor, store, run_id, attempt_id, after, last_event_id,
-        )
-        headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                   "X-RunStore-ID": store.store_id}
-        if terminal_acknowledged:
-            return Response(status_code=204, headers=headers)
-        return StreamingResponse(
-            event_stream(request, store, run_id, attempt_id, after=cursor,
-                         page_size=event_page_size, poll_interval=poll_interval,
-                         keepalive_interval=keepalive_interval),
-            media_type="text/event-stream", headers=headers,
-        )
-
-    @app.get("/artifacts/{artifact_id}")
-    def artifact(request: Request, artifact_id: str) -> JSONResponse:
-        store = _store(request)
-        record, _ = _verified_artifact(store, artifact_id, max_artifact_bytes)
-        return JSONResponse(record, headers={"X-RunStore-ID": store.store_id})
-
-    @app.get("/artifacts/{artifact_id}/content")
-    def content(request: Request, artifact_id: str) -> Response:
-        store = _store(request)
-        record, data = _verified_artifact(store, artifact_id, max_artifact_bytes)
-        return Response(data, media_type="application/octet-stream",
-                        headers={"ETag": f'"{record["sha256"]}"', "X-RunStore-ID": store.store_id})
-
+    install_results(app, lambda request: _store(request), event_page_size=event_page_size,
+        poll_interval=poll_interval, keepalive_interval=keepalive_interval, max_artifact_bytes=max_artifact_bytes)
+    install_legacy(app, max_artifact_bytes=max_artifact_bytes, event_page_size=event_page_size,
+                   poll_interval=poll_interval, keepalive_interval=keepalive_interval)
     return app
