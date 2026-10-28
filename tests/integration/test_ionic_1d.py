@@ -246,8 +246,19 @@ def test_multilayer_domains_and_electronic_defects_are_not_silently_dropped():
     with pytest.raises(CapabilityError, match="one electrical layer"):
         compile_ionic_device_1d(load_device(), intervals_per_layer=6)
     prepared = changed(prepare_single_ion_device(), defect_model="explicit_quasi_steady")
-    with pytest.raises(CapabilityError, match="explicit_or_distributed_defects"):
-        compile_ionic_device_1d(prepared, intervals_per_layer=6)
+    compiled = compile_ionic_device_1d(prepared, intervals_per_layer=6)
+    reaction = compiled.electronic_component.recombination
+    model = reaction.explicit_defects
+    assert model is not None
+    assert model.species[0].identifier == prepared.layers[0].id + "/neutral_probe"
+    assert np.all(model.owned_nodes)
+    # Electronic projection must retain the configured neutral rate, not just
+    # accept its declaration while silently using lifetime SRH.
+    evaluation = reaction.evaluate(np.full(compiled.node_count, 1e20),
+                                   np.full(compiled.node_count, 2e20))
+    assert evaluation.explicit is not None
+    assert np.all(evaluation.explicit.total_rate_m3_s > 0.0)
+    np.testing.assert_array_equal(evaluation.srh.rate, evaluation.explicit.total_rate_m3_s)
 
 
 @pytest.mark.parametrize("diffusion_only", [False, True])
