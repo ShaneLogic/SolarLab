@@ -515,9 +515,41 @@ component projection. Multilayer callers must supply `ion_domain_layer` and
 `ion_domain_endpoints=("blocking", "blocking")`; undeclared additional ion domains
 are refused. Zero diffusivity retains population, background and storage in
 assembly; the connected-domain steady solver rejects zero or disconnected
-diffusivity. Negative/dual-ion, shared-site and dynamic ion cases remain outside
-this delivered slice. The result records `qualification: false`; final mesh,
-time and scientific acceptance remain open.
+diffusivity. Negative/dual-ion and shared-site cases remain outside this delivered slice.
+The result records `qualification: false`; final mesh, time and scientific
+acceptance remain open.
+
+## Driven ionic histories
+
+The physical backward-Euler driver advances potential, carriers and the mobile
+ion population together, including the confined absorber domain. Generate an
+explicit steady initial artifact, then run a four-step voltage ramp:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.ionic_steady --multilayer \
+  --output outputs/ionic_initial.json
+ionic_initial_sha=$(.venv/bin/python -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("outputs/ionic_initial.json").read_bytes()).hexdigest())')
+.venv/bin/python -B -m examples.research_1d.ionic_transient \
+  --initial-result outputs/ionic_initial.json --initial-sha256 "$ionic_initial_sha" \
+  --output outputs/ionic_history.json
+```
+
+Add `--refine` to compare 4, 8 and 16 time steps from the same initial artifact.
+The example drives 2 to 4 mV over one second in the dark on the 37-electrical /
+13-ion-node device. The recorded fine history changed the ion distribution by
+about 0.29%, with zero reported total-inventory drift. Successive final ion-cell
+inventory differences decreased by a factor of about 1.85. This demonstrates a
+bounded working history and decreasing timestep differences; it does not
+establish continuum accuracy or a qualified hysteresis experiment.
+
+The loader checks the initial file hash, accepted steady evidence, controls and
+physical fields, then rechecks initial admission without another steady solve.
+Every dynamic ion equation remains present; steady inventory constraints and
+zero-flux conditions are not used as transient acceptance criteria. Physical
+population differences include stable finite-site increments and voltage-reference
+motion. Each step records the full conduction/displacement current and charge
+accounting. A failed run preserves its accepted prefix and first failed attempt,
+returns exit status 2, and retains `physical_certificate_status: not_evaluated`.
 
 ## Adding a local model
 

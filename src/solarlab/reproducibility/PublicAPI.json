@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, and bounded single-ion assembly/steady solving; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, and bounded single-ion assembly, steady solving and driven transients; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -386,6 +386,21 @@
       "transient_worker_binding",
       "run_transient_worker",
       "read_transient_job"
+    ],
+    "solarlab.solvers.time.ionic_backward_euler": [
+      "IonicBackwardEuler1DStep",
+      "finite_site_secant_m3",
+      "inventory_m2",
+      "step_accounting",
+      "ionic_step_accounting"
+    ],
+    "solarlab.experiments.ionic_transient": [
+      "IonicTransientInitial",
+      "IonicTransientOptions",
+      "IonicTransientAttempt",
+      "IonicTransientResult",
+      "load_ionic_steady_initial",
+      "solve_ionic_transient"
     ]
   },
   "public_imports": {
@@ -842,6 +857,21 @@
       "transient_worker_binding",
       "run_transient_worker",
       "read_transient_job"
+    ],
+    "solarlab.solvers.time.ionic_backward_euler": [
+      "IonicBackwardEuler1DStep",
+      "finite_site_secant_m3",
+      "inventory_m2",
+      "step_accounting",
+      "ionic_step_accounting"
+    ],
+    "solarlab.experiments.ionic_transient": [
+      "IonicTransientInitial",
+      "IonicTransientOptions",
+      "IonicTransientAttempt",
+      "IonicTransientResult",
+      "load_ionic_steady_initial",
+      "solve_ionic_transient"
     ]
   },
   "checked_consumers": [
