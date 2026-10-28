@@ -9,15 +9,20 @@ which telescopes to ``Phi (1 - exp(-tau_total))`` on ANY mesh. The cell
 source is ``absorbed / w`` with ``w`` the geometry's cell measure (see
 ``profile.py`` for the historical integer-endpoint contact-cell convention).
 
-The optical depth is the historical mid-face trapezoid of the per-node
+For the historical integer- and half-endpoint channels, optical depth is
+the mid-face trapezoid of the per-node
 absorption coefficient (scalar ``alpha``: ``alpha * x``) and is therefore
 piecewise linear between nodes. At a face it is evaluated exactly on that
 linear interpolant; the historical faces keep their historical expressions
 bit for bit -- the node-span ends take the end values and an interval
 midpoint takes the mean of its two node values -- so the integer- and
-half-endpoint geometries reproduce the historical arrays exactly, and a
-face moved to a true interface plane (two-sided geometries) lands on the
-same interpolant.
+half-endpoint geometries reproduce the historical arrays exactly.
+
+The two-sided channels instead integrate each material's piecewise-constant
+absorption on its true extent. Their interface planes and one-sided nodal
+coefficients must identify every layer; varying absorption within a layer is
+not inferred from incomplete interface traces. This is an N correction, while
+the historical nodal optical-depth helpers retain their original arithmetic.
 """
 
 from __future__ import annotations
@@ -30,6 +35,11 @@ from typing import Any
 
 import numpy as np
 
+from solarlab.mesh.geometry import (
+    PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+    TWO_SIDED_TRACE_V1,
+    InterfacePlane,
+)
 from solarlab.physics.generation._validation import array_digest
 from solarlab.physics.generation.profile import (
     ControlVolumes,
@@ -46,6 +56,10 @@ __all__ = [
     "beer_lambert_optical_depth",
     "face_optical_depth",
 ]
+
+_TWO_SIDED_GEOMETRIES = frozenset(
+    (TWO_SIDED_TRACE_V1, PHYSICAL_BOUNDARY_TWO_SIDED_V1)
+)
 
 
 def _require_absorption(x: np.ndarray, alpha_m1: Any) -> np.ndarray:
@@ -79,7 +93,7 @@ def beer_lambert_optical_depth(x_nodes_m: np.ndarray, alpha_m1: Any) -> np.ndarr
 
 
 def face_optical_depth(x_nodes_m: np.ndarray, alpha_m1: Any, faces_m: np.ndarray) -> np.ndarray:
-    """Optical depth on the piecewise-linear interpolant, at every face."""
+    """Historical optical depth on the nodal linear interpolant, at each face."""
 
     x = np.asarray(x_nodes_m, dtype=float)
     faces = np.asarray(faces_m, dtype=float)
@@ -98,6 +112,62 @@ def face_optical_depth(x_nodes_m: np.ndarray, alpha_m1: Any, faces_m: np.ndarray
     return tau
 
 
+def _two_sided_absorbed_photon_flux(
+    control_volumes: ControlVolumes, alpha: np.ndarray, photon_flux_m2_s: float
+) -> np.ndarray:
+    """Integrate constant material coefficients on true layer/cell extents."""
+    nodes, faces, _ = require_control_volumes(control_volumes)
+    if alpha.ndim == 0 or np.all(alpha == alpha[0]):
+        coefficient = float(alpha) if alpha.ndim == 0 else float(alpha[0])
+        cell_alpha = np.full(nodes.size, coefficient)
+        depth_left = coefficient * (faces[:-1] - nodes[0])
+    else:
+        planes = getattr(control_volumes, "interfaces", None)
+        if planes is None or any(not isinstance(plane, InterfacePlane) for plane in planes):
+            raise ValueError(
+                "two-sided Beer-Lambert requires explicit interface planes "
+                "for nonuniform absorption"
+            )
+        positions = np.asarray([plane.position_m for plane in planes], dtype=float)
+        if (
+            not np.all(np.isfinite(positions))
+            or np.any(np.diff(positions) <= 0.0)
+            or np.any(positions <= nodes[0])
+            or np.any(positions >= nodes[-1])
+            or np.any(np.isin(nodes, positions))
+            or not np.all(np.isin(positions, faces))
+        ):
+            raise ValueError(
+                "two-sided Beer-Lambert requires strictly interior interface "
+                "planes on cell faces, without shared nodes"
+            )
+        boundaries = np.concatenate(([nodes[0]], positions, [nodes[-1]]))
+        owner = np.searchsorted(positions, nodes, side="right")
+        layer_alpha = np.empty(boundaries.size - 1)
+        for layer in range(layer_alpha.size):
+            values = alpha[owner == layer]
+            if values.size == 0 or not np.all(values == values[0]):
+                raise ValueError(
+                    "two-sided Beer-Lambert requires piecewise-constant "
+                    "absorption in each layer; varying or missing one-sided "
+                    "layer coefficients are not supported"
+                )
+            layer_alpha[layer] = values[0]
+        depth_front = np.concatenate(
+            ([0.0], np.cumsum(layer_alpha * np.diff(boundaries)))
+        )
+        cell_owner = np.searchsorted(positions, faces[:-1], side="right")
+        cell_alpha = layer_alpha[cell_owner]
+        depth_left = (
+            depth_front[cell_owner]
+            + cell_alpha * (faces[:-1] - boundaries[cell_owner])
+        )
+    # Each cell uses its actual extent, never its carrier storage weight.
+    # expm1 retains thin-cell absorption without subtracting transmissions.
+    depth_increment = cell_alpha * np.diff(faces)
+    return photon_flux_m2_s * np.exp(-depth_left) * -np.expm1(-depth_increment)
+
+
 def beer_lambert_absorbed_photon_flux(
     control_volumes: ControlVolumes, alpha_m1: Any, photon_flux_m2_s: float
 ) -> np.ndarray:
@@ -105,13 +175,20 @@ def beer_lambert_absorbed_photon_flux(
 
     ``alpha_m1`` is a scalar or one value per node [m^-1]; ``photon_flux_m2_s``
     is the above-gap photon flux entering at the first node.
+
+    Named two-sided channels interpret nodal coefficients as one-sided
+    piecewise-constant material values. They require explicit interface planes
+    and reject within-layer variation whose optical traces are unspecified.
     """
 
     nodes, faces, _ = require_control_volumes(control_volumes)
     alpha = _require_absorption(nodes, alpha_m1)
     phi = _require_photon_flux(photon_flux_m2_s)
-    tau_face = face_optical_depth(nodes, alpha, faces)
-    absorbed = phi * (np.exp(-tau_face[:-1]) - np.exp(-tau_face[1:]))
+    if control_volumes.name in _TWO_SIDED_GEOMETRIES:
+        absorbed = _two_sided_absorbed_photon_flux(control_volumes, alpha, phi)
+    else:
+        tau_face = face_optical_depth(nodes, alpha, faces)
+        absorbed = phi * (np.exp(-tau_face[:-1]) - np.exp(-tau_face[1:]))
     absorbed.setflags(write=False)
     return absorbed
 

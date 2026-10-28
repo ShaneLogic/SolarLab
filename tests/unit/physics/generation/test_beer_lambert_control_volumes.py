@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -88,17 +89,87 @@ def test_layer_budgets_converge_to_the_analytic_layer_integrals():
 
 @pytest.mark.parametrize("builder", [two_sided_trace_geometry, physical_boundary_two_sided_geometry])
 def test_two_sided_geometries_conserve_photons_with_faces_on_the_true_plane(builder):
-    x, alpha, _, _, edges = _layered()
+    x, alpha, thicknesses, alphas, edges = _layered()
     positions = edges[1:-1]
     reduced = remove_shared_interface_nodes(x, positions)
     keep = np.isin(x, reduced)
     geometry = builder(reduced, positions)
     absorbed = beer_lambert_absorbed_photon_flux(geometry, alpha[keep], PHI)
-    tau_total = beer_lambert_optical_depth(reduced, alpha[keep])[-1]
+    tau_total = math.fsum(a * d for a, d in zip(alphas, thicknesses))
     assert math.fsum(absorbed) == pytest.approx(PHI * -math.expm1(-tau_total), rel=RTOL_FP)
     assert np.all(absorbed >= 0.0)
     assert np.all(beer_lambert_generation(geometry, alpha[keep], PHI) * geometry.cell_measures_m
                   == pytest.approx(absorbed, rel=4e-16))
+
+
+def _two_sided_manufactured(case):
+    if case == "science_mr1":
+        thicknesses = np.array((200e-9, 400e-9, 100e-9))
+        alphas = np.array((2e5, 1.3e7, 4e6))
+        points, offset = [0.0], 0.0
+        for thickness, count in zip(thicknesses, (9, 17, 5)):
+            coordinate = np.linspace(-1.0, 1.0, count + 1)
+            edges = thickness * (1.0 + np.tanh(2.0 * coordinate) / np.tanh(2.0)) / 2.0 + offset
+            points.extend(0.5 * (edges[:-1] + edges[1:]))
+            offset += thickness
+        points.append(offset)
+        nodes = np.asarray(points)
+    else:
+        nodes = np.array((0, 2, 6, 17, 26, 29, 44, 63, 86, 93, 105, 127)) * 1e-9
+        thicknesses = np.array((30e-9, 60e-9, 37e-9))
+        alphas = np.array((1.7e7, 3e5, 9.2e6))
+    positions = np.cumsum(thicknesses)[:-1]
+    owner = np.searchsorted(positions, nodes, side="right")
+    return nodes, thicknesses, alphas, positions, owner
+
+
+@pytest.mark.parametrize("builder", [two_sided_trace_geometry, physical_boundary_two_sided_geometry])
+@pytest.mark.parametrize("case", ["science_mr1", "unequal_spacing"])
+def test_two_sided_layer_integrals_match_piecewise_material_oracle(builder, case):
+    nodes, thicknesses, alphas, positions, owner = _two_sided_manufactured(case)
+    geometry = builder(nodes, positions)
+    profile = BeerLambertBinding(nodes, alphas[owner], PHI).generation_profile(geometry)
+    depth_front = np.concatenate(([0.0], np.cumsum(alphas * thicknesses)))
+    expected = [
+        PHI * math.exp(-depth_front[layer]) * -math.expm1(-alphas[layer] * thicknesses[layer])
+        for layer in range(3)
+    ]
+    actual = [math.fsum(profile.absorbed_m2_s[owner == layer]) for layer in range(3)]
+    # The frozen P0407-BL-LAYER limit; total conservation alone is insufficient.
+    np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=0.0)
+    assert math.fsum(actual) == pytest.approx(PHI * -math.expm1(-depth_front[-1]), rel=RTOL_FP)
+    np.testing.assert_allclose(
+        profile.source_m3_s * geometry.cell_measures_m,
+        profile.absorbed_m2_s, rtol=4e-16, atol=0.0,
+    )
+    assert np.all(profile.source_m3_s >= 0.0)
+    assert math.fsum(actual) <= PHI
+    assert np.min(np.diff(nodes)) != np.max(np.diff(nodes))
+
+
+@pytest.mark.parametrize("builder", [two_sided_trace_geometry, physical_boundary_two_sided_geometry])
+def test_two_sided_unspecified_varying_layer_absorption_is_rejected(builder):
+    nodes, _, alphas, positions, owner = _two_sided_manufactured("unequal_spacing")
+    geometry = builder(nodes, positions)
+    alpha = alphas[owner].copy()
+    alpha[1] *= 1.1
+    with pytest.raises(ValueError, match="piecewise-constant"):
+        BeerLambertBinding(nodes, alpha, PHI).generation_profile(geometry)
+    incomplete = SimpleNamespace(
+        name=geometry.name, nodes_m=geometry.nodes_m,
+        cell_faces_m=geometry.cell_faces_m, cell_measures_m=geometry.cell_measures_m,
+    )
+    with pytest.raises(ValueError, match="explicit interface planes"):
+        beer_lambert_generation(incomplete, alphas[owner], PHI)
+
+
+@pytest.mark.parametrize("builder", [two_sided_trace_geometry, physical_boundary_two_sided_geometry])
+def test_two_sided_uniform_absorption_is_referenced_to_the_first_node(builder):
+    origin, width, alpha = 120e-9, 300e-9, 1.3e7
+    nodes = origin + np.array((0.0, 0.07, 0.3, 0.8, 1.0)) * width
+    geometry = builder(nodes, ())
+    absorbed = beer_lambert_absorbed_photon_flux(geometry, alpha, PHI)
+    assert math.fsum(absorbed) == pytest.approx(PHI * -math.expm1(-alpha * width), rel=RTOL_FP)
 
 
 @pytest.mark.parametrize(
