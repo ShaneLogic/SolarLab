@@ -21,7 +21,7 @@ from scipy.sparse import csc_matrix, eye
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.equations.dc_1d import (
-    CompiledDevice1D, DC1DProblem, _quasi_fermi_potential_tangents,
+    CapabilityError, CompiledDevice1D, DC1DProblem, _quasi_fermi_potential_tangents,
 )
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
@@ -313,6 +313,8 @@ def solve_impedance(
     """
     if not isinstance(compiled, CompiledDevice1D):
         raise ValueError("an actual CompiledDevice1D is required")
+    if compiled.field_transport is not None:
+        raise CapabilityError("CT AC current tangents are not bound; field-dependent carrier transport is DC-only")
     if not isinstance(operating_point, SteadyState1D):
         raise ValueError("an accepted same-device SteadyState1D is required")
     if not {"ion_free", "classical_1d_dc", "maxwell_boltzmann"} <= set(compiled.capabilities):

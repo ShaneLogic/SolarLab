@@ -1009,6 +1009,31 @@ distributed, multivalent and metastable defects are rejected by this binding.
 The bounded example passed the original numerical gates; broader material,
 mesh and final scientific qualification remain pending.
 
+## Field-dependent carrier transport
+
+Smooth Caughey–Thomas velocity saturation is bound to the actual DC
+Scharfetter–Gummel fluxes and full Newton Jacobian:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.field_transport \
+  --output outputs/field_transport.json
+.venv/bin/python -B -m examples.research_1d.field_transport \
+  --read outputs/field_transport.json
+```
+
+The default 37-node illuminated example enables absorber velocity saturation
+and solves at 2 mV. `--config <device.json>` accepts an explicit device with
+nonzero saturation velocities. The result includes the effective face
+diffusivities, field derivatives, original residual and accepted solver state.
+The saved-result reader performs no new solve.
+
+This slice uses the full electrostatic face field, requires `ct_beta_n` or
+`ct_beta_p` greater than one on each active carrier face, and keeps Poole–Frenkel
+enhancement off. CT-off devices retain the original constant-diffusivity path.
+Both AC entry points explicitly reject active CT until their complete drive
+and current tangents are implemented. The bounded DC example passed its
+original numerical gates; mesh and final scientific qualification remain pending.
+
 ## Adding a local model
 
 `steady.py` contains `SaturatingRecombination`, an executable extension example:

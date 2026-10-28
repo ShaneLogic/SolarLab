@@ -120,6 +120,8 @@ class IonicSmallSignal1D:
         if self.coordinate_form not in {"moving_boundary_lift_v1", "fixed_reference_v1"}:
             raise ValueError("ionic AC requires an explicit supported coordinate representation")
         device, state = self.problem.device, self.operating_state
+        if device.electronic_component.field_transport is not None:
+            raise CapabilityError("CT AC current tangents are not bound; field-dependent carrier transport is DC-only")
         if state.device_sha256 != device.identity or state.voltage_V != self.problem.voltage_V:
             raise ValueError("ionic AC state must have the same complete device and operating voltage")
         if any(channel.kind != "fixed_reservoir" for channel in device.electronic_component.channels):

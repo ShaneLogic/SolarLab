@@ -5,6 +5,7 @@ dopants, static temperature/doping/band grading, DOS-aware SG transport,
 semiconductor work-function contacts, local lifetime or explicit neutral
 single-level SRH (equal physical conduction/valence DOS on defect-owned nodes)
 with radiative/Auger,
+smooth Caughey-Thomas face transport without Poole-Frenkel enhancement,
 and monochromatic Beer-Lambert or a node-aligned fixed generation resource.
 Historical mode labels do not select a legacy engine or enable its tier ceiling.
 Unsupported active mechanisms fail before any nonlinear solve.
@@ -27,6 +28,7 @@ from solarlab.equations.dc_1d import (
     CompiledDevice1D,
     LocalRecombinationModel,
 )
+from solarlab.equations.field_transport_1d import bind_field_transport_1d
 from solarlab.mesh import INTEGER_ENDPOINT_V1, RIGHT_LAYER_WINS, build_geometry, multilayer_grid
 from solarlab.mesh.grid import layer_node_masks
 from solarlab.physics.band_structure.binding import (
@@ -51,6 +53,7 @@ from solarlab.physics.recombination.reaction import (
     BulkRecombinationReaction,
 )
 from solarlab.physics.transport import legacy_face_diffusivity
+from solarlab.physics.transport.field_mobility_tangents import FieldMobilityCapabilityError
 
 __all__ = ["CapabilityError", "CompiledDevice1D", "compile_device_1d"]
 
@@ -134,8 +137,8 @@ def _unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[P
             missing.append(prefix + "dopant_ionization_model")
         if parameters["band_gap_narrowing_model"] != "off":
             missing.append(prefix + "band_gap_narrowing_model")
-        if any(parameters[name] != 0.0 for name in ("v_sat_n", "v_sat_p", "pf_gamma_n", "pf_gamma_p")):
-            missing.append(prefix + "field_mobility")
+        if any(parameters[name] != 0.0 for name in ("pf_gamma_n", "pf_gamma_p")):
+            missing.append(prefix + "field_mobility: Poole-Frenkel enhancement is not bound")
         if layer.bulk_trap_distribution_json is not None:
             missing.append(prefix + "bulk_trap_distribution: distributed defects are not bound")
         if layer.metastable_document_json is not None:
@@ -241,6 +244,18 @@ def compile_device_1d(
             result[mask] = dict(layer.parameters)[name]
         return result
 
+    electron_diffusivity = legacy_face_diffusivity(binding.electron_diffusivity_m2_s)
+    hole_diffusivity = legacy_face_diffusivity(binding.hole_diffusivity_m2_s)
+    try:
+        field_transport = bind_field_transport_1d(
+            nodes, electron_diffusivity, hole_diffusivity, binding.thermal_voltage_V,
+            v_sat_n=paint("v_sat_n"), v_sat_p=paint("v_sat_p"),
+            ct_beta_n=paint("ct_beta_n"), ct_beta_p=paint("ct_beta_p"),
+            pf_gamma_n=paint("pf_gamma_n"), pf_gamma_p=paint("pf_gamma_p"),
+        )
+    except FieldMobilityCapabilityError as error:
+        raise CapabilityError("unsupported_classical_1d_dc: " + str(error)) from error
+
     # The configured intrinsic product must agree with the physical DOS/bands.
     # Changing it silently would replace the user's recombination population.
     bands = binding.band_structure
@@ -309,14 +324,16 @@ def compile_device_1d(
     )
     if explicit_defects is not None:
         identity_parts += (explicit_defects.identity_sha256,)
+    if field_transport is not None:
+        identity_parts += (field_transport.identity_sha256,)
     identity = hashlib.sha256(json.dumps(
         identity_parts,
         separators=(",", ":"), allow_nan=False,
     ).encode()).hexdigest()
     return CompiledDevice1D(
         data["id"], identity, geometry, binding, poisson,
-        legacy_face_diffusivity(binding.electron_diffusivity_m2_s),
-        legacy_face_diffusivity(binding.hole_diffusivity_m2_s),
+        electron_diffusivity, hole_diffusivity,
         generation, recombination, channels, phi_left, built_in, fermi,
         reference_phi, reference_n, reference_p, additional_recombination,
+        field_transport=field_transport,
     )

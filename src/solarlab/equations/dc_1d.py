@@ -39,6 +39,7 @@ from solarlab.contracts import (
 )
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.discretization.stable_bernoulli import bernoulli_pair
+from solarlab.equations.field_transport_1d import FieldTransport1D
 from solarlab.mesh.geometry import ControlVolumeGeometry1D
 from solarlab.physics.band_structure.binding import ParameterBinding
 from solarlab.physics.contacts import CarrierExchangeChannel, junction_polarity
@@ -145,6 +146,7 @@ class CompiledDevice1D:
         "semiconductor_work_function_contacts",
         "bulk_srh_radiative_auger",
     )
+    field_transport: FieldTransport1D | None = None
     _carrier_layout: Layout = field(init=False, repr=False)
     _carrier_geometry: Geometry = field(init=False, repr=False)
 
@@ -168,6 +170,14 @@ class CompiledDevice1D:
         for name in ("electron_diffusivity_faces_m2_s", "hole_diffusivity_faces_m2_s"):
             if getattr(self, name).shape != (count - 1,):
                 raise ValueError(f"{name} does not match the geometry faces")
+        transport = self.field_transport
+        if transport is not None and (
+            not np.array_equal(transport.nodes_m, self.nodes_m)
+            or transport.thermal_voltage_V != self.thermal_voltage_V
+            or not np.array_equal(transport.base_electron_diffusivity_m2_s, self.electron_diffusivity_faces_m2_s)
+            or not np.array_equal(transport.base_hole_diffusivity_m2_s, self.hole_diffusivity_faces_m2_s)
+        ):
+            raise ValueError("field transport must bind this device's grid, temperature and low-field diffusivities")
         for name in ("reference_electron_density_m3", "reference_hole_density_m3"):
             if np.any(getattr(self, name) <= 0.0):
                 raise ValueError("all reference densities must be finite and positive")
@@ -333,10 +343,15 @@ class DC1DProblem:
         count = device.node_count
         values = np.asarray(u, dtype=float)
         phi, n, p = device.fields(values, voltage_V=self.voltage_V)
+        electron_diffusivity = device.electron_diffusivity_faces_m2_s
+        hole_diffusivity = device.hole_diffusivity_faces_m2_s
+        if device.field_transport is not None:
+            transport = device.field_transport.evaluate(phi)
+            electron_diffusivity = transport.electron_diffusivity_m2_s
+            hole_diffusivity = transport.hole_diffusivity_m2_s
         return carrier_particle_fluxes(
             device.nodes_m, phi, n, p,
-            device.electron_diffusivity_faces_m2_s,
-            device.hole_diffusivity_faces_m2_s,
+            electron_diffusivity, hole_diffusivity,
             device.thermal_voltage_V,
             device.parameters.band_structure,
             electron_electrochemical_step=np.diff(values[count:2 * count]),
@@ -441,6 +456,7 @@ class DC1DProblem:
         derivative = self._derivative(udot)
         fluxes = self.fluxes(values)
         rate = self.recombination_rate(n, p)
+        transport = None if device.field_transport is None else device.field_transport.evaluate(values[:count])
         assert rate.d_rate_dn is not None and rate.d_rate_dp is not None
         widths = device.geometry.cell_measures_m
         matrix = lil_matrix((3 * count, 3 * count), dtype=float)
@@ -460,6 +476,16 @@ class DC1DProblem:
         ):
             drive = sign * np.diff(values[offset:offset + count])
             left_phi, right_phi = _quasi_fermi_potential_tangents(flux, drive, sign, thermal)
+            if transport is not None:
+                diffusivity = (transport.electron_diffusivity_m2_s if carrier == "n"
+                               else transport.hole_diffusivity_m2_s)
+                d_diffusivity = (transport.electron_d_diffusivity_d_field if carrier == "n"
+                                 else transport.hole_d_diffusivity_d_field)
+                # SG is linear in positive D. E = -(phi_R-phi_L)/dx, so
+                # this is the additional (dGamma/dD)(dD/dE)(dE/dphi) term.
+                field_chain = (flux.flux / diffusivity) * d_diffusivity / np.diff(device.nodes_m)
+                left_phi = left_phi + field_chain
+                right_phi = right_phi - field_chain
             left_z = sign * flux.left_density_derivative * density[:-1]
             right_z = sign * flux.right_density_derivative * density[1:]
             for face in range(count - 1):
