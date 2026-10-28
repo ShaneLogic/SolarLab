@@ -1,4 +1,4 @@
-"""Inventory-constrained, jointly coupled independent-ion research steady solve.
+"""Inventory-constrained, jointly coupled finite-site ion research steady solve.
 
 One dependent balance per blocking species is replaced by the physical inventory
 declared in the compiled input. All original balances remain diagnostic and
@@ -68,7 +68,8 @@ class ConstrainedIonic1DProblem:
                 or float(domain["reference_inventory_m2"]) != device.reference_inventory_m2):
             raise ValueError("physical inventory must match the original prepared domain and weights")
         if device.ion_species_count == 2:
-            if (ion_model.get("site_contract") != "independent_finite_sites"
+            if (ion_model.get("site_contract") != device.ion_site_contract
+                    or device.ion_site_contract not in {"independent_finite_sites", "shared_finite_sites"}
                     or not np.array_equal(ion_model.get("negative_face_diffusivity_m2_s"),
                                           device.negative_ion_diffusivity_faces_m2_s)):
                 raise ValueError("the negative ionic provenance binding is inconsistent")
@@ -110,11 +111,19 @@ class ConstrainedIonic1DProblem:
         matrix = self.original.jacobian(y).tolil()
         device = self.original.device
         # The actual physical storage derivative supplies d(sum(W_P*P))/da.
-        derivative = -self.original.storage_jacobian(y).diagonal()
+        storage = self.original.storage_jacobian(y)
+        derivative = -storage.diagonal()
         for species, block in zip(device.ion_species_names, device.ion_species_slices):
             row = self.constraint_rows[species]
-            matrix.rows[row] = list(range(block.start, block.stop))
-            matrix.data[row] = derivative[block].tolist()
+            if device.ion_site_contract == "shared_finite_sites":
+                # Each inventory depends on both shared-site coordinates.
+                first_ion = 3 * device.node_count
+                gradient = -np.asarray(storage[block, first_ion:].sum(axis=0)).ravel()
+                matrix.rows[row] = list(range(first_ion, device.state_size))
+                matrix.data[row] = gradient.tolist()
+            else:
+                matrix.rows[row] = list(range(block.start, block.stop))
+                matrix.data[row] = derivative[block].tolist()
         return matrix.tocsc()
 
 
@@ -267,6 +276,13 @@ def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str,
         for key in ("domain_ion_net_charge_C_m2", "physical_ion_net_charge_C_m2",
                     "deposited_ion_net_charge_C_m2", "charge_deposition_error_C_m2"):
             result[key] = positive[key] + negative[key]
+    if device.ion_site_contract == "shared_finite_sites":
+        occupied = (populations[0] + populations[1]) / device.positive_ion_site_limit_m3
+        result["shared_site"] = {
+            "summed_site_fraction": occupied, "vacancy_fraction": 1.0 - occupied,
+            "maximum_summed_site_fraction": float(np.max(occupied)),
+            "minimum_vacancy_fraction": float(np.min(1.0 - occupied)),
+        }
     return result
 
 

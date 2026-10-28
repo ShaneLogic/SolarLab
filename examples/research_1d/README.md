@@ -515,8 +515,7 @@ component projection. Multilayer callers must supply `ion_domain_layer` and
 `ion_domain_endpoints=("blocking", "blocking")`; undeclared additional ion domains
 are refused. Zero diffusivity retains population, background and storage in
 assembly; the connected-domain steady solver rejects zero or disconnected
-diffusivity. The independent dual-ion extension is described below; shared-site
-cases remain outside this delivered slice.
+diffusivity. Independent and shared-site dual-ion examples are described below.
 The result records `qualification: false`; final mesh, time and scientific
 acceptance remain open.
 
@@ -571,8 +570,32 @@ The independently reproduced dark 2 mV steady state converged in 10 Newton
 iterations. All four 2-to-4 mV steps over one second converged, with positive
 and negative populations changing by about 0.148% and 0.0782%. Per-species
 conservation and full conduction/displacement-current checks passed. This is
-a bounded working case; shared sites, additional ion domains, mesh/time
-qualification and hysteresis qualification remain open.
+a bounded working case. The shared-site model has a separate example below;
+additional ion domains, mesh/time qualification and hysteresis qualification
+remain open.
+
+## Shared-site positive and negative ions
+
+Run the original diffusion-only shared-site model with a common capacity:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.shared_site_ionic \
+  --output-directory outputs/shared_site_ionic
+```
+
+This uses the same 37/13-node blocking absorber with reference densities
+`1e24` and `6e23` m⁻³ and a common capacity of `2e24` m⁻³. Both populations
+share the vacancy fraction. Their coupled density derivatives, physical
+increments and inventory constraints are included in the solve. Accepted
+states are not clipped or renormalized.
+
+The dark 2 mV cold solve converged in 12 Newton iterations, followed by all
+four requested steps to 4 mV over one second. The largest summed occupancy
+was about 98.05%; both populations moved by about 0.36% during the history.
+The output preserves each inventory, vacancy fraction, current balance and
+failure evidence. Shared sites require equal capacities and the original
+diffusion-only model; other shared-site combinations are refused. This
+bounded example does not establish mesh/time or final scientific qualification.
 
 ## Transient HTTP jobs
 

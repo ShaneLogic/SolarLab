@@ -1,4 +1,4 @@
-"""Executable independent finite-site ion extension of the classical electronic rows.
+"""Executable independent/shared finite-site extension of classical electronic rows.
 
 This binding admits one declared layer-wide ion domain, finite sites, blocking
 domain endpoints, and a static operating voltage/temperature. It assembles F(y, ydot),
@@ -15,7 +15,7 @@ import math
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from scipy.sparse import block_diag, csc_matrix, diags, lil_matrix
+from scipy.sparse import block_diag, bmat, csc_matrix, diags, lil_matrix
 
 from solarlab.contracts import frozen_array
 from solarlab.contracts.arrays import integer_indices
@@ -26,8 +26,9 @@ from solarlab.physics.band_structure.temperature import ion_diffusivity_at_tempe
 from solarlab.physics.electrostatics.charge import ChargeEntry, ChargeLedger
 from solarlab.physics.ions import (
     DIFFUSION_ONLY_STERIC_V1, WHOLE_FLUX_STERIC_V1,
-    ion_face_flux, ion_face_flux_jacobian, shifted_logistic_density, single_site_density,
+    ion_face_flux, ion_face_flux_jacobian, shared_site_densities, shifted_logistic_density, single_site_density,
 )
+from solarlab.physics.ions.shared_site import shared_site_coordinate_jacobian_m3, shared_site_coordinate_hessian_m3
 
 __all__ = ["CompiledIonicDevice1D", "Ionic1DProblem", "IonicState1D"]
 Q = ELEMENTARY_CHARGE_C
@@ -106,9 +107,12 @@ class CompiledIonicDevice1D:
     negative_ion_site_limit_m3: Vector = field(default_factory=lambda: np.empty(0))
     negative_ion_logit_reference: Vector = field(default_factory=lambda: np.empty(0))
     negative_ion_diffusivity_faces_m2_s: Vector = field(default_factory=lambda: np.empty(0))
+    ion_site_contract: str = "independent_finite_sites"
 
     def __post_init__(self) -> None:
         count = self.ion_node_count
+        if self.ion_site_contract not in {"independent_finite_sites", "shared_finite_sites"}:
+            raise ValueError("unsupported ionic site contract")
         indices = integer_indices(self.ion_node_indices)
         if indices.size == 0:
             if count != self.node_count:
@@ -144,6 +148,8 @@ class CompiledIonicDevice1D:
             raise ValueError("negative-ion arrays must all match the complete domain or all be absent")
         if np.any(self.negative_ion_diffusivity_faces_m2_s < 0.0):
             raise ValueError("negative-ion diffusivity must be non-negative on every domain face")
+        if self.ion_site_contract == "shared_finite_sites" and not negative_count:
+            raise ValueError("ionic binding: shared sites require both complete populations")
         if np.any(self.positive_ion_reference_m3 <= 0.0) or np.any(self.positive_ion_reference_m3 >= self.positive_ion_site_limit_m3):
             raise ValueError("finite-site reference must lie strictly between zero and capacity")
         if self.ion_geometry.name != HALF_ENDPOINT_V1 or self.ion_geometry.interfaces:
@@ -175,7 +181,15 @@ class CompiledIonicDevice1D:
             raise ValueError("ionic binding: reference density differs from the original P0 declaration")
         if not np.array_equal(self.positive_ion_site_limit_m3, np.full(count, capacity)):
             raise ValueError("ionic binding: site capacity differs from the original P_lim declaration")
-        if not np.array_equal(self.positive_ion_logit_reference, np.full(count, logit)):
+        expected_positive_logit = np.full(count, logit)
+        if self.ion_site_contract == "shared_finite_sites":
+            source_negative = float(matching[0]["P0_neg"])
+            source_negative_capacity = float(matching[0]["P_lim_neg"])
+            if source_negative_capacity != capacity or source_negative <= 0.0 or reference + source_negative >= capacity:
+                raise ValueError("ionic binding: shared sites require common capacity and positive source vacancy")
+            source_vacancy = 1.0 - (np.full(count, reference) + np.full(count, source_negative)) / capacity
+            expected_positive_logit = np.log(np.full(count, reference) / capacity) - np.log(source_vacancy)
+        if not np.array_equal(self.positive_ion_logit_reference, expected_positive_logit):
             raise ValueError("ionic binding: logit reference differs from the original P0/P_lim relationship")
         negative_reference = float(matching[0]["P0_neg"])
         negative_diffusion = float(matching[0]["D_ion_neg"])
@@ -187,12 +201,16 @@ class CompiledIonicDevice1D:
             except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
                 raise ValueError("ionic binding requires valid original negative finite-site parameters") from exc
             for name, value in (("negative_ion_reference_m3", negative_reference),
-                                ("negative_ion_site_limit_m3", negative_capacity),
-                                ("negative_ion_logit_reference", negative_logit)):
+                                ("negative_ion_site_limit_m3", negative_capacity)):
                 if not np.array_equal(getattr(self, name), np.full(count, value)):
                     raise ValueError(f"ionic binding: {name} differs from its original declaration")
+            expected_negative_logit = np.full(count, negative_logit)
+            if self.ion_site_contract == "shared_finite_sites":
+                expected_negative_logit = np.log(np.full(count, negative_reference) / capacity) - np.log(source_vacancy)
+            if not np.array_equal(self.negative_ion_logit_reference, expected_negative_logit):
+                raise ValueError("ionic binding: negative log-ratio reference differs from its original declaration")
             model = manifest.get("ion_model")
-            if (not isinstance(model, dict) or model.get("site_contract") != "independent_finite_sites"
+            if (not isinstance(model, dict) or model.get("site_contract") != self.ion_site_contract
                     or not np.array_equal(model.get("negative_face_diffusivity_m2_s"), self.negative_ion_diffusivity_faces_m2_s)):
                 raise ValueError("ionic binding: negative transport must match the independent-site declaration")
             activation = float(matching[0]["E_a_ion"])
@@ -204,14 +222,21 @@ class CompiledIonicDevice1D:
             if not np.array_equal(self.negative_ion_diffusivity_faces_m2_s, np.full(count - 1, scaled_negative)):
                 raise ValueError("ionic binding: negative diffusivity differs from its original temperature-scaled declaration")
             settings = manifest.get("original_ionic_settings")
-            if not isinstance(settings, dict) or settings.get("ion_steric_shared_site") is not False:
-                raise ValueError("ionic binding: shared-site kinetics are not assembled")
+            if not isinstance(settings, dict) or settings.get("ion_steric_shared_site") is not (self.ion_site_contract == "shared_finite_sites"):
+                raise ValueError("ionic binding: declared ionic site contract differs from its original flags")
+            if self.ion_site_contract == "shared_finite_sites":
+                if self.steric_model != DIFFUSION_ONLY_STERIC_V1 or settings.get("ion_steric_diffusion_only") is not True:
+                    raise ValueError("ionic binding: shared sites require the original diffusion-only law")
+                if (model.get("coordinate_map") != "historical_shared_site_softmax_v1"
+                        or not np.array_equal(model.get("reference_vacancy_fraction"), source_vacancy)):
+                    raise ValueError("ionic binding: shared coordinate/vacancy declaration differs from its source")
             layout = manifest.get("state_layout")
             if (not isinstance(layout, dict) or layout.get("ion_species") != ["positive", "negative"]
                     or layout.get("size") != self.state_size):
                 raise ValueError("ionic binding: both species must remain in the declared state layout")
             object.__setattr__(self, "capabilities", tuple(
-                "independent_dual_ion_1d_residual" if name == "single_positive_ion_1d_residual" else name
+                ("shared_site_dual_ion_1d_residual" if self.ion_site_contract == "shared_finite_sites" else "independent_dual_ion_1d_residual")
+                if name == "single_positive_ion_1d_residual" else name
                 for name in self.capabilities
             ))
         elif negative_reference != 0.0 or negative_diffusion != 0.0:
@@ -317,8 +342,18 @@ class CompiledIonicDevice1D:
         if values.shape != (self.state_size,) or not np.all(np.isfinite(values)):
             raise ValueError("ionic coordinates must be finite with shape (3*N + species_count*M,)")
         phi, n, p = self.electronic_component.fields(values[:3 * count], voltage_V=voltage_V)
-        populations = []
+        populations: list[Vector] = []
+        if self.ion_site_contract == "shared_finite_sites":
+            positive, negative = self.ion_species_slices
+            populations.extend(shared_site_densities(
+                self.positive_ion_site_limit_m3, self.positive_ion_logit_reference, self.negative_ion_logit_reference,
+                values[positive], values[negative],
+            ))
+            if np.any(populations[0] + populations[1] >= self.positive_ion_site_limit_m3):
+                raise ValueError("shared-site trial summed occupancy is outside the representable finite vacancy domain")
         for species, block in zip(self.ion_species_names, self.ion_species_slices):
+            if self.ion_site_contract == "shared_finite_sites":
+                break
             reference = getattr(self, species + "_ion_reference_m3")
             capacity = getattr(self, species + "_ion_site_limit_m3")
             logit = getattr(self, species + "_ion_logit_reference")
@@ -332,6 +367,27 @@ class CompiledIonicDevice1D:
         if any(not np.all(np.isfinite(value)) or np.any(value <= 0.0) for value in (n, p, *populations)):
             raise ValueError("ionic/electronic trial density is outside the finite positive domain")
         return phi, n, p, tuple(populations)
+
+    def ion_coordinate_jacobian_m3(self, y: ArrayLike, *, voltage_V: float = 0.0) -> np.ndarray:
+        """Node-major complete physical ion derivatives [M,species,coordinate]."""
+        populations = self.fields_by_species(y, voltage_V=voltage_V)[3]
+        if self.ion_site_contract == "shared_finite_sites":
+            return shared_site_coordinate_jacobian_m3(populations[0], populations[1], self.positive_ion_site_limit_m3)
+        result = np.zeros((self.ion_node_count, self.ion_species_count, self.ion_species_count))
+        for index, (species, density) in enumerate(zip(self.ion_species_names, populations)):
+            result[:, index, index] = density * (1.0 - density / getattr(self, species + "_ion_site_limit_m3"))
+        return result
+
+    def ion_coordinate_hessian_m3(self, y: ArrayLike, *, voltage_V: float = 0.0) -> np.ndarray:
+        """Node-major complete physical ion Hessian [M,species,coordinate,coordinate]."""
+        populations = self.fields_by_species(y, voltage_V=voltage_V)[3]
+        if self.ion_site_contract == "shared_finite_sites":
+            return shared_site_coordinate_hessian_m3(populations[0], populations[1], self.positive_ion_site_limit_m3)
+        result = np.zeros((self.ion_node_count, self.ion_species_count, self.ion_species_count, self.ion_species_count))
+        for index, (species, density) in enumerate(zip(self.ion_species_names, populations)):
+            capacity = getattr(self, species + "_ion_site_limit_m3")
+            result[:, index, index, index] = density * (1.0 - density / capacity) * (1.0 - 2.0 * density / capacity)
+        return result
 
     def state(self, y: ArrayLike, *, voltage_V: float = 0.0) -> IonicState1D:
         values = np.asarray(y, dtype=float)
@@ -401,13 +457,15 @@ class Ionic1DProblem:
         if species not in self.device.ion_species_names:
             raise ValueError("requested ion species is not assembled in this device")
         phi, _, _, populations = self.device.fields_by_species(y, voltage_V=self.voltage_V)
-        density = populations[self.device.ion_species_names.index(species)]
+        index = self.device.ion_species_names.index(species)
+        density = populations[index]
+        partner = populations[1 - index] if self.device.ion_site_contract == "shared_finite_sites" else None
         capacity = getattr(self.device, species + "_ion_site_limit_m3")
         return ion_face_flux(
             phi[self.device.ion_node_indices], density, np.diff(self.device.ion_geometry.nodes_m), getattr(self.device, species + "_ion_diffusivity_faces_m2_s"),
             self.device.electronic_component.thermal_voltage_V, capacity[:-1],
             steric_diffusion_only=self.device.steric_model == DIFFUSION_ONLY_STERIC_V1,
-            P_lim_node=capacity, drift_sign=1.0 if species == "positive" else -1.0,
+            P_lim_node=capacity, P_other_node=partner, drift_sign=1.0 if species == "positive" else -1.0,
         )
 
     def ion_fluxes_on_electronic_faces(self, y: ArrayLike, *, species: str = "positive") -> Vector:
@@ -434,9 +492,15 @@ class Ionic1DProblem:
         left, right = self.device.electronic_component.contact_potentials(self.voltage_V)
         result[:count] = self.device.electronic_component.poisson.residual(phi, rho, left, right)
         # Every internal face contributes -Gamma to its left cell, +Gamma to right.
-        for species, density, block in zip(self.device.ion_species_names, populations, self.device.ion_species_slices):
+        for index, (species, density, block) in enumerate(zip(self.device.ion_species_names, populations, self.device.ion_species_slices)):
             result[block] = -np.diff(np.r_[0.0, self.ion_fluxes(values, species=species), 0.0])
-            result[block] -= self.device.ion_geometry.cell_measures_m * self._ion_partial(density, species) * derivative[block]
+            if self.device.ion_site_contract == "shared_finite_sites":
+                mass = self.device.ion_coordinate_jacobian_m3(values, voltage_V=self.voltage_V)
+                plus, minus = self.device.ion_species_slices
+                rate = mass[:, index, 0] * derivative[plus] + mass[:, index, 1] * derivative[minus]
+                result[block] -= self.device.ion_geometry.cell_measures_m * rate
+            else:
+                result[block] -= self.device.ion_geometry.cell_measures_m * self._ion_partial(density, species) * derivative[block]
         if not np.all(np.isfinite(result)):
             raise FloatingPointError("ionic residual is outside the finite numerical envelope")
         return result
@@ -445,6 +509,11 @@ class Ionic1DProblem:
         values = np.asarray(y, dtype=float)
         _, _, _, populations = self.device.fields_by_species(values, voltage_V=self.voltage_V)
         electronic = self.electronic_problem.storage_jacobian(values[:3 * self.device.node_count])
+        if self.device.ion_site_contract == "shared_finite_sites":
+            mass = self.device.ion_coordinate_jacobian_m3(values, voltage_V=self.voltage_V)
+            coupled = bmat([[diags(-self.device.ion_geometry.cell_measures_m * mass[:, row, column], format="csc")
+                             for column in range(2)] for row in range(2)], format="csc")
+            return block_diag((electronic, coupled), format="csc")
         ionic = tuple(diags(-self.device.ion_geometry.cell_measures_m * self._ion_partial(density, species), format="csc")
                       for species, density in zip(self.device.ion_species_names, populations))
         return block_diag((electronic, *ionic), format="csc")
@@ -452,6 +521,8 @@ class Ionic1DProblem:
     def jacobian(self, y: ArrayLike, ydot: ArrayLike | None = None, *, alpha: float = 0.0) -> csc_matrix:
         if not math.isfinite(alpha):
             raise ValueError("alpha must be finite")
+        if self.device.ion_site_contract == "shared_finite_sites":
+            return self._shared_site_jacobian(y, ydot, alpha)
         count = self.device.node_count
         values = np.asarray(y, dtype=float)
         phi, _, _, populations = self.device.fields_by_species(values, voltage_V=self.voltage_V)
@@ -493,11 +564,62 @@ class Ionic1DProblem:
             raise FloatingPointError("ionic Jacobian is outside the finite numerical envelope")
         return result
 
+    def _shared_site_jacobian(self, y: ArrayLike, ydot: ArrayLike | None, alpha: float) -> csc_matrix:
+        """Full existing-row transport, signed charge and coupled storage chain."""
+        device, count = self.device, self.device.node_count
+        values = np.asarray(y, dtype=float)
+        phi, _, _, populations = device.fields_by_species(values, voltage_V=self.voltage_V)
+        derivative = self._derivative(ydot)
+        mass = device.ion_coordinate_jacobian_m3(values, voltage_V=self.voltage_V)
+        hessian = device.ion_coordinate_hessian_m3(values, voltage_V=self.voltage_V)
+        matrix = lil_matrix((device.state_size, device.state_size), dtype=float)
+        matrix[:3 * count, :3 * count] = self.electronic_problem.jacobian(values[:3 * count], derivative[:3 * count])
+        indices, blocks = device.ion_node_indices, device.ion_species_slices
+        for column, block in enumerate(blocks):
+            charge = Q * device.electronic_component.poisson.charge_jacobian()[indices] * device.ion_charge_weight_ratio * (mass[:, 0, column] - mass[:, 1, column])
+            for local, node in enumerate(indices):
+                matrix[node, block.start + local] = charge[local]
+        for species, (name, density, block) in enumerate(zip(device.ion_species_names, populations, blocks)):
+            other = 1 - species
+            flux = ion_face_flux_jacobian(
+                phi[indices], density, np.diff(device.ion_geometry.nodes_m), getattr(device, name + "_ion_diffusivity_faces_m2_s"),
+                device.electronic_component.thermal_voltage_V, device.positive_ion_site_limit_m3[:-1],
+                steric_diffusion_only=True, P_lim_node=device.positive_ion_site_limit_m3,
+                P_other_node=populations[other], drift_sign=1.0 if species == 0 else -1.0,
+            )
+            if not np.all(flux.differentiable_faces):
+                raise ValueError("ionic Jacobian is undefined at a retained historical regularization kink")
+            for face in range(device.ion_node_count - 1):
+                for orientation, local in ((-1.0, face), (1.0, face + 1)):
+                    row = block.start + local
+                    matrix[row, indices[face]] += orientation * flux.potential_left_derivative[face]
+                    matrix[row, indices[face + 1]] += orientation * flux.potential_right_derivative[face]
+                    for column, column_block in enumerate(blocks):
+                        left = flux.density_left_derivative[face] * mass[face, species, column] + flux.partner_left_derivative[face] * mass[face, other, column]
+                        right = flux.density_right_derivative[face] * mass[face + 1, species, column] + flux.partner_right_derivative[face] * mass[face + 1, other, column]
+                        matrix[row, column_block.start + face] += orientation * left
+                        matrix[row, column_block.start + face + 1] += orientation * right
+            for column, column_block in enumerate(blocks):
+                second = hessian[:, species, column, 0] * derivative[blocks[0]] + hessian[:, species, column, 1] * derivative[blocks[1]]
+                matrix[block, column_block] -= diags(device.ion_geometry.cell_measures_m * second)
+        result = matrix.tocsc()
+        if alpha != 0.0:
+            result = result + alpha * self.storage_jacobian(values)
+        if not np.all(np.isfinite(result.data)):
+            raise FloatingPointError("ionic Jacobian is outside the finite numerical envelope")
+        return result
+
     def inventory_rate_m2_s(self, y: ArrayLike, ydot: ArrayLike, *, species: str = "positive") -> float:
         """Actual d(sum(W_P*P))/dt; blocking face transport has zero net input."""
         if species not in self.device.ion_species_names:
             raise ValueError("requested ion species is not assembled in this device")
         _, _, _, populations = self.device.fields_by_species(y, voltage_V=self.voltage_V)
         index = self.device.ion_species_names.index(species)
+        if self.device.ion_site_contract == "shared_finite_sites":
+            derivative = self._derivative(ydot)
+            mass = self.device.ion_coordinate_jacobian_m3(y, voltage_V=self.voltage_V)
+            plus, minus = self.device.ion_species_slices
+            rate = mass[:, index, 0] * derivative[plus] + mass[:, index, 1] * derivative[minus]
+            return math.fsum((self.device.ion_geometry.cell_measures_m * rate).tolist())
         derivative = self._derivative(ydot)[self.device.ion_species_slices[index]]
         return math.fsum((self.device.ion_geometry.cell_measures_m * self._ion_partial(populations[index], species) * derivative).tolist())

@@ -37,10 +37,11 @@ def compile_ionic_device_1d(
     ion_domain_layer: str | None = None,
     ion_domain_endpoints: tuple[str, str] | None = None,
 ) -> CompiledIonicDevice1D:
-    """Compile independent finite-site populations in one explicitly blocking layer.
+    """Compile independent or shared finite-site ions in one blocking layer.
 
-    Zero D retains each configured population/background/storage. Shared sites,
-    additional domains and absent/saturated positive references are unsupported.
+    Zero D retains each configured population/background/storage. Shared sites
+    require the original diffusion-only law, equal capacities and positive
+    vacancy. Additional domains and absent/saturated references are unsupported.
     A negative population requires its own positive unsaturated reference, even
     when its mobility is zero. A multilayer device requires an
     explicit layer and two blocking endpoints; no interface exchange is inferred.
@@ -63,8 +64,9 @@ def compile_ionic_device_1d(
             raise CapabilityError("first_ionic_1d: multilayer ion domain requires explicit blocking endpoints")
     elif ion_domain_endpoints != ("blocking", "blocking"):
         raise CapabilityError("first_ionic_1d: ion interface exchange is unsupported; declare two blocking endpoints")
-    if data["settings"]["ion_steric_shared_site"]:
-        raise CapabilityError("first_ionic_1d: shared-site ions are not assembled")
+    shared = bool(data["settings"]["ion_steric_shared_site"])
+    if shared and not data["settings"]["ion_steric_diffusion_only"]:
+        raise CapabilityError("shared-site ions require the original diffusion-only crowding law")
     declarations = [{"layer": layer.id, **{name: dict(layer.parameters)[name] for name in _ION_INPUTS}}
                     for layer in prepared.layers]
     for layer in prepared.layers:
@@ -93,6 +95,13 @@ def compile_ionic_device_1d(
             raise CapabilityError("dual_ionic_1d: a positive unsaturated negative-ion reference is required; mobility alone cannot create a population")
         if negative_diffusion < 0.0:
             raise CapabilityError("dual_ionic_1d: negative-ion diffusivity must be non-negative")
+    if shared:
+        if not dual:
+            raise CapabilityError("shared-site ions require both declared positive and negative references")
+        if capacity != negative_capacity:
+            raise CapabilityError("shared-site ions require one exactly common site capacity")
+        if not math.isfinite(reference + negative_reference) or reference + negative_reference >= capacity:
+            raise CapabilityError("shared-site reference summed occupancy must be below the common capacity")
 
     # Explicit component projection; only ionic populations/transport switches
     # are excluded from this component, and every change is recorded below.
@@ -127,6 +136,7 @@ def compile_ionic_device_1d(
     # One uniform ionic domain: retain the ion kernel's scalar-broadcast law,
     # including exact zero diffusivity, rather than a carrier-only harmonic mean.
     faces = np.full(count - 1, scaled_diffusion)
+    positive_logit_array = np.full(count, logit)
     negative_arrays: dict[str, np.ndarray] = {}
     if dual:
         scaled_negative = ion_diffusivity_at_temperature(negative_diffusion, component.parameters.temperature_K, activation)
@@ -140,6 +150,10 @@ def compile_ionic_device_1d(
             "negative_ion_logit_reference": np.full(count, negative_logit),
             "negative_ion_diffusivity_faces_m2_s": np.full(count - 1, scaled_negative),
         }
+        if shared:
+            vacancy = 1.0 - (reference_array + negative_arrays["negative_ion_reference_m3"]) / limit_array
+            positive_logit_array = np.log(reference_array / limit_array) - np.log(vacancy)
+            negative_arrays["negative_ion_logit_reference"] = np.log(negative_arrays["negative_ion_reference_m3"] / limit_array) - np.log(vacancy)
     manifest: dict[str, Any] = {
         "binding": "single_positive_ion_classical_1d_residual_v1",
         "original_prepared_sha256": prepared.content_sha256,
@@ -167,12 +181,16 @@ def compile_ionic_device_1d(
     }
     if dual:
         # Positive-only manifest bytes remain the integrated v1 contract.
-        manifest["binding"] = "independent_dual_ion_classical_1d_residual_v1"
+        manifest["binding"] = "shared_site_dual_ion_classical_1d_residual_v1" if shared else "independent_dual_ion_classical_1d_residual_v1"
         manifest["ion_domain"]["negative_reference_inventory_m2"] = math.fsum((
             ion_geometry.cell_measures_m * negative_arrays["negative_ion_reference_m3"]
         ).tolist())
         manifest["ion_model"]["negative_face_diffusivity_m2_s"] = negative_arrays["negative_ion_diffusivity_faces_m2_s"].tolist()
-        manifest["ion_model"]["site_contract"] = "independent_finite_sites"
+        manifest["ion_model"]["site_contract"] = "shared_finite_sites" if shared else "independent_finite_sites"
+        if shared:
+            manifest["ion_model"]["coordinate_map"] = "historical_shared_site_softmax_v1"
+            manifest["ion_model"]["reference_vacancy_fraction"] = vacancy.tolist()
+            manifest["ion_model"]["coordinate_reference"] = "log(species_fraction)-log(common_vacancy_fraction)"
         manifest["ion_charge_deposition"]["rule"] = "rho_ion=q*(W_P/W_e)*((P_positive-P0)-(P_negative-P0_neg)); separate historical negative charge group"
         manifest["state_layout"].update(size=3 * component.node_count + 2 * count,
                                         ion_species=["positive", "negative"], ion_species_count=2)
@@ -180,10 +198,11 @@ def compile_ionic_device_1d(
     identity = hashlib.sha256(encoded.encode()).hexdigest()
     return CompiledIonicDevice1D(
         data["id"], identity, prepared.content_sha256, component, ion_geometry, domain_layer.id,
-        reference_array, limit_array, np.full(count, logit), faces, steric_model, encoded,
+        reference_array, limit_array, positive_logit_array, faces, steric_model, encoded,
         ion_node_indices=indices,
         negative_ion_reference_m3=negative_arrays.get("negative_ion_reference_m3", np.empty(0)),
         negative_ion_site_limit_m3=negative_arrays.get("negative_ion_site_limit_m3", np.empty(0)),
         negative_ion_logit_reference=negative_arrays.get("negative_ion_logit_reference", np.empty(0)),
         negative_ion_diffusivity_faces_m2_s=negative_arrays.get("negative_ion_diffusivity_faces_m2_s", np.empty(0)),
+        ion_site_contract="shared_finite_sites" if shared else "independent_finite_sites",
     )

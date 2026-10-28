@@ -17,6 +17,7 @@ from scipy.special import expit
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
 from solarlab.physics.electrostatics import contact_displacement
+from solarlab.physics.ions.shared_site import shared_site_secant_m3
 from solarlab.solvers.time.backward_euler import (
     BackwardEuler1DStep, _storage_mask, inventory_m2 as electronic_inventory_m2,
     step_accounting as electronic_step_accounting,
@@ -100,11 +101,19 @@ class IonicBackwardEuler1DStep:
         return BackwardEuler1DStep(self.endpoint.electronic_problem, self.previous.electronic_state, self.dt_s)
 
     def inventory_rates_m2_s(self, y: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
-        """Carrier rates and every independent physical finite-site secant, in block order."""
+        """Carrier rates and physical site-law secants for every species, in block order."""
         device, N = self.endpoint.device, self.endpoint.device.node_count
         values = np.asarray(y, dtype=float)
         device.fields_by_species(values, voltage_V=self.endpoint.voltage_V)
         carrier = self.electronic_step.inventory_rate_m2_s(values[:3 * N])
+        if device.ion_site_contract == "shared_finite_sites":
+            positive, negative = device.ion_species_slices
+            changes = shared_site_secant_m3(
+                device.positive_ion_site_limit_m3,
+                device.positive_ion_logit_reference, device.negative_ion_logit_reference,
+                self.previous.u[positive], self.previous.u[negative], values[positive], values[negative],
+            )
+            return carrier, tuple(device.ion_geometry.cell_measures_m * change / self.dt_s for change in changes)
         rates = []
         for species, block in zip(device.ion_species_names, device.ion_species_slices):
             ion_change = finite_site_secant_m3(
@@ -279,6 +288,13 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
             "global_ion_balance_m2_s": math.fsum(negative_balance.tolist()),
         }
         result["ion_species"] = {"positive": positive, "negative": negative}
+    if device.ion_site_contract == "shared_finite_sites":
+        occupied = (new.positive_ion_density_m3 + new.negative_ion_density_m3) / device.positive_ion_site_limit_m3
+        result["shared_site"] = {
+            "summed_site_fraction": occupied, "vacancy_fraction": 1.0 - occupied,
+            "maximum_summed_site_fraction": float(np.max(occupied)),
+            "minimum_vacancy_fraction": float(np.min(1.0 - occupied)),
+        }
     return result
 
 

@@ -355,6 +355,9 @@ time steps, and all dynamic ion continuity rows remain in residual and J.
             "ion_balance_tolerance_m2_s": options.ion_balance_tolerance_m2_s,
             "ion_logit_step": options.ion_logit_step,
         } for species in compiled.ion_species_names}
+    if compiled.ion_site_contract == "shared_finite_sites":
+        recorded["ion_site_contract"] = compiled.ion_site_contract
+        recorded["ion_inventory_increment"] = "coupled_shared_site_physical_secant"
     recorded["voltage_seed_policy"] = "harmonic_potential_preserve_carrier_and_ion_densities"
     recorded["max_total_newton_residual_calls"] = electronic.max_steps * electronic.newton_budget.max_residual_evaluations
     recorded["max_total_newton_jacobian_calls"] = electronic.max_steps * electronic.newton_budget.max_jacobian_evaluations
