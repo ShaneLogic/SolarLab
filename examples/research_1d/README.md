@@ -683,6 +683,34 @@ failed auxiliary-electronic strategy remain recorded failures. The successful
 direct policy does not run that auxiliary solver. The helper checks wall time
 between stages; use a process supervisor when a hard deadline is required.
 
+## Illuminated ionic J–V and sampled photovoltaic metrics
+
+Use the accepted illuminated state produced above to run the shared-site
+device from 0 to 1.25 V in uniform 25 mV steps:
+
+```sh
+LIGHT_STEADY_SHA=$(shasum -a 256 outputs/illuminated_ionic_steady.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_pv solve \
+  --initial-result outputs/illuminated_ionic_steady.json \
+  --initial-sha256 "$LIGHT_STEADY_SHA" --output outputs/ionic_pv.json
+PV_SHA=$(shasum -a 256 outputs/ionic_pv.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_pv read \
+  --result outputs/ionic_pv.json --sha256 "$PV_SHA"
+```
+
+The verified 51-point command completed in about 15 seconds on the development
+machine. Every point solves the full coupled system with the same physical
+checks; reading the result runs no solver. The saved data retain the first
+failure and accepted prefix if a calculation stops early.
+
+The bounded example gives sampled Jsc ≈ 144.384 A/m², interpolated Voc ≈
+1.21462 V, maximum power ≈ 147.104 W/m² and FF ≈ 0.838815. These use
+piecewise-linear voltage interpolation; mesh and voltage-grid accuracy remain
+unqualified. PCE is unavailable because incident irradiance is undeclared.
+This steady curve has no scan-rate or hysteresis interpretation. Historical
+`coarse-probe`, `continue` and `tail` commands retain the earlier failed coarse
+attempt and its successful continuations.
+
 ## Multiple blocking ion domains
 
 The additive two-domain compiler and equation assembly can be exercised with:
