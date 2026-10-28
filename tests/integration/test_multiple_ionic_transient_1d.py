@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from collections.abc import Iterator
+import gzip
 import hashlib
 import json
 import os
@@ -30,7 +31,17 @@ from solarlab.solvers.time.multiple_ionic_backward_euler import MultipleIonicBac
 STEADY_SHA = "858ef2f39be16018049d49cfe171d3f79f03891c1259b0eff7701945a78ef7f3"
 STEADY_PATH = Path("/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/test/ArchitectureRefactor/Stage04/P04CoreV1/Core1D/MultipleIonDomainsV1/Solvers/Steady.json")
 D0_SHA = "52fbe8cad99b739698459daaf428cba17acf5a8a70ea19de8a4fd9c4852651aa"
-D0_PATH = Path("/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/test/ArchitectureRefactor/Stage04/P04CoreV1/Core1D/MultipleIonDomainsV1/ImmobileSteady/MixedSteady.json")
+D0_FIXTURE = Path(__file__).with_name("fixtures") / "multiple_ionic_d0_steady.json.gz"
+
+
+@pytest.fixture(scope="module")
+def d0_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Materialize the exact reviewed initial state without a new steady solve."""
+    payload = gzip.decompress(D0_FIXTURE.read_bytes())
+    assert hashlib.sha256(payload).hexdigest() == D0_SHA
+    path = tmp_path_factory.mktemp("multiple-ionic-d0") / "MixedSteady.json"
+    path.write_bytes(payload)
+    return path
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -168,10 +179,10 @@ def test_actual_four_step_history_and_reuse_saved_reader(tmp_path: Path, monkeyp
     assert read_multiple_ionic_transient(output, digest)["completed"]
 
 
-def test_D0_bound_initial_and_full_native_shared_mass(tmp_path: Path) -> None:
+def test_D0_bound_initial_and_full_native_shared_mass(tmp_path: Path, d0_path: Path) -> None:
     device = compile_multiple_ionic_device_1d(prepare_mixed_immobile_device(),
         intervals_per_layer=INTERVALS, ion_domains=DOMAINS)
-    initial = load_multiple_ionic_steady_initial(device, D0_PATH, D0_SHA, controls=steady_controls(4))
+    initial = load_multiple_ionic_steady_initial(device, d0_path, D0_SHA, controls=steady_controls(4))
     step = MultipleIonicBackwardEuler1DStep(MultipleIonic1DProblem(device, 0.0025, 0.0), initial.state, 0.25)
     y = step.initial_coordinates()
     domain = device.domains[1]
@@ -188,7 +199,7 @@ def test_D0_bound_initial_and_full_native_shared_mass(tmp_path: Path) -> None:
                                negative, rtol=2e-15, atol=0.0)
     assert step.endpoint.storage_jacobian(y)[minus, plus].nnz == 4
     assert np.max(abs(step.residual(y)[minus])) < 1e6
-    raw = _decode(json.loads(D0_PATH.read_text()))
+    raw = _decode(json.loads(d0_path.read_text()))
     raw["result"]["solver_controls"]["immobile_profile_binding"]["absorber_right"]["species"]["negative"]["target_density_m3"][0] *= 1.1
     bad = tmp_path / "WrongBinding.json"
     bad.write_text(json.dumps(_encode(raw), indent=2) + "\n")
@@ -197,10 +208,10 @@ def test_D0_bound_initial_and_full_native_shared_mass(tmp_path: Path) -> None:
                                          controls=steady_controls(4))
 
 
-def test_actual_D0_four_step_history(tmp_path: Path) -> None:
+def test_actual_D0_four_step_history(tmp_path: Path, d0_path: Path) -> None:
     from examples.research_1d.multiple_ionic_transient import run_case
     output = Path(os.environ.get("SOLARLAB_MULTIPLE_D0_TIME_OUTPUT", str(tmp_path / "D0History.json")))
-    result = run_case(D0_PATH, D0_SHA, output, mixed_immobile=True)
+    result = run_case(d0_path, D0_SHA, output, mixed_immobile=True)
     assert result.completed, [(a.termination, a.error) for a in result.failed_attempts]
     assert len(result.states) == 5 and len(result.attempts) == 4
     for attempt in result.attempts:
