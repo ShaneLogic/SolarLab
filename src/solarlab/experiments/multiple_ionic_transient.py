@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from solarlab.contracts import frozen_array
-from solarlab.equations.ionic_closure import ion_mobility_partition
+from solarlab.equations.ionic_closure import immobile_profile_binding, ion_mobility_partition
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem, MultipleIonicState1D
 from solarlab.experiments.ionic_transient import IonicTransientOptions, _finite_accounting
 from solarlab.experiments.transient import TransientProtocol
@@ -56,8 +56,7 @@ def _admit(
 ) -> tuple[MultipleIonicState1D, float, tuple[GateOutcome, ...]]:
     if not isinstance(device, CompiledMultipleIonicDevice1D) or not isinstance(controls, IonicSteadyOptions):
         raise ValueError("a complete device and explicit initial steady controls are required")
-    if any(ion_mobility_partition(domain)[1] for domain in device.domains):
-        raise ValueError("multiple-domain transient initial admission currently supports connected positive-D species only")
+    immobile = {domain.domain_layer_id: ion_mobility_partition(domain)[1] for domain in device.domains}
     if hashlib.sha256(text.encode()).hexdigest() != sha256:
         raise ValueError("initial evidence SHA256 mismatch")
     document = _decode(json.loads(text))
@@ -72,6 +71,11 @@ def _admit(
             or record["binding_manifest"] != device.binding_manifest
             or record["solver_controls"]["numerical"] != asdict(controls)):
         raise ValueError("initial model/source/control binding mismatch")
+    if any(immobile.values()):
+        binding = {domain.domain_layer_id: immobile_profile_binding(domain)
+                   for domain in device.domains if immobile[domain.domain_layer_id]}
+        if record["solver_controls"].get("immobile_profile_binding") != binding:
+            raise ValueError("initial declared D0 profile binding mismatch")
     saved = record["state"]
     if saved is None:
         raise ValueError("accepted evidence must contain its actual state")
@@ -220,6 +224,23 @@ def solve_multiple_ionic_transient(
             next_state = device.state(candidate, voltage_V=voltage)
             counts["accounting"] += 1
             accounting = multiple_ionic_step_accounting(step, candidate)
+            for domain in device.domains:
+                name = domain.domain_layer_id
+                for species in ion_mobility_partition(domain)[1]:
+                    index = device.domain_ids.index(name)
+                    before = getattr(states[-1].domain_component_states[index], species + "_ion_density_m3")
+                    after = getattr(next_state.domain_component_states[index], species + "_ion_density_m3")
+                    reference = getattr(domain, species + "_ion_reference_m3")
+                    block = device.ion_species_slices[name][species]
+                    values = accounting["domains"][name]["species"][species]
+                    values["immobile_profile"] = {
+                        "compiled_reference_m3": reference, "previous_density_m3": before, "new_density_m3": after,
+                        "physical_density_increment_m3": values["physical_inventory_increment_m2"] / domain.ion_geometry.cell_measures_m,
+                        "rounded_density_increment_m3": after - before,
+                        "profile_relative_error": float(np.max(abs(after - reference) / reference)),
+                        "step_density_relative_change": float(np.max(abs(after - before) / before)),
+                        "coordinate_increment": candidate[block] - states[-1].u[block],
+                    }
             checkpoint()
             accepted, termination = newton.accepted, newton.termination.value
             if not _finite_accounting(accounting):
@@ -259,6 +280,10 @@ def solve_multiple_ionic_transient(
         "state_sha256": state_digest(admitted.u), "steady_controls": asdict(initial.steady_controls),
         "generation_scale": generation, "generation_admission": "explicit_dark_G0_revalidation",
         "admission_checks": admission_checks}
+    if any(ion_mobility_partition(domain)[1] for domain in device.domains):
+        provenance["immobile_profile_binding"] = {
+            domain.domain_layer_id: immobile_profile_binding(domain)
+            for domain in device.domains if ion_mobility_partition(domain)[1]}
     return MultipleIonicTransientResult(protocol, np.asarray(times), tuple(states), tuple(attempts), provenance,
         device.identity, device.original_prepared_sha256, device.binding_manifest, recorded, total,
         time.monotonic() - started)

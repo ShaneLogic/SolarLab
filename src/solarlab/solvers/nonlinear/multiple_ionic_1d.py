@@ -13,9 +13,9 @@ from scipy.sparse import csc_matrix
 
 from solarlab.contracts import frozen_array
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
-from solarlab.equations.dc_1d import CapabilityError, DC1DProblem
+from solarlab.equations.dc_1d import DC1DProblem
 from solarlab.equations.ionic_1d import Ionic1DProblem
-from solarlab.equations.ionic_closure import ion_mobility_partition
+from solarlab.equations.ionic_closure import immobile_profile_binding, ion_mobility_partition
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem, MultipleIonicState1D
 from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, IonicSteadyOptions
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
@@ -29,7 +29,7 @@ __all__ = ["ConstrainedMultipleIonic1DProblem", "MultipleIonicSteadyResult",
 
 @dataclass(frozen=True)
 class ConstrainedMultipleIonic1DProblem:
-    """One own-domain inventory row for each connected positive-D species."""
+    """Own mobile inventories and original per-cell immobile physical closure."""
 
     original: MultipleIonic1DProblem
     inventory_row_node: int
@@ -38,16 +38,24 @@ class ConstrainedMultipleIonic1DProblem:
         if not isinstance(self.original, MultipleIonic1DProblem):
             raise TypeError("the original multiple-domain equations are required")
         for domain in self.original.device.domains:
-            if ion_mobility_partition(domain)[1]:
-                raise CapabilityError("multiple-domain steady currently requires positive-D species; D0 assembly/storage remain supported")
             # Preserve the accepted local source/geometry/mobility validation.
             ConstrainedIonic1DProblem(Ionic1DProblem(domain, self.original.voltage_V,
                                                     self.original.generation_scale), self.inventory_row_node)
 
     @property
+    def immobile_species(self) -> dict[str, tuple[str, ...]]:
+        return {domain.domain_layer_id: ion_mobility_partition(domain)[1] for domain in self.original.device.domains}
+
+    @property
+    def profile_constraint_rows(self) -> dict[str, dict[str, tuple[int, ...]]]:
+        return {name: {species: tuple(range(cast(int, block.start), cast(int, block.stop)))
+                       for species, block in blocks.items() if species in self.immobile_species[name]}
+                for name, blocks in self.original.device.ion_species_slices.items()}
+
+    @property
     def constraint_rows(self) -> dict[str, dict[str, int]]:
         return {name: {species: cast(int, block.start) + self.inventory_row_node
-                       for species, block in blocks.items()}
+                       for species, block in blocks.items() if species not in self.immobile_species[name]}
                 for name, blocks in self.original.device.ion_species_slices.items()}
 
     def residual(self, y: np.ndarray) -> np.ndarray:
@@ -56,7 +64,16 @@ class ConstrainedMultipleIonic1DProblem:
         populations = device.fields_by_domain(y, voltage_V=self.original.voltage_V)[3]
         for domain in device.domains:
             name = domain.domain_layer_id
+            local_physical = None
+            if self.immobile_species[name]:
+                local = ConstrainedIonic1DProblem(Ionic1DProblem(domain, self.original.voltage_V,
+                    self.original.generation_scale), self.inventory_row_node)
+                local_physical = local.residual(device.local_coordinates(y, name))
             for index, species in enumerate(domain.ion_species_names):
+                if species in self.immobile_species[name]:
+                    assert local_physical is not None
+                    result[device.ion_species_slices[name][species]] = local_physical[domain.ion_species_slices[index]]
+                    continue
                 cells = domain.ion_geometry.cell_measures_m * (
                     populations[name][index] - getattr(domain, species + "_ion_reference_m3"))
                 result[self.constraint_rows[name][species]] = math.fsum(cells.tolist())
@@ -65,8 +82,28 @@ class ConstrainedMultipleIonic1DProblem:
     def jacobian(self, y: np.ndarray) -> csc_matrix:
         matrix = self.original.jacobian(y).tolil()
         storage = self.original.storage_jacobian(y)
-        for name, blocks in self.original.device.ion_species_slices.items():
+        device = self.original.device
+        for domain in device.domains:
+            name, blocks = domain.domain_layer_id, device.ion_species_slices[domain.domain_layer_id]
+            if self.immobile_species[name]:
+                local = ConstrainedIonic1DProblem(Ionic1DProblem(domain, self.original.voltage_V,
+                    self.original.generation_scale), self.inventory_row_node)
+                local_jacobian = local.jacobian(device.local_coordinates(y, name))
+                domain_block = device.domain_slices[name]
+                global_columns = np.r_[np.arange(3 * device.node_count),
+                    np.arange(cast(int, domain_block.start), cast(int, domain_block.stop))]
+                for index, species in enumerate(domain.ion_species_names):
+                    if species not in self.immobile_species[name]:
+                        continue
+                    for local_row, global_row in zip(
+                        range(cast(int, domain.ion_species_slices[index].start), cast(int, domain.ion_species_slices[index].stop)),
+                        self.profile_constraint_rows[name][species]):
+                        gradient = local_jacobian.getrow(local_row).toarray().ravel()
+                        columns = np.flatnonzero(gradient)
+                        matrix.rows[global_row], matrix.data[global_row] = global_columns[columns].tolist(), gradient[columns].tolist()
             for species, block in blocks.items():
+                if species in self.immobile_species[name]:
+                    continue
                 row = self.constraint_rows[name][species]
                 gradient = -np.asarray(storage[block, :].sum(axis=0)).ravel()
                 columns = np.flatnonzero(gradient)
@@ -150,10 +187,17 @@ def multiple_ionic_diagnostics(problem: ConstrainedMultipleIonic1DProblem, y: np
                 "minimum_density_m3": float(density.min()), "maximum_site_fraction": float(np.max(density / capacity)),
                 "physical_excess_charge_C_m2": physical, "deposited_excess_charge_C_m2": deposited,
                 "charge_deposition_error_C_m2": deposited - physical,
-                "closure": "own_domain_inventory", "dropped_row": problem.constraint_rows[name][species],
-                "dropped_balance_m2_s": float(full[problem.constraint_rows[name][species]]),
+                "closure": "declared_per_cell_profile" if species in problem.immobile_species[name] else "own_domain_inventory",
+                "dropped_row": None if species in problem.immobile_species[name] else problem.constraint_rows[name][species],
+                "dropped_balance_m2_s": None if species in problem.immobile_species[name] else float(full[problem.constraint_rows[name][species]]),
                 "maximum_relative_change_from_reference": float(np.max(abs(density - reference) / reference)),
             }
+            if species in problem.immobile_species[name]:
+                species_records[species].update(
+                    profile_constraint_rows=problem.profile_constraint_rows[name][species],
+                    profile_relative_error=float(np.max(abs(density - reference) / reference)),
+                    profile_cell_error_m2=domain.ion_geometry.cell_measures_m * (density - reference),
+                    reference_source_parameter="P0" if species == "positive" else "P0_neg")
         domains[name] = {
             "species": species_records, "electrical_node_indices": domain.ion_node_indices,
             "physical_weights_m": domain.ion_geometry.cell_measures_m, "site_contract": domain.ion_site_contract,
@@ -201,6 +245,8 @@ def multiple_ionic_checks(
             limits = {"inventory_relative_error": options.inventory_relative_tolerance,
                       "ion_balance_l1_m2_s": options.ion_balance_tolerance_m2_s,
                       "ion_flux_max_m2_s": options.ion_flux_tolerance_m2_s}
+            if species in problem.immobile_species[name]:
+                limits["profile_relative_error"] = options.inventory_relative_tolerance
             for key, limit in limits.items():
                 value = float(values[key])
                 outcomes.append(GateOutcome(prefix + key, math.isfinite(value) and value <= limit, value, limit,
@@ -223,6 +269,10 @@ def _settings(problem: ConstrainedMultipleIonic1DProblem, options: IonicSteadyOp
     for domain in device.domains:
         name = domain.domain_layer_id
         for species, block in device.ion_species_slices[name].items():
+            if species in problem.immobile_species[name]:
+                weights[block] = 1.0 / (options.inventory_relative_tolerance * domain.ion_geometry.cell_measures_m
+                                        * getattr(domain, species + "_ion_reference_m3"))
+                continue
             weights[block] = 2 * domain.ion_node_count / options.ion_balance_tolerance_m2_s
             weights[problem.constraint_rows[name][species]] = 1.0 / (
                 options.inventory_relative_tolerance * device.reference_inventories_m2[name][species])
@@ -249,7 +299,7 @@ def solve_multiple_ionic_steady_state(
         raise ValueError("initial voltage must match; no implicit voltage/reference conversion")
     for name, targets in device.reference_inventories_m2.items():
         for species, target in targets.items():
-            if abs(initial.domain_inventories_m2[name][species] - target) > options.inventory_relative_tolerance * target:
+            if species not in problem.immobile_species[name] and abs(initial.domain_inventories_m2[name][species] - target) > options.inventory_relative_tolerance * target:
                 raise ValueError("each mobile domain/species initial inventory must match its own compiled target")
     deadline = started + options.wall_s
     last = initial.u.copy()
@@ -295,6 +345,11 @@ def solve_multiple_ionic_steady_state(
         "inventory_targets_m2": device.reference_inventories_m2,
         "supported_mobility": "every_domain_species_connected_positive_D",
         "convergence_norm": "historical_max_row_v1", "merit": "original_weighted_l2_armijo"}
+    if any(problem.immobile_species.values()):
+        control["supported_mobility"] = "connected_positive_D_or_declared_per_cell_D0"
+        control["profile_constraint_rows"] = problem.profile_constraint_rows
+        control["immobile_profile_binding"] = {domain.domain_layer_id: immobile_profile_binding(domain)
+            for domain in device.domains if problem.immobile_species[domain.domain_layer_id]}
     return MultipleIonicSteadyResult(state, accepted, termination, newton, initial, np.array(last, copy=True),
         diagnostics, checks, control, device.identity, device.original_prepared_sha256,
         device.binding_manifest, counts, time.monotonic() - started, error)

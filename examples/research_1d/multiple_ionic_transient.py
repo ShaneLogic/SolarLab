@@ -14,6 +14,7 @@ import numpy as np
 from examples.research_1d.ionic_steady import controls as steady_controls
 from examples.research_1d.ionic_transient import controls, protocol
 from examples.research_1d.multiple_ionic_domains import DOMAINS, INTERVALS, prepare_multiple_ionic_device
+from examples.research_1d.multiple_ionic_steady import prepare_mixed_immobile_device
 from solarlab.device.compile_multiple_ionic_1d import compile_multiple_ionic_device_1d
 from solarlab.experiments.multiple_ionic_transient import (
     MultipleIonicTransientResult, load_multiple_ionic_steady_initial, read_multiple_ionic_transient,
@@ -22,10 +23,10 @@ from solarlab.experiments.multiple_ionic_transient import (
 from solarlab.experiments.transient_results import _encode
 
 
-def run_case(initial_path: Path, initial_sha256: str, output: Path) -> MultipleIonicTransientResult:
+def run_case(initial_path: Path, initial_sha256: str, output: Path, *, mixed_immobile: bool = False) -> MultipleIonicTransientResult:
     if output.exists():
         raise FileExistsError("preserve the original attempt; no automatic retry")
-    device = compile_multiple_ionic_device_1d(prepare_multiple_ionic_device(),
+    device = compile_multiple_ionic_device_1d(prepare_mixed_immobile_device() if mixed_immobile else prepare_multiple_ionic_device(),
         intervals_per_layer=INTERVALS, ion_domains=DOMAINS)
     initial = load_multiple_ionic_steady_initial(device, initial_path, initial_sha256,
                                                controls=steady_controls(device.domains[0].ion_node_count))
@@ -81,6 +82,7 @@ def main() -> int:
     solve.add_argument("--initial-result", type=Path, required=True)
     solve.add_argument("--initial-sha256", required=True)
     solve.add_argument("--output", type=Path, required=True)
+    solve.add_argument("--mixed-immobile", action="store_true")
     read = commands.add_parser("read")
     read.add_argument("--result", type=Path, required=True)
     read.add_argument("--sha256", required=True)
@@ -95,7 +97,8 @@ def main() -> int:
             "accepted_times_s": result["accepted_times_s"], "attempt_count": len(result["attempts"]),
             "first_failed_step": first}), indent=2))
         return 0 if document["completed"] else 2
-    return 0 if run_case(args.initial_result, args.initial_sha256, args.output).completed else 2
+    return 0 if run_case(args.initial_result, args.initial_sha256, args.output,
+                         mixed_immobile=args.mixed_immobile).completed else 2
 
 
 if __name__ == "__main__":

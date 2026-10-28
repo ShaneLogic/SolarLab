@@ -10,15 +10,26 @@ from pathlib import Path
 
 from examples.research_1d.ionic_steady import controls
 from examples.research_1d.multiple_ionic_domains import DOMAINS, INTERVALS, prepare_multiple_ionic_device
+from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_multiple_ionic_1d import compile_multiple_ionic_device_1d
+from solarlab.device.inputs import DeviceInput
+from solarlab.device.resolved import PreparedDevice
 from solarlab.experiments.transient_results import _encode
 from solarlab.solvers.nonlinear.multiple_ionic_1d import MultipleIonicSteadyResult, solve_multiple_ionic_steady_state
 
 
-def run_case(output: Path) -> MultipleIonicSteadyResult:
+def prepare_mixed_immobile_device() -> PreparedDevice:
+    """One right shared-site D0 population; every other species stays mobile."""
+    prepared = prepare_multiple_ionic_device(kind="shared")
+    data = prepared.to_input().editing_data()
+    next(layer for layer in data["layers"] if layer["id"] == "absorber_right")["parameters"]["D_ion_neg"] = 0.0
+    return resolve_device(DeviceInput.model_validate(data), prepared.defaults, prepared.resources, sources=prepared.sources)
+
+
+def run_case(output: Path, *, mixed_immobile: bool = False) -> MultipleIonicSteadyResult:
     if output.exists():
         raise FileExistsError("preserve the existing attempt; no silent retry")
-    device = compile_multiple_ionic_device_1d(prepare_multiple_ionic_device(),
+    device = compile_multiple_ionic_device_1d(prepare_mixed_immobile_device() if mixed_immobile else prepare_multiple_ionic_device(),
         intervals_per_layer=INTERVALS, ion_domains=DOMAINS)
     result = solve_multiple_ionic_steady_state(device, voltage_V=0.002, generation_scale=0.0,
                                               options=controls(device.domains[0].ion_node_count))
@@ -49,7 +60,9 @@ def run_case(output: Path) -> MultipleIonicSteadyResult:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    result = run_case(parser.parse_args().output)
+    parser.add_argument("--mixed-immobile", action="store_true")
+    args = parser.parse_args()
+    result = run_case(args.output, mixed_immobile=args.mixed_immobile)
     return 0 if result.accepted else 2
 
 

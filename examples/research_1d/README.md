@@ -774,11 +774,12 @@ evaluates a trial state. For a coupled dark steady solve, run:
 ```
 
 This solves one common electronic system and both blocking ion domains, with
-each species constrained to its own domain's reference inventory. The saved
+each mobile species constrained to its own domain's reference inventory. The saved
 result includes the original balance rows, physical current, source identities
 and acceptance checks. The bounded 13-electrical-node, 4+4-ion-node example at
-2 mV passed independent review. The steady solver currently requires connected,
-positive-diffusivity species; immobile species are supported by assembly only.
+2 mV passed independent review. Connected positive-diffusivity species and
+entirely immobile species are supported. Each immobile cell preserves its
+physical reference population, including shared-site cross derivatives.
 To evolve that same accepted dark state with both mobile domains, run:
 
 ```sh
@@ -796,8 +797,26 @@ The transient retains every physical storage and balance row, separate domain
 inventories and signed conduction/displacement currents, including contact
 storage. It reads the accepted initial state without another cold solve. A
 failed step preserves the accepted prefix and returns exit 2. This bounded
-positive-diffusivity example does not establish time or mesh convergence;
+example does not establish time or mesh convergence;
 final scientific qualification remains pending.
+
+For a shared-site case with a mobile positive and immobile negative species in
+the right domain, and both species mobile in the left domain:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_steady \
+  --mixed-immobile --output outputs/multiple_ionic_d0_steady.json
+D0_SHA=$(shasum -a 256 outputs/multiple_ionic_d0_steady.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_transient solve \
+  --mixed-immobile --initial-result outputs/multiple_ionic_d0_steady.json \
+  --initial-sha256 "$D0_SHA" --output outputs/multiple_ionic_d0_transient.json
+```
+
+The steady result and four-step history passed independent review under the
+original controls. Immobile densities stay fixed within the recorded numerical
+error while their shared-site coordinates can change as the partner moves.
+The time solver retains the full physical storage rows and records those
+changes separately; it does not freeze a coordinate or substitute steady rows.
 
 ## Ionic small-signal response
 

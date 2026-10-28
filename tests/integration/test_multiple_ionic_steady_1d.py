@@ -13,9 +13,11 @@ from threadpoolctl import threadpool_limits
 
 from examples.research_1d.ionic_steady import controls
 from examples.research_1d.multiple_ionic_domains import DOMAINS, INTERVALS, prepare_multiple_ionic_device
+from examples.research_1d.multiple_ionic_steady import prepare_mixed_immobile_device
 from solarlab.device.compile_multiple_ionic_1d import compile_multiple_ionic_device_1d
-from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.multiple_ionic_1d import MultipleIonic1DProblem
+from solarlab.equations.ionic_1d import Ionic1DProblem
+from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem
 from solarlab.solvers.nonlinear.multiple_ionic_1d import (
     ConstrainedMultipleIonic1DProblem, _settings, multiple_ionic_checks, multiple_ionic_diagnostics,
     solve_multiple_ionic_steady_state,
@@ -136,13 +138,94 @@ def test_every_original_dropped_balance_is_checked(monkeypatch):
     assert data["domains"]["absorber_left"]["species"]["positive"]["dropped_balance_m2_s"] == 2e6
 
 
-@pytest.mark.parametrize("kind", ["positive", "shared"])
-def test_immobile_solver_case_refuses_without_dropping_assembly_storage(kind):
+@pytest.mark.parametrize("kind", ["positive", "independent", "shared"])
+def test_immobile_physical_rows_match_accepted_local_closure_and_retain_storage(kind):
     device, options, original = case(kind, right_immobile=True)
-    y = device.initial_state(voltage_V=0.002).u
+    y = device.initial_state(voltage_V=0.002).u.copy()
+    y[device.domain_slices["absorber_right"]] = np.linspace(-0.1, 0.1, device.domains[1].state_size - 3 * device.node_count)
     assert original.storage_jacobian(y)[device.domain_slices["absorber_right"], :].nnz > 0
-    with pytest.raises(CapabilityError, match="D0 assembly/storage"):
-        solve_multiple_ionic_steady_state(device, voltage_V=0.002, generation_scale=0.0, options=options)
+    constrained = ConstrainedMultipleIonic1DProblem(original, options.inventory_row_node)
+    domain = device.domains[1]
+    local = ConstrainedIonic1DProblem(Ionic1DProblem(domain, 0.002, 0.0), options.inventory_row_node)
+    local_y = device.local_coordinates(y, domain.domain_layer_id)
+    np.testing.assert_array_equal(constrained.residual(y)[device.domain_slices[domain.domain_layer_id]],
+                                  local.residual(local_y)[3 * device.node_count:])
+    K, J = original.storage_jacobian(y), constrained.jacobian(y)
+    for rows in constrained.profile_constraint_rows[domain.domain_layer_id].values():
+        for row in rows:
+            np.testing.assert_array_equal(J.getrow(row).toarray(), -K.getrow(row).toarray())
+    np.testing.assert_array_equal(original.residual(y)[device.domain_slices[domain.domain_layer_id]],
+                                  np.zeros(domain.state_size - 3 * device.node_count))
+    assert constrained.constraint_rows["absorber_right"] == {}
+    checks = {check.name: check for check in multiple_ionic_checks(constrained, y, options)}
+    assert not checks["absorber_right.positive.profile_relative_error"].passed
+
+
+def test_shared_partner_moves_with_exact_physical_frozen_target_and_full_cross_gradient():
+    device = compile_multiple_ionic_device_1d(prepare_mixed_immobile_device(),
+        intervals_per_layer=INTERVALS, ion_domains=DOMAINS)
+    original = MultipleIonic1DProblem(device, 0.002, 0.0)
+    constrained = ConstrainedMultipleIonic1DProblem(original, 3)
+    y = device.initial_state(voltage_V=0.002).u.copy()
+    domain = device.domains[1]
+    plus, minus = device.ion_species_slices["absorber_right"].values()
+    capacity = domain.positive_ion_site_limit_m3
+    positive = domain.positive_ion_reference_m3 * 1.1
+    negative = domain.negative_ion_reference_m3
+    vacancy = 1.0 - (positive + negative) / capacity
+    y[plus] = np.log(positive / capacity) - np.log(vacancy) - domain.positive_ion_logit_reference
+    y[minus] = np.log(negative / capacity) - np.log(vacancy) - domain.negative_ion_logit_reference
+    values = device.fields_by_domain(y, voltage_V=0.002)[3]["absorber_right"]
+    np.testing.assert_allclose(values[1], negative, rtol=4 * np.finfo(float).eps, atol=0.0)
+    assert np.any(y[minus] != 0.0) and np.any(y[plus] != 0.0)
+    assert constrained.jacobian(y)[minus, plus].nnz == domain.ion_node_count
+    np.testing.assert_array_equal(original.residual(y)[minus], np.zeros(domain.ion_node_count))
+    wrong = y.copy()
+    wrong[minus] = 0.0
+    assert np.max(abs(constrained.residual(wrong)[minus])) > 1e5
+    fixed = constrained.residual(y)[minus]
+    assert np.max(abs(fixed) / (domain.ion_geometry.cell_measures_m * negative)) < 1e-12
+
+
+@pytest.mark.parametrize("kind", ["positive", "independent", "shared"])
+def test_mixed_full_directional_and_local_profile_scaling(kind):
+    device, options, original = case(kind, right_immobile=True)
+    problem = ConstrainedMultipleIonic1DProblem(original, 3)
+    y = device.initial_state(voltage_V=0.002).u.copy()
+    y[3 * device.node_count:] = np.linspace(-0.05, 0.07, device.state_size - 3 * device.node_count)
+    rng = np.random.default_rng(9908)
+    direction = rng.uniform(-0.1, 0.1, y.size)
+    direction[:device.node_count] *= device.electronic_component.thermal_voltage_V
+    J = problem.jacobian(y)
+    # The D0 row's weak directional component otherwise loses precision
+    # when differencing physical populations. The error criterion is unchanged.
+    h = 1e-4
+    finite = (problem.residual(y + h * direction) - problem.residual(y - h * direction)) / (2 * h)
+    error = float(np.max(abs(finite - J @ direction) / np.maximum(abs(J) @ abs(direction), np.finfo(float).tiny)))
+    print(f"two-domain mixed {kind}: directional error {error:.9g}")
+    assert error < 2e-7
+    settings = _settings(problem, options)
+    domain = device.domains[1]
+    for species, block in device.ion_species_slices["absorber_right"].items():
+        np.testing.assert_array_equal(settings.scaling.row_weights[block],
+            1 / (options.inventory_relative_tolerance * domain.ion_geometry.cell_measures_m
+                 * getattr(domain, species + "_ion_reference_m3")))
+
+
+def test_actual_mixed_shared_immobile_regression(tmp_path):
+    from examples.research_1d.multiple_ionic_steady import run_case
+    output = Path(os.environ.get("SOLARLAB_MULTIPLE_D0_EVIDENCE", str(tmp_path / "MixedSteady.json")))
+    result = run_case(output, mixed_immobile=True)
+    assert result.accepted, (result.termination, result.error)
+    assert result.state is not None and result.diagnostics is not None and not result.qualification
+    negative = result.diagnostics["domains"]["absorber_right"]["species"]["negative"]
+    assert negative["profile_relative_error"] <= 1e-12
+    np.testing.assert_array_equal(negative["ion_balance_m2_s"], np.zeros(4))
+    np.testing.assert_array_equal(negative["ion_flux_m2_s"], np.zeros(5))
+    assert all(check.passed for check in result.checks)
+    right = result.diagnostics["domains"]["absorber_right"]["species"]["positive"]
+    assert right["maximum_relative_change_from_reference"] > 0.0
+    assert len(result.solver_controls["profile_constraint_rows"]["absorber_right"]["negative"]) == 4
 
 
 def test_original_equilibrium_gate_names_and_unbound_state_refusal():
