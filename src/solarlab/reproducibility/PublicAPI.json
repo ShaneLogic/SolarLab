@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, and bounded single-ion assembly/steady solving; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -358,6 +358,27 @@
       "TransientAttempt",
       "TransientResult1D",
       "solve_transient"
+    ],
+    "solarlab.device.compile_ionic_1d": [
+      "CompiledIonicDevice1D",
+      "compile_ionic_device_1d"
+    ],
+    "solarlab.equations.ionic_1d": [
+      "CompiledIonicDevice1D",
+      "Ionic1DProblem",
+      "IonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.ionic_1d": [
+      "ConstrainedIonic1DProblem",
+      "IonicSteadyOptions",
+      "IonicSteadyResult",
+      "solve_ionic_steady_state"
+    ],
+    "solarlab.experiments.transient_results": [
+      "CapturedTransientRun",
+      "run_transient_for_publication",
+      "publish_transient_result",
+      "read_transient_result"
     ]
   },
   "public_imports": {
@@ -786,6 +807,27 @@
       "TransientAttempt",
       "TransientResult1D",
       "solve_transient"
+    ],
+    "solarlab.device.compile_ionic_1d": [
+      "CompiledIonicDevice1D",
+      "compile_ionic_device_1d"
+    ],
+    "solarlab.equations.ionic_1d": [
+      "CompiledIonicDevice1D",
+      "Ionic1DProblem",
+      "IonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.ionic_1d": [
+      "ConstrainedIonic1DProblem",
+      "IonicSteadyOptions",
+      "IonicSteadyResult",
+      "solve_ionic_steady_state"
+    ],
+    "solarlab.experiments.transient_results": [
+      "CapturedTransientRun",
+      "run_transient_for_publication",
+      "publish_transient_result",
+      "read_transient_result"
     ]
   },
   "checked_consumers": [

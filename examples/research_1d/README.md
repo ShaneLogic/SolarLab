@@ -401,6 +401,78 @@ instantaneous pulse peaks. This is a driven time history; steady J–V and final
 hysteresis qualification remain separate. The fixed-bias branch retains its
 previous accepted states and diagnostics exactly in the archived comparison.
 
+## Persisting a transient
+
+`solarlab.experiments.transient_results` provides
+`run_transient_for_publication`, `publish_transient_result` and
+`read_transient_result`. The computation wrapper records its actual inputs,
+selected source-file hashes and runtime during the solve. It does not infer the
+history of a supplied compiled device or initial DC state. Publishing a result
+without that capture explicitly records its provenance as `not_recorded`.
+
+For an existing compiled device, accepted initial state, protocol and controls:
+
+```python
+from solarlab.experiments.transient_results import (
+    run_transient_for_publication, publish_transient_result,
+)
+from solarlab.io.run_store import RunStore
+
+captured = run_transient_for_publication(
+    compiled, initial, protocol, options=options, initial_options=initial_options,
+)
+with RunStore(store_path) as store:
+    row = store.enqueue("light-ramp", opaque_identity=captured.identity,
+                        input_metadata={"kind": "generation transient"})
+    token = store.claim("light-ramp", expected_attempt_id=row["current_attempt_id"],
+                        expected_generation=row["generation"], owner_id="research")
+    result = publish_transient_result(store, token, captured.result,
+                                      nodes_m=captured.nodes_m, capture=captured)
+    store.complete(token, state="succeeded" if captured.result.completed else "failed",
+                   result=result, artifacts=result["artifact_ids"])
+```
+
+Read the committed result in another process:
+
+```sh
+.venv/bin/python -B examples/research_1d/read_transient.py \
+  --store /absolute/local/store --run-id light-ramp
+```
+
+The reader checks fourteen physical arrays plus raw diagnostics and the result
+manifest against the committed attempt. Requested times and the accepted prefix
+remain separate; an interrupted calculation retains its first failed attempt.
+Step currents align with `accepted_times_s[1:]`; no initial displacement current
+is invented. A successful read means data were read and verified, including a
+readable partial history. It does not change the numerical outcome or the
+`not_evaluated` physical-certificate status.
+
+## Coupled ionic steady state
+
+The bounded single-ion compiler and steady solver solve potential, electrons,
+holes and one positive finite-site ion population together. The runnable example
+uses one electrical layer, blocking ion endpoints and a fixed opposite
+background, with a conserved physical ion inventory:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.ionic_steady \
+  --output outputs/ionic_steady.json
+```
+
+The independently checked 13-node dark case at 2 mV converged in three Newton
+iterations and changed the ion profile by about 3.91%, with zero reported
+relative inventory error. The solver checks every original ion balance,
+including the row replaced by the inventory constraint, and the electronic
+physical controls. The ion balance and face-flux controls are internal numerical
+limits; they do not establish scientific qualification.
+
+The compiler records the original ionic inputs and the explicit electronic
+component projection. Zero ion diffusivity retains population, background and
+storage in assembly; the connected-domain steady solver rejects zero or
+disconnected diffusivity. Multilayer, negative/dual-ion, shared-site and dynamic
+ion cases are outside this delivered slice. The result records
+`qualification: false`; final scientific acceptance remains open.
+
 ## Adding a local model
 
 `steady.py` contains `SaturatingRecombination`, an executable extension example:

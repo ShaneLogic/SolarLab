@@ -184,6 +184,9 @@ jobs:
           tests/integration/test_impedance_selective_contacts.py
           tests/integration/test_transient_1d.py
           tests/integration/test_transient_voltage_1d.py
+          tests/integration/test_transient_results.py
+          tests/integration/test_ionic_1d.py
+          tests/integration/test_ionic_steady_1d.py
           tests/unit/experiments/test_steady_jv_metrics.py
           tests/unit/experiments/test_operating_points.py
           tests/integration/test_core_1d.py
