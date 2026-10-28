@@ -80,6 +80,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         <p class="subtitle">Solar cell simulator</p>
       </div>
       <div class="workstation-header-actions">
+        <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V · new core</a>
         <button type="button" class="btn btn-ghost workstation-sidebar-toggle" id="ws-sidebar-toggle" aria-controls="ws-tree" aria-expanded="false" aria-label="Show workspace tree" title="Show workspace tree">☰</button>
         <button type="button" class="btn btn-ghost" id="ws-reset-layout" title="Restore the default panel arrangement">Reset Layout</button>
         <button type="button" class="btn btn-ghost btn-danger-ghost" id="ws-clear-workspace" title="Delete all devices, experiments and saved runs from this browser">Clear Workspace</button>

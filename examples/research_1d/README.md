@@ -206,7 +206,7 @@ uv sync --frozen --extra dev --extra server --python 3.13
 
 The example listens on `127.0.0.1` and installs the explicit `research_1d`
 device. `--build-source-commit` identifies actual Git source bytes; the worker
-checks them against its installation. Broader frontend migration is ongoing.
+checks them against its installation.
 In another terminal, submit the demonstrated short three-point calculation:
 
 ```python
@@ -253,6 +253,38 @@ This short protocol does not bracket Voc: its result retains
 for the documented full sweep and direct Voc refinement. Trusted application
 code can install additional prepared devices using `SteadyPreparationContext`;
 HTTP chooses a registered device and explicit numerical protocol.
+
+## Browser research entry
+
+With the service above listening on port 8000, start the frontend in another
+terminal:
+
+```sh
+cd web
+npm ci --no-audit --no-fund
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Open `http://127.0.0.1:5173/?view=steady-jv`. Select an installed device, choose
+the voltage samples and generation scale, then click **Run steady DC**. The
+default three-point protocol is the short calculation above. The page follows
+the actual worker, reads eight committed arrays, and plots J–V, current density,
+potential and carrier densities. Select a voltage to inspect its spatial fields.
+Voc, fill factor and efficiency remain **Unknown** when unavailable.
+
+**Cancel this attempt** targets the displayed calculation; its final state is
+confirmed by the stored terminal event. **Reconnect / refresh run** resumes
+reading the same attempt after a connection failure. Run identifiers and raw
+events are under **Run diagnostics**. This first entry keeps its selected run
+in page memory; preserve its identifier before reloading or closing the page.
+Stored results remain available through the service readers.
+
+Vite proxies `/steady-service/` to port 8000 and strips that prefix; `/api`
+continues to serve the existing workspace. A deployed static build needs an
+equivalent same-origin reverse proxy. This entry exposes steady DC only; the
+Python frequency-domain example below is separate. An actual browser run
+verified the four Plotly views and spatial selection against the real service;
+this does not establish scientific qualification.
 
 ## Fixed-contact small-signal response
 
