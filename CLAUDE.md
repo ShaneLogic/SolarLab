@@ -105,10 +105,21 @@ additional activity ledgers. Repository-required guidance stays in Git; plans,
 evidence and scientific run artifacts stay in the archive. Use the supported Orca
 task/message/lifecycle workflow and respect each Dispatch's file ownership.
 
-The refactor commander and sole integrator is the user-appointed Claude Code
-session `7438e21f-2c98-4223-948f-1a0308439ec4` (model `claude-opus-5-5`, effort
-max, Orca terminal `term_69895950-4742-4d9a-88e6-84e5dbbf8bbf`), appointed by the
-user on 2026-10-14. Existing workers keep actual runtime `gpt-6-astra`, reasoning
+The refactor commander and sole integrator is the user-appointed Codex
+session `01a180c3-f826-7873-8d0b-44b2e40899c4` (Orca terminal
+`term_3c65f4db-0a9b-41c7-b337-956eff7204dd`), appointed by the user on
+2026-10-28, replacing Claude session `7438e21f-2c98-4223-948f-1a0308439ec4`.
+The active Run remains `run_b01db3902366`. Execution is authorized. Prioritize
+a runnable new-core 1D research release: configuration, physical models,
+equation assembly, nonlinear solver, steady state/J-V, scans, and result reading,
+with a model-extension example, verification, and a reproducible environment.
+Then continue the remaining approved scope. Clearly distinguish implementation,
+verification, and scientific qualification; legacy execution is not new-core completion.
+Routine reversible implementation and sequencing decisions belong to the commander.
+Use approximately 15-minute investigation checkpoints; after two checkpoints
+without useful evidence or progress, change the assumption, scope, or method.
+Ask the user only about changes to final scientific standards, core delivery
+scope, added resource cost, or merging main. Existing workers keep actual runtime `gpt-6-astra`, reasoning
 `max`, Full Access and network enabled; sessions added after 2026-10-14 may
 instead run `claude-opus-5-5` at effort `max` (user-approved). Every
 participant's actual model/effort/permissions are verified once per session start
