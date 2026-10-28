@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from solarlab.solvers.nonlinear.ionic_1d import IonicSteadyOptions
 
 __all__ = ["IonicTransientJob", "prepare_ionic_transient_job", "ionic_transient_worker_binding",
-           "run_ionic_transient_worker", "read_ionic_transient_job"]
+           "run_ionic_transient_worker", "read_ionic_transient_job", "ionic_transient_identity_inputs"]
 _ID = "ionic_transient_1d"
 _SCHEMA = _document("solarlab.ionic-transient.worker-request.v1", {
     "engine": "solarlab", "fields": ["schema", "engine", "prepared_sha256", "protocol", "grid", "controls"]})
@@ -66,6 +66,11 @@ def _identity_inputs(prepared: PreparedDevice, implementation: BuildSource) -> I
     selection = select_models(registry, topology, context, defaults, parameters, {})
     return IdentityInputs(prepared, selection, registry, ModelInputs.from_mappings(defaults=defaults, overrides={}),
                           (SemanticProjection(ref, "all_values_v1", checked),))
+
+
+def ionic_transient_identity_inputs(prepared: PreparedDevice, implementation: BuildSource) -> IdentityInputs:
+    """Expose the existing identity recipe for explicitly installed adapters."""
+    return _identity_inputs(prepared, implementation)
 
 
 def _validate(prepared: PreparedDevice, protocol: TransientProtocol, intervals: tuple[int, ...], domain: str,

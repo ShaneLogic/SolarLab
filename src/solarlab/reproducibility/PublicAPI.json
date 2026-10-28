@@ -450,12 +450,22 @@
       "prepare_ionic_transient_job",
       "ionic_transient_worker_binding",
       "run_ionic_transient_worker",
-      "read_ionic_transient_job"
+      "read_ionic_transient_job",
+      "ionic_transient_identity_inputs"
     ],
     "solarlab.experiments.ionic_transient_results": [
       "ionic_initial_document",
       "ionic_transient_payload",
       "validate_ionic_history"
+    ],
+    "solarlab.experiments.ionic_initialization": [
+      "IonicInitializationOptions",
+      "IonicInitializationResult",
+      "IonicDensitySeedArtifact",
+      "load_ionic_density_seed",
+      "initialize_ionic_steady_state",
+      "write_ionic_initialization",
+      "read_ionic_initialization"
     ]
   },
   "public_imports": {
@@ -967,12 +977,22 @@
       "prepare_ionic_transient_job",
       "ionic_transient_worker_binding",
       "run_ionic_transient_worker",
-      "read_ionic_transient_job"
+      "read_ionic_transient_job",
+      "ionic_transient_identity_inputs"
     ],
     "solarlab.experiments.ionic_transient_results": [
       "ionic_initial_document",
       "ionic_transient_payload",
       "validate_ionic_history"
+    ],
+    "solarlab.experiments.ionic_initialization": [
+      "IonicInitializationOptions",
+      "IonicInitializationResult",
+      "IonicDensitySeedArtifact",
+      "load_ionic_density_seed",
+      "initialize_ionic_steady_state",
+      "write_ionic_initialization",
+      "read_ionic_initialization"
     ]
   },
   "checked_consumers": [

@@ -113,3 +113,58 @@ def run_transient(request: WorkerRequest, context: WorkerContext) -> WorkerResul
         "registered_device_id": body["device_id"], "execution_catalog_sha256": request.registry.sha256,
         "server_sources": preparation["server_sources"], "server_runtime": preparation["server_runtime"]},
         artifacts=output.artifacts, state=output.state)
+
+
+def run_ionic_transient(request: WorkerRequest, context: WorkerContext) -> WorkerResult:
+    """Check the unique installed route while preserving the core request bytes."""
+    from solarlab.experiments.ionic_transient_worker import ionic_transient_worker_binding, run_ionic_transient_worker
+    from solarlab.physics.registry import metadata_digest
+    from solarlab_server.ionic_transient_preparation import (
+        EXPERIMENT_ID, SCOPE, IonicTransientJobInput, _numerical_policy, _server_bindings, _server_runtime,
+    )
+    from solarlab_server.steady_preparation import _device_binding, _implementation_binding
+
+    context.check_cancel()
+    catalog, body = json.loads(request.registry.content), json.loads(request.request.content)
+    entries = [r for r in catalog["bindings"] if r["driver"] == EXPERIMENT_ID]
+    if (catalog["schema"] != "solarlab.execution-catalog.v1" or catalog["job_schema_sha256"] != request.schema.sha256
+            or body.get("schema") != "solarlab.ionic-transient.worker-request.v1" or body.get("engine") != "solarlab"
+            or len(entries) != 1):
+        raise ValueError("ionic worker request/catalog/schema differs from the unique installed route")
+    entry = entries[0]
+    if (entry["experiment_id"] != EXPERIMENT_ID or entry["version"] != 1 or entry["engine"] != "solarlab"
+            or entry["scope"] != SCOPE or entry["worker_source_sha256"] != ionic_transient_worker_binding().source_sha256
+            or entry["input_schema"] != IonicTransientJobInput.model_json_schema()):
+        raise ValueError("ionic experiment/worker/schema source is not the installed binding")
+    binding = context.consume_manifest(request, engine="solarlab")
+    preparation = entry["preparation_context"]
+    selected = [item for item in preparation["devices"] if item["prepared_sha256"] == binding.inputs.prepared.content_sha256]
+    if len(selected) != 1:
+        raise ValueError("ionic request must identify exactly one registered prepared device")
+    device_id = selected[0]["device_id"]
+    if (entry["model_registry_sha256"] != binding.inputs.registry.content_sha256
+            or selected[0] != _device_binding(device_id, binding.inputs.prepared)
+            or preparation["implementation"] != _implementation_binding(binding.execution.implementation)
+            or preparation["current_repository_head"] != binding.execution.current_repository_head
+            or preparation["server_sources"] != _server_bindings() or preparation["server_runtime"] != _server_runtime()
+            or preparation["fixed_numerical_policy"] != _numerical_policy()
+            or body["grid"]["ion_domain_layer"] != preparation["ion_domain_layer"]
+            or body["grid"]["ion_domain_endpoints"] != preparation["ion_domain_endpoints"]):
+        raise ValueError("ionic registry/device/source/domain/policy differs from the consumed manifest")
+    controls = body["controls"]
+    declared = IonicTransientJobInput.model_validate({"device_id": device_id, **body["protocol"],
+        "intervals_per_layer": body["grid"]["intervals_per_layer"], "controls": {
+            "initial_steady": {name: controls["initial_steady"][name] for name in ("budget", "inventory_row_node", "wall_s")},
+            "transient": {name: controls["transient"]["electronic"][name] for name in ("newton_budget", "max_steps", "wall_s")}}})
+    if controls != {"initial_steady": asdict(declared.initial_options()), "transient": asdict(declared.options())}:
+        raise ValueError("ionic inner controls differ from the installed fixed scientific policy")
+    output = run_ionic_transient_worker(request, context)
+    if preparation["server_sources"] != _server_bindings():
+        raise ValueError("ionic server source changed during computation")
+    return WorkerResult.from_dict({**json.loads(output.result_json), "experiment_id": EXPERIMENT_ID, "experiment_version": 1,
+        "registered_device_id": device_id, "execution_catalog_sha256": request.registry.sha256,
+        "registered_input_schema_sha256": metadata_digest(entry["input_schema"]),
+        "registered_model_registry_sha256": entry["model_registry_sha256"],
+        "registered_numerical_policy": preparation["fixed_numerical_policy"],
+        "server_sources": preparation["server_sources"], "server_runtime": preparation["server_runtime"]},
+        artifacts=output.artifacts, state=output.state)

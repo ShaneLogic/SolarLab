@@ -514,7 +514,7 @@ The compiler records original ionic inputs and the explicit electronic
 component projection. Multilayer callers must supply `ion_domain_layer` and
 `ion_domain_endpoints=("blocking", "blocking")`; undeclared additional ion domains
 are refused. Zero diffusivity retains population, background and storage in
-assembly; the connected-domain steady solver rejects zero or disconnected
+assembly; the connected-domain steady solver rejects partially disconnected
 diffusivity. Independent and shared-site dual-ion examples are described below.
 The result records `qualification: false`; final mesh, time and scientific
 acceptance remain open.
@@ -639,10 +639,49 @@ species' inventory. The preceding accepted state is only a numerical guess;
 the first failed point stops the curve and retains its candidate and checks.
 This is an equilibrium curve, with no scan-rate or hysteresis interpretation.
 The three dark points above are verified. A direct change from the saved dark
-state to generation scale 1 at 2 mV stagnated and remains a recorded failure;
-illuminated ionic J-V is not yet validated by this example. Missing short/open
-circuit brackets leave the corresponding photovoltaic metrics unavailable.
+state to generation scale 1 at 2 mV stagnated and remains a recorded failure.
+The explicit density-initialization route below provides an illuminated state.
+Missing short/open circuit brackets leave the corresponding photovoltaic
+metrics unavailable.
 The current driver requires positive diffusivity in one blocking domain.
+
+## Illuminated ionic initialization
+
+Use the accepted dark `Steady.json` from the shared-site example. Select the
+direct policy explicitly to prepare positive carrier densities once and then
+solve the original coupled ionic equations:
+
+```sh
+LIGHT_INITIAL=outputs/shared_site_ionic/Steady.json
+LIGHT_INITIAL_SHA=$(shasum -a 256 "$LIGHT_INITIAL" | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_initialization solve \
+  --policy direct_density_seed_v1 \
+  --initial-result "$LIGHT_INITIAL" --initial-sha256 "$LIGHT_INITIAL_SHA" \
+  --voltage .002 --generation-scale 1 --output outputs/ionic_initialization.json \
+  --accepted-steady-output outputs/illuminated_ionic_steady.json
+LIGHT_STEADY_SHA=$(shasum -a 256 outputs/illuminated_ionic_steady.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_jv solve \
+  --kind shared --voltages .001 .002 .003 --generation-scale 1 \
+  --initial-policy saved_accepted --initial-result outputs/illuminated_ionic_steady.json \
+  --initial-sha256 "$LIGHT_STEADY_SHA" --output outputs/illuminated_ionic_jv.json
+INIT_SHA=$(shasum -a 256 outputs/ionic_initialization.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.ionic_initialization read \
+  --result outputs/ionic_initialization.json --sha256 "$INIT_SHA"
+```
+
+Preparation preserves the initial potential and ionic coordinates. Both ionic
+species remain active in the final coupled solve and at each subsequent J–V
+point. All original coupled acceptance checks remain in force; a positive
+density seed alone is never an accepted solution. Saved seed reuse is optional
+and requires both `--density-seed-result` and `--density-seed-sha256`.
+
+The bounded shared-site witness has 37 electrical nodes and 13 nodes per ionic
+species. Its three illuminated points pass the original gates, but do not
+bracket short or open circuit and do not qualify photovoltaic metrics, mesh
+accuracy or hysteresis. The earlier direct dark-to-light stagnation and the
+failed auxiliary-electronic strategy remain recorded failures. The successful
+direct policy does not run that auxiliary solver. The helper checks wall time
+between stages; use a process supervisor when a hard deadline is required.
 
 ## Ionic small-signal response
 
@@ -706,7 +745,40 @@ same-unit groups within the existing artifact limit. Independent reads compare
 the original child and committed payloads without importing a solver. Queued
 cancellation creates a cancelled terminal without a fabricated history. This
 verified process case uses the existing positive-diffusivity shared-site model;
-zero-diffusivity jobs and an ionic HTTP/browser entry are not covered here.
+zero-diffusivity process jobs are not covered here.
+
+## Ionic transient HTTP jobs
+
+Start the explicitly installed dark ionic service from a committed checkout:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.ionic_transient_service \
+  --build-source-commit "$(git rev-parse HEAD)" \
+  --store outputs/ionic_http_store --work outputs/ionic_http_work --port 8000
+```
+
+Use the submission and header-reading code in **Local HTTP service**, replacing
+the `job` dictionary with:
+
+```python
+from examples.research_1d.ionic_transient_service import example_submission
+
+job = example_submission("my-ionic-history")
+```
+
+The shared-site example performs a coupled cold steady solve followed by four
+time steps from 2 to 4 mV. Passing `failure=True` deliberately limits Newton
+work; the failed job retains the accepted samples at 0 and 0.25 s and records
+the failed step at 0.5 s. Completed and failed histories use the same existing
+job, result, artifact and SSE endpoints. Readback exposes 26 logical arrays
+within 16 terminal artifacts and never invokes a solver.
+
+The installed catalog declares positive, independent dual-ion and shared-site
+devices. The actual HTTP witness covers the shared-site model with positive
+diffusivities in one blocking absorber domain. Its request bytes, fixed
+numerical controls, selected device, catalog, source and result bindings are
+checked. Illuminated or zero-diffusivity HTTP jobs, multiple domains and an
+ionic browser page remain outside this entry's verified scope.
 
 ## Transient HTTP jobs
 
@@ -735,8 +807,8 @@ demonstrates a deliberately insufficient Newton budget: the terminal state is
 artifact endpoints. It is not reported as a completed history. Real HTTP tests
 cover both outcomes, co-installed steady jobs, SSE replay and queued
 cancellation. Stored results can be read without invoking a solver. The HTTP
-adapter currently supports ion-free histories; the ionic examples above use
-the direct Python workflow.
+adapter supports ion-free histories. The separate ionic HTTP service above
+uses its own explicit installed catalog.
 
 ## Transient browser entry
 
