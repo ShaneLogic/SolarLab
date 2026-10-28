@@ -128,6 +128,20 @@ def test_real_illumination_obeys_current_continuity_and_photon_budget(device, li
     assert limits["all_face_current_spread"].value < 1e-8
 
 
+def test_refined_fixed_reservoir_device_starts_from_dark_with_unchanged_gates(prepared):
+    compiled = compile_device_1d(prepared, intervals_per_layer=96)
+    assert compiled.node_count == 289
+    assert all(channel.kind == "fixed_reservoir" for channel in compiled.channels)
+    result = solve_steady_state(compiled)
+    assert result.converged
+    assert result.density_basin_initializations == 1
+    assert all(gate.passed for gate in result.physical_gates)
+    currents = np.r_[result.current_density_A_m2, result.contact_current_density_A_m2]
+    assert np.ptp(currents) < 1e-8
+    output = -compiled.voltage_polarity * currents
+    assert 0.0 < np.min(output) <= np.max(output) <= compiled.generation_limit_A_m2
+
+
 @pytest.mark.parametrize("state_kind", ["dark", "light", "storage"])
 def test_independent_directional_fy_in_physical_states(device, dark, light, state_kind):
     rng = np.random.default_rng(20261028)

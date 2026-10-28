@@ -244,7 +244,7 @@ def _density_basin_seed(problem: DC1DProblem, u: np.ndarray) -> np.ndarray:
 
     The full production Jacobian supplies SG, contact, and recombination
     derivatives. Solving its carrier block in density coordinates avoids an
-    enormous logarithmic step out of an almost empty blocking reservoir.
+    enormous logarithmic step out of an almost empty carrier population.
     The seed receives no acceptance certificate; coupled Newton still judges it.
     """
     count = problem.device.node_count
@@ -349,7 +349,7 @@ def solve_steady_state(
     density_initializations = 0
     for index, (voltage, light) in enumerate(points):
         u = device.rebase_coordinates(u, previous_voltage, voltage)
-        if index == 0 and light > 0.0 and any(channel.kind != "fixed_reservoir" for channel in device.channels):
+        if index == 0 and light > 0.0:
             u = _density_basin_seed(DC1DProblem(device, voltage, light), u)
             density_initializations += 1
         problem, result = _solve_point(device, u, voltage, light, controls)
