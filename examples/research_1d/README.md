@@ -711,6 +711,44 @@ This steady curve has no scan-rate or hysteresis interpretation. Historical
 `coarse-probe`, `continue` and `tail` commands retain the earlier failed coarse
 attempt and its successful continuations.
 
+## Ionic J–V process jobs
+
+Run the illuminated shared-site curve through the shared process supervisor and
+persist its fields, currents, inventories, metrics and initialization evidence:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.process_ionic_jv run \
+  --build-source-commit "$(git rev-parse HEAD)" \
+  --store outputs/ionic_pv_store --work outputs/ionic_pv_work \
+  --run-id illuminated-jv
+.venv/bin/python -B -m examples.research_1d.process_ionic_jv read \
+  --store outputs/ionic_pv_store --run-id illuminated-jv
+```
+
+Use a checkout matching the committed source supplied to the worker. The
+default initialization records one dark and one illuminated coupled solve,
+followed by the 51 curve points. Reading submits no job and imports no solver.
+The verified process result contains 15 artifacts; the supervisor alone
+publishes them and records the terminal state.
+
+To reuse its exact accepted illuminated initial state:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.process_ionic_jv export-initial \
+  --store outputs/ionic_pv_store --run-id illuminated-jv \
+  --output outputs/ionic_pv_initial.json
+```
+
+Pass that file and its printed digest with `run --initial-result ...
+--initial-sha256 ...`. Adding `--failure-case` deliberately limits the curve
+to one second. A failed run retains its accepted prefix and first failed point,
+and its read command returns exit 2. The actual failure witness retained nine
+points and failed at 0.225 V; timing can change the prefix on another machine.
+Saved reuse performs no initialization solve after admission. The initial
+serialization failure remains a separate failed attempt with no curve data.
+PCE stays unavailable without declared irradiance, and scientific qualification
+remains pending. This process entry has no HTTP or browser binding yet.
+
 ## Multiple blocking ion domains
 
 The additive two-domain compiler and equation assembly can be exercised with:
