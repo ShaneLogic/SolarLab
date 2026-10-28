@@ -1,6 +1,6 @@
-"""Fixed-voltage generation transients from an accepted same-device DC state.
+"""Driven voltage/generation transients from an accepted same-device DC state.
 
-The caller specifies every time and endpoint generation value. There are no
+The caller specifies every time and endpoint voltage/generation value. There are no
 automatic substeps/retries, steady settling stages, or scientific certificates.
 Newton acceptance concerns the physical backward-Euler residual, not constant
 DC conduction current. The first failed attempt and accepted prefix are kept.
@@ -32,7 +32,11 @@ __all__ = ["TransientProtocol", "TransientOptions", "TransientAttempt", "Transie
 
 @dataclass(frozen=True)
 class TransientProtocol:
-    """Explicit endpoint samples; generation is used at each right endpoint."""
+    """Explicit voltage/generation samples at each BE right endpoint.
+
+    There is no inferred event interpolation or steady solve at intermediate
+    biases. The samples drive a time history, not a steady JV scan.
+    """
 
     times_s: np.ndarray
     voltage_V: np.ndarray
@@ -54,8 +58,6 @@ class TransientProtocol:
             raise ValueError("voltage and generation must have one value per requested time")
         if np.any(self.generation_scale < 0.0):
             raise ValueError("generation_scale must be nonnegative")
-        if np.any(self.voltage_V != self.voltage_V[0]):
-            raise ValueError("variable-voltage protocols are unsupported in this research slice")
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,10 @@ The wall budget is monotonic and checked around each residual/Jacobian and
 accounting call; individual SciPy operations are not preempted. No wall clock
 or evaluation budget is reset after failure. Initial DC gates are rechecked
 only for admission of the initial state, never used to gate transient steps.
+For a changing voltage, the recorded Newton seed is rebased and harmonically
+lifted to the new electrode potentials while preserving old carrier densities.
+The full physical secant already includes reference-voltage changes, so no
+additional voltage-rate storage term is added.
 """
     started = time.monotonic()
     if not isinstance(compiled, CompiledDevice1D) or not isinstance(initial, SteadyState1D):
@@ -186,7 +192,7 @@ only for admission of the initial state, never used to gate transient steps.
         start, end = float(protocol.times_s[index - 1]), float(protocol.times_s[index])
         voltage, generation = float(protocol.voltage_V[index]), float(protocol.generation_scale[index])
         step = BackwardEuler1DStep(DC1DProblem(compiled, voltage, generation), states[-1], end - start)
-        candidate = step.initial_coordinates()
+        candidate = step.initial_coordinates(voltage_lift=True)
         initial_guess = candidate.copy()
         attempt_start = time.monotonic()
         newton, accounting, error = None, None, None
@@ -205,7 +211,7 @@ only for admission of the initial state, never used to gate transient steps.
 
         try:
             checkpoint()
-            candidate = step.initial_coordinates(options.predictor)
+            candidate = step.initial_coordinates(options.predictor, voltage_lift=True)
             initial_guess = candidate.copy()
             newton = solve_newton(
                 CallableProblem(lambda u: evaluate(step.residual, u), lambda u: evaluate(step.jacobian, u)),
@@ -236,5 +242,8 @@ only for admission of the initial state, never used to gate transient steps.
             break
         states.append(compiled.state(candidate, voltage_V=voltage))
         accepted_times.append(end)
+    recorded_controls = asdict(options)
+    if np.any(protocol.voltage_V != protocol.voltage_V[0]):
+        recorded_controls["voltage_seed_policy"] = "harmonic_potential_preserve_densities_when_voltage_changes"
     return TransientResult1D(protocol, np.asarray(accepted_times), tuple(states), tuple(attempts), initial,
-                             compiled.identity, asdict(options), asdict(initial_options), time.monotonic() - started)
+                             compiled.identity, recorded_controls, asdict(initial_options), time.monotonic() - started)

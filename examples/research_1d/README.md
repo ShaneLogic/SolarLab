@@ -380,8 +380,26 @@ Independent checks accepted all 28 example steps; successive final inventory
 differences decreased by about a factor of 2.07. This is bounded first-order
 evidence, not a time-error bound or mesh qualification. Physical-certificate
 status remains `not_evaluated`. Abrupt dark turn-on and very small time steps
-have retained Newton/roundoff failures. Variable bias, ions and hysteresis
-remain outside this first transient slice.
+have retained Newton/roundoff failures. Ions and qualified hysteresis remain
+outside this transient implementation.
+
+An explicit time-dependent voltage example is also available:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.transient_voltage \
+  --output "$HOME/.local/share/solarlab/research_1d/transient-voltage.json" --refine
+```
+
+It uses constant generation scale 1 and
+`V(t) = 0.1 + 0.001 * (t / 400 ns)²`, with 4, 8 and 16 declared steps.
+Reference changes are included in each physical inventory difference. A recorded
+harmonic potential seed imposes the new electrode voltage while preserving the
+old carrier populations; Newton solves the full coupled endpoint equations.
+Independent checks found approximately first-order inventory and terminal-current
+refinement. Reported displacement currents are interval values `ΔD / Δt`, not
+instantaneous pulse peaks. This is a driven time history; steady J–V and final
+hysteresis qualification remain separate. The fixed-bias branch retains its
+previous accepted states and diagnostics exactly in the archived comparison.
 
 ## Adding a local model
 

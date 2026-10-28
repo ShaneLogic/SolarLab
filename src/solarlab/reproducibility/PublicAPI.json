@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and fixed-bias generation transients; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],

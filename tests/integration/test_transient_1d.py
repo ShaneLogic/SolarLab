@@ -132,8 +132,8 @@ def test_voltage_reference_rebase_preserves_the_old_physical_fields(case):
     rate = step.inventory_rate_m2_s(u)
     scaled = abs(rate) * step.dt_s / inventory_m2(device, point.state)
     assert np.max(scaled) < 5e-14
-    with pytest.raises(ValueError, match="variable-voltage"):
-        TransientProtocol([0, 1e-7], [0, 0.2], [1, 1.01])
+    protocol = TransientProtocol([0, 1e-7], [0, 0.2], [1, 1.01])
+    np.testing.assert_array_equal(protocol.voltage_V, [0, 0.2])
 
 
 @pytest.mark.parametrize("member", ["times_s", "voltage_V", "generation_scale"])

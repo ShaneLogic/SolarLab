@@ -87,18 +87,37 @@ class BackwardEuler1DStep:
     def jacobian(self, u: np.ndarray) -> csc_matrix:
         return self.endpoint.jacobian(u) + self.endpoint.storage_jacobian(u) / self.dt_s
 
-    def initial_coordinates(self, predictor: str = "previous") -> np.ndarray:
+    def initial_coordinates(
+        self, predictor: str = "previous", *, voltage_lift: bool = False,
+    ) -> np.ndarray:
         """Explicit Newton seed; it never changes the old physical inventory.
 
         generation_inventory adds dt*G_new equally to the two differential
         carrier populations, retaining old phi. Transport/recombination are
         solved by implicit Newton, not included in this positive source seed.
         This is neither an accepted time step nor a steady settling stage.
+
+        voltage_lift additionally imposes the change of electrode potential
+        through the charge-free harmonic potential profile. Compensating both
+        carrier coordinates preserves physical populations. It is skipped
+        exactly at fixed voltage; the default retains the original pure rebase.
         """
         device = self.endpoint.device
         values = device.rebase_coordinates(
             self.previous.u, self.previous.voltage_V, self.endpoint.voltage_V,
         )
+        if voltage_lift and self.endpoint.voltage_V != self.previous.voltage_V:
+            count = device.node_count
+            resistance = 1.0 / device.poisson.face_capacitance_F_m2
+            profile = np.r_[0.0, np.cumsum(resistance)]
+            profile /= profile[-1]
+            change = -device.voltage_polarity * (self.endpoint.voltage_V - self.previous.voltage_V)
+            before = values[:count].copy()
+            values[:count] += change * profile
+            # Use the represented potential change in the compensating shift.
+            shift = (values[:count] - before) / device.thermal_voltage_V
+            values[count:2 * count] -= shift
+            values[2 * count:] -= shift
         if predictor == "previous":
             return values
         if predictor != "generation_inventory":
