@@ -10,10 +10,12 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import ctypes
+import gzip
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import resource
 import signal
 import sys
@@ -25,6 +27,53 @@ from scripts.benchmarks import g2_route_launcher as launcher
 SCHEMA = "solarlab.g2-saved-observe.v1"
 LEGACY_COMMIT = "20751ff9bacd4040d930a9e794b4348094d4fda7"
 GIB = 1024**3
+
+
+class ObservationStopped(RuntimeError):
+    """An operational stop, deliberately outside the reader's ValueError catch."""
+
+    def __init__(self, kind, detail):
+        self.kind = kind
+        super().__init__("g2_saved_observe_" + detail)
+
+
+def exception_evidence(error):
+    """Bounded exception/call-site facts, without locals or native operands.
+
+    Generic reader ValueErrors remain unclassified unless their retained chain
+    identifies our own stop or a definite JSON/container decoding error.
+    """
+    chain, seen, current = [], set(), error
+    classification = "unclassified_error"
+    while current is not None and id(current) not in seen and len(chain) < 4:
+        seen.add(id(current))
+        if isinstance(current, ObservationStopped):
+            classification = current.kind
+        elif classification == "unclassified_error" and isinstance(
+                current, (json.JSONDecodeError, UnicodeDecodeError, gzip.BadGzipFile, EOFError)):
+            classification = "artifact_decode_error"
+        parts = []
+        for arg in current.args[:3]:
+            if type(arg) is str:
+                # Truncate before formatting; never stringify arrays/large ints.
+                parts.append(re.sub(r"(?:0x)?[0-9a-fA-F]{32,}", "<numeric-word>", arg[:1024]))
+            elif arg is None or type(arg) is bool or type(arg) is int and arg.bit_length() <= 63:
+                parts.append(str(arg))
+            else:
+                parts.append("<" + type(arg).__name__[:80] + ">")
+        frames, tb = [], current.__traceback__
+        while tb is not None:
+            frames.append({"file": Path(tb.tb_frame.f_code.co_filename).name[:120],
+                           "function": tb.tb_frame.f_code.co_name[:100], "line": tb.tb_lineno})
+            frames = frames[-8:]
+            tb = tb.tb_next
+        chain.append({"type": type(current).__name__[:80], "message": "; ".join(parts)[:1024],
+                      "frames": frames})
+        current = current.__cause__ if current.__cause__ is not None else (
+            None if current.__suppress_context__ else current.__context__)
+    return {"exception": chain[0]["type"], "reason": chain[0]["message"],
+            "classification": classification, "chain": chain,
+            "chain_truncated": current is not None}
 
 
 def require(condition, reason):
@@ -192,7 +241,7 @@ def validate(manifest_path):
 @contextmanager
 def cancellation():
     def stop(number, frame):
-        raise RuntimeError("saved_observe_signal_" + str(number))
+        raise ObservationStopped("cancelled", "signal_" + str(number))
     saved = {number: signal.signal(number, stop) for number in (signal.SIGTERM, signal.SIGINT)}
     try:
         yield
@@ -222,7 +271,8 @@ def _observe(context, checkpoint):
     source, target, execution = context["source"], context["target"], case["execution"]
     source_bytes = output_bytes(source, ())
     cap = min(context["limits"].artifact_bytes, plan["resources"]["combined_persisted_case_bytes"]-source_bytes)
-    require(cap > 2*1024**2, "combined_output_cap")
+    if cap <= 2*1024**2:
+        raise ObservationStopped("resource_limit", "combined_output_cap")
     model = AffineCoupledSlab(SlabDefinition(**request["numeric_packet"]["definition"]), case["mesh_intervals"])
     mapping = AffineVoltageMap(model, mapped_input_profile=request["voltage_lift_map"]["mapped_input_profile"])
     target.mkdir(parents=True, exist_ok=False)
@@ -254,7 +304,8 @@ def _observe(context, checkpoint):
                 "logical_sha256": writer.logical_sha256, "logical_bytes": writer.logical_bytes,
                 "encoded_bytes": writer.encoded_bytes, "closed": writer.closed, "container_complete": writer.closed})
         raw = (integer_json_dumps(result, execution.get("integer_io_policy"), indent=2)+"\n").encode()
-        require(output_bytes(target, ())+len(raw)+65536 <= cap, "output_cap")
+        if output_bytes(target, ())+len(raw)+65536 > cap:
+            raise ObservationStopped("resource_limit", "output_cap")
         require(pinned(m["producer_result"]) == context["producer_result"], "producer_changed_during_read")
         with (target / "RunResult.json").open("xb") as stream:
             stream.write(raw)
@@ -262,7 +313,7 @@ def _observe(context, checkpoint):
     except BaseException as error:
         try:
             writer.abort(error)
-            writer.publish_first_failure({"exception": type(error).__name__, "reason": str(error)[:2048]})
+            writer.publish_first_failure(exception_evidence(error))
         except BaseException as secondary:
             error.add_note("saved observer closeout: " + type(secondary).__name__)
         raise
@@ -280,8 +331,12 @@ def run(manifest_path):
         context["work_deadline"] = min(context["work_deadline"],
             launcher._refresh_pipeline_deadline(clock)-limits.cleanup_s)
         rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
-        require(not Path(policy["cancel_path"]).exists(), "cancelled")
-        require(time.perf_counter() < context["work_deadline"] and rss <= limits.rss_bytes, "wall_or_RSS_limit")
+        if Path(policy["cancel_path"]).exists():
+            raise ObservationStopped("cancelled", "cancel_path")
+        if time.perf_counter() >= context["work_deadline"]:
+            raise ObservationStopped("deadline", "work_deadline")
+        if rss > limits.rss_bytes:
+            raise ObservationStopped("resource_limit", "RSS_limit")
     checkpoint()
     require(all(os.environ.get(k) == "1" for k in launcher.THREAD_VARIABLES), "thread_environment")
     _blas_one()
@@ -315,7 +370,7 @@ def main(argv=None):
                               "scientific_pass": result.get("scientific_pass")}))
         return 0
     except (ValueError, KeyError, OSError, RuntimeError) as error:
-        print(json.dumps({"status": "refused_or_failed", "reason": str(error)}))
+        print(json.dumps({"status": "refused_or_failed", **exception_evidence(error)}))
         return 2
 
 

@@ -242,7 +242,7 @@ def install_observer_stubs(monkeypatch, callback):
         value.__dict__.update(values)
         monkeypatch.setitem(sys.modules, value.__name__, value)
     def observer(mapping, request, append, checkpoint, *, t1_context):
-        calls.update(t1_context=t1_context, append=append)
+        calls.update(t1_context=t1_context, append=append, checkpoint=checkpoint)
         return "original-observer-instance"
     def reader(source, **kwargs):
         calls.update(source=source, reader=kwargs)
@@ -289,7 +289,7 @@ def test_original_admission_and_t1_identity_forwarded_unchanged(bound, monkeypat
     assert snapshot(bound.source) == before
 
 
-@pytest.mark.parametrize("failure", ["exception", "cancel", "signal"])
+@pytest.mark.parametrize("failure", ["exception", "cancel", "signal", "deadline", "rss"])
 def test_failure_keeps_old_data_and_new_first_failure(bound, monkeypatch, failure):
     permit_run(monkeypatch)
     cancel = Path(bound.manifest["execution"]["supervision"]["cancel_path"])
@@ -298,13 +298,24 @@ def test_failure_keeps_old_data_and_new_first_failure(bound, monkeypatch, failur
             raise RuntimeError("first reader failure")
         if failure == "cancel":
             cancel.touch()
-        else:
+        elif failure == "signal":
             signal.raise_signal(signal.SIGTERM)
+        elif failure == "deadline":
+            monkeypatch.setattr(saved.time, "perf_counter", lambda: 1e30)
+            calls["checkpoint"]()
+        else:
+            monkeypatch.setattr(saved.resource, "getrusage", lambda *args: SimpleNamespace(ru_maxrss=10**15))
+            calls["checkpoint"]()
     install_observer_stubs(monkeypatch, fail)
     before = snapshot(bound.source)
     with pytest.raises((ValueError, RuntimeError)):
         saved.run(bound.persist())
     assert (bound.target / "FirstFailure.json").is_file()
+    evidence = json.loads((bound.target / "FirstFailure.json").read_bytes())
+    assert evidence["classification"] == {
+        "exception": "unclassified_error", "cancel": "cancelled", "signal": "cancelled",
+        "deadline": "deadline", "rss": "resource_limit"}[failure]
+    assert evidence["chain"][0]["frames"]
     assert not (bound.target / "RunResult.json").exists()
     assert not (bound.target / "RecoveryReceipt.json").exists()
     assert snapshot(bound.source) == before
@@ -322,7 +333,7 @@ def test_runtime_guard_stops_before_observer(bound, monkeypatch, guard):
         monkeypatch.setattr(saved.resource, "getrusage", lambda *args: SimpleNamespace(ru_maxrss=10**15))
     else:
         monkeypatch.delenv(saved.launcher.CHANNEL_FD_ENV, raising=False)
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, saved.ObservationStopped)):
         saved.run(bound.persist())
     assert not bound.target.exists()
 
@@ -349,3 +360,59 @@ def test_inherited_lock_remains_owned_after_consumer_exception(bound, monkeypatc
             saved.run(bound.persist())
         with pytest.raises(BlockingIOError):
             fcntl.flock(competitor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@pytest.mark.parametrize("kind", ["deadline", "cancelled", "resource_limit", "decode", "generic_value"])
+def test_real_reader_preserves_own_stop_and_bounded_cause(tmp_path, monkeypatch, kind):
+    from scripts.benchmarks import native_readback as reader
+    failure = (saved.ObservationStopped(kind, "injected_"+kind) if kind in
+               {"deadline", "cancelled", "resource_limit"} else
+               json.JSONDecodeError("injected invalid JSON", "{", 1) if kind == "decode" else
+               ValueError("injected unexplained observer refusal"))
+    def injected_read(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(reader, "_read_json", injected_read)
+    with pytest.raises(Exception) as caught:
+        reader.verify_history(tmp_path, max_record_bytes=1024, max_logical_bytes=4096,
+                              max_records=10, deadline_monotonic=time.perf_counter()+1)
+    evidence = saved.exception_evidence(caught.value)
+    if isinstance(failure, saved.ObservationStopped):
+        assert caught.value is failure
+        assert evidence["classification"] == kind
+    else:
+        assert isinstance(caught.value, reader.HistoryVerificationError)
+        assert caught.value.__cause__ is failure
+        assert evidence["classification"] == ("artifact_decode_error" if kind == "decode" else "unclassified_error")
+    assert any(frame["function"] == "injected_read" for node in evidence["chain"] for frame in node["frames"])
+
+
+def test_wrapped_old_style_deadline_can_be_reported_without_claiming_old_cause():
+    from scripts.benchmarks.native_readback import HistoryVerificationError
+    try:
+        try:
+            raise ValueError("g2_saved_observe_wall_or_RSS_limit")
+        except ValueError as cause:
+            raise HistoryVerificationError("invalid_artifact_ValueError", 5591, 315661032) from cause
+    except HistoryVerificationError as outer:
+        evidence = saved.exception_evidence(outer)
+    assert evidence["classification"] == "unclassified_error"
+    assert evidence["chain"][1]["message"] == "g2_saved_observe_wall_or_RSS_limit"
+    assert evidence["chain"][0]["frames"]
+
+
+def test_exception_evidence_bounds_chains_and_never_dumps_native_numbers():
+    error = ValueError("native="+"9"*100000, 1 << 1000000, {"giant": "x"*100000})
+    for _ in range(7):
+        outer = RuntimeError("observer layer")
+        outer.__cause__ = error
+        error = outer
+    result = saved.exception_evidence(error)
+    assert len(result["chain"]) == 4 and result["chain_truncated"] is True
+    base = error
+    while base.__cause__ is not None:
+        base = base.__cause__
+    rendered = json.dumps(saved.exception_evidence(base))
+    assert len(rendered) < 2048 and "99999999999999999999999999999999" not in rendered
+    assert "<numeric-word>" in rendered and "<int>" in rendered and "<dict>" in rendered
+    base.__cause__ = base
+    assert saved.exception_evidence(base)["chain_truncated"] is True
