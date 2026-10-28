@@ -322,8 +322,9 @@ A separate new-core frequency-domain example linearizes a revalidated DC state:
 ```
 
 It runs this device at 1 V DC and requests 0, 1 and 1000 Hz. Carrier contact
-channels may be `fixed_reservoir` or finite-rate `robin`; blocking contacts
-are explicitly rejected in this slice. A separate 37-node Robin case was
+channels may be `fixed_reservoir`, finite-rate `robin`, or selective combinations
+with a blocking channel, within the solver's checked numerical envelope.
+A separate 37-node Robin case was
 verified at 0, 1, 1000 and 1e6 Hz, including both-terminal DC derivatives and
 the contact-cell displacement contribution. The same DC Jacobian and carrier
 storage derivatives supply a complex sparse solve. Returned arrays include
@@ -338,6 +339,16 @@ The result retains linear-residual and all-face Maxwell-current diagnostics.
 It records the current source and supplied controls used to revalidate the DC
 state; it does not reconstruct an unrecorded original DC execution history.
 Frequency/mesh convergence and full scientific AC qualification remain open.
+
+The selective extension has verified a positive-polarity device with electron
+exchange only on the right and hole exchange only on the left at 1 V DC,
+including both-terminal DC derivatives. Some reversed-polarity and mixed-contact
+cases still fail the unchanged Maxwell-current gate, including a mixed
+negative-polarity case at 0.95 V. These failures return no accepted response;
+general selective-contact robustness remains open. A carrier blocked at both
+ends with a requested zero frequency is explicitly outside the validated scope.
+Generation and recombination can change that carrier's inventory, so this
+boundary does not assume its inventory is universally conserved.
 
 ## Fixed-bias generation transient
 

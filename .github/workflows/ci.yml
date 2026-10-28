@@ -181,6 +181,7 @@ jobs:
           tests/unit/solvers/test_frequency_domain.py
           tests/integration/test_impedance_1d.py
           tests/integration/test_impedance_finite_contacts.py
+          tests/integration/test_impedance_selective_contacts.py
           tests/integration/test_transient_1d.py
           tests/unit/experiments/test_steady_jv_metrics.py
           tests/unit/experiments/test_operating_points.py

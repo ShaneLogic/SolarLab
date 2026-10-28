@@ -10,9 +10,7 @@ import pytest
 from threadpoolctl import threadpool_limits
 
 from examples.research_1d.steady import load_device
-from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_1d import compile_device_1d
-from solarlab.device.inputs import DeviceInput
 from solarlab.equations.dc_1d import DC1DProblem
 from solarlab.experiments.impedance import _moving_voltage_partial, solve_impedance, voltage_reference_direction
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
@@ -117,25 +115,6 @@ def test_linear_normalization_is_not_a_finite_amplitude_drive(case):
     scaled = solve_impedance(compiled, point, result.frequency_Hz, voltage_phasor_V=voltage, steady_options=controls)
     np.testing.assert_allclose(scaled.admittance_density_S_m2, result.admittance_density_S_m2, rtol=2e-10)
     np.testing.assert_allclose(scaled.potential_perturbation_V / voltage, result.potential_perturbation_V, rtol=2e-10, atol=1e-12)
-
-
-@pytest.mark.parametrize("contact_kind", ["selective"])
-def test_blocking_contacts_remain_explicit_capability_boundaries(contact_kind):
-    prepared = load_device()
-    document = prepared.to_input().editing_data()
-    if contact_kind == "robin":
-        document["settings"]["flat_band_contacts"] = True
-    else:
-        document["contacts"] = [
-            dict(id="left", side="left", layer="htl", S_n=0.0, S_p=200.0),
-            dict(id="right", side="right", layer="etl", S_n=200.0, S_p=0.0),
-        ]
-    prepared = resolve_device(DeviceInput.model_validate(document), prepared.defaults,
-                              prepared.resources, sources=prepared.sources)
-    compiled = compile_device_1d(prepared, intervals_per_layer=12)
-    point = solve_steady_state(compiled, voltage_V=1.0)
-    with pytest.raises(ValueError, match="unsupported blocking"):
-        solve_impedance(compiled, point, [0.0, 1e6])
 
 
 def test_missing_failed_foreign_or_rebound_dc_states_are_rejected(case):

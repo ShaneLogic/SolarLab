@@ -1,4 +1,4 @@
-"""Ion-free classical 1D fixed/finite-rate small signal about accepted DC.
+"""Ion-free classical 1D fixed/finite/selective small signal about accepted DC.
 
 Phasors use exp(+i*omega*t). A 1 V normalization describes a derivative,
 not a finite one-volt experiment. Coordinates use the DC state's fixed
@@ -17,6 +17,7 @@ import sys
 
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.sparse import csc_matrix, eye
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.equations.dc_1d import (
@@ -224,6 +225,68 @@ def _lifted_storage_drive(problem: DC1DProblem, u: np.ndarray, lift: np.ndarray)
     return result
 
 
+def _uniform_carrier_partial(problem: DC1DProblem, u: np.ndarray, shifted_carrier: str) -> np.ndarray:
+    """Production derivative for a uniform dimensionless carrier offset.
+
+    A unit electron offset gives dn=n; a unit hole offset gives dp=-p.
+    The corresponding particle flux scales by +Gamma_n or -Gamma_p.
+    """
+    device = problem.device
+    count = device.node_count
+    _, n, p = device.fields(u, voltage_V=problem.voltage_V)
+    dn = n if shifted_carrier == "n" else np.zeros(count)
+    dp = -p if shifted_carrier == "p" else np.zeros(count)
+    rate = problem.recombination_rate(n, p)
+    assert rate.d_rate_dn is not None and rate.d_rate_dp is not None
+    source = -(rate.d_rate_dn * dn + rate.d_rate_dp * dp)
+    fluxes = problem.fluxes(u)
+    result = np.zeros(3 * count)
+    result[:count] = device.poisson.charge_jacobian() * Q * (dp - dn)
+    for carrier, offset, density, flux, sign in (
+        ("n", count, dn, fluxes.electron, 1.0), ("p", 2 * count, dp, fluxes.hole, -1.0),
+    ):
+        face = sign * flux.flux if carrier == shifted_carrier else np.zeros(count - 1)
+        rows = -np.diff(np.r_[0.0, face, 0.0]) + device.geometry.cell_measures_m * source
+        for side, node in (("left", 0), ("right", count - 1)):
+            channel = device.channel(carrier, side)
+            if channel.kind == "fixed_reservoir":
+                rows[node] = sign if carrier == shifted_carrier else 0.0
+            else:
+                slope = boundary_particle_flux(channel, channel.reservoir_density_m3).density_derivative
+                rows[node] += (1.0 if side == "left" else -1.0) * slope * density[node]
+        result[offset:offset + count] = rows
+    return result
+
+
+def _reference_anchor_system(
+    problem: DC1DProblem, u: np.ndarray, J: csc_matrix, K: csc_matrix,
+) -> tuple[csc_matrix, csc_matrix, csc_matrix, tuple[int, int]]:
+    """Sparse carrier-offset basis with analytically grouped uniform columns.
+
+    q_i=eta_i+eta_anchor off the anchor, q_anchor=eta_anchor. Thus the
+    anchor column is the uniform carrier derivative. Evaluating it from
+    the production kernels retains the small physical mode that can be
+    lost when large opposite entries of the nodal Jacobian are summed.
+    """
+    device = problem.device
+    count = device.node_count
+    transform = eye(3 * count, format="lil")
+    anchors = []
+    for carrier, offset, preferred in (
+        ("n", count, "right" if device.voltage_polarity > 0.0 else "left"),
+        ("p", 2 * count, "left" if device.voltage_polarity > 0.0 else "right"),
+    ):
+        fixed = [side for side in ("left", "right") if device.channel(carrier, side).kind == "fixed_reservoir"]
+        side = fixed[0] if fixed else preferred
+        anchor = offset + (0 if side == "left" else count - 1)
+        anchors.append(anchor)
+        transform[offset:offset + count, anchor] = np.ones(count)
+    P = transform.tocsc()
+    matrix = (J @ P).tolil()
+    for carrier, anchor in zip(("n", "p"), anchors):
+        uniform = _uniform_carrier_partial(problem, u, carrier)
+        matrix[:, anchor] = uniform[:, None]
+    return matrix.tocsc(), (K @ P).tocsc(), P, (anchors[0], anchors[1])
 
 
 def solve_impedance(
@@ -237,7 +300,7 @@ def solve_impedance(
     current_absolute_tolerance_A_m2_V: float = 1e-8,
     current_relative_tolerance: float = 1e-10,
 ) -> SmallSignalResult1D:
-    """Actual complex DC linearization for fixed-reservoir/Robin contacts.
+    """Actual fixed/Robin/selective linearization within checked numerical limits.
 
     Input fields/gates are revalidated against supplied current controls and
     code. A bare SteadyState1D does not bind complete historical solver/source
@@ -276,8 +339,12 @@ def solve_impedance(
     if not np.array_equal(widths[1:-1], compiled.poisson.interior_widths_m):
         raise ValueError("small signal requires matching carrier and Poisson interior control widths")
     for channel in compiled.channels:
-        if channel.kind not in {"fixed_reservoir", "robin"}:
-            raise ValueError(f"small-signal slice supports fixed_reservoir/robin contacts; unsupported {channel.kind}")
+        if channel.kind not in {"fixed_reservoir", "robin", "blocking"}:
+            raise ValueError(f"unsupported small-signal contact kind: {channel.kind}")
+    if np.any(np.asarray(frequencies_Hz) == 0.0):
+        for carrier in ("n", "p"):
+            if all(compiled.channel(carrier, side).kind == "blocking" for side in ("left", "right")):
+                raise ValueError(f"zero-frequency {carrier} blocked at both ends is not validated by this small-signal slice")
     source_pins = _sources()
     problem = DC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale)
     u = operating_point.state.u
@@ -305,8 +372,13 @@ def solve_impedance(
                 fixed_coordinates[offset + node] = 0.0j
     rhs = -_moving_voltage_partial(problem, u, lift) * voltage
     rhs_rate = _lifted_storage_drive(problem, u, lift) * voltage
+    transform = eye(3 * count, format="csc")
+    solve_J, solve_K = J, K
+    anchors: tuple[int, int] | None = None
+    if any(channel.kind != "fixed_reservoir" for channel in compiled.channels):
+        solve_J, solve_K, transform, anchors = _reference_anchor_system(problem, u, J, K)
     reduced_solutions = solve_frequency_systems(
-        J, K, rhs, frequencies_Hz, options=linear, fixed_coordinates=fixed_coordinates, rhs_rate=rhs_rate,
+        solve_J, solve_K, rhs, frequencies_Hz, options=linear, fixed_coordinates=fixed_coordinates, rhs_rate=rhs_rate,
     )
     original_rhs = -_moving_voltage_partial(problem, u) * voltage
     original_rate = (K @ c) * voltage
@@ -314,7 +386,7 @@ def solve_impedance(
     for item in reduced_solutions:
         omega = 2.0 * math.pi * item.frequency_Hz
         matrix = J + 1j * omega * K
-        y = item.solution + lift * voltage
+        y = transform @ item.solution + lift * voltage
         b = original_rhs + 1j * omega * original_rate
         residual = matrix @ y - b
         denominator = abs(matrix) @ abs(y) + abs(b)
@@ -376,9 +448,9 @@ def solve_impedance(
         bounds.append((Q * float(np.sum(residual)) + omega * float(np.sum(abs(item.residual[1:count - 1])))) / abs(voltage))
     conduction = np.asarray(conduction_rows)
     terminal_conduction = np.asarray(terminal_rows)
-    omega = 2.0 * math.pi * np.asarray([item.frequency_Hz for item in solved])
-    displacement_current = 1j * omega[:, None] * displacement
-    terminal_displacement = 1j * omega[:, None] * terminal_D
+    omegas = 2.0 * math.pi * np.asarray([item.frequency_Hz for item in solved])
+    displacement_current = 1j * omegas[:, None] * displacement
+    terminal_displacement = 1j * omegas[:, None] * terminal_D
     total = conduction + displacement_current
     terminal_total = terminal_conduction + terminal_displacement
     all_faces = np.c_[terminal_total[:, :1], total, terminal_total[:, 1:]] / voltage
@@ -403,6 +475,7 @@ def solve_impedance(
         identity, digest, operating_point.voltage_V, operating_point.generation_scale,
         compiled.voltage_polarity, source_identity, source_pins, asdict(controls), {
             **asdict(linear), "fixed_coordinate_indices": sorted(fixed_coordinates),
+            "carrier_reference_anchor_coordinates": anchors,
             "coordinate_form": "boundary-voltage lifted moving reference; full original residual verified",
             "current_absolute_tolerance_A_m2_V": current_absolute_tolerance_A_m2_V,
             "current_relative_tolerance": current_relative_tolerance,
