@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers and the implemented ion-free classical 1D DC research workflow; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, the ion-free classical 1D DC workflow and fixed-reservoir small signal; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -319,6 +319,23 @@
       "run_steady_jv_worker",
       "steady_jv_identity_inputs",
       "validate_steady_jv_scope"
+    ],
+    "solarlab.solvers.linear": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.solvers.linear.frequency_domain": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.experiments.impedance": [
+      "SmallSignalResult1D",
+      "voltage_reference_direction",
+      "solve_impedance"
     ]
   },
   "public_imports": {
@@ -708,6 +725,23 @@
       "run_steady_jv_worker",
       "steady_jv_identity_inputs",
       "validate_steady_jv_scope"
+    ],
+    "solarlab.solvers.linear": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.solvers.linear.frequency_domain": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.experiments.impedance": [
+      "SmallSignalResult1D",
+      "voltage_reference_direction",
+      "solve_impedance"
     ]
   },
   "checked_consumers": [
