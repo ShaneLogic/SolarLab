@@ -72,7 +72,7 @@ function protocol(value: SteadyProtocol, route: SteadyRoute): void {
 
 /** Narrow decoder for this worker's plain C-order float64 NPY payloads.
  * getArtifact verifies the original bytes first. No pickle/eval/general dtype loader. */
-export function readSteadyArray(bytes: Uint8Array, record: ArtifactRecord): FloatArray {
+export function readSteadyArray(bytes: Uint8Array, record: ArtifactRecord, allowEmpty = false): FloatArray {
   check(record.format === 'npy' && bytes.length >= 10
     && Array.from(bytes.slice(0, 6)).join(',') === '147,78,85,77,80,89', 'Invalid steady NPY artifact')
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -85,7 +85,7 @@ export function readSteadyArray(bytes: Uint8Array, record: ArtifactRecord): Floa
   const match = /^\{'descr': '([<>]f8)', 'fortran_order': False, 'shape': \((\d+(?:,\s*\d+)*,?)\),?\s*\}\s*$/.exec(header)
   check(match, 'Only plain C-order float64 steady arrays are supported')
   const shape = match[2].split(',').filter(x => x.trim()).map(Number)
-  check(shape.length >= 1 && shape.length <= 2 && shape.every(n => Number.isSafeInteger(n) && n > 0), 'Invalid steady array shape')
+  check(shape.length >= 1 && shape.length <= 2 && shape.every(n => Number.isSafeInteger(n) && (allowEmpty ? n >= 0 : n > 0)), 'Invalid steady array shape')
   const count = shape.reduce((a, b) => a * b, 1)
   check(Number.isSafeInteger(count) && prefix + length + count * 8 === bytes.length, 'NPY byte count mismatch')
   check(record.metadata.dtype === match[1] && record.metadata.order === 'C'
@@ -93,6 +93,27 @@ export function readSteadyArray(bytes: Uint8Array, record: ArtifactRecord): Floa
   const values = Array.from({ length: count }, (_, i) => view.getFloat64(prefix + length + i * 8, match[1][0] === '<'))
   check(values.every(Number.isFinite), 'Non-finite steady field cannot be plotted as a valid result')
   return { shape, values }
+}
+
+/** Shared bounded JSON transport for the installed research job routes. */
+export async function requestJobService(endpoint: string, path: string, init: RequestInit = {}): Promise<{ value: StoredObject; response: Response }> {
+  const response = await fetch(new URL(path, endpoint), { ...init, redirect: 'error', cache: 'no-store' })
+  const reader = response.body?.getReader()
+  check(reader, 'Missing service response')
+  const chunks: Uint8Array[] = []; let size = 0
+  try {
+    while (true) {
+      const part = await reader.read(); if (part.done) break
+      size += part.value.length; check(size <= 1024 ** 2, 'Service response exceeds 1 MiB')
+      chunks.push(part.value)
+    }
+  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
+  const bytes = new Uint8Array(size); let offset = 0
+  for (const part of chunks) { bytes.set(part, offset); offset += part.length }
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  if (!response.ok) throw new RunClientError('http', `Service HTTP ${response.status}: ${text.slice(0, 2048)}`, { status: response.status })
+  check(response.headers.get('content-type')?.split(';')[0] === 'application/json', 'Expected JSON service response')
+  return { value: object(JSON.parse(text)), response }
 }
 
 export class SteadyJVClient {
@@ -104,24 +125,8 @@ export class SteadyJVClient {
     this.endpoint = url.href.replace(/\/$/, '') + '/'
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<{ value: StoredObject; response: Response }> {
-    const response = await fetch(new URL(path, this.endpoint), { ...init, redirect: 'error', cache: 'no-store' })
-    const reader = response.body?.getReader()
-    check(reader, 'Missing service response')
-    const chunks: Uint8Array[] = []; let size = 0
-    try {
-      while (true) {
-        const part = await reader.read(); if (part.done) break
-        size += part.value.length; check(size <= 1024 ** 2, 'Service response exceeds 1 MiB')
-        chunks.push(part.value)
-      }
-    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock() }
-    const bytes = new Uint8Array(size); let offset = 0
-    for (const part of chunks) { bytes.set(part, offset); offset += part.length }
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    if (!response.ok) throw new RunClientError('http', `Service HTTP ${response.status}: ${text.slice(0, 2048)}`, { status: response.status })
-    check(response.headers.get('content-type')?.split(';')[0] === 'application/json', 'Expected JSON service response')
-    return { value: object(JSON.parse(text)), response }
+  private request(path: string, init: RequestInit = {}): Promise<{ value: StoredObject; response: Response }> {
+    return requestJobService(this.endpoint, path, init)
   }
 
   async discover(signal?: AbortSignal): Promise<SteadyCatalog> {

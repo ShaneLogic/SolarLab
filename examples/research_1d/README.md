@@ -627,6 +627,24 @@ cancellation. Stored results can be read without invoking a solver. The HTTP
 adapter currently supports ion-free histories; the ionic examples above use
 the direct Python workflow.
 
+## Transient browser entry
+
+With the co-installed transient service above on port 8000, start the frontend
+as described in **Browser research entry**, then open
+`http://127.0.0.1:5173/?view=transient`. Select an installed device and enter the
+explicit time, voltage and generation samples before choosing **Run transient**.
+The page follows the actual job and plots the accepted temporal and spatial
+fields, including conduction, displacement and total terminal currents.
+
+The stored requested protocol labels accepted, failed and unattempted steps.
+A failed history displays its actual prefix; missing currents at the initial
+time remain unavailable. Temporal axes use the accepted history's time domain.
+The displayed bookmark and **Open stored attempt** form reopen the exact saved
+attempt after a reload. Reconnect and readback do not submit another calculation.
+Cancellation targets the displayed attempt and is confirmed from its terminal
+state. This entry retains the same ion-free and scientific-qualification limits
+as the transient HTTP adapter.
+
 ## Adding a local model
 
 `steady.py` contains `SaturatingRecombination`, an executable extension example:
