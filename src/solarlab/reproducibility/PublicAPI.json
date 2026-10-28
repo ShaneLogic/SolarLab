@@ -475,6 +475,13 @@
       "CompiledMultipleIonicDevice1D",
       "MultipleIonic1DProblem",
       "MultipleIonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.multiple_ionic_1d": [
+      "ConstrainedMultipleIonic1DProblem",
+      "MultipleIonicSteadyResult",
+      "multiple_ionic_diagnostics",
+      "multiple_ionic_checks",
+      "solve_multiple_ionic_steady_state"
     ]
   },
   "public_imports": {
@@ -1011,6 +1018,13 @@
       "CompiledMultipleIonicDevice1D",
       "MultipleIonic1DProblem",
       "MultipleIonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.multiple_ionic_1d": [
+      "ConstrainedMultipleIonic1DProblem",
+      "MultipleIonicSteadyResult",
+      "multiple_ionic_diagnostics",
+      "multiple_ionic_checks",
+      "solve_multiple_ionic_steady_state"
     ]
   },
   "checked_consumers": [

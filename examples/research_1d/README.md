@@ -700,8 +700,20 @@ particle current is exactly zero at blocking endpoints and through the gap.
 Assembly checks cover unequal domain grids, positive and independent dual
 populations, shared finite sites and immobile populations, including shared
 storage derivatives. Existing one-domain behavior is preserved. This example
-evaluates a trial state: coupled multi-domain steady/time solving and final
-scientific qualification are not yet established by this assembly slice.
+evaluates a trial state. For a coupled dark steady solve, run:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_steady \
+  --output outputs/multiple_ionic_steady.json
+```
+
+This solves one common electronic system and both blocking ion domains, with
+each species constrained to its own domain's reference inventory. The saved
+result includes the original balance rows, physical current, source identities
+and acceptance checks. The bounded 13-electrical-node, 4+4-ion-node example at
+2 mV passed independent review. The steady solver currently requires connected,
+positive-diffusivity species; immobile species are supported by assembly only.
+Multi-domain time solving and final scientific qualification remain pending.
 
 ## Ionic small-signal response
 
