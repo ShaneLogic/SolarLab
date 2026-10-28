@@ -204,6 +204,7 @@ jobs:
           tests/integration/test_ionic_pv_1d.py
           tests/integration/test_multiple_ionic_domains_1d.py
           tests/integration/test_multiple_ionic_steady_1d.py
+          tests/integration/test_multiple_ionic_transient_1d.py
           tests/runtime/test_ionic_transient_worker.py
           tests/runtime/test_ionic_transient_job_service.py
           tests/unit/experiments/test_steady_jv_metrics.py

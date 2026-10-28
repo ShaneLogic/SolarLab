@@ -741,7 +741,25 @@ result includes the original balance rows, physical current, source identities
 and acceptance checks. The bounded 13-electrical-node, 4+4-ion-node example at
 2 mV passed independent review. The steady solver currently requires connected,
 positive-diffusivity species; immobile species are supported by assembly only.
-Multi-domain time solving and final scientific qualification remain pending.
+To evolve that same accepted dark state with both mobile domains, run:
+
+```sh
+MULTI_SHA=$(shasum -a 256 outputs/multiple_ionic_steady.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_transient solve \
+  --initial-result outputs/multiple_ionic_steady.json --initial-sha256 "$MULTI_SHA" \
+  --output outputs/multiple_ionic_transient.json
+MULTI_TIME_SHA=$(shasum -a 256 outputs/multiple_ionic_transient.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_transient read \
+  --result outputs/multiple_ionic_transient.json --sha256 "$MULTI_TIME_SHA"
+```
+
+The four backward-Euler steps ramp the bias from 2 to 4 mV over one second.
+The transient retains every physical storage and balance row, separate domain
+inventories and signed conduction/displacement currents, including contact
+storage. It reads the accepted initial state without another cold solve. A
+failed step preserves the accepted prefix and returns exit 2. This bounded
+positive-diffusivity example does not establish time or mesh convergence;
+final scientific qualification remains pending.
 
 ## Ionic small-signal response
 

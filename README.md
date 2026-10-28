@@ -55,7 +55,9 @@ and bounded steady J–V jobs through the shared process supervisor. The new cor
 also has explicit voltage/generation transients, saved-result HTTP/browser access,
 and coupled positive, independent dual-ion and shared-site steady/time examples.
 Ionic small-signal examples distinguish mobile and frozen responses about the same
-saved operating state. These are bounded working cases; mesh/time/voltage-grid
+saved operating state. A complete illuminated ionic J–V command reports sampled
+photovoltaic metrics, and two separated blocking ion domains share one electronic
+steady/transient system. These are bounded working cases; mesh/time/voltage-grid
 scientific acceptance and the remaining refactor are in progress. The broader application features
 described below include the existing `perovskite_sim` engine and do not imply
 that those capabilities have migrated to the new core.

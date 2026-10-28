@@ -482,6 +482,19 @@
       "multiple_ionic_diagnostics",
       "multiple_ionic_checks",
       "solve_multiple_ionic_steady_state"
+    ],
+    "solarlab.solvers.time.multiple_ionic_backward_euler": [
+      "MultipleIonicBackwardEuler1DStep",
+      "multiple_ionic_step_accounting"
+    ],
+    "solarlab.experiments.multiple_ionic_transient": [
+      "MultipleIonicTransientInitial",
+      "MultipleIonicTransientAttempt",
+      "MultipleIonicTransientResult",
+      "load_multiple_ionic_steady_initial",
+      "solve_multiple_ionic_transient",
+      "write_multiple_ionic_transient",
+      "read_multiple_ionic_transient"
     ]
   },
   "public_imports": {
@@ -1025,6 +1038,19 @@
       "multiple_ionic_diagnostics",
       "multiple_ionic_checks",
       "solve_multiple_ionic_steady_state"
+    ],
+    "solarlab.solvers.time.multiple_ionic_backward_euler": [
+      "MultipleIonicBackwardEuler1DStep",
+      "multiple_ionic_step_accounting"
+    ],
+    "solarlab.experiments.multiple_ionic_transient": [
+      "MultipleIonicTransientInitial",
+      "MultipleIonicTransientAttempt",
+      "MultipleIonicTransientResult",
+      "load_multiple_ionic_steady_initial",
+      "solve_multiple_ionic_transient",
+      "write_multiple_ionic_transient",
+      "read_multiple_ionic_transient"
     ]
   },
   "checked_consumers": [
