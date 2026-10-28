@@ -188,6 +188,72 @@ outcome. Invalid requests and cancellation use the existing runtime controls;
 readback never starts a solver. The in-process sweep commands above retain
 their documented execution mode.
 
+## Local HTTP service
+
+The installed `steady_jv` adapter now uses the same new-core worker through
+`/jobs`, `/experiments`, the stored-result endpoints and reconnectable SSE.
+Install the server dependencies and start the explicit example from the
+repository root, using fresh local store/work directories:
+
+```sh
+uv sync --frozen --extra dev --extra server --python 3.13
+.venv/bin/python -B examples/research_1d/service.py \
+  --build-source-commit "$(git rev-parse HEAD)" \
+  --store "$HOME/.local/share/solarlab/research_1d/http-demo" \
+  --work "$HOME/.local/share/solarlab/research_1d/http-demo-work" \
+  --port 8000
+```
+
+The example listens on `127.0.0.1` and installs the explicit `research_1d`
+device. `--build-source-commit` identifies actual Git source bytes; the worker
+checks them against its installation. Broader frontend migration is ongoing.
+In another terminal, submit the demonstrated short three-point calculation:
+
+```python
+import json
+from urllib.request import Request, urlopen
+
+base = "http://127.0.0.1:8000"
+with urlopen(base + "/experiments") as response:
+    headers = {
+        "X-Solarlab-Registry": response.getheader("X-Solarlab-Registry"),
+        "X-Solarlab-Job-Schema": response.getheader("X-Solarlab-Job-Schema"),
+        "Content-Type": "application/json",
+    }
+job = {
+    "schema_version": "solarlab.job-submission.v1",
+    "run_id": "my-steady-run", "experiment_id": "steady_jv",
+    "version": 1, "engine": "solarlab",
+    "input": {
+        "device_id": "research_1d", "voltage_V": [0.0, 0.05, 0.1],
+        "intervals_per_layer": 12, "generation_scale": 1.0,
+        "incident_power_W_m2": None,
+    },
+    "limits": {
+        "wall_seconds": 45.0, "rss_bytes": 1610612736,
+        "output_bytes": 100663296, "accepted_steps": None, "calls": None,
+    },
+}
+request = Request(base + "/jobs", data=json.dumps(job).encode(), headers=headers)
+with urlopen(request) as response:
+    accepted = json.load(response)
+print(accepted)
+```
+
+A 202 response means the job was accepted. Follow its `events_url`, or poll
+`/runs/{run_id}/attempts/{attempt_id}`, until the actual terminal outcome.
+`result_url` becomes readable after that outcome; each returned artifact has
+its own `content_url`. The arrays are NPY data suitable for
+`numpy.load(..., allow_pickle=False)`. Reconnecting SSE with the last event's
+sequence in `Last-Event-ID` resumes after that event. Repeating an identical
+submission with the same run ID returns the same attempt.
+
+This short protocol does not bracket Voc: its result retains
+`open_circuit_not_bracketed`. Use the direct Python research workflow above
+for the documented full sweep and direct Voc refinement. Trusted application
+code can install additional prepared devices using `SteadyPreparationContext`;
+HTTP chooses a registered device and explicit numerical protocol.
+
 ## Adding a local model
 
 `steady.py` contains `SaturatingRecombination`, an executable extension example:
