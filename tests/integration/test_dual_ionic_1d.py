@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import math
 
 import numpy as np
@@ -14,9 +15,11 @@ from examples.research_1d.ionic_multilayer import (
 )
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
+from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.inputs import DeviceInput
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.ionic_1d import Ionic1DProblem
+from solarlab.materials.source import SourceDocument
 from solarlab.physics.band_structure.temperature import ion_diffusivity_at_temperature
 from solarlab.physics.ions import ion_face_flux, single_site_density
 
@@ -256,8 +259,18 @@ def test_explicit_domain_shared_sites_and_missing_negative_reference_refuse():
 
 
 def test_positive_only_151ee28_identity_fields_and_old_state_shape_remain_compatible():
-    device = compile_domain(prepare_confined_ion_device())
-    assert device.identity == "5c6d28aca9f385c36995ed7d280f3ca0421d3a70e3459e662353fb2804c3d73b"
+    prepared = prepare_confined_ion_device()
+    # The example binds its absolute source path. Use a stable logical source
+    # for this frozen 151ee28 identity so checkout location is not a test input.
+    source = SourceDocument("research_1d/device.json", prepared.sources[0].content)
+    defaults = DefaultCatalog.from_mapping({
+        **json.loads(source.content)["default_catalog"],
+        "evidence": [[source.id, source.sha256]],
+    })
+    stable = resolve_device(prepared.to_input(), defaults, prepared.resources, sources=(source,))
+    device = compile_domain(stable)
+    assert device.identity == "29f79d5b84cd31409010ebcf85798965bfcfe52bbd310106e66f87343730cea3"
+    assert device.identity != compile_domain(prepared).identity
     assert device.ion_species_names == ("positive",) and device.state_size == 124
     y = device.initial_state(voltage_V=0.002).u.copy()
     y[3 * device.node_count:] = np.linspace(-0.15, 0.12, device.ion_node_count)
