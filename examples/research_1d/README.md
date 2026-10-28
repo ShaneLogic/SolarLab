@@ -9,8 +9,9 @@ configured physics is rejected; no legacy engine or fallback is used.
 
 This is a research workflow, not final scientific or release qualification.
 Mesh and voltage-grid convergence, full spectral/TMM optics, interface/defect
-extensions, ions, transient/hysteresis, 2D and the full registry release remain
-outside this example's verified scope. DC voltage continuation is not a
+extensions, ions, hysteresis, 2D and the full registry release remain
+outside this example's verified scope. A separate fixed-bias generation
+transient example is described below. DC voltage continuation is not a
 time-dependent voltage scan. Every parameter point is resolved and compiled
 cold; states and factorizations are not reused across parameter changes.
 
@@ -337,6 +338,39 @@ The result retains linear-residual and all-face Maxwell-current diagnostics.
 It records the current source and supplied controls used to revalidate the DC
 state; it does not reconstruct an unrecorded original DC execution history.
 Frequency/mesh convergence and full scientific AC qualification remain open.
+
+## Fixed-bias generation transient
+
+Run the conservative backward-Euler example with the same thread controls:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.transient \
+  --output "$HOME/.local/share/solarlab/research_1d/transient.json" --refine
+```
+
+The output path must be new. This solves the 37-node device at 0 V under
+generation scale 1, then applies the declared ramp
+`g(t) = 1 + 0.01 * (t / 400 ns)²`. The optional refinement runs 4, 8 and 16
+explicit steps with right-endpoint generation values. Every accepted step
+solves the difference of physical carrier inventories, evaluated with `expm1`
+to avoid subtracting nearly equal densities. It retains algebraic Poisson and
+contact equations, and reports both conduction and displacement current.
+
+`TransientProtocol`, `TransientOptions` and `solve_transient` in
+`solarlab.experiments.transient` expose the same workflow. Controls and the
+accepted initial DC state are explicit. This example selects the independently
+reviewed `poisson_contact_balance_v1` policy with unchanged Poisson, contact
+and aggregate carrier budgets. There are no hidden substeps or retries.
+
+The JSON retains accepted states, the first failed attempt, physical inventory
+changes, raw current and residual diagnostics, and charge-subtraction roundoff.
+The command exits nonzero if its requested calculation is incomplete.
+Independent checks accepted all 28 example steps; successive final inventory
+differences decreased by about a factor of 2.07. This is bounded first-order
+evidence, not a time-error bound or mesh qualification. Physical-certificate
+status remains `not_evaluated`. Abrupt dark turn-on and very small time steps
+have retained Newton/roundoff failures. Variable bias, ions and hysteresis
+remain outside this first transient slice.
 
 ## Adding a local model
 

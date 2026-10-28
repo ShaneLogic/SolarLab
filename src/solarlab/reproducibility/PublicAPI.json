@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, and fixed/finite-rate small signal; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate small signal and fixed-bias generation transients; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -341,6 +341,23 @@
       "SteadySweepJobs",
       "prepare_steady_sweep_jobs",
       "read_steady_sweep_jobs"
+    ],
+    "solarlab.solvers.time": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting"
+    ],
+    "solarlab.solvers.time.backward_euler": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting"
+    ],
+    "solarlab.experiments.transient": [
+      "TransientProtocol",
+      "TransientOptions",
+      "TransientAttempt",
+      "TransientResult1D",
+      "solve_transient"
     ]
   },
   "public_imports": {
@@ -752,6 +769,23 @@
       "SteadySweepJobs",
       "prepare_steady_sweep_jobs",
       "read_steady_sweep_jobs"
+    ],
+    "solarlab.solvers.time": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting"
+    ],
+    "solarlab.solvers.time.backward_euler": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting"
+    ],
+    "solarlab.experiments.transient": [
+      "TransientProtocol",
+      "TransientOptions",
+      "TransientAttempt",
+      "TransientResult1D",
+      "solve_transient"
     ]
   },
   "checked_consumers": [
