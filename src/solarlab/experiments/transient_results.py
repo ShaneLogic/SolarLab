@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D
 
 __all__ = ["CapturedTransientRun", "run_transient_for_publication",
-           "publish_transient_result", "read_transient_result"]
+           "publish_transient_result", "read_transient_result", "transient_result_payload"]
 
 _SCHEMA = "solarlab.transient-result.v1"
 _CURRENTS = tuple(prefix + "current_density_A_m2" for prefix in (
@@ -398,3 +398,6 @@ def read_transient_result(store: RunStore, run_id: str, *, attempt_id: str | Non
         raise ValueError("unknown transient provenance status")
     return {"document": document, "manifest": manifest, "arrays": arrays, "diagnostics": diagnostics,
             "run_state": attempt["state"], "provenance": provenance}
+
+# Public entry point for trusted companion preparation.
+transient_result_payload = _payload

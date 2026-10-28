@@ -214,8 +214,7 @@ def test_original_binding_rejects_reference_capacity_and_logit_counterexamples(f
 
 
 @pytest.mark.parametrize("parameters,settings,message", [
-    ({"P0_neg": 1e23}, {}, "negative/dual"),
-    ({"D_ion_neg": 1e-17}, {}, "negative/dual"),
+    ({"D_ion_neg": 1e-17}, {}, "negative-ion reference"),
     ({}, {"ion_steric_shared_site": True}, "shared-site"),
     ({"P0": 0.0}, {}, "strictly positive"),
     ({"P0": 1e27}, {}, "unsaturated"),
@@ -224,6 +223,23 @@ def test_unassembled_ionic_capabilities_refuse_explicitly(parameters, settings, 
     prepared = changed(prepare_single_ion_device(), parameters=parameters, settings=settings)
     with pytest.raises(CapabilityError, match=message):
         compile_ionic_device_1d(prepared, intervals_per_layer=6)
+
+
+def test_configured_negative_population_survives_zero_mobility_with_physical_storage():
+    prepared = changed(prepare_single_ion_device(), parameters={"P0_neg": 1e23, "D_ion_neg": 0.0})
+    compiled = compile_ionic_device_1d(prepared, intervals_per_layer=6)
+    state = compiled.initial_state()
+    problem = Ionic1DProblem(compiled)
+    negative = compiled.ion_species_slices[1]
+    assert compiled.ion_species_count == 2 and compiled.state_size == 5 * compiled.node_count
+    np.testing.assert_array_equal(state.negative_ion_density_m3, np.full(compiled.ion_node_count, 1e23))
+    assert state.negative_domain_inventory_m2 > 0.0
+    np.testing.assert_array_equal(problem.ion_fluxes(state.u, species="negative"), np.zeros(compiled.ion_node_count - 1))
+    storage = problem.storage_jacobian(state.u)
+    assert np.all(storage.diagonal()[negative] < 0.0)
+    derivative = np.zeros(compiled.state_size)
+    derivative[negative] = 0.1
+    np.testing.assert_array_equal(problem.residual(state.u, derivative)[negative], (storage @ derivative)[negative])
 
 
 def test_multilayer_domains_and_electronic_defects_are_not_silently_dropped():

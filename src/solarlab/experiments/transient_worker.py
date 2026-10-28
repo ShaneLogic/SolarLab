@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
 
 __all__ = ["TransientJob", "prepare_transient_job", "transient_worker_binding",
-           "run_transient_worker", "read_transient_job"]
+           "run_transient_worker", "read_transient_job", "transient_identity_inputs"]
 
 _ID = "transient_1d"
 _SCHEMA = _document("solarlab.transient.worker-request.v1", {
@@ -325,3 +325,6 @@ def read_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None =
                 "arrays": {name: by_name[name]["artifact_id"] for name in _UNITS}},
             "arrays": arrays, "diagnostics": diagnostics, "worker_result": result,
             "run_state": attempt["state"], "manifest": manifest.export()}
+
+# Public entry point for trusted companion preparation.
+transient_identity_inputs = _identity_inputs

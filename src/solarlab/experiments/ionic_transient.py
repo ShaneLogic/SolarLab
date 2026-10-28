@@ -56,10 +56,11 @@ def _same_state(left: IonicState1D, right: IonicState1D) -> bool:
     if not isinstance(left, IonicState1D) or not isinstance(right, IonicState1D):
         return False
     if (left.device_sha256 != right.device_sha256 or left.voltage_V != right.voltage_V
-            or left.domain_inventory_m2 != right.domain_inventory_m2
+            or left.domain_inventories_m2 != right.domain_inventories_m2
             or left.electronic_state.device_sha256 != right.electronic_state.device_sha256):
         return False
-    pairs = [(left.u, right.u), (left.positive_ion_density_m3, right.positive_ion_density_m3)]
+    pairs = [(left.u, right.u), (left.positive_ion_density_m3, right.positive_ion_density_m3),
+             (left.negative_ion_density_m3, right.negative_ion_density_m3)]
     pairs.extend((getattr(left.electronic_state, name), getattr(right.electronic_state, name))
                  for name in ("potential_V", "electron_density_m3", "hole_density_m3"))
     return all(np.array_equal(a, b) for a, b in pairs)
@@ -99,6 +100,8 @@ def _admit_evidence(
                 or electronic["voltage_V"] != voltage
                 or saved["domain_inventory_m2"] != state.domain_inventory_m2
                 or not np.array_equal(saved["positive_ion_density_m3"], state.positive_ion_density_m3)
+                or saved.get("negative_domain_inventory_m2", 0.0) != state.negative_domain_inventory_m2
+                or not np.array_equal(saved.get("negative_ion_density_m3", []), state.negative_ion_density_m3)
                 or not np.array_equal(electronic["u"], state.electronic_state.u)
                 or not np.array_equal(result["candidate_coordinates"], state.u)
                 or not np.array_equal(result["newton"]["state"], state.u)
@@ -137,7 +140,7 @@ def load_ionic_steady_initial(
 
 @dataclass(frozen=True)
 class IonicTransientOptions:
-    """Existing electronic controls plus the full ion-balance bound and step size."""
+    """Existing electronic controls plus independent per-species L1 and step bounds."""
 
     electronic: TransientOptions
     ion_balance_tolerance_m2_s: float
@@ -232,10 +235,10 @@ def _newton_settings(
         compiled.electronic_component, poisson_tolerance=electronic.poisson_tolerance,
         continuity_tolerance_A_m2=electronic.continuity_tolerance_A_m2,
         contact_log_tolerance=electronic.contact_log_tolerance,
-    ).row_weights, np.full(ion_count, ion_count / options.ion_balance_tolerance_m2_s)]
+    ).row_weights, np.full(ion_count * compiled.ion_species_count, ion_count / options.ion_balance_tolerance_m2_s)]
     steps = np.r_[production_coordinates(compiled.electronic_component,
         potential_step_V=electronic.potential_step_V, quasi_fermi_step=electronic.quasi_fermi_step).max_step,
-        np.full(ion_count, options.ion_logit_step)]
+        np.full(ion_count * compiled.ion_species_count, options.ion_logit_step)]
     settings = NewtonSettings(ResidualScaling(weights), 1.0, StepControl(steps), electronic.newton_budget, (), False)
     electronic_norm = production_convergence_norm(compiled.electronic_component,
                                                    convergence_policy=electronic.convergence_policy)
@@ -244,7 +247,8 @@ def _newton_settings(
     def convergence_norm(scaled: np.ndarray) -> float:
         if scaled.shape != (compiled.state_size,) or not np.all(np.isfinite(scaled)):
             return math.inf
-        return max(electronic_norm(scaled[:3 * count]), math.fsum(abs(scaled[3 * count:]).tolist()) / ion_count)
+        return max(electronic_norm(scaled[:3 * count]),
+                   *(math.fsum(abs(scaled[block]).tolist()) / ion_count for block in compiled.ion_species_slices))
 
     return settings, convergence_norm
 
@@ -345,6 +349,12 @@ time steps, and all dynamic ion continuity rows remain in residual and J.
                   "steady_controls": asdict(initial.steady_controls), "admission_checks": initial_checks}
     recorded = asdict(options)
     recorded["stopping_norm"] = "max(electronic_balance_norm(scaled_BE[:3N]),sum(abs(scaled_BE[3N:]))/M)"
+    if compiled.ion_species_count == 2:
+        recorded["stopping_norm"] = "max(electronic_balance_norm(scaled_BE[:3N]),L1(scaled_BE[positive])/M,L1(scaled_BE[negative])/M)"
+        recorded["ion_species_controls"] = {species: {
+            "ion_balance_tolerance_m2_s": options.ion_balance_tolerance_m2_s,
+            "ion_logit_step": options.ion_logit_step,
+        } for species in compiled.ion_species_names}
     recorded["voltage_seed_policy"] = "harmonic_potential_preserve_carrier_and_ion_densities"
     recorded["max_total_newton_residual_calls"] = electronic.max_steps * electronic.newton_budget.max_residual_evaluations
     recorded["max_total_newton_jacobian_calls"] = electronic.max_steps * electronic.newton_budget.max_jacobian_evaluations

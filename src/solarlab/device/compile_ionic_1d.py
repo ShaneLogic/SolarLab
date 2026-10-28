@@ -1,4 +1,4 @@
-"""Compile the bounded single-positive-ion residual from real PreparedDevice inputs.
+"""Compile one blocking ion domain with positive and optional independent negative ions.
 
 The ion-free compilation below is an explicit electronic *component* projection,
 not a returned ionic device or an ion-stripping fallback. All original ionic
@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import hashlib
 import json
 import math
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -37,11 +37,12 @@ def compile_ionic_device_1d(
     ion_domain_layer: str | None = None,
     ion_domain_endpoints: tuple[str, str] | None = None,
 ) -> CompiledIonicDevice1D:
-    """Compile one layer-wide positive population with finite sites and blocking contacts.
+    """Compile independent finite-site populations in one explicitly blocking layer.
 
-    Zero D retains the configured ion population/background/storage. Negative
-    populations, shared sites, additional domains and absent/saturated positive
-    references require a subsequent binding. A multilayer device requires an
+    Zero D retains each configured population/background/storage. Shared sites,
+    additional domains and absent/saturated positive references are unsupported.
+    A negative population requires its own positive unsaturated reference, even
+    when its mobility is zero. A multilayer device requires an
     explicit layer and two blocking endpoints; no interface exchange is inferred.
     """
     if not isinstance(prepared, PreparedDevice):
@@ -68,11 +69,9 @@ def compile_ionic_device_1d(
                     for layer in prepared.layers]
     for layer in prepared.layers:
         parameters = dict(layer.parameters)
-        if parameters["P0_neg"] != 0.0 or parameters["D_ion_neg"] != 0.0:
-            raise CapabilityError("first_ionic_1d: negative/dual ions are not assembled")
-        if layer.role == "substrate" and any(parameters[name] != 0.0 for name in ("P0", "D_ion")):
+        if layer.role == "substrate" and any(parameters[name] != 0.0 for name in ("P0", "D_ion", "P0_neg", "D_ion_neg")):
             raise CapabilityError("first_ionic_1d: substrate ion domains are not assembled")
-        if layer.id != domain_layer.id and any(parameters[name] != 0.0 for name in ("P0", "D_ion")):
+        if layer.id != domain_layer.id and any(parameters[name] != 0.0 for name in ("P0", "D_ion", "P0_neg", "D_ion_neg")):
             raise CapabilityError("first_ionic_1d: outside-domain population/mobility or multiple active domains are unsupported")
     parameters = dict(domain_layer.parameters)
     reference, capacity = float(cast(float, parameters["P0"])), float(cast(float, parameters["P_lim"]))
@@ -83,6 +82,17 @@ def compile_ionic_device_1d(
         raise CapabilityError("first_ionic_1d: a strictly positive, unsaturated finite-site reference is required")
     if diffusion < 0.0 or activation < 0.0:
         raise CapabilityError("first_ionic_1d: diffusivity/activation energy must be non-negative")
+    negative_reference = float(cast(float, parameters["P0_neg"]))
+    negative_capacity = float(cast(float, parameters["P_lim_neg"]))
+    negative_diffusion = float(cast(float, parameters["D_ion_neg"]))
+    dual = negative_reference != 0.0 or negative_diffusion != 0.0
+    if dual:
+        if not all(math.isfinite(value) for value in (negative_reference, negative_capacity, negative_diffusion)):
+            raise CapabilityError("dual_ionic_1d: finite negative-ion parameters are required")
+        if not 0.0 < negative_reference < negative_capacity:
+            raise CapabilityError("dual_ionic_1d: a positive unsaturated negative-ion reference is required; mobility alone cannot create a population")
+        if negative_diffusion < 0.0:
+            raise CapabilityError("dual_ionic_1d: negative-ion diffusivity must be non-negative")
 
     # Explicit component projection; only ionic populations/transport switches
     # are excluded from this component, and every change is recorded below.
@@ -117,7 +127,20 @@ def compile_ionic_device_1d(
     # One uniform ionic domain: retain the ion kernel's scalar-broadcast law,
     # including exact zero diffusivity, rather than a carrier-only harmonic mean.
     faces = np.full(count - 1, scaled_diffusion)
-    manifest = {
+    negative_arrays: dict[str, np.ndarray] = {}
+    if dual:
+        scaled_negative = ion_diffusivity_at_temperature(negative_diffusion, component.parameters.temperature_K, activation)
+        if not math.isfinite(scaled_negative) or scaled_negative < 0.0:
+            raise CapabilityError("dual_ionic_1d: temperature-scaled negative diffusivity is outside the finite envelope")
+        negative_occupancy = negative_reference / negative_capacity
+        negative_logit = math.log(negative_occupancy) - math.log1p(-negative_occupancy)
+        negative_arrays = {
+            "negative_ion_reference_m3": np.full(count, negative_reference),
+            "negative_ion_site_limit_m3": np.full(count, negative_capacity),
+            "negative_ion_logit_reference": np.full(count, negative_logit),
+            "negative_ion_diffusivity_faces_m2_s": np.full(count - 1, scaled_negative),
+        }
+    manifest: dict[str, Any] = {
         "binding": "single_positive_ion_classical_1d_residual_v1",
         "original_prepared_sha256": prepared.content_sha256,
         "original_ionic_inputs": declarations,
@@ -142,10 +165,25 @@ def compile_ionic_device_1d(
                          "size": 3 * component.node_count + count},
         "scope": "assembled residual and analytic derivatives; ionic steady/transient qualification remains open",
     }
+    if dual:
+        # Positive-only manifest bytes remain the integrated v1 contract.
+        manifest["binding"] = "independent_dual_ion_classical_1d_residual_v1"
+        manifest["ion_domain"]["negative_reference_inventory_m2"] = math.fsum((
+            ion_geometry.cell_measures_m * negative_arrays["negative_ion_reference_m3"]
+        ).tolist())
+        manifest["ion_model"]["negative_face_diffusivity_m2_s"] = negative_arrays["negative_ion_diffusivity_faces_m2_s"].tolist()
+        manifest["ion_model"]["site_contract"] = "independent_finite_sites"
+        manifest["ion_charge_deposition"]["rule"] = "rho_ion=q*(W_P/W_e)*((P_positive-P0)-(P_negative-P0_neg)); separate historical negative charge group"
+        manifest["state_layout"].update(size=3 * component.node_count + 2 * count,
+                                        ion_species=["positive", "negative"], ion_species_count=2)
     encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":"), allow_nan=False)
     identity = hashlib.sha256(encoded.encode()).hexdigest()
     return CompiledIonicDevice1D(
         data["id"], identity, prepared.content_sha256, component, ion_geometry, domain_layer.id,
         reference_array, limit_array, np.full(count, logit), faces, steric_model, encoded,
         ion_node_indices=indices,
+        negative_ion_reference_m3=negative_arrays.get("negative_ion_reference_m3", np.empty(0)),
+        negative_ion_site_limit_m3=negative_arrays.get("negative_ion_site_limit_m3", np.empty(0)),
+        negative_ion_logit_reference=negative_arrays.get("negative_ion_logit_reference", np.empty(0)),
+        negative_ion_diffusivity_faces_m2_s=negative_arrays.get("negative_ion_diffusivity_faces_m2_s", np.empty(0)),
     )

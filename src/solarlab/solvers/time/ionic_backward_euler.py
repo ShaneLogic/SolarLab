@@ -1,6 +1,6 @@
 """Physical backward Euler for the integrated electronic/confined-ion model.
 
-R=F_DC-(S_new-S_old)/dt and J=F_y+K/dt. All M ionic balances remain;
+R=F_DC-(S_new-S_old)/dt and J=F_y+K/dt. All M balances per species remain;
 only fixed-reservoir carrier rows are algebraic. Diagnostics carry actual
 motion currents and explicit floating readback errors, not acceptance labels.
 """
@@ -55,12 +55,16 @@ def finite_site_secant_m3(
     return result
 
 
-def inventory_m2(device: CompiledIonicDevice1D, state: IonicState1D) -> tuple[np.ndarray, np.ndarray]:
-    """Physical carrier (2,N) and ion (M,) inventories, including all endpoints."""
+def inventory_m2(
+    device: CompiledIonicDevice1D, state: IonicState1D, *, species: str = "positive",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Physical carrier (2,N) and named ion (M,) inventories, including endpoints."""
     if not isinstance(state, IonicState1D) or state.device_sha256 != device.identity:
         raise ValueError("inventory requires a full same-device ionic state")
+    if species not in device.ion_species_names:
+        raise ValueError("requested ion species is not assembled in this device")
     carrier = electronic_inventory_m2(device.electronic_component, state.electronic_state)
-    return carrier, device.ion_geometry.cell_measures_m * state.positive_ion_density_m3
+    return carrier, device.ion_geometry.cell_measures_m * getattr(state, f"{species}_ion_density_m3")
 
 
 @dataclass(frozen=True)
@@ -85,33 +89,47 @@ class IonicBackwardEuler1DStep:
         for name in ("potential_V", "electron_density_m3", "hole_density_m3"):
             if not np.array_equal(getattr(actual.electronic_state, name), getattr(self.previous.electronic_state, name)):
                 raise ValueError("previous electronic fields disagree with their voltage reference")
-        if (not np.array_equal(actual.positive_ion_density_m3, self.previous.positive_ion_density_m3)
-                or actual.domain_inventory_m2 != self.previous.domain_inventory_m2):
+        if (any(not np.array_equal(getattr(actual, f"{species}_ion_density_m3"),
+                                   getattr(self.previous, f"{species}_ion_density_m3"))
+                for species in device.ion_species_names)
+                or actual.domain_inventories_m2 != self.previous.domain_inventories_m2):
             raise ValueError("previous physical ion fields/inventory disagree with the bound coordinates")
 
     @property
     def electronic_step(self) -> BackwardEuler1DStep:
         return BackwardEuler1DStep(self.endpoint.electronic_problem, self.previous.electronic_state, self.dt_s)
 
-    def inventory_rate_m2_s(self, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def inventory_rates_m2_s(self, y: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+        """Carrier rates and every independent physical finite-site secant, in block order."""
         device, N = self.endpoint.device, self.endpoint.device.node_count
         values = np.asarray(y, dtype=float)
-        device.fields(values, voltage_V=self.endpoint.voltage_V)
+        device.fields_by_species(values, voltage_V=self.endpoint.voltage_V)
         carrier = self.electronic_step.inventory_rate_m2_s(values[:3 * N])
-        ion_change = finite_site_secant_m3(
-            device.positive_ion_site_limit_m3, device.positive_ion_logit_reference,
-            self.previous.u[3 * N:], values[3 * N:],
-        )
-        return carrier, device.ion_geometry.cell_measures_m * ion_change / self.dt_s
+        rates = []
+        for species, block in zip(device.ion_species_names, device.ion_species_slices):
+            ion_change = finite_site_secant_m3(
+                getattr(device, f"{species}_ion_site_limit_m3"), getattr(device, f"{species}_ion_logit_reference"),
+                self.previous.u[block], values[block],
+            )
+            rates.append(device.ion_geometry.cell_measures_m * ion_change / self.dt_s)
+        return carrier, tuple(rates)
+
+    def inventory_rate_m2_s(self, y: np.ndarray, *, species: str = "positive") -> tuple[np.ndarray, np.ndarray]:
+        """Historical positive-rate reader, with an explicit negative-species selector."""
+        if species not in self.endpoint.device.ion_species_names:
+            raise ValueError("requested ion species is not assembled in this device")
+        carrier, rates = self.inventory_rates_m2_s(y)
+        return carrier, rates[self.endpoint.device.ion_species_names.index(species)]
 
     def residual(self, y: np.ndarray) -> np.ndarray:
         result = self.endpoint.residual(y)
         N = self.endpoint.device.node_count
-        carrier, ion = self.inventory_rate_m2_s(y)
+        carrier, ions = self.inventory_rates_m2_s(y)
         rows = result[N:3 * N].reshape(2, N)
         mask = _storage_mask(self.endpoint.device.electronic_component)
         rows[mask] -= carrier[mask]
-        result[3 * N:] -= ion
+        for block, ion in zip(self.endpoint.device.ion_species_slices, ions):
+            result[block] -= ion
         return result
 
     def jacobian(self, y: np.ndarray) -> csc_matrix:
@@ -130,12 +148,15 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
     particles/(m^2*s); their charge is scattered without a second volume factor.
     Stable interval displacement and separately rounded state readbacks are
     both exposed, including their effect on the complete Maxwell identity.
+    Historical unnamed ion arrays refer to the positive species; dual evidence
+    also records both named species. Ionic conduction/charge arrays sum signs.
     """
     problem, device, old = step.endpoint, step.endpoint.device, step.previous
     N, dt, idx = device.node_count, step.dt_s, device.ion_node_indices
     new = device.state(y, voltage_V=problem.voltage_V)
     carrier_info = electronic_step_accounting(step.electronic_step, np.asarray(y)[:3 * N])
-    carrier_rate, ion_rate = step.inventory_rate_m2_s(y)
+    carrier_rate, ion_rates = step.inventory_rates_m2_s(y)
+    ion_rate = ion_rates[0]
     carrier_balance = np.asarray(carrier_info["carrier_balance_m2_s"])
     carrier_particles = np.asarray(carrier_info["particle_fluxes_m2_s"])
     carrier_conduction = Q * (carrier_particles[1] - carrier_particles[0])
@@ -144,15 +165,24 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
     ion_balance = -np.diff(np.r_[0.0, ion_domain_flux, 0.0]) - ion_rate
     ion_charge_rate = np.zeros(N)
     ion_charge_rate[idx] = Q * ion_rate
+    signed_ion_particles = ion_particles
+    if device.ion_species_count == 2:
+        negative_rate = ion_rates[1]
+        negative_flux = problem.ion_fluxes(y, species="negative")
+        negative_particles = np.r_[0.0, problem.ion_fluxes_on_electronic_faces(y, species="negative"), 0.0]
+        negative_balance = -np.diff(np.r_[0.0, negative_flux, 0.0]) - negative_rate
+        signed_ion_particles = ion_particles - negative_particles
+        ion_charge_rate[idx] = Q * (ion_rate - negative_rate)
     charge_rate = Q * (carrier_rate[1] - carrier_rate[0]) + ion_charge_rate
-    conduction = carrier_conduction + Q * ion_particles
+    conduction = carrier_conduction + Q * signed_ion_particles
     widths = device.electronic_component.geometry.cell_measures_m
     poisson = device.electronic_component.poisson
 
     def readback(state: IonicState1D) -> tuple[np.ndarray, np.ndarray]:
         e = state.electronic_state
         rho = device.charge_ledger(e.electron_density_m3, e.hole_density_m3,
-                                  state.positive_ion_density_m3).space_charge_C_m3()
+                                  state.positive_ion_density_m3,
+                                  state.negative_ion_density_m3 if device.ion_species_count == 2 else None).space_charge_C_m3()
         interior = poisson.face_displacement(e.potential_V)
         ports = contact_displacement(interior, rho, widths)
         return np.r_[ports[0], interior, ports[1]], widths * rho
@@ -174,6 +204,8 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
     charge_readback_error = charge_rate - (new_charge - old_charge) / dt
     ion_balance_global = np.zeros(N)
     ion_balance_global[idx] = ion_balance
+    if device.ion_species_count == 2:
+        ion_balance_global[idx] = ion_balance - negative_balance
     charge_defect = Q * (carrier_balance[1] - carrier_balance[0] + ion_balance_global)
     jump = maxwell[:-1] - maxwell[1:]
     predicted = charge_defect + stable_gauss_rate
@@ -187,7 +219,7 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
     mask = _storage_mask(device.electronic_component)
     continuity_bound = Q * (float(np.sum(abs(residual[N:3 * N].reshape(2, N)[mask])))
                             + math.fsum(abs(residual[3 * N:]).tolist()))
-    return {
+    result = {
         "physical_certificate_status": "not_evaluated",
         "carrier_inventory_m2": new_carrier_inventory, "ion_inventory_m2": new_ion_inventory,
         "carrier_inventory_rate_m2_s": carrier_rate, "ion_inventory_rate_m2_s": ion_rate,
@@ -201,7 +233,7 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
         "charge_inventory_C_m2": new_charge, "charge_inventory_rate_A_m2": charge_rate,
         "charge_subtraction_roundoff_A_m2": charge_readback_error,
         "carrier_conduction_current_density_A_m2": carrier_conduction,
-        "ion_conduction_current_density_A_m2": Q * ion_particles,
+        "ion_conduction_current_density_A_m2": Q * signed_ion_particles,
         "conduction_current_density_A_m2": conduction,
         "interval_displacement_C_m2": interval_d,
         "rounded_interval_displacement_C_m2": rounded_interval_d,
@@ -225,6 +257,29 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
         "compiled_identity": device.identity, "previous_compiled_identity": old.device_sha256,
         "previous_voltage_V": old.voltage_V, "voltage_V": problem.voltage_V, "dt_s": dt,
     }
+    if device.ion_species_count == 2:
+        positive_keys = (
+            "ion_inventory_m2", "ion_inventory_rate_m2_s", "rounded_ion_inventory_rate_m2_s",
+            "ion_inventory_readback_error_m2_s", "ion_particle_fluxes_m2_s", "ion_domain_fluxes_m2_s",
+            "ion_balance_m2_s", "global_ion_inventory_rate_m2_s", "global_ion_balance_m2_s",
+        )
+        positive = {key: result[key] for key in positive_keys}
+        positive["ion_conduction_current_density_A_m2"] = Q * ion_particles
+        _, old_negative_inventory = inventory_m2(device, old, species="negative")
+        _, new_negative_inventory = inventory_m2(device, new, species="negative")
+        rounded_negative_rate = (new_negative_inventory - old_negative_inventory) / dt
+        negative = {
+            "ion_inventory_m2": new_negative_inventory, "ion_inventory_rate_m2_s": negative_rate,
+            "rounded_ion_inventory_rate_m2_s": rounded_negative_rate,
+            "ion_inventory_readback_error_m2_s": negative_rate - rounded_negative_rate,
+            "ion_particle_fluxes_m2_s": negative_particles, "ion_domain_fluxes_m2_s": negative_flux,
+            "ion_balance_m2_s": negative_balance,
+            "ion_conduction_current_density_A_m2": -Q * negative_particles,
+            "global_ion_inventory_rate_m2_s": math.fsum(negative_rate.tolist()),
+            "global_ion_balance_m2_s": math.fsum(negative_balance.tolist()),
+        }
+        result["ion_species"] = {"positive": positive, "negative": negative}
+    return result
 
 
 ionic_step_accounting = step_accounting

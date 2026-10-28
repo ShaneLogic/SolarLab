@@ -378,14 +378,16 @@
       "CapturedTransientRun",
       "run_transient_for_publication",
       "publish_transient_result",
-      "read_transient_result"
+      "read_transient_result",
+      "transient_result_payload"
     ],
     "solarlab.experiments.transient_worker": [
       "TransientJob",
       "prepare_transient_job",
       "transient_worker_binding",
       "run_transient_worker",
-      "read_transient_job"
+      "read_transient_job",
+      "transient_identity_inputs"
     ],
     "solarlab.solvers.time.ionic_backward_euler": [
       "IonicBackwardEuler1DStep",
@@ -401,6 +403,18 @@
       "IonicTransientResult",
       "load_ionic_steady_initial",
       "solve_ionic_transient"
+    ],
+    "solarlab.solvers.nonlinear.problem": [
+      "CallableProblem",
+      "GateOutcome",
+      "Matrix",
+      "PhysicalGate",
+      "ResidualScaling",
+      "SolveBudget",
+      "SteadyProblem",
+      "StepControl",
+      "Vector",
+      "state_digest"
     ]
   },
   "public_imports": {
@@ -849,14 +863,16 @@
       "CapturedTransientRun",
       "run_transient_for_publication",
       "publish_transient_result",
-      "read_transient_result"
+      "read_transient_result",
+      "transient_result_payload"
     ],
     "solarlab.experiments.transient_worker": [
       "TransientJob",
       "prepare_transient_job",
       "transient_worker_binding",
       "run_transient_worker",
-      "read_transient_job"
+      "read_transient_job",
+      "transient_identity_inputs"
     ],
     "solarlab.solvers.time.ionic_backward_euler": [
       "IonicBackwardEuler1DStep",
@@ -872,6 +888,9 @@
       "IonicTransientResult",
       "load_ionic_steady_initial",
       "solve_ionic_transient"
+    ],
+    "solarlab.solvers.nonlinear.problem": [
+      "SolveBudget"
     ]
   },
   "checked_consumers": [

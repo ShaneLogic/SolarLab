@@ -30,6 +30,26 @@ def prepare_confined_ion_device(*, diffusion_only: bool = True) -> PreparedDevic
     return resolve_device(DeviceInput.model_validate(data), template.defaults, template.resources, sources=template.sources)
 
 
+def prepare_confined_dual_ion_device(
+    *, diffusion_only: bool = True,
+    positive_diffusivity_m2_s: float = 1e-16,
+    negative_diffusivity_m2_s: float = 5e-17,
+) -> PreparedDevice:
+    """Same three layers, two separately compensated finite-site absorber species.
+
+    The populations have independent capacities and their original fixed
+    backgrounds; unequal references do not introduce a neutralization rule.
+    Either zero diffusivity retains that species and its physical storage.
+    """
+    template = prepare_confined_ion_device(diffusion_only=diffusion_only)
+    data = template.to_input().editing_data()
+    data["id"] = "confined_absorber_dual_ion"
+    absorber = next(layer for layer in data["layers"] if layer["role"].lower() == "absorber")
+    absorber["parameters"].update(D_ion=positive_diffusivity_m2_s,
+                                  P0_neg=6e23, P_lim_neg=2e27, D_ion_neg=negative_diffusivity_m2_s)
+    return resolve_device(DeviceInput.model_validate(data), template.defaults, template.resources, sources=template.sources)
+
+
 def main() -> None:
     device = compile_ionic_device_1d(
         prepare_confined_ion_device(), intervals_per_layer=(12, 12, 12),

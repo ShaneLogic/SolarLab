@@ -20,12 +20,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from solarlab.experiments.execution import JobHandle, ProcessSupervisor
 from solarlab.experiments.jv.worker import SteadyJVJob, steady_jv_worker_binding
+from solarlab.experiments.transient_worker import TransientJob, transient_worker_binding
 from solarlab.experiments.registry import ExperimentRegistry
 from solarlab.experiments.worker import ManifestBinding, ResourceLimits, RunSpec, WorkerBinding, WorkerRequest
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.registry import ModelRegistry, metadata_digest
 from solarlab_server.legacy_engine import LegacyJob, legacy_worker_binding
 from solarlab_server.steady_preparation import SteadyJobInput, SteadyPreparationContext, prepare_steady_input
+from solarlab_server.transient_preparation import TransientJobInput, TransientPreparationContext, prepare_transient_input
 
 
 def canonical(value: Any) -> bytes:
@@ -95,13 +97,30 @@ class SteadyRegistration:
 
 
 @dataclass(frozen=True, slots=True)
+class TransientRegistration:
+    """One installed transient adapter, with no caller-selectable code or state."""
+
+    experiment_id: str
+    version: int
+    context: TransientPreparationContext
+    engine: Literal["solarlab"] = field(default="solarlab", init=False)
+    input_type: type[TransientJobInput] = field(default=TransientJobInput, init=False)
+    legacy_kinds: tuple[str, ...] = field(default=(), init=False)
+    synchronous_paths: tuple[str, ...] = field(default=(), init=False)
+
+    def __post_init__(self) -> None:
+        if type(self.context) is not TransientPreparationContext:
+            raise ValueError("transient registration requires the actual trusted preparation context")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionCatalog:
     """A source-checked table over the existing experiment/model declarations."""
 
     registry: ExperimentRegistry
     models: ModelRegistry
     sources: tuple[SourceDocument, ...]
-    registrations: tuple[LegacyRegistration | SteadyRegistration, ...]
+    registrations: tuple[LegacyRegistration | SteadyRegistration | TransientRegistration, ...]
     expected_registry_sha256: str
     expected_model_sha256: str
     ceiling: ResourceLimits
@@ -112,7 +131,7 @@ class ExecutionCatalog:
         object.__setattr__(self, "sources", tuple(self.sources))
         object.__setattr__(self, "registrations", tuple(self.registrations))
         if (type(self.ceiling) is not ResourceLimits or not self.registrations
-                or any(type(r) not in {LegacyRegistration, SteadyRegistration} for r in self.registrations)):
+                or any(type(r) not in {LegacyRegistration, SteadyRegistration, TransientRegistration} for r in self.registrations)):
             raise ValueError("explicit route registrations and a resource ceiling are required")
         keys = [(r.experiment_id, r.version) for r in self.registrations]
         aliases = [a for r in self.registrations for a in (*r.legacy_kinds, *r.synchronous_paths)]
@@ -127,10 +146,10 @@ class ExecutionCatalog:
             "legacy_facade_sha256": legacy_worker_binding().source_sha256,
             "bindings": [self._entry(r) for r in self.registrations]})))
 
-    def _models(self, registration: LegacyRegistration | SteadyRegistration) -> ModelRegistry:
-        return registration.context.models if isinstance(registration, SteadyRegistration) else self.models
+    def _models(self, registration: LegacyRegistration | SteadyRegistration | TransientRegistration) -> ModelRegistry:
+        return self.models if isinstance(registration, LegacyRegistration) else registration.context.models
 
-    def _entry(self, registration: LegacyRegistration | SteadyRegistration) -> dict[str, Any]:
+    def _entry(self, registration: LegacyRegistration | SteadyRegistration | TransientRegistration) -> dict[str, Any]:
         entry = {"experiment_id": registration.experiment_id, "version": registration.version,
             "engine": registration.engine, "input_schema": registration.input_type.model_json_schema(),
             "model_registry_sha256": self._models(registration).content_sha256,
@@ -138,10 +157,15 @@ class ExecutionCatalog:
             "synchronous_paths": list(registration.synchronous_paths), "scientific_qualification": False}
         if isinstance(registration, LegacyRegistration):
             entry.update(driver=registration.driver, scope="legacy_compatibility")
-        else:
+        elif isinstance(registration, SteadyRegistration):
             entry.update(driver="steady_jv", scope="static_classical_ion_free_1d_dc",
                 preparation_context=registration.context.export(),
                 worker_source_sha256=steady_jv_worker_binding().source_sha256)
+        else:
+            entry.update(driver="transient_1d", scope="classical_ion_free_1d_transient",
+                preparation_context=registration.context.export(),
+                worker_source_sha256=transient_worker_binding().source_sha256,
+                result_schema="solarlab.transient.worker-result.v1")
         return entry
 
     def verify(self) -> None:
@@ -161,20 +185,40 @@ class ExecutionCatalog:
                                     expected_model_sha256=models.content_sha256)
         for registration in self.registrations:
             definition = self.registry.get(registration.experiment_id, registration.version)
-            factory = registration.prepare if isinstance(registration, LegacyRegistration) else prepare_steady_input
+            factory: Callable[..., Any]
+            if isinstance(registration, LegacyRegistration):
+                factory = registration.prepare
+            elif isinstance(registration, SteadyRegistration):
+                factory = prepare_steady_input
+            else:
+                registration.context.verify_sources()
+                factory = prepare_transient_input
             source = Path(inspect.getfile(factory)).read_bytes()
             if (definition.protocol_builder.sha256 != hashlib.sha256(source).hexdigest()
                     or definition.protocol_builder.id.partition("#")[2] != factory.__name__
                     or definition.parameter_schema.sha256 != metadata_digest(registration.input_type.model_json_schema())):
                 raise ValueError("loaded preparation/schema differs from the frozen registry")
 
-    def worker_binding(self, engine: Literal["legacy", "solarlab"] = "legacy") -> WorkerBinding:
-        from solarlab_server.registered_worker import run_legacy, run_steady
-        if not any(r.engine == engine for r in self.registrations):
+    def worker_binding(self, engine: Literal["legacy", "solarlab"] = "legacy", *,
+                       experiment_id: str | None = None) -> WorkerBinding:
+        from solarlab_server.registered_worker import run_legacy, run_steady, run_transient
+        registrations = [r for r in self.registrations if r.engine == engine
+                         and (experiment_id is None or r.experiment_id == experiment_id)]
+        if not registrations:
             raise ValueError("engine has no explicit installed execution registration")
-        id, function = ("registered_legacy", run_legacy) if engine == "legacy" else ("registered_steady", run_steady)
+        kinds = {"registered_legacy" if isinstance(r, LegacyRegistration) else
+                 "registered_steady" if isinstance(r, SteadyRegistration) else "registered_transient" for r in registrations}
+        if len(kinds) != 1:
+            raise ValueError("multiple workers are installed for this engine; select an explicit experiment_id")
+        id, = kinds
+        function = {"registered_legacy": run_legacy, "registered_steady": run_steady, "registered_transient": run_transient}[id]
         return WorkerBinding.from_function(id, function,
             registry_sha256=self.document.sha256, schema_sha256=self.schema.sha256)
+
+    def worker_bindings(self) -> tuple[WorkerBinding, ...]:
+        """All explicitly installed worker kinds for one shared supervisor."""
+        values = [self.worker_binding(r.engine, experiment_id=r.experiment_id) for r in self.registrations]
+        return tuple({binding.id: binding for binding in values}.values())
 
     def prepare(self, submission: JobSubmission) -> tuple[RunSpec, ManifestBinding]:
         self.verify()
@@ -189,7 +233,7 @@ class ExecutionCatalog:
             value = getattr(limits, key)
             if maximum is not None and (value is None or value > maximum):
                 raise ValueError("requested budget exceeds the service ceiling: " + key)
-        job: LegacyJob | SteadyJVJob
+        job: LegacyJob | SteadyJVJob | TransientJob
         if isinstance(registration, LegacyRegistration):
             model = registration.input_type.model_validate(submission.input)
             job = registration.prepare(model)
@@ -200,7 +244,7 @@ class ExecutionCatalog:
                 raise ValueError("registered driver differs from the complete execution manifest")
             worker_id, request_kind = "registered_legacy", "legacy"
             extra: dict[str, Any] = {}
-        else:
+        elif isinstance(registration, SteadyRegistration):
             if limits.accepted_steps is not None or limits.calls is not None:
                 raise ValueError("steady worker counters are unobserved; accepted_steps/calls budgets are unsupported")
             steady_input = SteadyJobInput.model_validate(submission.input)
@@ -209,6 +253,15 @@ class ExecutionCatalog:
                 raise ValueError("registered preparation did not return the explicit steady worker")
             worker_id, request_kind = "registered_steady", "steady"
             extra = {"device_id": steady_input.device_id}
+        else:
+            if limits.accepted_steps is not None or limits.calls is not None:
+                raise ValueError("transient worker counters are unobserved; accepted_steps/calls budgets are unsupported")
+            transient_input = TransientJobInput.model_validate(submission.input)
+            job = prepare_transient_input(transient_input, registration.context)
+            if type(job) is not TransientJob or job.execution.engine.name != "solarlab":
+                raise ValueError("registered preparation did not return the explicit transient worker")
+            worker_id, request_kind = "registered_transient", "transient"
+            extra = {"device_id": transient_input.device_id}
         models = self._models(registration)
         if job.execution.inputs.registry.content_sha256 != models.content_sha256:
             raise ValueError("prepared model registry differs from the server registry")

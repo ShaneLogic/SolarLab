@@ -1,10 +1,10 @@
-"""Inventory-constrained, jointly coupled single-ion research steady solve.
+"""Inventory-constrained, jointly coupled independent-ion research steady solve.
 
-One dependent blocking-ion balance is replaced by the physical inventory
+One dependent balance per blocking species is replaced by the physical inventory
 declared in the compiled input. All original balances remain diagnostic and
 are checked independently. No density projection or electronic-only solve
 occurs here; every Newton system contains 3N electronic coordinates and M
-ion-domain coordinates, with explicit mapping into the electrical grid.
+coordinates per species, with explicit mapping into the electrical grid.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import math
 import time
+from typing import cast
 
 import numpy as np
 from scipy.sparse import csc_matrix
@@ -33,7 +34,7 @@ __all__ = ["ConstrainedIonic1DProblem", "IonicSteadyOptions", "IonicSteadyResult
 
 @dataclass(frozen=True)
 class ConstrainedIonic1DProblem:
-    """Original coupled steady rows plus one physical number-inventory row."""
+    """Original coupled rows plus one physical number-inventory row per species."""
 
     original: Ionic1DProblem
     inventory_row_node: int
@@ -42,8 +43,10 @@ class ConstrainedIonic1DProblem:
         device = self.original.device
         if type(self.inventory_row_node) is not int or not 0 <= self.inventory_row_node < device.ion_node_count:
             raise ValueError("inventory_row_node must name an ion-domain node")
-        if np.any(device.positive_ion_diffusivity_faces_m2_s <= 0.0):
-            raise CapabilityError("one-constraint ionic steady solve requires one connected positive-D domain; zero D is underdetermined")
+        for species in device.ion_species_names:
+            if np.any(getattr(device, f"{species}_ion_diffusivity_faces_m2_s") <= 0.0):
+                raise CapabilityError(
+                    f"ionic steady solve requires one connected positive-D domain per species; {species} zero D is underdetermined")
         manifest = device.binding_manifest
         domain = manifest.get("ion_domain")
         component_binding = manifest.get("electronic_component")
@@ -64,6 +67,13 @@ class ConstrainedIonic1DProblem:
                 or not np.array_equal(domain["cell_measures_m"], device.ion_geometry.cell_measures_m)
                 or float(domain["reference_inventory_m2"]) != device.reference_inventory_m2):
             raise ValueError("physical inventory must match the original prepared domain and weights")
+        if device.ion_species_count == 2:
+            if (ion_model.get("site_contract") != "independent_finite_sites"
+                    or not np.array_equal(ion_model.get("negative_face_diffusivity_m2_s"),
+                                          device.negative_ion_diffusivity_faces_m2_s)):
+                raise ValueError("the negative ionic provenance binding is inconsistent")
+            if domain.get("negative_reference_inventory_m2") != device.negative_reference_inventory_m2:
+                raise ValueError("negative physical inventory must match the original prepared domain and weights")
 
     @property
     def constraint_row(self) -> int:
@@ -73,21 +83,38 @@ class ConstrainedIonic1DProblem:
     def inventory_target_m2(self) -> float:
         return self.original.device.reference_inventory_m2
 
+    @property
+    def constraint_rows(self) -> dict[str, int]:
+        device = self.original.device
+        return {species: block.start + self.inventory_row_node
+                for species, block in zip(device.ion_species_names, device.ion_species_slices)}
+
+    @property
+    def inventory_targets_m2(self) -> dict[str, float]:
+        device = self.original.device
+        targets = {"positive": self.inventory_target_m2}
+        if device.ion_species_count == 2:
+            targets["negative"] = device.negative_reference_inventory_m2
+        return targets
+
     def residual(self, y: np.ndarray) -> np.ndarray:
         result = self.original.residual(y)
         device = self.original.device
-        _, _, _, density = device.fields(y, voltage_V=self.original.voltage_V)
-        inventory = math.fsum((device.ion_geometry.cell_measures_m * density).tolist())
-        result[self.constraint_row] = inventory - self.inventory_target_m2
+        _, _, _, populations = device.fields_by_species(y, voltage_V=self.original.voltage_V)
+        for species, density in zip(device.ion_species_names, populations):
+            inventory = math.fsum((device.ion_geometry.cell_measures_m * density).tolist())
+            result[self.constraint_rows[species]] = inventory - self.inventory_targets_m2[species]
         return result
 
     def jacobian(self, y: np.ndarray) -> csc_matrix:
         matrix = self.original.jacobian(y).tolil()
-        count = self.original.device.node_count
+        device = self.original.device
         # The actual physical storage derivative supplies d(sum(W_P*P))/da.
-        derivative = -self.original.storage_jacobian(y).diagonal()[3 * count:]
-        matrix.rows[self.constraint_row] = list(range(3 * count, self.original.device.state_size))
-        matrix.data[self.constraint_row] = derivative.tolist()
+        derivative = -self.original.storage_jacobian(y).diagonal()
+        for species, block in zip(device.ion_species_names, device.ion_species_slices):
+            row = self.constraint_rows[species]
+            matrix.rows[row] = list(range(block.start, block.stop))
+            matrix.data[row] = derivative[block].tolist()
         return matrix.tocsc()
 
 
@@ -96,7 +123,8 @@ class IonicSteadyOptions:
     """Explicit internal row controls and independent numerical checks.
 
     electronic supplies physical limits and phi/quasi-Fermi step bounds only;
-    budget controls the one coupled solve. No electronic continuation runs.
+    budget controls the one coupled solve. Ionic limits apply independently
+    to every configured species. No electronic continuation runs.
     """
 
     electronic: SteadyOptions
@@ -142,9 +170,12 @@ class IonicSteadyResult:
 
 
 def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str, object]:
+    """Keep historical positive aliases; dual evidence also names each species."""
     original, device = problem.original, problem.original.device
     count = device.node_count
-    phi, n, p, density = device.fields(y, voltage_V=original.voltage_V)
+    phi, n, p, populations = device.fields_by_species(y, voltage_V=original.voltage_V)
+    density = populations[0]
+    positive_rows = device.ion_species_slices[0]
     full = original.residual(y)
     component = device.electronic_component
     electronic = original.electronic_problem
@@ -159,14 +190,14 @@ def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str,
     electronic_current = np.r_[electronic.contact_current_density(y[:3 * count])[0],
                                electronic.current_density(y[:3 * count]),
                                electronic.contact_current_density(y[:3 * count])[1]]
-    ionic_current = Q * np.r_[0.0, original.ion_fluxes_on_electronic_faces(y), 0.0]
+    ionic_current = np.r_[0.0, original.ion_current_density_A_m2(y), 0.0]
     inventory = math.fsum((device.ion_geometry.cell_measures_m * density).tolist())
-    ledger = device.charge_ledger(n, p, density)
+    ledger = device.charge_ledger(n, p, density, populations[1] if len(populations) == 2 else None)
     deposited = component.geometry.cell_measures_m * Q * ledger.entry("positive_ion").net_population()
     domain_charge = Q * device.ion_geometry.cell_measures_m * (density - device.positive_ion_reference_m3)
     physical = np.zeros(count)
     physical[device.ion_node_indices] = domain_charge
-    return {
+    result = {
         "electrical_node_count": count, "ion_node_count": device.ion_node_count,
         "ion_node_indices": device.ion_node_indices, "ion_nodes_m": device.ion_geometry.nodes_m,
         "original_residual": full, "constrained_residual": problem.residual(y),
@@ -174,9 +205,9 @@ def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str,
         "inventory_target_m2": problem.inventory_target_m2, "inventory_m2": inventory,
         "inventory_error_m2": inventory - problem.inventory_target_m2,
         "inventory_relative_error": abs(inventory - problem.inventory_target_m2) / problem.inventory_target_m2,
-        "ion_flux_m2_s": flux, "ion_balance_m2_s": full[3 * count:],
-        "ion_balance_l1_m2_s": math.fsum(abs(full[3 * count:]).tolist()),
-        "ion_balance_sum_m2_s": math.fsum(full[3 * count:].tolist()),
+        "ion_flux_m2_s": flux, "ion_balance_m2_s": full[positive_rows],
+        "ion_balance_l1_m2_s": math.fsum(abs(full[positive_rows]).tolist()),
+        "ion_balance_sum_m2_s": math.fsum(full[positive_rows].tolist()),
         "ion_flux_max_m2_s": float(np.max(abs(flux))),
         "electronic_current_density_A_m2": electronic_current,
         "ionic_current_density_A_m2": ionic_current,
@@ -195,6 +226,48 @@ def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str,
         "maximum_site_fraction": float(np.max(density / device.positive_ion_site_limit_m3)),
         "potential_V": phi,
     }
+    if device.ion_species_count == 2:
+        species_keys = (
+            "constraint_row", "inventory_target_m2", "inventory_m2", "inventory_error_m2",
+            "inventory_relative_error", "ion_flux_m2_s", "ion_balance_m2_s", "ion_balance_l1_m2_s",
+            "ion_balance_sum_m2_s", "ion_flux_max_m2_s", "domain_ion_net_charge_C_m2",
+            "physical_ion_net_charge_C_m2", "deposited_ion_net_charge_C_m2", "charge_deposition_error_C_m2",
+            "ion_density_change_from_reference_m3", "minimum_ion_density_m3", "maximum_site_fraction",
+        )
+        positive = {key: result[key] for key in species_keys}
+        positive["original_dropped_balance_m2_s"] = float(full[problem.constraint_row])
+        negative_density = populations[1]
+        negative_rows = device.ion_species_slices[1]
+        negative_flux = original.ion_fluxes(y, species="negative")
+        negative_inventory = math.fsum((device.ion_geometry.cell_measures_m * negative_density).tolist())
+        negative_target = problem.inventory_targets_m2["negative"]
+        negative_domain_charge = -Q * device.ion_geometry.cell_measures_m * (
+            negative_density - device.negative_ion_reference_m3)
+        negative_physical = np.zeros(count)
+        negative_physical[device.ion_node_indices] = negative_domain_charge
+        negative_deposited = -component.geometry.cell_measures_m * Q * ledger.entry("negative_ion").net_population()
+        negative = {
+            "constraint_row": problem.constraint_rows["negative"], "inventory_target_m2": negative_target,
+            "inventory_m2": negative_inventory, "inventory_error_m2": negative_inventory - negative_target,
+            "inventory_relative_error": abs(negative_inventory - negative_target) / negative_target,
+            "ion_flux_m2_s": negative_flux, "ion_balance_m2_s": full[negative_rows],
+            "ion_balance_l1_m2_s": math.fsum(abs(full[negative_rows]).tolist()),
+            "ion_balance_sum_m2_s": math.fsum(full[negative_rows].tolist()),
+            "ion_flux_max_m2_s": float(np.max(abs(negative_flux))),
+            "original_dropped_balance_m2_s": float(full[problem.constraint_rows["negative"]]),
+            "domain_ion_net_charge_C_m2": negative_domain_charge,
+            "physical_ion_net_charge_C_m2": negative_physical,
+            "deposited_ion_net_charge_C_m2": negative_deposited,
+            "charge_deposition_error_C_m2": negative_deposited - negative_physical,
+            "ion_density_change_from_reference_m3": negative_density - device.negative_ion_reference_m3,
+            "minimum_ion_density_m3": float(np.min(negative_density)),
+            "maximum_site_fraction": float(np.max(negative_density / device.negative_ion_site_limit_m3)),
+        }
+        result["ion_species"] = {"positive": positive, "negative": negative}
+        for key in ("domain_ion_net_charge_C_m2", "physical_ion_net_charge_C_m2",
+                    "deposited_ion_net_charge_C_m2", "charge_deposition_error_C_m2"):
+            result[key] = positive[key] + negative[key]
+    return result
 
 
 def _checks(diagnostics: dict[str, object], options: IonicSteadyOptions) -> tuple[GateOutcome, ...]:
@@ -215,6 +288,12 @@ def _checks(diagnostics: dict[str, object], options: IonicSteadyOptions) -> tupl
         value = float(measured)
         outcomes.append(GateOutcome(name, math.isfinite(value) and value <= limit, value, limit,
                                     "prospective numerical research control; qualification remains false"))
+    if "ion_species" in diagnostics:
+        negative = cast(dict[str, dict[str, object]], diagnostics["ion_species"])["negative"]
+        for name in ("inventory_relative_error", "ion_balance_l1_m2_s", "ion_flux_max_m2_s"):
+            value, limit = float(cast(float, negative[name])), limits[name]
+            outcomes.append(GateOutcome("negative_" + name, math.isfinite(value) and value <= limit,
+                                        value, limit, "independent negative-species numerical control; qualification remains false"))
     return tuple(outcomes)
 
 
@@ -238,15 +317,16 @@ def solve_ionic_steady_state(
             or initial.electronic_state.device_sha256 != device.electronic_component.identity):
         raise ValueError("initial state must carry the full same-device ionic identity and voltage")
     checked = device.state(initial.u, voltage_V=voltage_V)
-    for name in ("positive_ion_density_m3",):
+    for name in ("positive_ion_density_m3", "negative_ion_density_m3"):
         if not np.array_equal(getattr(checked, name), getattr(initial, name)):
             raise ValueError("initial ionic fields disagree with the bound coordinates")
     for name in ("potential_V", "electron_density_m3", "hole_density_m3"):
         if not np.array_equal(getattr(checked.electronic_state, name), getattr(initial.electronic_state, name)):
             raise ValueError("initial electronic fields disagree with the bound full state")
-    if (initial.domain_inventory_m2 != checked.domain_inventory_m2
-            or abs(checked.domain_inventory_m2 - problem.inventory_target_m2)
-            > options.inventory_relative_tolerance * problem.inventory_target_m2):
+    if (initial.domain_inventories_m2 != checked.domain_inventories_m2
+            or any(abs(checked.domain_inventories_m2[species] - target)
+                   > options.inventory_relative_tolerance * target
+                   for species, target in problem.inventory_targets_m2.items())):
         raise ValueError("initial physical inventory must match the declared prepared-domain inventory")
     ion_count = device.ion_node_count
     electronic = options.electronic
@@ -254,12 +334,13 @@ def solve_ionic_steady_state(
         device.electronic_component, poisson_tolerance=electronic.poisson_tolerance,
         continuity_tolerance_A_m2=electronic.continuity_tolerance_A_m2,
         contact_log_tolerance=electronic.contact_log_tolerance,
-    ).row_weights, np.full(ion_count, 2 * ion_count / options.ion_balance_tolerance_m2_s)]
-    weights[problem.constraint_row] = 1.0 / (options.inventory_relative_tolerance * problem.inventory_target_m2)
+    ).row_weights, np.full(ion_count * device.ion_species_count, 2 * ion_count / options.ion_balance_tolerance_m2_s)]
+    for species, row in problem.constraint_rows.items():
+        weights[row] = 1.0 / (options.inventory_relative_tolerance * problem.inventory_targets_m2[species])
     steps = np.r_[production_coordinates(device.electronic_component,
                                          potential_step_V=electronic.potential_step_V,
                                          quasi_fermi_step=electronic.quasi_fermi_step).max_step,
-                  np.full(ion_count, options.ion_logit_step)]
+                  np.full(ion_count * device.ion_species_count, options.ion_logit_step)]
     deadline = started + options.wall_s
     last = np.array(initial.u, copy=True)
     counts = {"residual": 0, "jacobian": 0}

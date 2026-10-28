@@ -515,7 +515,8 @@ component projection. Multilayer callers must supply `ion_domain_layer` and
 `ion_domain_endpoints=("blocking", "blocking")`; undeclared additional ion domains
 are refused. Zero diffusivity retains population, background and storage in
 assembly; the connected-domain steady solver rejects zero or disconnected
-diffusivity. Negative/dual-ion and shared-site cases remain outside this delivered slice.
+diffusivity. The independent dual-ion extension is described below; shared-site
+cases remain outside this delivered slice.
 The result records `qualification: false`; final mesh, time and scientific
 acceptance remain open.
 
@@ -550,6 +551,58 @@ population differences include stable finite-site increments and voltage-referen
 motion. Each step records the full conduction/displacement current and charge
 accounting. A failed run preserves its accepted prefix and first failed attempt,
 returns exit status 2, and retains `physical_certificate_status: not_evaluated`.
+
+## Independent positive and negative ions
+
+Run a cold coupled dual-ion steady state and four driven time steps:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.dual_ionic \
+  --output-directory outputs/dual_ionic
+```
+
+Use a new output directory: existing evidence is not overwritten. The example
+has 37 electrical nodes, 13 nodes per ion species and 137 unknowns. Both species
+occupy independent finite sites in the same blocking absorber domain. Their
+inventories are constrained separately at steady state; the physical time
+equations retain all particle balances and the signed ionic current.
+
+The independently reproduced dark 2 mV steady state converged in 10 Newton
+iterations. All four 2-to-4 mV steps over one second converged, with positive
+and negative populations changing by about 0.148% and 0.0782%. Per-species
+conservation and full conduction/displacement-current checks passed. This is
+a bounded working case; shared sites, additional ion domains, mesh/time
+qualification and hysteresis qualification remain open.
+
+## Transient HTTP jobs
+
+Start the co-installed steady and ion-free transient service:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.transient_service \
+  --build-source-commit "$(git rev-parse HEAD)" \
+  --store "$HOME/.local/share/solarlab/research_1d/transient-http" \
+  --work "$HOME/.local/share/solarlab/research_1d/transient-http-work" \
+  --port 8000
+```
+
+Use the submission and header-reading code in **Local HTTP service**, replacing
+the `job` dictionary with:
+
+```python
+from examples.research_1d.transient_service import example_submission
+
+job = example_submission("my-transient-run")
+```
+
+The completed example has samples at 0, 100 and 200 ns. Passing `failure=True`
+demonstrates a deliberately insufficient Newton budget: the terminal state is
+`failed`, with its actual accepted prefix available through the same result and
+artifact endpoints. It is not reported as a completed history. Real HTTP tests
+cover both outcomes, co-installed steady jobs, SSE replay and queued
+cancellation. Stored results can be read without invoking a solver. The HTTP
+adapter currently supports ion-free histories; the ionic examples above use
+the direct Python workflow.
 
 ## Adding a local model
 
