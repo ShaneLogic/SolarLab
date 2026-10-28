@@ -254,6 +254,30 @@ for the documented full sweep and direct Voc refinement. Trusted application
 code can install additional prepared devices using `SteadyPreparationContext`;
 HTTP chooses a registered device and explicit numerical protocol.
 
+## Fixed-contact small-signal response
+
+A separate new-core frequency-domain example linearizes a revalidated DC state:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.impedance
+```
+
+It runs this device at 1 V DC and requests 0, 1 and 1000 Hz. The four carrier
+contact channels must be `fixed_reservoir`; finite-rate and blocking contacts
+are explicitly rejected in this first slice. The same DC Jacobian and carrier
+storage derivatives supply a complex sparse solve. Returned arrays include
+potential, electric field, carrier-density perturbations, conduction and
+displacement currents, and both terminal currents.
+
+Phasors use `exp(+i*omega*t)`. The default 1 V phasor is a derivative
+normalization, not a one-volt finite-amplitude experiment. Admittance density
+is in S/m² and impedance-area product in ohm·m²; multiply the former by device
+area, or divide the latter by area, for the corresponding total port quantity.
+The result retains linear-residual and all-face Maxwell-current diagnostics.
+It records the current source and supplied controls used to revalidate the DC
+state; it does not reconstruct an unrecorded original DC execution history.
+Frequency/mesh convergence and full scientific AC qualification remain open.
+
 ## Adding a local model
 
 `steady.py` contains `SaturatingRecombination`, an executable extension example:
