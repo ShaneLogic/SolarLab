@@ -6,8 +6,11 @@ to the public API W3a delivered on devel b1f953c (uncommitted worktree files):
 ``solarlab.discretization`` (+ its explicitly imported N modules
 ``stable_bernoulli`` and ``particle_flux``), ``solarlab.mesh`` and
 ``solarlab.physics.electrostatics``.  Only names exported in a module's
-``__all__`` are used; no private helper is called.  The P04-07 hooks still
-raise ``pytest.skip("awaiting interface: ...")`` until W3b is reviewed.
+``__all__`` are used; no private helper is called.  The P04-07 hooks are
+wired (review R3-3) to W3b's ``solarlab.physics.recombination`` and
+``solarlab.physics.generation``; legacy code is used here only to prepare
+the inputs of a recorded golden case (stack, material alpha, n-k), never
+for an expected value.
 
 Wiring rules:
 
@@ -29,9 +32,11 @@ import numpy as np
 import pytest
 
 AWAITING = "awaiting interface"
+NOT_OFFERED = "not offered by the reviewed API"
 
-#: Author-declared change class per capability (W3a Report section 1 and 7;
-#: verified in R3/ReviewW3a/ReviewV1.md).  P04-07 entries stay None.
+#: Author-declared change class per capability (W3a Report section 1 and 7,
+#: verified in R3/ReviewW3a/ReviewV1.md; W3b Report section 5 and
+#: Task2/P0407SplitN1.md, verified in R3/ReviewW3b/ReviewV1.md).
 CHANGE_CLASS: dict[str, str | None] = {
     "bernoulli": "M",               # solarlab.discretization.bernoulli*
     "bernoulli_stable": "N",        # stable_bernoulli.bernoulli_pair
@@ -42,10 +47,11 @@ CHANGE_CLASS: dict[str, str | None] = {
     "gauss_term_sink": "N",         # gauss_assembly.gauss_balance_with_term_sink
     "control_volumes": "M",
     "substrate_alignment": "M",
-    "bulk_recombination": None,
-    "trap_profile": None,
-    "beer_lambert": None,
-    "tmm": None,
+    "bulk_recombination": "M",      # BulkRecombinationReaction (finite lifetimes)
+    "srh_blocked_leg_tangent": "N", # N1: tau = +inf SRH partials NaN -> exact 0
+    "trap_profile": "M",            # {exponential,gaussian}_edge_profile
+    "beer_lambert": "M",            # beer_lambert_generation on a named geometry
+    "tmm": "M",                     # transfer_matrix kernels + OpticalStackBinding
 }
 
 #: Golden outputs with no new counterpart, with the reason (reported, not hidden).
@@ -53,6 +59,9 @@ GOLDEN_NOT_MIGRATED: dict[tuple[str, str], str] = {
     ("poisson_layered", "phi_spsolve"): (
         "legacy physics.poisson.solve_poisson (scipy spsolve fallback, not on any hot path) "
         "has no new counterpart; the LAPACK prefactored path is migrated"),
+    ("bl_ionmonger_benchmark_N30", "alpha_node"): (
+        "per-node alpha is an output of the legacy material build (build_material_arrays), "
+        "which is outside P04-07; the candidate consumes the legacy-built alpha as its input"),
 }
 
 
@@ -386,12 +395,59 @@ def bulk_recombination(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(rate, dR/dn, dR/dp) for the requested channels only.
 
-    ``params`` is ``p04_oracle_recombination.BulkParameters``; a channel not
-    listed must be absent (no reaction instance).  TODO(W3b): public
-    recombination reaction instances and their value/derivative evaluation.
+    ``params`` is ``p04_oracle_recombination.BulkParameters``.  One
+    ``BulkRecombinationReaction`` instance evaluates every channel; the full
+    set returns its ``total``, a subset sums only the requested channel terms
+    with the published ``sum_recombination_rates`` (an unlisted channel adds
+    nothing, not a zero-coefficient term).
     """
 
-    return _awaiting("P04-07 bulk recombination value/derivatives")
+    evaluation = _reaction(np.asarray(n, dtype=float).size, params).evaluate(
+        np.asarray(n, dtype=float), np.asarray(p, dtype=float))
+    if tuple(channels) == ("srh", "radiative", "auger"):
+        term = evaluation.total
+    else:
+        sum_recombination_rates = _public("solarlab.physics.recombination", "sum_recombination_rates")
+        term = sum_recombination_rates(*(getattr(evaluation, c) for c in channels))
+    return term.rate, term.d_rate_dn, term.d_rate_dp
+
+
+def _coefficients(node_count: int, params: Any, **override: Any) -> Any:
+    BulkRecombinationCoefficients = _public("solarlab.physics.recombination", "BulkRecombinationCoefficients")
+
+    values = dict(ni_sq_m6=params.ni_sq, tau_n_s=params.tau_n, tau_p_s=params.tau_p, n1_m3=params.n1,
+                  p1_m3=params.p1, radiative_m3_s=params.B_rad, auger_n_m6_s=params.C_n,
+                  auger_p_m6_s=params.C_p)
+    values.update(override)
+    return BulkRecombinationCoefficients(node_count, **values)
+
+
+def _reaction(node_count: int, params: Any, explicit: Any = None, **override: Any) -> Any:
+    BulkRecombinationReaction = _public("solarlab.physics.recombination", "BulkRecombinationReaction")
+
+    return BulkRecombinationReaction(_coefficients(node_count, params, **override), explicit)
+
+
+def bulk_recombination_terms(
+    n: np.ndarray, p: np.ndarray, params: Any, **per_node: np.ndarray
+) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Per-channel and total (rate, dR/dn, dR/dp); ``per_node`` overrides
+    coefficients with per-node arrays (e.g. ``tau_n_s`` containing +inf)."""
+
+    n_arr = np.asarray(n, dtype=float)
+    evaluation = _reaction(n_arr.size, params, **per_node).evaluate(n_arr, np.asarray(p, dtype=float))
+    return {name: (t.rate, t.d_rate_dn, t.d_rate_dp)
+            for name, t in (("srh", evaluation.srh), ("radiative", evaluation.radiative),
+                            ("auger", evaluation.auger), ("total", evaluation.total))}
+
+
+def bulk_recombination_evaluation(
+    n: np.ndarray, p: np.ndarray, params: Any,
+) -> Any:
+    """The public reaction evaluation, including its explicit domain predicate."""
+
+    n_arr = np.asarray(n, dtype=float)
+    return _reaction(n_arr.size, params).evaluate(n_arr, np.asarray(p, dtype=float))
 
 
 def bulk_recombination_with_explicit_defect(
@@ -406,10 +462,21 @@ def bulk_recombination_with_explicit_defect(
 ) -> np.ndarray:
     """Total bulk rate when an explicit neutral defect owns ``explicit_nodes``.
 
-    TODO(W3b): public explicit-defect + lifetime-SRH composition.
+    One ``NeutralDefectSpecies`` (n1/p1 zero off its nodes, as the legacy
+    compiler stores them) in a ``NeutralExplicitDefectModel`` that owns
+    exactly ``explicit_nodes``, bound into the same reaction instance.
     """
 
-    return _awaiting("P04-07 explicit defect vs lifetime SRH composition")
+    NeutralDefectSpecies = _public("solarlab.physics.recombination", "NeutralDefectSpecies")
+    NeutralExplicitDefectModel = _public("solarlab.physics.recombination", "NeutralExplicitDefectModel")
+
+    mask = np.asarray(explicit_nodes, dtype=bool)
+    digest = "c3" * 32
+    species = NeutralDefectSpecies("layer[0]/r3_defect", digest, mask, float(defect_tau_n), float(defect_tau_p),
+                                   np.where(mask, float(defect_n1), 0.0), np.where(mask, float(defect_p1), 0.0))
+    model = NeutralExplicitDefectModel((species,), mask, (("layer[0]", digest),))
+    n_arr = np.asarray(n, dtype=float)
+    return _reaction(n_arr.size, params, model).evaluate(n_arr, np.asarray(p, dtype=float)).total.rate
 
 
 def trap_profile(
@@ -418,10 +485,23 @@ def trap_profile(
 ) -> np.ndarray:
     """N_t(x) [m^-3] for ``shape`` in {"exponential", "gaussian"}.
 
-    TODO(W3b): public existing-trap-profile function.
+    The migrated historical kernels (they keep the ``length <= 0`` sentinel).
     """
 
-    return _awaiting("P04-07 trap profile")
+    name = {"exponential": "exponential_edge_profile", "gaussian": "gaussian_edge_profile"}[shape]
+    kernel = _public("solarlab.physics.recombination", name)
+    return kernel(np.asarray(x_local, dtype=float), thickness, N_if, N_bulk, length, edge)
+
+
+def trap_profile_binding(shape: str, x_local: np.ndarray, thickness: float, N_if: float, N_bulk: float,
+                         length: float, edge: str, tau_n: Any, tau_p: Any) -> Any:
+    """``TrapProfile(...).bind(...)``: (trap density, tau_n, tau_p) per node."""
+
+    TrapProfile = _public("solarlab.physics.recombination", "TrapProfile")
+
+    binding = TrapProfile(N_if, N_bulk, length, shape=shape, edge=edge).bind(
+        np.asarray(x_local, dtype=float), thickness, tau_n, tau_p)
+    return binding.trap_density_m3, binding.tau_n_s, binding.tau_p_s
 
 
 def beer_lambert_generation(
@@ -430,14 +510,23 @@ def beer_lambert_generation(
     alpha_node: np.ndarray,
     Phi: float,
     incidence: str = "left",
+    interfaces: tuple[float, ...] = (),
 ) -> tuple[np.ndarray, np.ndarray]:
     """(G per node [m^-3 s^-1], control-volume weights [m]) for monochromatic BL.
 
-    TODO(W3b): public BL generation for the named geometry; ``incidence`` is
-    "left" (x=0) or "right" (x=L).
+    ``interfaces`` are the material planes a two-sided geometry needs.  The
+    reviewed API illuminates the first node only (``INCIDENCE_SIDES`` is
+    front-only, the single existing direction); a back-side request is not
+    emulated here by mirroring, because that would test the adapter.
     """
 
-    return _awaiting("P04-07 monochromatic Beer-Lambert generation")
+    if incidence != "left":
+        pytest.skip(f"{NOT_OFFERED}: back-side (x = L) incidence; the reviewed P04-07 API is front-only")
+    beer_lambert_generation = _public("solarlab.physics.generation", "beer_lambert_generation")
+
+    cv = build_geometry(geometry, x, interfaces)
+    G = beer_lambert_generation(cv, np.asarray(alpha_node, dtype=float), Phi)
+    return np.asarray(G), np.asarray(cv.cell_measures_m)
 
 
 def tmm_reflect_transmit_absorb(
@@ -448,10 +537,30 @@ def tmm_reflect_transmit_absorb(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(R, T, A per layer (M, n_wl)) at normal incidence.
 
-    TODO(W3b): public TMM optical-resource evaluation.
+    R, T from ``tmm_reflectance`` / ``tmm_transmittance``; A_k as the
+    difference of ``tmm_cumulative_absorptance`` across layer k's planes.
     """
 
-    return _awaiting("P04-07 TMM R/T/A")
+    tmm_reflectance = _public("solarlab.physics.generation", "tmm_reflectance")
+    tmm_transmittance = _public("solarlab.physics.generation", "tmm_transmittance")
+    tmm_cumulative_absorptance = _public("solarlab.physics.generation", "tmm_cumulative_absorptance")
+
+    wl = np.asarray(wavelengths_m, dtype=float)
+    tmm, bounds = _tmm_layers(wl, layers)
+    R = tmm_reflectance(tmm, wl, n_ambient, n_substrate)
+    T = tmm_transmittance(tmm, wl, n_ambient, n_substrate)
+    C = tmm_cumulative_absorptance(tmm, wl, bounds, bounds, n_ambient, n_substrate)
+    return np.asarray(R), np.asarray(T), np.diff(np.asarray(C), axis=0)
+
+
+def _tmm_layers(wl: np.ndarray, layers: list[tuple[Any, float]]) -> tuple[list[Any], np.ndarray]:
+    TMMLayer = _public("solarlab.physics.generation", "TMMLayer")
+
+    out = []
+    for N, d in layers:
+        N = np.broadcast_to(np.asarray(N, dtype=complex), wl.shape)
+        out.append(TMMLayer(d=float(d), n=np.real(N).copy(), k=np.imag(N).copy()))
+    return out, np.concatenate(([0.0], np.cumsum([float(d) for _, d in layers])))
 
 
 def tmm_cell_absorbed_photons(
@@ -462,10 +571,66 @@ def tmm_cell_absorbed_photons(
 ) -> np.ndarray:
     """Absorbed photons per cell [m^-2 s^-1] between consecutive ``faces_m``.
 
-    TODO(W3b): public control-volume TMM generation (before dividing by w).
+    ``tmm_absorbed_photon_flux_per_cell`` (ambient and exit index 1).
     """
 
-    return _awaiting("P04-07 TMM control-volume absorbed photons")
+    tmm_absorbed_photon_flux_per_cell = _public("solarlab.physics.generation", "tmm_absorbed_photon_flux_per_cell")
+
+    wl = np.asarray(wavelengths_m, dtype=float)
+    tmm, bounds = _tmm_layers(wl, layers)
+    return np.asarray(tmm_absorbed_photon_flux_per_cell(
+        tmm, wl, np.asarray(spectral_flux, dtype=float), np.asarray(faces_m, dtype=float), bounds, 1.0, 1.0))
+
+
+def optical_binding(
+    wavelengths_nm: np.ndarray,
+    spectral_flux: np.ndarray,
+    layers: list[tuple[str, Any, float, bool, bool]],
+    *,
+    ambient_index: float = 1.0,
+    exit_index: float = 1.0,
+    dependencies: Any = (),
+    source_id: str = "r3-synthetic",
+) -> Any:
+    """``OpticalStackBinding`` from (name, N complex, thickness, incoherent, electrical)."""
+
+    OpticalLayerSpec = _public("solarlab.physics.generation", "OpticalLayerSpec")
+    OpticalStackBinding = _public("solarlab.physics.generation", "OpticalStackBinding")
+    SpectralPhotonFlux = _public("solarlab.physics.generation", "SpectralPhotonFlux")
+
+    wl_nm = np.asarray(wavelengths_nm, dtype=float)
+    specs = []
+    for name, N, d, incoherent, electrical in layers:
+        N = np.broadcast_to(np.asarray(N, dtype=complex), wl_nm.shape)
+        specs.append(OpticalLayerSpec(name, float(d), np.real(N).copy(), np.imag(N).copy(), incoherent, electrical))
+    spectrum = SpectralPhotonFlux(wl_nm, np.asarray(spectral_flux, dtype=float), source_id)
+    return OpticalStackBinding(tuple(specs), spectrum, ambient_index=ambient_index, exit_index=exit_index,
+                               dependencies=dependencies)
+
+
+def stale_profile_error() -> type:
+    return _public("solarlab.physics.generation", "StaleGenerationProfileError")
+
+
+def tmm_photon_budget(binding: Any) -> dict[str, Any]:
+    """Integrated photon budget [m^-2 s^-1] of an ``optical_binding``."""
+
+    budget = binding.photon_budget()
+    return {
+        "incident": budget.incident_m2_s, "reflected": budget.reflected_m2_s,
+        "transmitted": budget.transmitted_m2_s, "electrical": budget.electrical_absorbed_m2_s,
+        "parasitic": budget.parasitic_absorbed_m2_s, "layers": np.asarray(budget.layer_absorbed_m2_s),
+        "closure": np.asarray(budget.spectral_closure_residual()),
+    }
+
+
+def optical_generation(binding: Any, geometry: str, x: np.ndarray,
+                       interfaces: tuple[float, ...] = ()) -> tuple[np.ndarray, np.ndarray, Any]:
+    """(G, weights, GenerationProfile) of a binding on a named geometry."""
+
+    cv = build_geometry(geometry, x, interfaces)
+    profile = binding.generation_profile(cv)
+    return np.asarray(profile.source_m3_s), np.asarray(cv.cell_measures_m), profile
 
 
 def golden_case(case_id: str, inputs: dict[str, Any]) -> dict[str, np.ndarray]:
@@ -499,4 +664,71 @@ def golden_case(case_id: str, inputs: dict[str, Any]) -> dict[str, np.ndarray]:
         phi = PoissonFactorization.factor(op).solve(
             rho, float.fromhex(inputs["phi_left"]), float.fromhex(inputs["phi_right"]))
         return {"phi_prefactored": np.asarray(phi)}
+    if case_id in ("bl_synthetic", "bl_ionmonger_benchmark_N30", "tmm_ionmonger_benchmark_tmm_N30"):
+        return _golden_generation(case_id, inputs, hx)
+    if case_id == "tmm_synthetic_three_layer":
+        tmm_reflectance = _public("solarlab.physics.generation", "tmm_reflectance")
+        tmm_transmittance = _public("solarlab.physics.generation", "tmm_transmittance")
+        tmm_cumulative_absorptance = _public("solarlab.physics.generation", "tmm_cumulative_absorptance")
+        flux_per_cell = _public("solarlab.physics.generation", "tmm_absorbed_photon_flux_per_cell")
+        TMMLayer = _public("solarlab.physics.generation", "TMMLayer")
+
+        wl, faces, d = hx(inputs["wavelength_m"]), hx(inputs["faces"]), hx(inputs["d"])
+        layers = [TMMLayer(d=float(dk), n=np.full(wl.size, float(nk)), k=hx(kk))
+                  for nk, kk, dk in zip(inputs["n"], inputs["k"], d)]
+        bounds = np.concatenate(([0.0], np.cumsum(d)))
+        flux = np.full(wl.size, float.fromhex(inputs["spectral_flux"]))
+        return {"R": tmm_reflectance(layers, wl, 1.0, 1.5), "T": tmm_transmittance(layers, wl, 1.0, 1.5),
+                "C_faces": tmm_cumulative_absorptance(layers, wl, faces, bounds, 1.0, 1.5),
+                "cell_absorbed": flux_per_cell(layers, wl, flux, faces, bounds, 1.0, 1.5)}
+    if case_id == "recombination_total":
+        from p04_oracle_recombination import BulkParameters
+
+        par = BulkParameters(*(float.fromhex(inputs[k]) for k in
+                               ("ni_sq", "tau_n", "tau_p", "n1", "p1", "B_rad", "C_n", "C_p")))
+        rate, dn, dp = bulk_recombination(hx(inputs["n"]), hx(inputs["p"]), par)
+        return {"rate": rate, "d_n": dn, "d_p": dp}
+    if case_id == "trap_profiles":
+        xl = hx(inputs["x_local"])
+        args = (float.fromhex(inputs["thickness"]), float.fromhex(inputs["N_t_interface"]),
+                float.fromhex(inputs["N_t_bulk"]))
+        return {f"{shape}_{edge}_{length:.0e}": trap_profile(shape, xl, *args, length, edge)
+                for shape in ("exponential", "gaussian") for edge in ("both", "left", "right")
+                for length in inputs["lengths"]}
     return _awaiting(f"golden case {case_id}")
+
+
+def _golden_generation(case_id: str, inputs: dict[str, Any], hx: Any) -> dict[str, np.ndarray]:
+    """BL / TMM golden cases; legacy code only prepares the recorded inputs."""
+
+    from pathlib import Path
+
+    import p04_legacy as legacy
+
+    x = hx(inputs["x"])
+    if case_id == "bl_synthetic":
+        G, w = beer_lambert_generation("legacy_1d_integer_endpoint_v1", x, hx(inputs["alpha_node"]),
+                                       float.fromhex(inputs["Phi"]))
+        return {"G": G, "dual_cell_widths": w}
+    stack = legacy.device_fixture(Path(inputs["config"]).name)
+    if case_id == "bl_ionmonger_benchmark_N30":
+        from perovskite_sim.solver.mol import build_material_arrays
+
+        alpha = build_material_arrays(x, stack).alpha  # input preparation (material build)
+        G, w = beer_lambert_generation("legacy_1d_integer_endpoint_v1", x, alpha, float.fromhex(inputs["Phi"]))
+    else:
+        from perovskite_sim.physics.optical_stack import build_device_optical_stack
+
+        OpticalLayerSpec = _public("solarlab.physics.generation", "OpticalLayerSpec")
+        OpticalStackBinding = _public("solarlab.physics.generation", "OpticalStackBinding")
+        SpectralPhotonFlux = _public("solarlab.physics.generation", "SpectralPhotonFlux")
+
+        wl_nm = np.linspace(300.0, 1000.0, 200)  # the window _compute_tmm_generation models
+        table = np.loadtxt(legacy.LEGACY_PACKAGE / "data" / "am15g.csv", delimiter=",", comments="#")
+        spectrum = SpectralPhotonFlux.from_table(table[:, 0], table[:, 1], wl_nm, source_id="ASTM-G173-03")
+        optical = build_device_optical_stack(stack, wl_nm)  # input preparation (n, k per slice)
+        specs = tuple(OpticalLayerSpec(layer.name, t.d, t.n, t.k, t.incoherent, layer.role != "substrate")
+                      for layer, part in zip(stack.layers, optical.physical_layer_slices)
+                      for t in optical.layers[part])
+        G, w, _ = optical_generation(OpticalStackBinding(specs, spectrum), "legacy_1d_integer_endpoint_v1", x)
+    return {"G": G, "q_sum_G_w_A_m2": np.array([Q_LEGACY * np.sum(G * w)])}

@@ -168,6 +168,18 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv lock --check
       - run: uv sync --frozen --extra dev --extra server --no-editable
+      - name: New-core DC and research workflow
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          VECLIB_MAXIMUM_THREADS: "1"
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          tests/unit/solvers/test_nonlinear_analytic.py
+          tests/unit/experiments/test_steady_jv_metrics.py
+          tests/integration/test_core_1d.py
+          tests/integration/test_research_1d_workflow.py
       - name: Package boundaries and dependency continuity
         run: >-
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
@@ -192,18 +204,6 @@ jobs:
           tests/refactor/test_registry_mapping.py
           tests/refactor/test_configuration_schema_export.py
           tests/refactor/test_configuration_input_types.py::test_json_mode_matches_public_metadata_and_preserves_default
-      - name: New-core DC and research workflow
-        env:
-          OPENBLAS_NUM_THREADS: "1"
-          OMP_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          VECLIB_MAXIMUM_THREADS: "1"
-        run: >-
-          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
-          tests/unit/solvers/test_nonlinear_analytic.py
-          tests/unit/experiments/test_steady_jv_metrics.py
-          tests/integration/test_core_1d.py
-          tests/integration/test_research_1d_workflow.py
       # Separate process: the pool budgets include the parent process family RSS.
       - name: Runtime store, execution pool and services
         run: >-

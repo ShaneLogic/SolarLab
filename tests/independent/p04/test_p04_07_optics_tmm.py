@@ -158,3 +158,77 @@ def test_candidate_control_volume_photons():
     out = np.asarray(adapter.tmm_cell_absorbed_photons(WL, flux, STACK, faces))
     ref = _oracle_cell_absorbed(tmm_normal_incidence(WL, STACK, 1.0, 1.0), faces, flux)
     assert np.max(np.abs(out - ref)) <= g.rel_limit * np.max(ref)
+
+
+# ---------------------------------------------------------------- candidate binding (review R3-3)
+
+
+ITO = (1.9 + 0.01j, 150e-9)  # transparent conductor: optical-only front layer (parasitic)
+WL_NM_BIND = WL_NM.copy()
+FLUX = np.linspace(2e27, 4e27, N_WL)  # photons m^-2 s^-1 m^-1
+
+
+def _bind_layers(ito=ITO, absorber_d=D[1], absorber_N=None):
+    absorber_N = STACK[1][0] if absorber_N is None else absorber_N
+    return [("ito", ito[0], ito[1], False, False), ("etl", STACK[0][0], D[0], False, True),
+            ("absorber", absorber_N, absorber_d, False, True), ("htl", STACK[2][0], D[2], False, True)]
+
+
+def test_candidate_device_photon_budget_with_parasitic_layer():
+    """incident = R + T + A_electrical + A_parasitic; the parasitic layer never becomes G."""
+
+    g = gate("P0407-TMM-BUDGET")
+    binding = adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers())
+    out = adapter.tmm_photon_budget(binding)
+    res = tmm_normal_incidence(WL, [ITO, *STACK], 1.0, 1.0)
+    A = res.layer_absorptance_integral()
+    w = trapezoid_weights(WL)
+    incident = FLUX @ w
+    ref = {"incident": incident, "reflected": (res.R * FLUX) @ w, "transmitted": (res.T * FLUX) @ w,
+           "parasitic": (A[0] * FLUX) @ w, "electrical": (A[1:].sum(axis=0) * FLUX) @ w}
+    for key, value in ref.items():
+        assert abs(out[key] - value) <= g.rel_limit * incident, key
+    assert np.max(np.abs(out["closure"])) <= gate("P0407-TMM-RTA").abs_limit
+    assert out["parasitic"] > 0.0 and out["electrical"] < incident
+    total = out["reflected"] + out["transmitted"] + out["electrical"] + out["parasitic"]
+    assert abs(total / incident - 1.0) <= g.rel_limit
+    for geometry in ("legacy_1d_integer_endpoint_v1", "legacy_2d_half_endpoint_v1"):
+        x = np.linspace(0.0, sum(D), 37)  # electrical coordinate: the ITO is not in the mesh
+        G, w_cell, profile = adapter.optical_generation(binding, geometry, x)
+        areal = math.fsum(G * w_cell)
+        assert abs(areal / out["electrical"] - 1.0) <= g.rel_limit  # parasitic photons excluded
+        assert abs(math.fsum(profile.absorbed_m2_s) / out["electrical"] - 1.0) <= g.rel_limit
+
+
+def test_candidate_profile_is_not_reused_after_any_optical_input_changes():
+    """V1 P04-07 step 4: thickness, n, k, spectrum, T, composition, indices, mesh."""
+
+    stale = adapter.stale_profile_error()
+    base = adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers())
+    x = np.linspace(0.0, sum(D), 25)
+    _, _, profile = adapter.optical_generation(base, "legacy_1d_integer_endpoint_v1", x)
+    cv = adapter.build_geometry("legacy_1d_integer_endpoint_v1", x)
+    profile.require_inputs(base.sha256, cv)  # same inputs: reuse allowed
+    assert adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers()).sha256 == base.sha256
+    variants = {
+        "thickness": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(absorber_d=D[1] * (1 + 1e-12))),
+        "n": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(absorber_N=STACK[1][0] + 1e-12)),
+        "k": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(absorber_N=STACK[1][0] + 1e-12j)),
+        "spectrum": adapter.optical_binding(WL_NM_BIND, FLUX * (1 + 1e-15), _bind_layers()),
+        "parasitic_layer": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(ito=(1.9 + 0.02j, 150e-9))),
+        "temperature": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(),
+                                               dependencies={"temperature_K": 310.0}),
+        "composition": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(),
+                                               dependencies={"composition:absorber:x": 0.15}),
+        "ambient": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(), ambient_index=1.0 + 1e-15),
+        "exit": adapter.optical_binding(WL_NM_BIND, FLUX, _bind_layers(), exit_index=1.5),
+    }
+    digests = {k: v.sha256 for k, v in variants.items()}
+    assert len(set(digests.values()) | {base.sha256}) == len(variants) + 1
+    for name, item in variants.items():
+        with pytest.raises(stale):
+            profile.require_inputs(item.sha256, cv)
+    for other in (adapter.build_geometry("legacy_2d_half_endpoint_v1", x),
+                  adapter.build_geometry("legacy_1d_integer_endpoint_v1", np.linspace(0.0, sum(D), 26))):
+        with pytest.raises(stale):
+            profile.require_inputs(base.sha256, other)

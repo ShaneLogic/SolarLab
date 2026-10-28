@@ -9,10 +9,11 @@ import pytest
 
 import p04_adapter as adapter
 import p04_legacy as legacy
-from p04_gates import gate
+from p04_gates import EPS, gate
 from p04_oracle_electrostatics import shifted_stack_for_legacy_rule, LayeredStack
 from p04_oracle_geometry import (
     GEOMETRY_LEGACY_1D,
+    GEOMETRY_LEGACY_2D,
     GEOMETRY_R1_TWO_SIDED,
     integer_endpoint_widths,
     right_owner_layer_index,
@@ -95,7 +96,9 @@ def test_candidate_bl_layer_integrals_and_bounds(geometry):
     x = interface_node_grid() if geometry == GEOMETRY_LEGACY_1D else two_sided_grid((9, 17, 5))
     owner = right_owner_layer_index(x, TH) if geometry == GEOMETRY_LEGACY_1D else \
         np.searchsorted(np.cumsum(TH), x, side="left").clip(0, 2)
-    G, w = (np.asarray(a, dtype=float) for a in adapter.beer_lambert_generation(geometry, x, np.array(ALPHA)[owner], PHI))
+    planes = () if geometry == GEOMETRY_LEGACY_1D else tuple(np.cumsum(TH)[:-1])  # two-sided needs the planes
+    G, w = (np.asarray(a, dtype=float) for a in
+            adapter.beer_lambert_generation(geometry, x, np.array(ALPHA)[owner], PHI, interfaces=planes))
     total = math.fsum(G * w)
     assert total <= PHI and np.all(G >= 0.0)
     if geometry == GEOMETRY_LEGACY_1D:
@@ -128,6 +131,34 @@ def test_zero_channels_are_exact(subject):
     assert np.all(G[dark] == 0.0)
     assert np.all(np.asarray(run(a_node, 0.0)) == 0.0)
     assert np.all(np.asarray(run(np.zeros_like(a_node), PHI)) == 0.0)
+
+
+def test_candidate_contact_cells_keep_the_channel_convention():
+    """Integer endpoint: a contact cell weighs the full dx but absorbs only over dx/2.
+
+    The absorbed photons of each cell are compared per cell with the oracle's
+    discrete depth at the midpoint faces (bound 8 eps Phi: two rounded
+    exponentials <= 1 and one subtraction); the factor-2 alternative (absorbing
+    over the full dx) is excluded by orders of magnitude.  The 2D half-endpoint
+    channel keeps the same photons over dx/2: exactly twice the source.
+    """
+
+    gt = gate("P0407-BL-TELE")
+    x = interface_node_grid()
+    a_node = np.array(ALPHA)[right_owner_layer_index(x, TH)]
+    G, w = (np.asarray(v) for v in adapter.beer_lambert_generation(GEOMETRY_LEGACY_1D, x, a_node, PHI))
+    h = np.diff(x)
+    assert np.array_equal(w, integer_endpoint_widths(x)) and w[0] == h[0] and w[-1] == h[-1]
+    tau = nodal_trapezoid_optical_depth(x, a_node)
+    faces = np.concatenate(([tau[0]], 0.5 * (tau[:-1] + tau[1:]), [tau[-1]]))
+    absorbed = PHI * (np.exp(-faces[:-1]) - np.exp(-faces[1:]))
+    assert np.max(np.abs(G * w - absorbed)) <= 8 * EPS * PHI
+    full_cell = PHI * -math.expm1(-tau[1])
+    assert abs(G[0] * w[0] - full_cell) > 0.25 * full_cell  # discriminates the dx/2 extent
+    assert abs(math.fsum(G * w) / (PHI * -math.expm1(-tau[-1])) - 1.0) <= gt.rel_limit
+    G2, w2 = (np.asarray(v) for v in adapter.beer_lambert_generation(GEOMETRY_LEGACY_2D, x, a_node, PHI))
+    assert w2[0] == 0.5 * h[0] and w2[-1] == 0.5 * h[-1]
+    assert np.array_equal(G2[1:-1], G[1:-1]) and G2[0] == 2.0 * G[0] and G2[-1] == 2.0 * G[-1]
 
 
 def test_candidate_incidence_direction_is_mirror_symmetric():

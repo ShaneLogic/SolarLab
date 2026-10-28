@@ -214,6 +214,88 @@ def test_legacy_infinite_lifetime_limit_documented():
     assert np.isnan(np.asarray(d.electron_density_derivative)[0])
 
 
+def test_candidate_blocked_capture_leg_tangent():
+    """N1 (P0407-REC-ZERO): tau = +inf SRH partials are exact 0; nothing else moves.
+
+    Per-node lifetimes mix finite nodes with tau_n = +inf, tau_p = +inf and
+    both (each branch of the 0*inf quotient).  This test exercises the declared
+    N1 delivery; an intermediate M-only snapshot is checked separately against
+    the legacy payload, rather than inferred from failing candidate output.
+    Blocked partials must be +0.0 while the rate everywhere and the partials
+    on cycling nodes keep the legacy words (sign of zero included).
+    """
+
+    rec = legacy.recombination()
+    n, p = N_STATE[:16].copy(), P_STATE[:16].copy()
+    tau_n, tau_p = np.full(16, PAR.tau_n), np.full(16, PAR.tau_p)
+    tau_n[[2, 5, 11]] = np.inf
+    tau_p[[3, 5, 13]] = np.inf
+    blocked = np.isinf(tau_n) | np.isinf(tau_p)
+    with np.errstate(all="ignore"):
+        terms = adapter.bulk_recombination_terms(n, p, PAR, tau_n_s=tau_n, tau_p_s=tau_p)
+        old = rec.srh_recombination_derivatives(n, p, PAR.ni_sq, tau_n, tau_p, PAR.n1, PAR.p1)
+    rate, dn, dp = (np.asarray(a) for a in terms["srh"])
+    ref = [np.asarray(old.rate), np.asarray(old.electron_density_derivative), np.asarray(old.hole_density_derivative)]
+    assert rate.tobytes() == ref[0].tobytes() and np.all(rate[blocked] == 0.0)
+    for new, word in zip((dn, dp), ref[1:]):
+        assert new[~blocked].tobytes() == word[~blocked].tobytes()
+    assert adapter.change_class("srh_blocked_leg_tangent") == "N"
+    for new in (dn, dp):
+        assert np.all(new[blocked] == 0.0) and not np.any(np.signbit(new[blocked]))
+    rad, aug, tot = terms["radiative"], terms["auger"], terms["total"]
+    for k in (1, 2):
+        assert np.all(np.isfinite(np.asarray(tot[k])))
+        assert np.array_equal(np.asarray(tot[k])[blocked], (np.asarray(rad[k]) + np.asarray(aug[k]))[blocked])
+
+
+def _finite_overflow_case():
+    """All inputs are finite; the exact SRH partials are 2**-602, not zero."""
+
+    scale = float(2**600)
+    par = BulkParameters(1.0, scale, scale, 1.0, 1.0, 0.0, 0.0, 0.0)
+    return np.array([scale]), np.array([scale]), par
+
+
+def test_candidate_finite_overflow_is_not_a_blocked_capture_leg():
+    """N1 must not turn overflow with finite lifetimes into an exact-zero tangent.
+
+    A primitive may expose nonfinite arithmetic or reject it; a finite result
+    must still satisfy the frozen rational oracle. This distinguishes an
+    absent capture leg from an overflowing denominator without changing the
+    historical formula or requiring a new wide-range implementation.
+    """
+
+    n, p, par = _finite_overflow_case()
+    ex = srh_exact(n[0], p[0], par)
+    assert ex.d_n == ex.d_p == Fraction(1, 2**602)
+    with np.errstate(over="ignore", invalid="ignore"):
+        try:
+            terms = adapter.bulk_recombination_terms(n, p, par)
+        except (ValueError, FloatingPointError, OverflowError):
+            return
+    for value, exact, gross in zip(terms["srh"][1:], (ex.d_n, ex.d_p), (ex.gross_d_n, ex.gross_d_p)):
+        actual = float(np.asarray(value)[0])
+        assert not np.isfinite(actual) or within(actual, exact, gross, gate("P0407-REC-DER").rel_limit / EPS)
+
+
+def test_candidate_domain_rejects_nonfinite_evaluation_from_finite_inputs():
+    """A nonfinite rate cannot be accepted by the public physical-domain gate."""
+
+    n, p, par = _finite_overflow_case()
+    with np.errstate(over="ignore", invalid="ignore"):
+        try:
+            evaluation = adapter.bulk_recombination_evaluation(n, p, par)
+        except (ValueError, FloatingPointError, OverflowError):
+            return
+    arrays = (evaluation.total.rate, evaluation.total.d_rate_dn, evaluation.total.d_rate_dp)
+    if any(not np.all(np.isfinite(a)) for a in arrays):
+        assert not evaluation.in_domain()
+        with pytest.raises(ValueError):
+            evaluation.require_domain()
+    else:
+        evaluation.require_domain()
+
+
 # ---------------------------------------------------------------- explicit defect
 
 
@@ -290,3 +372,21 @@ def test_tau_from_trap_density_floor():
     N = np.array([1e19, 1e20, 5e20, 1e23])
     assert np.array_equal(t.tau_from_trap_density(1e-6, N, 1e20), tau_from_trap_density_ref(1e-6, N, 1e20))
     assert tau_from_trap_density_ref(1e-6, N, 1e20)[0] == 1e-6  # passivation floor
+
+
+@pytest.mark.parametrize("shape", ("exponential", "gaussian"))
+@pytest.mark.parametrize("edge", ("both", "left", "right"))
+def test_candidate_trap_profile_binding(shape, edge):
+    """TrapProfile.bind: density = the kernel word for word; tau rule and floor."""
+
+    g = gate("P0407-TRAP")
+    tau = np.full(TRAP_X.size, 1e-6)
+    density, tau_n, tau_p = (np.asarray(a) for a in adapter.trap_profile_binding(
+        shape, TRAP_X, 400e-9, 1e23, 1e20, 30e-9, edge, tau, 2 * tau))
+    kernel = np.asarray(adapter.trap_profile(shape, TRAP_X, 400e-9, 1e23, 1e20, 30e-9, edge))
+    assert density.tobytes() == kernel.tobytes()
+    assert np.max(np.abs(tau_n / tau_from_trap_density_ref(1e-6, kernel, 1e20) - 1.0)) <= g.rel_limit
+    assert np.max(np.abs(tau_p / tau_from_trap_density_ref(2e-6, kernel, 1e20) - 1.0)) <= g.rel_limit
+    _, tau_pass, _ = (np.asarray(a) for a in adapter.trap_profile_binding(
+        shape, TRAP_X, 400e-9, 1e18, 1e20, 30e-9, edge, tau, tau))  # passivation: N_if < N_bulk
+    assert np.max(np.abs(tau_pass / 1e-6 - 1.0)) <= g.rel_limit  # floor: never above the bulk lifetime

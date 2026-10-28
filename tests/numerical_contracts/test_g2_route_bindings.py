@@ -1,12 +1,59 @@
-"""Manufactured metadata only: no IDA/model/Arb or historical gzip access."""
+"""Metadata contracts and opt-in real probe construction, with no integration."""
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scripts.benchmarks import g2_route_bindings as b
+
+
+@pytest.fixture
+def saved_probe_for_source_rebinding(monkeypatch):
+    """Opt-in self-contained saved JSON; never read its historical stream."""
+    pytest.importorskip("flint", reason="real source rebinding needs the locked optional arithmetic environment")
+    path = os.environ.get("SOLARLAB_G2_REBIND_REQUEST")
+    if not path:
+        pytest.skip("set SOLARLAB_G2_REBIND_REQUEST to a saved, unrebound N8 probe NativeRequest.json")
+    from scripts.benchmarks import coupled_device_prototype as kernel
+    def no_native(*args, **kwargs):
+        pytest.fail("source rebinding must never allocate or run the native solver")
+    monkeypatch.setattr(kernel, "run_voltage_lift_native_pilot", no_native)
+    monkeypatch.setattr(kernel, "_voltage_lift_segment_solver", no_native)
+    request, _ = b.read_json(path)
+    assert "g2_source_rebinding" not in request
+    return request
+
+
+def test_real_probe_source_rebinding_passes_original_native_boundary(saved_probe_for_source_rebinding):
+    from scripts.benchmarks import coupled_device_prototype as kernel
+    saved = saved_probe_for_source_rebinding
+    before = b.digest(saved)
+    rebound = b.rebind_effective_source(saved)
+    assert b.digest(saved) == before
+    assert b.digest(b.rebind_effective_source(saved)) == b.digest(rebound)
+    assert rebound["voltage_lift_map"]["physical_model"] != saved["voltage_lift_map"]["physical_model"]
+    for key in ("numeric_packet", "controls", "budgets", "segments", "observation_times",
+                "physical_tolerance_policy", "z0", "zdot0", "actual_initial_identity"):
+        assert b.digest(rebound[key]) == b.digest(saved[key])
+    for key in ("physical_handoff_words_hex", "physical_rate_handoff_words_hex"):
+        assert rebound["initial_segment_frame"][key] == saved["initial_segment_frame"][key]
+    model = kernel.AffineCoupledSlab(kernel.SlabDefinition(**saved["numeric_packet"]["definition"]), 8)
+    mapping = kernel.AffineVoltageMap(model, mapped_input_profile=rebound["voltage_lift_map"]["mapped_input_profile"])
+    segments = tuple(kernel.ProtocolSegment(**row) for row in rebound["segments"])
+    kernel.validate_voltage_lift_native_request(mapping, segments, rebound)
+    with pytest.raises(ValueError, match="voltage_lift_native_request_binding"):
+        kernel.validate_voltage_lift_native_request(mapping, segments, saved)
+
+
+@pytest.mark.parametrize("field", ["z0", "zdot0"])
+def test_real_probe_source_rebinding_rejects_changed_initial_coordinates(saved_probe_for_source_rebinding, field):
+    damaged = deepcopy(saved_probe_for_source_rebinding)
+    damaged[field][0] = 1.0
+    with pytest.raises(ValueError, match="source_rebinding_initial_state"):
+        b.rebind_effective_source(damaged)
 
 
 def write_json(path, value):
