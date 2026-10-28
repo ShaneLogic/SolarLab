@@ -447,6 +447,34 @@ is invented. A successful read means data were read and verified, including a
 readable partial history. It does not change the numerical outcome or the
 `not_evaluated` physical-certificate status.
 
+## Transient process jobs
+
+Run the same ion-free time solver in an owned child process with persisted
+results and explicit resource limits:
+
+```sh
+.venv/bin/python -B examples/research_1d/process_transient.py run \
+  --store outputs/transient_jobs/store --work outputs/transient_jobs/work \
+  --build-source-commit "$(git rev-parse HEAD)"
+.venv/bin/python -B examples/research_1d/process_transient.py read \
+  --store outputs/transient_jobs/store --run-id transient-completed
+```
+
+The child compiles the device, solves its initial DC state and advances two
+37-node time steps. The example binds immutable committed core sources and any
+separately captured active adapters; it also records the actual current checkout
+HEAD. Readback uses only stored data. A supplied source archive can be selected
+with `--source-archive`, keeping its commit separate from the current checkout.
+
+Add `--failure-case --run-id transient-failed-prefix` to the run command to
+exercise a deliberately small Newton budget. The failed calculation retains its
+accepted prefix and first failed attempt, with one failed terminal and sixteen
+artifacts. Run and read exit with status 2 for that numerical failure, even when
+readback succeeds. Cancellation retains one cancelled terminal and does not
+claim a returned history. Exceptions and resource overrides retain their own
+failure meaning. This process interface does not change scientific acceptance
+or the transient result's `not_evaluated` status.
+
 ## Coupled ionic steady state
 
 The bounded single-ion compiler and steady solver solve potential, electrons,

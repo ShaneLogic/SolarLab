@@ -323,8 +323,11 @@ class WorkerBinding:
 class WorkerResult:
     result_json: str
     artifacts: tuple[tuple[str, ArtifactPayload], ...] = ()
+    state: str = "succeeded"
 
     def __post_init__(self) -> None:
+        if type(self.state) is not str or self.state not in {"succeeded", "failed"}:
+            raise ValueError("a returned worker result must explicitly succeed or fail; cancellation belongs to the runtime")
         object.__setattr__(self, "result_json", _object(_parse_document(self.result_json)))
         artifacts = tuple(self.artifacts)
         if len(artifacts) > 16 or len({name for name, _ in artifacts}) != len(artifacts):
@@ -336,8 +339,9 @@ class WorkerResult:
         object.__setattr__(self, "artifacts", artifacts)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any], *, artifacts: tuple[tuple[str, ArtifactPayload], ...] = ()) -> WorkerResult:
-        return cls(_object(value), artifacts)
+    def from_dict(cls, value: dict[str, Any], *, artifacts: tuple[tuple[str, ArtifactPayload], ...] = (),
+                  state: str = "succeeded") -> WorkerResult:
+        return cls(_object(value), artifacts, state)
 
 
 class CooperativeStop(BaseException):
@@ -549,13 +553,13 @@ def _child_main(
         output = function(request, context)
         if type(output) is not WorkerResult:
             raise ValueError("worker must return a validated WorkerResult")
-        output = WorkerResult(output.result_json, output.artifacts)
+        output = WorkerResult(output.result_json, output.artifacts, output.state)
         if execution is not None:
             if not context._manifest_consumed:
                 raise ValueError("worker returned without consuming its execution manifest")
             output = WorkerResult(output.result_json, (*output.artifacts, ("execution_manifest", bytes_artifact(
                 execution.manifest.canonical_json, metadata={"schema": "solarlab.execution-manifest.v1",
-                    "manifest_sha256": execution.expected_sha256, "scientific_qualification": False}))))
+                    "manifest_sha256": execution.expected_sha256, "scientific_qualification": False}))), output.state)
         for name, observed, cap in zip(("accepted_steps", "calls"), context._counts, (limits.accepted_steps, limits.calls)):
             if cap is not None and observed is None:
                 raise ValueError("requested counter is unobserved: " + name)
@@ -570,7 +574,7 @@ def _child_main(
                 os.fsync(stream.fileno())
             artifacts.append({"name": name, "file": filename, "sha256": payload.sha256,
                               "bytes": len(payload.data), "format": payload.format, "metadata_json": payload.metadata_json})
-        state, result = "succeeded", _parse_document(output.result_json)
+        state, result = output.state, _parse_document(output.result_json)
     except CooperativeStop:
         state, result, artifacts = "cancelled", {"reason": "cooperative_stop"}, []
     except _LimitExceeded as error:

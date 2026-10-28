@@ -379,6 +379,13 @@
       "run_transient_for_publication",
       "publish_transient_result",
       "read_transient_result"
+    ],
+    "solarlab.experiments.transient_worker": [
+      "TransientJob",
+      "prepare_transient_job",
+      "transient_worker_binding",
+      "run_transient_worker",
+      "read_transient_job"
     ]
   },
   "public_imports": {
@@ -828,6 +835,13 @@
       "run_transient_for_publication",
       "publish_transient_result",
       "read_transient_result"
+    ],
+    "solarlab.experiments.transient_worker": [
+      "TransientJob",
+      "prepare_transient_job",
+      "transient_worker_binding",
+      "run_transient_worker",
+      "read_transient_job"
     ]
   },
   "checked_consumers": [

@@ -185,6 +185,7 @@ jobs:
           tests/integration/test_transient_1d.py
           tests/integration/test_transient_voltage_1d.py
           tests/integration/test_transient_results.py
+          tests/runtime/test_transient_worker.py
           tests/integration/test_ionic_1d.py
           tests/integration/test_ionic_multilayer_1d.py
           tests/integration/test_ionic_steady_1d.py

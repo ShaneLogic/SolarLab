@@ -614,6 +614,7 @@ class ProcessSupervisor:
         _atomic_json(job.directory / "exit.json", exit_evidence)
         manifest: dict[str, Any] = {}
         payloads: list[tuple[str, ArtifactPayload]] = []
+        publishable = False
         state, result = "failed", {"reason": "child_crash", "exitcode": exitcode}
         try:
             if (job.directory / "terminal.json").exists():
@@ -639,27 +640,34 @@ class ProcessSupervisor:
                 payloads = self._checked_artifacts(job, manifest["artifacts"])
                 if exitcode == 0:
                     state, result = manifest["state"], manifest["result"]
+                    # Exceptions/cooperative stops carry no payloads. Only a
+                    # validated clean return may publish a numerical failure.
+                    publishable = state == "succeeded" or state == "failed" and bool(payloads)
             elif exitcode == 0:
                 result = {"reason": "missing_terminal"}
         except (ValueError, TypeError, KeyError, OSError) as error:
             state, result = "failed", {"reason": "invalid_terminal", "detail": str(error)[:1024]}
             payloads = []
+            publishable = False
         reason = self._resource_reason(job, time.monotonic())
         if reason is not None:
             state, result = "failed", {"reason": reason}
-        if state == "succeeded":
+            publishable = False
+        if publishable:
             missing = [name for name, cap in (("accepted_steps", job.limits.accepted_steps), ("calls", job.limits.calls))
                        if cap is not None and job.counts[name] is None]
             if missing or job.peak_rss is None:
                 state, result = "failed", {"reason": "required_measurement_unobserved", "counters": missing}
+                publishable = False
         if job.stop_reason is not None:
             state, result = job.stop_state, {"reason": job.stop_reason, "discarded_terminal_state": manifest.get("state")}
+            publishable = False
             if job.setup_error is not None:
                 result["setup_error"] = job.setup_error
         references: list[str] = []
         published_bytes = 0
         publication_error: str | None = None
-        if state == "succeeded":
+        if publishable:
             try:
                 for name, payload in payloads:
                     if _directory_bytes(job.directory) + published_bytes + len(payload.data) > job.limits.output_bytes:
@@ -667,6 +675,7 @@ class ProcessSupervisor:
                     guard = self._output_guard(len(payload.data), self._completion_allowance(job, result))
                     if guard["would_exceed"]:
                         state, result, references = "failed", {"reason": "shared_output_publication_reservation", "budget": guard}, []
+                        publishable = False
                         break
                     published = self.store.publish(job.token, name, payload)
                     references.append(published["artifact_id"])
@@ -674,12 +683,15 @@ class ProcessSupervisor:
                     guard = self._output_guard(0, self._completion_allowance(job, result))
                     if guard["would_exceed"]:
                         state, result, references = "failed", {"reason": "shared_output_after_publication", "budget": guard}, []
+                        publishable = False
                         break
             except (ValueError, OSError, StateConflict) as error:
                 publication_error = str(error)[:1024]
                 state, result, references = "failed", {"reason": "artifact_publication", "detail": publication_error}, []
-        if time.monotonic() - job.started > job.limits.wall_seconds and state == "succeeded":
+                publishable = False
+        if time.monotonic() - job.started > job.limits.wall_seconds and publishable:
             state, result, references = "failed", {"reason": "wall_limit_during_publication"}, []
+            publishable = False
         retained_output = _directory_bytes(job.directory) + published_bytes
         job.output_peak = max(job.output_peak, retained_output)
         resources: dict[str, Any] = {"owned_wall_seconds": time.monotonic() - job.started, "queue_seconds": job.started - job.enqueued,
@@ -696,8 +708,9 @@ class ProcessSupervisor:
                         "counter_observation_kind": "worker_reported_or_null_unobserved"}
         guard = self._output_guard(0, self._completion_allowance(job, final_result))
         resources["shared_output_before_terminal_commit"] = guard
-        if state == "succeeded" and guard["would_exceed"]:
+        if publishable and guard["would_exceed"]:
             state, result, references = "failed", {"reason": "shared_output_finalization_reservation", "budget": guard}, []
+            publishable = False
             final_result["worker_result"] = result
         committed, commit_error = False, None
         storage_error: sqlite3.Error | None = None
