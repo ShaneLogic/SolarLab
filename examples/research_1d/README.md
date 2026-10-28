@@ -1,17 +1,17 @@
 # New-core 1D research example
 
-This example runs ion-free, classical one-dimensional DC with the actual new
-compiler and steady solver. The explicit device/catalog is `device.json`.
+The baseline example runs ion-free, classical one-dimensional DC with the actual
+new compiler and steady solver. The explicit device/catalog is `device.json`.
 It supports Maxwell–Boltzmann carriers, fully ionized dopants, DOS-aware
 transport, semiconductor work-function contacts, bulk lifetime SRH/radiative/
 Auger recombination and the compiler's bound generation profiles. Unsupported
 configured physics is rejected; no legacy engine or fallback is used.
 
 This is a research workflow, not final scientific or release qualification.
-Mesh and voltage-grid convergence, full spectral/TMM optics, interface/defect
-extensions, ions, hysteresis, 2D and the full registry release remain
-outside this example's verified scope. A separate fixed-bias generation
-transient example is described below. DC voltage continuation is not a
+Full spectral/TMM optics, interface and broader defect extensions, hysteresis
+and 2D remain outside these new-core examples. Mesh and voltage-grid convergence
+and the full registry release remain unqualified. Separate sections below describe bounded transient,
+ionic and neutral-defect examples and their limits. DC voltage continuation is not a
 time-dependent voltage scan. Every parameter point is resolved and compiled
 cold; states and factorizations are not reused across parameter changes.
 
@@ -926,6 +926,31 @@ attempt after a reload. Reconnect and readback do not submit another calculation
 Cancellation targets the displayed attempt and is confirmed from its terminal
 state. This entry retains the same ion-free and scientific-qualification limits
 as the transient HTTP adapter.
+
+## Explicit neutral bulk defects
+
+Use the existing validated defect declaration to replace lifetime SRH with one
+or more neutral single-level species on the owning layer's nodes:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.neutral_defects \
+  --output outputs/neutral_defects.json
+```
+
+The default example adds a neutral absorber level to `device.json` and runs a
+37-node illuminated steady calculation at 2 mV. `--config <device.json>` accepts
+a complete declaration with its own explicit neutral inventory. The saved
+result includes the declaration, species binding, individual rates and exact
+partials, final fields, original residual and solver outcome.
+
+The explicit inventory replaces lifetime SRH on its owned nodes; radiative and
+Auger terms and other layers remain active. Neutral species add no trap charge.
+The current historical DEF1 energy convention requires equal physical
+conduction and valence densities of states on explicit-defect nodes. Other
+layers do not have this restriction. Unequal-DOS explicit nodes, charged,
+distributed, multivalent and metastable defects are rejected by this binding.
+The bounded example passed the original numerical gates; broader material,
+mesh and final scientific qualification remain pending.
 
 ## Adding a local model
 

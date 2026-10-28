@@ -2,7 +2,9 @@
 
 Supported physics is explicit: Maxwell-Boltzmann carriers, fully ionized
 dopants, static temperature/doping/band grading, DOS-aware SG transport,
-semiconductor work-function contacts, local lifetime SRH/radiative/Auger,
+semiconductor work-function contacts, local lifetime or explicit neutral
+single-level SRH (equal physical conduction/valence DOS on defect-owned nodes)
+with radiative/Auger,
 and monochromatic Beer-Lambert or a node-aligned fixed generation resource.
 Historical mode labels do not select a legacy engine or enable its tier ceiling.
 Unsupported active mechanisms fail before any nonlinear solve.
@@ -19,6 +21,7 @@ from typing import Any, Literal, TypedDict, cast
 import numpy as np
 
 from solarlab.device.resolved import PreparedDevice, PreparedLayer
+from solarlab.device.neutral_defects import bind_neutral_defects
 from solarlab.equations.dc_1d import (
     CapabilityError,
     CompiledDevice1D,
@@ -133,8 +136,8 @@ def _unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[P
             missing.append(prefix + "band_gap_narrowing_model")
         if any(parameters[name] != 0.0 for name in ("v_sat_n", "v_sat_p", "pf_gamma_n", "pf_gamma_p")):
             missing.append(prefix + "field_mobility")
-        if layer.defects or layer.defect_model != "effective_lifetime" or layer.bulk_trap_distribution_json is not None:
-            missing.append(prefix + "explicit_or_distributed_defects")
+        if layer.bulk_trap_distribution_json is not None:
+            missing.append(prefix + "bulk_trap_distribution: distributed defects are not bound")
         if layer.metastable_document_json is not None:
             missing.append(prefix + "metastable_document")
         if any(parameters[name] is not None for name in ("trap_N_t_interface", "trap_N_t_bulk", "trap_decay_length")):
@@ -251,7 +254,12 @@ def compile_device_1d(
         binding.srh_n1_m3, binding.srh_p1_m3, binding.radiative_coefficient_m3_s,
         paint("C_n"), paint("C_p"),
     )
-    recombination = BulkRecombinationReaction(coefficients)
+    explicit_defects = bind_neutral_defects(
+        layers, masks, ni_sq_m6=configured, band_gap_eV=bands.physical_band_gap_eV,
+        thermal_voltage_V=binding.thermal_voltage_V,
+        conduction_dos_m3=binding.conduction_dos_m3, valence_dos_m3=binding.valence_dos_m3,
+    )
+    recombination = BulkRecombinationReaction(coefficients, explicit_defects)
     generation_name = data["declaration"].get("fixed_generation")
     if generation_name is not None:
         table = prepared.resources.get(generation_name, "fixed_generation")
@@ -295,8 +303,14 @@ def compile_device_1d(
     if all(channel.kind == "blocking" for channel in channels):
         raise CapabilityError("fully_blocking_contacts: a closed carrier inventory constraint is not bound in this DC slice")
     extra_id = None if additional_recombination is None else additional_recombination.model_id
+    identity_parts: tuple[object, ...] = (
+        "electrode_quasi_fermi_1d_v1", prepared.content_sha256, binding.sha256,
+        generation.binding_sha256, geometry.name, counts, extra_id,
+    )
+    if explicit_defects is not None:
+        identity_parts += (explicit_defects.identity_sha256,)
     identity = hashlib.sha256(json.dumps(
-        ("electrode_quasi_fermi_1d_v1", prepared.content_sha256, binding.sha256, generation.binding_sha256, geometry.name, counts, extra_id),
+        identity_parts,
         separators=(",", ":"), allow_nan=False,
     ).encode()).hexdigest()
     return CompiledDevice1D(
