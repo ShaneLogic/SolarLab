@@ -15,7 +15,6 @@ from examples.research_1d.ionic_steady import controls as steady_controls
 from examples.research_1d.ionic_transient import controls as time_controls, protocol
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
-from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.experiments import ionic_transient as driver
 from solarlab.solvers.nonlinear.ionic_1d import (
@@ -106,13 +105,33 @@ def test_steady_diagnostics_keep_both_dropped_rows_and_signed_deposition(case):
 
 
 @pytest.mark.parametrize("species", ["positive", "negative"])
-def test_zero_D_species_keeps_population_but_refuses_a_one_domain_steady_constraint(species):
+def test_zero_D_species_uses_local_profiles_while_mobile_species_keeps_inventory(species):
     prepared = prepare_confined_dual_ion_device(**{f"{species}_diffusivity_m2_s": 0.0})
     device = compile_ionic_device_1d(prepared, intervals_per_layer=(12, 12, 12),
         ion_domain_layer="absorber", ion_domain_endpoints=("blocking", "blocking"))
     assert device.state_size == 137 and device.initial_state().domain_inventories_m2[species] > 0
-    with pytest.raises(CapabilityError, match="positive-D"):
-        ConstrainedIonic1DProblem(Ionic1DProblem(device), device.ion_node_count - 1)
+    original = Ionic1DProblem(device)
+    constrained = ConstrainedIonic1DProblem(original, device.ion_node_count - 1)
+    blocks = dict(zip(device.ion_species_names, device.ion_species_slices))
+    block = blocks[species]
+    assert constrained.immobile_species == (species,)
+    assert constrained.profile_constraint_rows == {species: tuple(range(block.start, block.stop))}
+    y = device.initial_state().u.copy()
+    y[block.start] += 0.02
+    state = device.state(y)
+    density = getattr(state, species + "_ion_density_m3")
+    target = getattr(device, species + "_ion_reference_m3")
+    expected = device.ion_geometry.cell_measures_m * (density - target)
+    np.testing.assert_array_equal(original.residual(y)[block], 0.0)
+    np.testing.assert_array_equal(constrained.residual(y)[block], expected)
+    np.testing.assert_array_equal(constrained.jacobian(y)[block, :].toarray(),
+                                  -original.storage_jacobian(y)[block, :].toarray())
+    assert expected[0] > 0.0
+    other = "negative" if species == "positive" else "positive"
+    inventory = math.fsum((device.ion_geometry.cell_measures_m
+                          * getattr(state, other + "_ion_density_m3")).tolist())
+    assert constrained.residual(y)[constrained.constraint_rows[other]] == (
+        inventory - constrained.inventory_targets_m2[other])
 
 
 def test_steady_scaling_separates_species_and_rejects_wrong_negative_inventory(case, monkeypatch):

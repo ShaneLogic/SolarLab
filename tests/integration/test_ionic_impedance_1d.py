@@ -236,6 +236,7 @@ def saved_operator(case, responses):
     system = SimpleNamespace(jacobian=None, storage_jacobian=None, rhs=None, rhs_rate=None, fixed_coordinates={},
         original_rows_enforced=tuple(range(compiled.state_size)),
         constraint_rows=sample["observation"]["inventory_constraint_rows"],
+        immobile_constraint_rows={},
         coordinate_form=sample["coordinate_representation"])
     operator = SimpleNamespace(system=lambda *args, **kwargs: system,
         observe=lambda *args, **kwargs: deepcopy(sample["observation"]))
