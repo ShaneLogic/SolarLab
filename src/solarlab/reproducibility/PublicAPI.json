@@ -261,6 +261,9 @@
       "solve_steady_state"
     ],
     "solarlab.solvers.nonlinear.production": [
+      "HISTORICAL_MAX_ROW_V1",
+      "POISSON_CONTACT_BALANCE_V1",
+      "production_convergence_norm",
       "production_coordinates",
       "production_residual_scaling",
       "production_steady_problem",
@@ -634,7 +637,10 @@
       "production_coordinates",
       "production_residual_scaling",
       "production_steady_linearization",
-      "production_steady_problem"
+      "production_steady_problem",
+      "HISTORICAL_MAX_ROW_V1",
+      "POISSON_CONTACT_BALANCE_V1",
+      "production_convergence_norm"
     ],
     "solarlab.experiments.jv.steady": [
       "SteadyJVMetrics",

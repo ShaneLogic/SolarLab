@@ -24,7 +24,9 @@ from solarlab.solvers.nonlinear.problem import (
     CallableProblem, GateOutcome, PhysicalGate, ResidualScaling, SolveBudget, StepControl,
 )
 from solarlab.solvers.nonlinear.production import (
-    poisson_row_weights, production_coordinates, production_residual_scaling,
+    HISTORICAL_MAX_ROW_V1, POISSON_CONTACT_BALANCE_V1,
+    poisson_row_weights, production_convergence_norm, production_coordinates,
+    production_residual_scaling,
 )
 
 __all__ = [
@@ -37,7 +39,11 @@ Q = ELEMENTARY_CHARGE_C
 
 @dataclass(frozen=True)
 class SteadyOptions:
-    """Physical limits and bounded numerical work for this DC slice."""
+    """Physical limits, bounded work and an explicit convergence policy.
+
+    The historical row policy is the default. The opt-in balance norm changes
+    the internal stopping budget; every independent physical gate is retained.
+    """
 
     poisson_tolerance: float = 1.0e-11
     continuity_tolerance_A_m2: float = 1.0e-8
@@ -52,6 +58,7 @@ class SteadyOptions:
     max_backtracks: int = 40
     max_bias_step_V: float = 0.1
     max_continuation_steps: int = 100
+    convergence_policy: str = HISTORICAL_MAX_ROW_V1
 
     def __post_init__(self) -> None:
         for name in (
@@ -65,6 +72,8 @@ class SteadyOptions:
         self.budget()
         if type(self.max_continuation_steps) is not int or self.max_continuation_steps < 1:
             raise ValueError("max_continuation_steps must be a positive integer")
+        if self.convergence_policy not in (HISTORICAL_MAX_ROW_V1, POISSON_CONTACT_BALANCE_V1):
+            raise ValueError("unknown production convergence policy")
 
     def budget(self) -> SolveBudget:
         return SolveBudget(
@@ -230,7 +239,10 @@ def _solve_point(
         ),
         options.budget(), _physical_gates(problem, options, equilibrium=equilibrium), False,
     )
-    result = solve_newton(problem, np.asarray(u, dtype=float), settings)
+    result = solve_newton(
+        problem, np.asarray(u, dtype=float), settings,
+        convergence_norm=production_convergence_norm(device, convergence_policy=options.convergence_policy),
+    )
     if not result.accepted:
         raise SteadyStateError(f"DC V={voltage_V:g}, generation_scale={generation_scale:g}", result)
     return problem, result

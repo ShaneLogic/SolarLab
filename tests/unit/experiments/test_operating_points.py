@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import asdict, replace
 import math
 
@@ -18,6 +19,7 @@ from solarlab.experiments.jv import operating_points as points
 from solarlab.experiments.jv.steady import run_steady_jv
 from solarlab.solvers.nonlinear.newton import NewtonResult, Termination
 from solarlab.solvers.nonlinear.problem import state_digest
+from solarlab.solvers.nonlinear.production import HISTORICAL_MAX_ROW_V1, POISSON_CONTACT_BALANCE_V1
 from solarlab.solvers.nonlinear.steady_1d import (
     SteadyOptions,
     SteadyStateError,
@@ -235,3 +237,74 @@ def test_exact_solved_zero_is_an_endpoint_without_interpolated_state():
     assert result.solution is bracket.solutions[0]
     assert result.voltage_V == result.interval_width_V == 0.0
     assert result.solve_calls == 0
+
+
+def test_opt_in_balance_policy_is_recorded_and_retained_by_direct_voc():
+    compiled = compile_device_1d(load_device(), intervals_per_layer=12)
+    controls = SteadyOptions(
+        max_bias_step_V=0.05, convergence_policy=POISSON_CONTACT_BALANCE_V1,
+    )
+    # A fresh cold solve prepares this bracket; no saved failed state is used.
+    bracket = run_steady_jv(compiled, [1.2, 1.225], options=controls)
+    assert bracket.solver_controls["convergence_policy"] == POISSON_CONTACT_BALANCE_V1
+    result = points.solve_direct_voc(compiled, bracket)
+    assert result.solver_controls == asdict(controls)
+    assert result.interval_width_V <= 1e-6
+    assert all(gate.passed for point in result.solutions for gate in point.physical_gates)
+    for point in result.solutions:
+        points._verify_point(compiled, point, bracket.generation_scale, controls)
+    with pytest.raises(points.VocBracketError, match="retain"):
+        points.solve_direct_voc(
+            compiled, bracket, options=replace(controls, convergence_policy=HISTORICAL_MAX_ROW_V1),
+        )
+
+
+def test_old_control_records_default_to_historical_row_policy(actual_bracket):
+    compiled, bracket, controls = actual_bracket
+    old_record = dict(bracket.solver_controls)
+    assert old_record.pop("convergence_policy") == HISTORICAL_MAX_ROW_V1
+    restored = SteadyOptions(**old_record)
+    assert restored == controls
+    points._verify_point(compiled, bracket.solutions[0], bracket.generation_scale, restored)
+
+
+@pytest.mark.parametrize("policy", [HISTORICAL_MAX_ROW_V1, POISSON_CONTACT_BALANCE_V1])
+def test_changing_policy_never_resigns_a_failed_saved_point(actual_bracket, policy):
+    compiled, bracket, controls = actual_bracket
+    failed_point = copy(bracket.solutions[0])
+    failure = _injected_failure(failed_point.state)
+    # Represent a failed saved record without changing any accepted fixture.
+    object.__setattr__(failed_point, "newton", failure.result)
+    with pytest.raises(points.VocBracketError, match="accepted steady solve"):
+        points._verify_point(
+            compiled, failed_point, bracket.generation_scale,
+            replace(controls, convergence_policy=policy),
+        )
+    assert not failure.result.accepted
+    assert all(point.converged for point in bracket.solutions)
+
+
+@pytest.mark.parametrize("policy", [HISTORICAL_MAX_ROW_V1, POISSON_CONTACT_BALANCE_V1])
+def test_saved_points_recompute_gates_independently_of_stored_passes(actual_bracket, monkeypatch, policy):
+    compiled, bracket, controls = actual_bracket
+    point = bracket.solutions[0]
+    genuine = points._physical_gates
+    calls = []
+
+    def guarded(problem, options, *, equilibrium):
+        gates = genuine(problem, options, equilibrium=equilibrium)
+
+        def rejected(u):
+            calls.append(u)
+            original = gates[0](u)
+            return replace(original, passed=False, message="injected independent gate rejection")
+
+        return (rejected, *gates[1:])
+
+    monkeypatch.setattr(points, "_physical_gates", guarded)
+    assert all(gate.passed for gate in point.physical_gates)
+    with pytest.raises(points.VocBracketError, match="recomputed production physical gate"):
+        points._verify_point(
+            compiled, point, bracket.generation_scale, replace(controls, convergence_policy=policy),
+        )
+    assert calls and point.converged

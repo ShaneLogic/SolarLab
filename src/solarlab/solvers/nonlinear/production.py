@@ -7,6 +7,7 @@ No G2 qualification or unsupported time/ion capability is inferred from them.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 
 import numpy as np
@@ -18,9 +19,52 @@ from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem
 from solarlab.solvers.nonlinear.problem import ResidualScaling, StepControl
 
 __all__ = [
+    "HISTORICAL_MAX_ROW_V1", "POISSON_CONTACT_BALANCE_V1", "production_convergence_norm",
     "production_coordinates", "production_residual_scaling",
     "production_steady_problem", "production_steady_linearization",
 ]
+
+HISTORICAL_MAX_ROW_V1 = "historical_max_row_v1"
+POISSON_CONTACT_BALANCE_V1 = "poisson_contact_balance_v1"
+
+
+def production_convergence_norm(
+    device: CompiledDevice1D, *, convergence_policy: str = HISTORICAL_MAX_ROW_V1,
+) -> Callable[[np.ndarray], float] | None:
+    """Optional convergence norm of the unchanged production-scaled rows.
+
+    Poisson and fixed-reservoir log rows retain their individual limits.
+    Other carrier rows use q*sum(abs(balance))/current_tol, obtained by
+    dividing their existing 2*N*q/current_tol scaling by 2*N. Finite-rate
+    and blocking boundary cells are included. The Newton merit is untouched.
+    """
+    if convergence_policy == HISTORICAL_MAX_ROW_V1:
+        return None
+    if convergence_policy != POISSON_CONTACT_BALANCE_V1:
+        raise ValueError("unknown production convergence policy")
+    count = device.node_count
+    fixed = np.zeros(3 * count, dtype=bool)
+    fixed[:count] = True
+    for carrier, offset in (("n", count), ("p", 2 * count)):
+        for side, node in (("left", 0), ("right", count - 1)):
+            if device.channel(carrier, side).kind == "fixed_reservoir":
+                fixed[offset + node] = True
+
+    def norm(scaled_residual: np.ndarray) -> float:
+        values = np.asarray(scaled_residual, dtype=float)
+        if values.shape != (3 * count,):
+            raise ValueError("production convergence rows must match the compiled device")
+        if not np.all(np.isfinite(values)):
+            return math.inf
+        absolute = np.abs(values)
+        carrier_rows = absolute[count:].copy()
+        carrier_rows[fixed[count:]] = 0.0
+        balance = (
+            float(np.sum(carrier_rows[:count])) + float(np.sum(carrier_rows[count:]))
+        ) / (2 * count)
+        return max(float(np.max(absolute[fixed])), balance)
+
+    return norm
 
 
 def poisson_row_weights(device: CompiledDevice1D) -> np.ndarray:

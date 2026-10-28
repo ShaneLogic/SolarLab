@@ -8,8 +8,10 @@ other. A reused (stale) factorization that fails the line search, or needs
 deep backtracking, is rebuilt before the iteration is declared failed; a
 reused factor that does not halve the scaled residual is rebuilt next time.
 
-A state is **accepted** only when the scaled residual ``max |w F|`` is within
-the tolerance *and* every physical gate passes. A converged residual whose
+A state is **accepted** only when the convergence norm (``max |w F|`` by
+default) is within the tolerance *and* every physical gate passes. An explicit
+caller callback may measure the scaled rows; it does not change the merit or
+the row-max factor refresh rule. A converged residual whose
 gates fail is a rejected (wrong-branch) state, never a solution. Every exit
 names its reason, and all work is bounded by a :class:`SolveBudget`; there is
 no hidden fallback. Steps that no longer lower the merit end the solve as
@@ -95,6 +97,8 @@ class IterationRecord:
 
 @dataclass(frozen=True)
 class NewtonResult:
+    """Solve evidence; scaled_residual reports the selected convergence norm."""
+
     state: Vector
     accepted: bool
     termination: Termination
@@ -177,8 +181,13 @@ def factorize(matrix: Matrix) -> _Factor:
     return _Factor(matrix)
 
 
-def solve_newton(problem: SteadyProblem, u0: Vector, settings: NewtonSettings) -> NewtonResult:
+def solve_newton(
+    problem: SteadyProblem, u0: Vector, settings: NewtonSettings, *,
+    convergence_norm: Callable[[Vector], float] | None = None,
+) -> NewtonResult:
     """Damped Newton with explicit acceptance; see the module docstring."""
+    if convergence_norm is not None and not callable(convergence_norm):
+        raise ValueError("convergence_norm must be callable or None")
     budget = settings.budget
     u = np.array(u0, dtype=float, copy=True)
     start = state_digest(u)
@@ -209,12 +218,20 @@ def solve_newton(problem: SteadyProblem, u0: Vector, settings: NewtonSettings) -
             raise ValueError("the residual has the wrong size")
         return values if np.all(np.isfinite(values)) else None
 
+    def measure_norm(values: Vector) -> float:
+        if convergence_norm is None:
+            return float(np.max(np.abs(values)))
+        value = float(convergence_norm(values.copy()))
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError("convergence_norm must return a finite nonnegative scalar")
+        return value
+
     F = evaluate(u)
     if F is None:
         return finish(Termination.NONFINITE_RESIDUAL, math.inf,
                       "the residual is not finite at the start state")
     scaled = settings.scaling.scaled(F)
-    norm = float(np.max(np.abs(scaled)))
+    norm = measure_norm(scaled)
     factor: _Factor | None = None
     fresh = False
     iteration = 0
@@ -280,12 +297,14 @@ def solve_newton(problem: SteadyProblem, u0: Vector, settings: NewtonSettings) -
             return finish(Termination.LINE_SEARCH_FAILED, norm,
                           f"line search failed after {budget.max_backtracks} backtracks at "
                           f"scaled residual {norm:.6g}")
-        previous_norm = norm
+        previous_row_norm = float(np.max(np.abs(scaled)))
         u, F, scaled = accepted_trial
-        norm = float(np.max(np.abs(scaled)))
+        norm = measure_norm(scaled)
         records.append(IterationRecord(iteration, norm, step_inf, alpha, backtracks, fresh))
         # Refresh after any backtracking, and when a reused factor contracts poorly.
-        if backtracks > 0 or (not fresh and norm > _CHORD_CONTRACTION * previous_norm):
+        if backtracks > 0 or (
+            not fresh and float(np.max(np.abs(scaled))) > _CHORD_CONTRACTION * previous_row_norm
+        ):
             factor = None
         fresh = False
         if stagnant >= _STAGNATION_WINDOW and norm > settings.tolerance:

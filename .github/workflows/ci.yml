@@ -177,6 +177,7 @@ jobs:
         run: >-
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
           tests/unit/solvers/test_nonlinear_analytic.py
+          tests/unit/solvers/test_balance_convergence.py
           tests/unit/experiments/test_steady_jv_metrics.py
           tests/unit/experiments/test_operating_points.py
           tests/integration/test_core_1d.py

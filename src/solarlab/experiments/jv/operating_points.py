@@ -17,11 +17,14 @@ from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem
 from solarlab.experiments.jv.steady import SteadyJVResult
 from solarlab.solvers.nonlinear.newton import NewtonResult
 from solarlab.solvers.nonlinear.problem import state_digest
-from solarlab.solvers.nonlinear.production import production_residual_scaling
+from solarlab.solvers.nonlinear.production import (
+    production_convergence_norm, production_residual_scaling,
+)
 from solarlab.solvers.nonlinear.steady_1d import (
     SteadyOptions,
     SteadyState1D,
     SteadyStateError,
+    _physical_gates,
     solve_steady_state,
 )
 
@@ -168,10 +171,17 @@ def _verify_point(
         contact_log_tolerance=controls.contact_log_tolerance,
     )
     residual = scaling.scaled(problem.residual(point.state.u))
-    if not np.all(np.isfinite(residual)) or np.max(np.abs(residual)) > 1.0:
+    norm = production_convergence_norm(compiled, convergence_policy=controls.convergence_policy)
+    if not np.all(np.isfinite(residual)) or (
+        float(np.max(np.abs(residual))) if norm is None else norm(residual)
+    ) > 1.0:
         raise VocBracketError("saved point fails the production residual controls")
     if np.ptp(np.r_[current, contact]) > controls.current_spread_tolerance_A_m2:
         raise VocBracketError("saved point fails the all-face current gate")
+    if any(not gate(point.state.u).passed for gate in _physical_gates(
+        problem, controls, equilibrium=point.voltage_V == 0.0 and generation_scale == 0.0,
+    )):
+        raise VocBracketError("saved point fails a recomputed production physical gate")
 
 
 def solve_direct_voc(
