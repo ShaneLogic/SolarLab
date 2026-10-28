@@ -119,8 +119,8 @@ def test_linear_normalization_is_not_a_finite_amplitude_drive(case):
     np.testing.assert_allclose(scaled.potential_perturbation_V / voltage, result.potential_perturbation_V, rtol=2e-10, atol=1e-12)
 
 
-@pytest.mark.parametrize("contact_kind", ["robin", "selective"])
-def test_finite_and_blocking_contacts_are_explicit_capability_boundaries(contact_kind):
+@pytest.mark.parametrize("contact_kind", ["selective"])
+def test_blocking_contacts_remain_explicit_capability_boundaries(contact_kind):
     prepared = load_device()
     document = prepared.to_input().editing_data()
     if contact_kind == "robin":
@@ -134,7 +134,7 @@ def test_finite_and_blocking_contacts_are_explicit_capability_boundaries(contact
                               prepared.resources, sources=prepared.sources)
     compiled = compile_device_1d(prepared, intervals_per_layer=12)
     point = solve_steady_state(compiled, voltage_V=1.0)
-    with pytest.raises(ValueError, match="requires fixed_reservoir contacts"):
+    with pytest.raises(ValueError, match="unsupported blocking"):
         solve_impedance(compiled, point, [0.0, 1e6])
 
 

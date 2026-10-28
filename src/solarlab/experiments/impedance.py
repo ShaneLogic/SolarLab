@@ -1,4 +1,4 @@
-"""Ion-free classical 1D fixed-reservoir small signal about accepted DC.
+"""Ion-free classical 1D fixed/finite-rate small signal about accepted DC.
 
 Phasors use exp(+i*omega*t). A 1 V normalization describes a derivative,
 not a finite one-volt experiment. Coordinates use the DC state's fixed
@@ -146,13 +146,16 @@ def _particle_perturbations(
         (2 * count, p, fluxes.hole, -1.0, references[1]),
     ):
         drive = sign * np.diff(u[offset:offset + count])
-        left_phi, right_phi = _quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
+        left_phi, _right_phi = _quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
         left_z = sign * flux.left_density_derivative * density[:-1]
-        right_z = sign * flux.right_density_derivative * density[1:]
+        # A uniform Fermi or potential shift scales the particle flux. Group
+        # that exact homogeneity mode before multiplying the large SG slopes.
         result.append(
-            left_phi * x[:count - 1] + right_phi * x[1:count]
-            + left_z * x[offset:offset + count - 1] + right_z * x[offset + 1:offset + count]
-            + sign * reference / device.thermal_voltage_V * flux.flux * voltage
+            left_phi * (x[:count - 1] - x[1:count])
+            + left_z * (x[offset:offset + count - 1] - x[offset + 1:offset + count])
+            + sign * flux.flux * (
+                x[offset + 1:offset + count] + (x[1:count] + reference * voltage) / device.thermal_voltage_V
+            )
         )
     return result[0], result[1]
 
@@ -221,6 +224,8 @@ def _lifted_storage_drive(problem: DC1DProblem, u: np.ndarray, lift: np.ndarray)
     return result
 
 
+
+
 def solve_impedance(
     compiled: CompiledDevice1D,
     operating_point: SteadyState1D,
@@ -232,7 +237,7 @@ def solve_impedance(
     current_absolute_tolerance_A_m2_V: float = 1e-8,
     current_relative_tolerance: float = 1e-10,
 ) -> SmallSignalResult1D:
-    """Actual complex DC linearization for four fixed-reservoir contacts.
+    """Actual complex DC linearization for fixed-reservoir/Robin contacts.
 
     Input fields/gates are revalidated against supplied current controls and
     code. A bare SteadyState1D does not bind complete historical solver/source
@@ -271,8 +276,8 @@ def solve_impedance(
     if not np.array_equal(widths[1:-1], compiled.poisson.interior_widths_m):
         raise ValueError("small signal requires matching carrier and Poisson interior control widths")
     for channel in compiled.channels:
-        if channel.kind != "fixed_reservoir":
-            raise ValueError(f"first small-signal slice requires fixed_reservoir contacts; unsupported {channel.kind}")
+        if channel.kind not in {"fixed_reservoir", "robin"}:
+            raise ValueError(f"small-signal slice supports fixed_reservoir/robin contacts; unsupported {channel.kind}")
     source_pins = _sources()
     problem = DC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale)
     u = operating_point.state.u

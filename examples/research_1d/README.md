@@ -286,7 +286,7 @@ Python frequency-domain example below is separate. An actual browser run
 verified the four Plotly views and spatial selection against the real service;
 this does not establish scientific qualification.
 
-## Fixed-contact small-signal response
+## Small-signal response
 
 A separate new-core frequency-domain example linearizes a revalidated DC state:
 
@@ -294,9 +294,11 @@ A separate new-core frequency-domain example linearizes a revalidated DC state:
 .venv/bin/python -B -m examples.research_1d.impedance
 ```
 
-It runs this device at 1 V DC and requests 0, 1 and 1000 Hz. The four carrier
-contact channels must be `fixed_reservoir`; finite-rate and blocking contacts
-are explicitly rejected in this first slice. The same DC Jacobian and carrier
+It runs this device at 1 V DC and requests 0, 1 and 1000 Hz. Carrier contact
+channels may be `fixed_reservoir` or finite-rate `robin`; blocking contacts
+are explicitly rejected in this slice. A separate 37-node Robin case was
+verified at 0, 1, 1000 and 1e6 Hz, including both-terminal DC derivatives and
+the contact-cell displacement contribution. The same DC Jacobian and carrier
 storage derivatives supply a complex sparse solve. Returned arrays include
 potential, electric field, carrier-density perturbations, conduction and
 displacement currents, and both terminal currents.
