@@ -11,6 +11,7 @@ import time
 import pytest
 
 from examples.research_1d.process_transient import example_job, source_build
+from examples.research_1d.service import committed_implementation
 from solarlab.experiments.execution import ProcessSupervisor
 from solarlab.experiments.transient_worker import read_transient_job, transient_worker_binding
 from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerRequest, WorkerResult
@@ -50,7 +51,11 @@ def implementation():
     if commit is None:
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=5).strip()
     archive = os.environ.get("SOLARLAB_TRANSIENT_SOURCE_ARCHIVE")
-    return source_build(commit, Path(archive) if archive else None)
+    if archive or os.environ.get("SOLARLAB_TRANSIENT_SOURCE_COMMIT"):
+        return source_build(commit, Path(archive) if archive else None)
+    # Shared pytest collection also loads AC and ionic modules. Bind the whole
+    # committed installation rather than the standalone example subset.
+    return committed_implementation(commit)
 
 
 @pytest.fixture(scope="module")
@@ -201,17 +206,35 @@ def test_invalid_request_and_unobserved_caps_fail_before_native_work(tmp_path, j
 
 
 def test_actual_running_transient_cancellation_closes_owner_without_publication(tmp_path, job):
+    from solarlab.experiments.transient import TransientOptions, TransientProtocol
+    from solarlab.experiments.transient_worker import prepare_transient_job
+    from solarlab.solvers.nonlinear.problem import SolveBudget
+    from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
+
+    # Keep a real calculation running after coalesced progress reaches the
+    # parent. The two-step smoke case can finish before cancellation is issued.
+    body = json.loads(job.request.request.content)
+    times = [i * 1e-7 for i in range(33)]
+    options = TransientOptions(**{**body["transient_options"],
+        "newton_budget": SolveBudget(**body["transient_options"]["newton_budget"])})
+    job = prepare_transient_job(job.execution.inputs.prepared,
+        TransientProtocol(times, [0.] * 33, [1. + .01 * (i / 32) ** 2 for i in range(33)]),
+        intervals_per_layer=body["intervals_per_layer"], options=options,
+        initial_options=SteadyOptions(**body["initial_options"]),
+        implementation=job.execution.execution.implementation,
+        current_repository_head=job.execution.execution.current_repository_head,
+        engine=job.execution.engine)
     root = Path(os.environ.get("SOLARLAB_TRANSIENT_PROCESS_CANCEL_STORE", str(tmp_path / "store")))
     with RunStore(root) as store, pool(store, root.parent / "cancel-work", soft_grace_seconds=.05) as supervisor:
         handle = job.submit(supervisor, "transient-cancelled", limits())
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if any(e["payload"].get("ui_progress", {}).get("stage") == "transient_initial_dc"
+            if any(e["payload"].get("ui_progress", {}).get("stage") in {"transient_initial_dc", "transient_time_steps"}
                    for e in store.events(run_id=handle.run_id, limit=1000)):
                 break
             time.sleep(.005)
         else:
-            raise AssertionError("real child did not reach cold initial DC")
+            raise AssertionError("real child did not expose numerical progress before cancellation")
         assert supervisor.cancel(handle)
         receipt = supervisor.wait(handle, 10).data
         assert receipt["store_state"] == "cancelled" and receipt["terminal_committed"]
