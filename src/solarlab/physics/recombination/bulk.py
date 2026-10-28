@@ -95,7 +95,7 @@ def lifetime_srh_from_denominator(
     numerator = n * p - ni_sq
     with np.errstate(invalid="ignore"):
         rate = numerator / denominator
-    rate = np.where(blocked, 0.0, rate)
+    rate = np.where(blocked, np.copysign(0.0, np.real(numerator)), rate)
     if not derivatives:
         return _result(rate, None, None)
     with np.errstate(invalid="ignore"):
