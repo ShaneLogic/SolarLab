@@ -117,6 +117,8 @@ only-include = [
     ".gitignore",
     "pyproject.toml",
     "uv.lock",
+    "examples/research_1d",
+    "tests/integration/test_research_1d_workflow.py",
     "src/solarlab",
     "src/solarlab_research",
     "src/solarlab_server",

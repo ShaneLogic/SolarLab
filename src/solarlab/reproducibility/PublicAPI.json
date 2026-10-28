@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for WS2 modules and current companion-package consumers; private helpers are not cross-package API.",
+  "scope": "Closed public symbols for configuration, companion consumers and the implemented ion-free classical 1D DC research workflow; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -233,6 +233,38 @@
       "RegistryMapping",
       "prepare_registry_mapping",
       "read_registry_mapping"
+    ],
+    "solarlab.device.compile_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "compile_device_1d"
+    ],
+    "solarlab.equations": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D"
+    ],
+    "solarlab.equations.dc_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D"
+    ],
+    "solarlab.solvers.nonlinear.steady_1d": [
+      "SteadyOptions",
+      "SteadyState1D",
+      "SteadyStateError",
+      "solve_equilibrium",
+      "solve_steady_state"
+    ],
+    "solarlab.solvers.nonlinear.production": [
+      "production_coordinates",
+      "production_residual_scaling",
+      "production_steady_problem",
+      "production_steady_linearization"
     ]
   },
   "public_imports": {
@@ -523,6 +555,50 @@
     "solarlab.experiments.results": [
       "array_schema",
       "result_schema"
+    ],
+    "solarlab.device.compile_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "compile_device_1d"
+    ],
+    "solarlab.equations": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D"
+    ],
+    "solarlab.equations.dc_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D"
+    ],
+    "solarlab.solvers.nonlinear.steady_1d": [
+      "SteadyOptions",
+      "SteadyState1D",
+      "SteadyStateError",
+      "solve_equilibrium",
+      "solve_steady_state"
+    ],
+    "solarlab.solvers.nonlinear.production": [
+      "production_coordinates",
+      "production_residual_scaling",
+      "production_steady_linearization",
+      "production_steady_problem"
+    ],
+    "solarlab.experiments.jv.steady": [
+      "SteadyJVMetrics",
+      "SteadyJVResult",
+      "steady_jv_metrics",
+      "run_steady_jv",
+      "publish_steady_jv",
+      "read_steady_jv"
+    ],
+    "solarlab.sweeps.steady": [
+      "SteadySweepPoint",
+      "run_prepared_steady_sweep"
     ]
   },
   "checked_consumers": [

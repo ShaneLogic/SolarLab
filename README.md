@@ -47,6 +47,15 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 
 ## Overview
 
+**New-core development on `devel`:** the [1D research workflow](examples/research_1d/README.md)
+runs configuration, a real Poisson/drift-diffusion assembly, the new steady
+Newton solver, J–V, parameter sweeps and lossless result reading. It includes
+an executable local recombination-model extension. This verified execution
+slice supports ion-free classical DC; mesh/voltage-grid scientific acceptance
+and the remaining refactor are in progress. The broader application features
+described below include the existing `perovskite_sim` engine and do not imply
+that those capabilities have migrated to the new core.
+
 **SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver, with an experimental two-dimensional extension for lateral microstructure studies, backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
 
 It reproduces the main thin-film characterisation experiments from a single device definition, grouped into four families:
