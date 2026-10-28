@@ -915,6 +915,10 @@ class SlabPathObserver:
     def tangent_metal_flux(self, arithmetic, coordinate, analytic=False):
         """Closed form of the constant Dirichlet Poisson tangent action."""
         carrier, ion = self.fluxes(arithmetic, coordinate, analytic)
+        return self._tangent_metal_from_fluxes(arithmetic, carrier, ion)
+
+    def _tangent_metal_from_fluxes(self, arithmetic, carrier, ion):
+        """Reduce one already evaluated local flux tuple without changing it."""
         number = arithmetic.number
         total = [j+number(self.q)*f for j, f in zip(carrier, ion, strict=True)]
         charge_rates = [number(-self.q*self.area)*ion[0]]
@@ -937,10 +941,15 @@ class SlabPathObserver:
     def physical_charge_flux(self, arithmetic, coordinate, analytic=False):
         """Independent body and metal F in A, including both metal terms."""
         a = arithmetic
-        carrier, _ = self.fluxes(a, coordinate, analytic)
+        carrier, ion = self.fluxes(a, coordinate, analytic)
         body = (a.number(self.area)*(carrier[0]-carrier[-1])
                 +a.polynomial(self.capture_charge_rate[0]+self.capture_charge_rate[-1],coordinate))
-        metal = self.tangent_metal_flux(a,coordinate,analytic)
+        tangent = self.tangent_metal_flux
+        if getattr(tangent, "__func__", None) is SlabPathObserver.tangent_metal_flux:
+            metal = self._tangent_metal_from_fluxes(a, carrier, ion)
+        else:
+            # Preserve existing instance/subclass overrides of the public path.
+            metal = tangent(a, coordinate, analytic)
         return (body, *(flux+a.polynomial(poly,coordinate) for flux,poly in
                         zip(metal,self.tangent_metal_polynomial,strict=True)))
 
