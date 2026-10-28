@@ -272,6 +272,40 @@
       "VocBracketError",
       "VocFailure",
       "solve_direct_voc"
+    ],
+    "solarlab.physics.ions": [
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "WHOLE_FLUX_STERIC_V1",
+      "IonFaceFluxJacobian",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric",
+      "shared_site_densities",
+      "shared_site_fractions",
+      "shifted_logistic_density",
+      "single_site_density"
+    ],
+    "solarlab.physics.ions.migration": [
+      "WHOLE_FLUX_STERIC_V1",
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "IonFaceFluxJacobian",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg"
+    ],
+    "solarlab.physics.ions.finite_site": [
+      "single_site_density",
+      "shifted_logistic_density",
+      "shared_site_fractions",
+      "shared_site_densities"
     ]
   },
   "public_imports": {
@@ -613,6 +647,40 @@
       "VocBracketError",
       "VocFailure",
       "solve_direct_voc"
+    ],
+    "solarlab.physics.ions": [
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "IonFaceFluxJacobian",
+      "WHOLE_FLUX_STERIC_V1",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric",
+      "shared_site_densities",
+      "shared_site_fractions",
+      "shifted_logistic_density",
+      "single_site_density"
+    ],
+    "solarlab.physics.ions.migration": [
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "IonFaceFluxJacobian",
+      "WHOLE_FLUX_STERIC_V1",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric"
+    ],
+    "solarlab.physics.ions.finite_site": [
+      "shared_site_densities",
+      "shared_site_fractions",
+      "shifted_logistic_density",
+      "single_site_density"
     ]
   },
   "checked_consumers": [
