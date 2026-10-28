@@ -1,8 +1,8 @@
-"""Explicit legacy execution registrations over the existing P03/P06 contracts.
+"""Explicit execution registrations over the existing P03/P06 contracts.
 
 Factories and source bindings are supplied by trusted application code, never
-by HTTP. Core declaration compatibility does not authorize the new engine.
-This first route adapter invokes only the accepted legacy facade.
+by HTTP. Declaration compatibility alone never authorizes execution: legacy
+drivers and the single classical steady adapter require separate installation.
 """
 from __future__ import annotations
 
@@ -19,11 +19,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from solarlab.experiments.execution import JobHandle, ProcessSupervisor
+from solarlab.experiments.jv.worker import SteadyJVJob, steady_jv_worker_binding
 from solarlab.experiments.registry import ExperimentRegistry
 from solarlab.experiments.worker import ManifestBinding, ResourceLimits, RunSpec, WorkerBinding, WorkerRequest
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.registry import ModelRegistry, metadata_digest
 from solarlab_server.legacy_engine import LegacyJob, legacy_worker_binding
+from solarlab_server.steady_preparation import SteadyJobInput, SteadyPreparationContext, prepare_steady_input
 
 
 def canonical(value: Any) -> bytes:
@@ -59,6 +61,7 @@ class LegacyRegistration:
     prepare: Callable[[Any], LegacyJob]
     legacy_kinds: tuple[str, ...] = ()
     synchronous_paths: tuple[str, ...] = ()
+    engine: Literal["legacy"] = field(default="legacy", init=False)
 
     def __post_init__(self) -> None:
         if self.driver not in {"scaps_transient", "scaps_steady_state", "ion_hysteresis"}:
@@ -75,13 +78,30 @@ class LegacyRegistration:
 
 
 @dataclass(frozen=True, slots=True)
+class SteadyRegistration:
+    """Only the installed steady adapter; no HTTP-selectable Python factory."""
+
+    experiment_id: str
+    version: int
+    context: SteadyPreparationContext
+    engine: Literal["solarlab"] = field(default="solarlab", init=False)
+    input_type: type[SteadyJobInput] = field(default=SteadyJobInput, init=False)
+    legacy_kinds: tuple[str, ...] = field(default=(), init=False)
+    synchronous_paths: tuple[str, ...] = field(default=(), init=False)
+
+    def __post_init__(self) -> None:
+        if type(self.context) is not SteadyPreparationContext:
+            raise ValueError("steady registration requires the actual trusted preparation context")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionCatalog:
-    """A source-checked table of explicit compatibility routes, not a new registry."""
+    """A source-checked table over the existing experiment/model declarations."""
 
     registry: ExperimentRegistry
     models: ModelRegistry
     sources: tuple[SourceDocument, ...]
-    registrations: tuple[LegacyRegistration, ...]
+    registrations: tuple[LegacyRegistration | SteadyRegistration, ...]
     expected_registry_sha256: str
     expected_model_sha256: str
     ceiling: ResourceLimits
@@ -91,7 +111,8 @@ class ExecutionCatalog:
     def __post_init__(self) -> None:
         object.__setattr__(self, "sources", tuple(self.sources))
         object.__setattr__(self, "registrations", tuple(self.registrations))
-        if type(self.ceiling) is not ResourceLimits or not self.registrations:
+        if (type(self.ceiling) is not ResourceLimits or not self.registrations
+                or any(type(r) not in {LegacyRegistration, SteadyRegistration} for r in self.registrations)):
             raise ValueError("explicit route registrations and a resource ceiling are required")
         keys = [(r.experiment_id, r.version) for r in self.registrations]
         aliases = [a for r in self.registrations for a in (*r.legacy_kinds, *r.synchronous_paths)]
@@ -104,62 +125,106 @@ class ExecutionCatalog:
             "registry_sha256": self.registry.content_sha256, "model_registry_sha256": self.models.content_sha256,
             "job_schema_sha256": self.schema.sha256, "resource_ceiling": asdict(self.ceiling),
             "legacy_facade_sha256": legacy_worker_binding().source_sha256,
-            "bindings": [{"experiment_id": r.experiment_id, "version": r.version, "engine": "legacy",
-                "driver": r.driver, "input_schema": r.input_type.model_json_schema(),
-                "legacy_kinds": list(r.legacy_kinds), "synchronous_paths": list(r.synchronous_paths),
-                "scope": "legacy_compatibility", "scientific_qualification": False} for r in self.registrations]})))
+            "bindings": [self._entry(r) for r in self.registrations]})))
+
+    def _models(self, registration: LegacyRegistration | SteadyRegistration) -> ModelRegistry:
+        return registration.context.models if isinstance(registration, SteadyRegistration) else self.models
+
+    def _entry(self, registration: LegacyRegistration | SteadyRegistration) -> dict[str, Any]:
+        entry = {"experiment_id": registration.experiment_id, "version": registration.version,
+            "engine": registration.engine, "input_schema": registration.input_type.model_json_schema(),
+            "model_registry_sha256": self._models(registration).content_sha256,
+            "legacy_kinds": list(registration.legacy_kinds),
+            "synchronous_paths": list(registration.synchronous_paths), "scientific_qualification": False}
+        if isinstance(registration, LegacyRegistration):
+            entry.update(driver=registration.driver, scope="legacy_compatibility")
+        else:
+            entry.update(driver="steady_jv", scope="static_classical_ion_free_1d_dc",
+                preparation_context=registration.context.export(),
+                worker_source_sha256=steady_jv_worker_binding().source_sha256)
+        return entry
 
     def verify(self) -> None:
-        self.registry.verify_startup(self.models, tuple((s.id, s.content) for s in self.sources),
-            expected_sha256=self.expected_registry_sha256, expected_model_sha256=self.expected_model_sha256)
+        if self.registry.content_sha256 != self.expected_registry_sha256:
+            raise ValueError("experiment registry changed from the expected frozen identity")
+        sources = tuple((s.id, s.content) for s in self.sources)
+        self.models.verify_sources(sources, expected_sha256=self.expected_model_sha256)
+        by_key = {(r.experiment_id, r.version): r for r in self.registrations}
+        # A mixed catalog must not relabel the steady worker's registry as the
+        # legacy registry (or vice versa). Uninstalled declarations still get
+        # the original startup verification against the catalog's base models.
+        for definition in self.registry.definitions:
+            registration = by_key.get((definition.id, definition.version))
+            models = self.models if registration is None else self._models(registration)
+            declared = ExperimentRegistry((definition,))
+            declared.verify_startup(models, sources, expected_sha256=declared.content_sha256,
+                                    expected_model_sha256=models.content_sha256)
         for registration in self.registrations:
             definition = self.registry.get(registration.experiment_id, registration.version)
-            source = Path(inspect.getfile(registration.prepare)).read_bytes()
+            factory = registration.prepare if isinstance(registration, LegacyRegistration) else prepare_steady_input
+            source = Path(inspect.getfile(factory)).read_bytes()
             if (definition.protocol_builder.sha256 != hashlib.sha256(source).hexdigest()
-                    or definition.protocol_builder.id.partition("#")[2] != registration.prepare.__name__
+                    or definition.protocol_builder.id.partition("#")[2] != factory.__name__
                     or definition.parameter_schema.sha256 != metadata_digest(registration.input_type.model_json_schema())):
                 raise ValueError("loaded preparation/schema differs from the frozen registry")
 
-    def worker_binding(self) -> WorkerBinding:
-        from solarlab_server.registered_worker import run_legacy
-        return WorkerBinding.from_function("registered_legacy", run_legacy,
+    def worker_binding(self, engine: Literal["legacy", "solarlab"] = "legacy") -> WorkerBinding:
+        from solarlab_server.registered_worker import run_legacy, run_steady
+        if not any(r.engine == engine for r in self.registrations):
+            raise ValueError("engine has no explicit installed execution registration")
+        id, function = ("registered_legacy", run_legacy) if engine == "legacy" else ("registered_steady", run_steady)
+        return WorkerBinding.from_function(id, function,
             registry_sha256=self.document.sha256, schema_sha256=self.schema.sha256)
 
     def prepare(self, submission: JobSubmission) -> tuple[RunSpec, ManifestBinding]:
         self.verify()
-        if submission.engine != "legacy":
-            raise ValueError("new-engine execution is not admitted; legacy fallback is forbidden")
         registration = next((r for r in self.registrations if (r.experiment_id, r.version) ==
                              (submission.experiment_id, submission.version)), None)
         if registration is None:
-            raise ValueError("experiment has no migrated legacy execution registration")
+            raise ValueError("experiment has no explicit installed execution registration")
+        if submission.engine != registration.engine:
+            raise ValueError("engine differs from the installed registration; fallback is forbidden")
         limits = ResourceLimits(**submission.limits.model_dump())
         for key, maximum in asdict(self.ceiling).items():
             value = getattr(limits, key)
             if maximum is not None and (value is None or value > maximum):
                 raise ValueError("requested budget exceeds the service ceiling: " + key)
-        model = registration.input_type.model_validate(submission.input)
-        job = registration.prepare(model)
-        if type(job) is not LegacyJob or job.execution.engine.name != "legacy":
-            raise ValueError("registered factory did not prepare the explicit legacy facade")
-        behavior = job.execution.engine.behavior
-        if behavior is None or getattr(behavior, "driver", None) != registration.driver:
-            raise ValueError("registered driver differs from the complete execution manifest")
-        if job.execution.inputs.registry.content_sha256 != self.expected_model_sha256:
+        job: LegacyJob | SteadyJVJob
+        if isinstance(registration, LegacyRegistration):
+            model = registration.input_type.model_validate(submission.input)
+            job = registration.prepare(model)
+            if type(job) is not LegacyJob or job.execution.engine.name != "legacy":
+                raise ValueError("registered factory did not prepare the explicit legacy facade")
+            behavior = job.execution.engine.behavior
+            if behavior is None or getattr(behavior, "driver", None) != registration.driver:
+                raise ValueError("registered driver differs from the complete execution manifest")
+            worker_id, request_kind = "registered_legacy", "legacy"
+            extra: dict[str, Any] = {}
+        else:
+            if limits.accepted_steps is not None or limits.calls is not None:
+                raise ValueError("steady worker counters are unobserved; accepted_steps/calls budgets are unsupported")
+            steady_input = SteadyJobInput.model_validate(submission.input)
+            job = prepare_steady_input(steady_input, registration.context)
+            if type(job) is not SteadyJVJob or job.execution.engine.name != "solarlab":
+                raise ValueError("registered preparation did not return the explicit steady worker")
+            worker_id, request_kind = "registered_steady", "steady"
+            extra = {"device_id": steady_input.device_id}
+        models = self._models(registration)
+        if job.execution.inputs.registry.content_sha256 != models.content_sha256:
             raise ValueError("prepared model registry differs from the server registry")
         preflight = self.registry.preflight(submission.experiment_id, submission.version,
-            job.execution.inputs.selection, self.models)
+            job.execution.inputs.selection, models)
         if not preflight.declared_compatible:
             raise ValueError("experiment capability refused: " + "; ".join(preflight.declared_problems))
-        # This is an explicit legacy compatibility route. The core preflight's
-        # can_execute=False and unavailable new engine remain unchanged.
-        payload = SourceDocument("solarlab.registered-legacy-request.v1", canonical({
-            "experiment_id": submission.experiment_id, "version": submission.version, "engine": "legacy",
-            "legacy_request_id": job.request.request.id,
-            "legacy_request_base64": base64.b64encode(job.request.request.content).decode()}))
+        # The explicit installation admits this adapter only; declaration
+        # can_execute and scientific qualification are not changed.
+        payload = SourceDocument(f"solarlab.registered-{request_kind}-request.v1", canonical({
+            "experiment_id": submission.experiment_id, "version": submission.version, "engine": submission.engine,
+            f"{request_kind}_request_id": job.request.request.id,
+            f"{request_kind}_request_base64": base64.b64encode(job.request.request.content).decode(), **extra}))
         request = WorkerRequest(payload, self.document, self.schema, job.request.execution_identity,
                                 job.request.H_input, job.request.H_physics)
-        return RunSpec.from_binding("registered_legacy", request, limits, job.execution), job.execution
+        return RunSpec.from_binding(worker_id, request, limits, job.execution), job.execution
 
 
 @dataclass(frozen=True, slots=True)

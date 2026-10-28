@@ -9,9 +9,10 @@ separate integration work.
 
 Runs and attempt records include stored opaque execution metadata and results.
 Event pages span a run's history; SSE URLs explicitly select one attempt.
-Submission requires an explicit source-checked legacy execution catalog.
+Submission requires an explicit source-checked execution catalog.
 Server shutdown and subscriber disconnect never cancel the external owner.
-Unregistered experiments and the new scientific engine remain unavailable.
+Only installed legacy routes and the classical steady adapter are admitted;
+unregistered experiments and broader scientific qualification are unavailable.
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def create_app(
     ``Last-Event-ID`` precedence. Artifact bodies are exact validated bytes.
     Preview POSTs resolve DTOs only when the caller supplies trusted catalog
     and resource data through ``configuration_preview``; they never execute.
-    ``job_service`` explicitly adds checked legacy submissions through an
+    ``job_service`` explicitly adds checked installed submissions through an
     existing shared supervisor. Its lifecycle is owned by the caller.
     """
     if type(event_page_size) is not int or not 1 <= event_page_size <= 1000:

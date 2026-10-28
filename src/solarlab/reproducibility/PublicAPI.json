@@ -315,7 +315,10 @@
       "SteadyJVJob",
       "prepare_steady_jv_job",
       "steady_jv_worker_binding",
-      "read_steady_jv_job"
+      "read_steady_jv_job",
+      "run_steady_jv_worker",
+      "steady_jv_identity_inputs",
+      "validate_steady_jv_scope"
     ]
   },
   "public_imports": {
@@ -701,7 +704,10 @@
       "SteadyJVJob",
       "prepare_steady_jv_job",
       "steady_jv_worker_binding",
-      "read_steady_jv_job"
+      "read_steady_jv_job",
+      "run_steady_jv_worker",
+      "steady_jv_identity_inputs",
+      "validate_steady_jv_scope"
     ]
   },
   "checked_consumers": [

@@ -36,7 +36,8 @@ if TYPE_CHECKING:
     from solarlab.io.run_store import RunStore
 
 __all__ = ["SteadyJVProtocol", "SteadyJVJob", "prepare_steady_jv_job",
-           "steady_jv_worker_binding", "read_steady_jv_job"]
+           "steady_jv_worker_binding", "read_steady_jv_job", "run_steady_jv_worker",
+           "steady_jv_identity_inputs", "validate_steady_jv_scope"]
 
 _ID = "steady_jv"
 _SCHEMA = SourceDocument("solarlab.steady-jv.worker-request.v1", b'{"engine":"solarlab","fields":["schema","engine","prepared_sha256","protocol"],"schema":"solarlab.steady-jv.worker-request.v1"}')
@@ -120,7 +121,8 @@ class SteadyJVProtocol:
         object.__setattr__(self, "voltage_V", tuple(float(v) for v in values))
 
 
-def _static_scope(prepared: PreparedDevice) -> None:
+def validate_steady_jv_scope(prepared: PreparedDevice) -> None:
+    """Refuse unsupported configured physics before numerical preparation."""
     from solarlab.device.compile_1d import _unsupported
 
     if type(prepared) is not PreparedDevice:
@@ -129,7 +131,8 @@ def _static_scope(prepared: PreparedDevice) -> None:
     _unsupported(prepared, prepared.to_mapping(), tuple(p for p in prepared.layers if p.role != "substrate"))
 
 
-def _inputs(prepared: PreparedDevice, implementation: BuildSource) -> IdentityInputs:
+def steady_jv_identity_inputs(prepared: PreparedDevice, implementation: BuildSource) -> IdentityInputs:
+    """Bind the actual prepared input and compiler source to classical models."""
     source = next((item for item in implementation.files if item.id == "solarlab/device/compile_1d.py"), None)
     if source is None:
         raise ValueError("the actual core compiler source must be bound")
@@ -195,8 +198,8 @@ def prepare_steady_jv_job(prepared: PreparedDevice, protocol: SteadyJVProtocol, 
         raise ValueError("the steady worker requires the explicit solarlab engine")
     if type(protocol) is not SteadyJVProtocol or type(implementation) is not BuildSource:
         raise ValueError("explicit steady protocol and actual implementation sources required")
-    _static_scope(prepared)
-    inputs = _inputs(prepared, implementation)
+    validate_steady_jv_scope(prepared)
+    inputs = steady_jv_identity_inputs(prepared, implementation)
     settings = tuple(sorted((name, "1") for name in _THREADS))
     environment = RuntimeEnvironment(platform.python_implementation(), platform.python_version(),
         platform.system(), platform.machine(), tuple((name, importlib.metadata.version(name)) for name in _PACKAGES),
@@ -216,11 +219,12 @@ def prepare_steady_jv_job(prepared: PreparedDevice, protocol: SteadyJVProtocol, 
 
 
 def steady_jv_worker_binding() -> WorkerBinding:
-    return WorkerBinding.from_function(_ID, _run_steady_jv, registry_sha256=_REGISTRY.sha256,
+    return WorkerBinding.from_function(_ID, run_steady_jv_worker, registry_sha256=_REGISTRY.sha256,
                                        schema_sha256=_SCHEMA.sha256)
 
 
-def _run_steady_jv(request: WorkerRequest, worker: WorkerContext) -> WorkerResult:
+def run_steady_jv_worker(request: WorkerRequest, worker: WorkerContext) -> WorkerResult:
+    """Run the explicitly bound cold job using the supplied existing context."""
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
     body = json.loads(request.request.content)
@@ -229,8 +233,8 @@ def _run_steady_jv(request: WorkerRequest, worker: WorkerContext) -> WorkerResul
     if body != _body(prepared, protocol):
         raise ValueError("request differs from the explicit prepared steady invocation")
     _verify_sources(binding.execution)
-    _static_scope(prepared)
-    expected = _inputs(prepared, binding.execution.implementation)
+    validate_steady_jv_scope(prepared)
+    expected = steady_jv_identity_inputs(prepared, binding.execution.implementation)
     if (input_identity(expected).sha256 != request.H_input or physics_identity(expected).sha256 != request.H_physics
             or any(getattr(binding.execution, name) != value for name, value in
                    _roles(prepared, protocol, binding.execution.implementation).items())):
