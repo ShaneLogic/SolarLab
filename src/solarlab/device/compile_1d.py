@@ -14,7 +14,7 @@ from collections.abc import Sequence
 import hashlib
 import json
 import math
-from typing import Any
+from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
 
@@ -50,6 +50,39 @@ from solarlab.physics.recombination.reaction import (
 from solarlab.physics.transport import legacy_face_diffusivity
 
 __all__ = ["CapabilityError", "CompiledDevice1D", "compile_device_1d"]
+
+
+class _LayerScalars(TypedDict):
+    """Resolved scalar fields consumed by this supported DC binding."""
+
+    chi: float
+    Eg: float
+    Nc300: float
+    Nv300: float
+    ni: float
+    n1: float
+    p1: float
+    mu_n: float
+    mu_p: float
+    B_rad: float
+    v_th: float
+    N_A: float
+    N_D: float
+    N_A_bulk: float | None
+    N_D_bulk: float | None
+    doping_profile_shape: str | None
+    doping_decay_length: float | None
+    doping_edge: str
+    mu_T_gamma: float
+    B_rad_T_gamma: float
+    varshni_alpha: float
+    varshni_beta: float
+    Eg_back: float | None
+    chi_back: float | None
+    grading_profile: Literal["linear", "parabolic", "exponential"]
+    grading_direction: Literal["front_to_back", "back_to_front"]
+    grading_bowing: float
+    grading_char_length: float | None
 
 
 def _unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[PreparedLayer, ...]) -> None:
@@ -120,10 +153,14 @@ def _unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[P
 
 
 def _layer_input(layer: PreparedLayer) -> LayerParameterInput:
-    p = dict(layer.parameters)
+    parameters = dict(layer.parameters)
     for name in ("chi", "Eg", "Nc300", "Nv300", "ni", "eps_r", "mu_n", "mu_p"):
-        if p[name] is None or not math.isfinite(float(p[name])) or float(p[name]) <= 0.0:
+        value = parameters[name]
+        if value is None or not math.isfinite(float(value)) or float(value) <= 0.0:
             raise CapabilityError(f"layers.{layer.id}.{name}: classical 1D DC requires a finite positive value")
+    # Preparation has resolved the full scalar schema; the binding objects
+    # below validate their model-specific domains. This cast changes no values.
+    p = cast(_LayerScalars, parameters)
     return LayerParameterInput(
         name=layer.id, role=layer.role, thickness_m=layer.thickness,
         electron_affinity_eV=p["chi"], band_gap_eV=p["Eg"],
@@ -241,7 +278,7 @@ def compile_device_1d(
     fermi = -work_left - phi_left
     reference_n = binding.conduction_dos_m3 * np.exp((fermi + reference_phi + bands.physical_electron_affinity_eV) / binding.thermal_voltage_V)
     reference_p = binding.valence_dos_m3 * np.exp(-(fermi + reference_phi + bands.physical_electron_affinity_eV + bands.physical_band_gap_eV) / binding.thermal_voltage_V)
-    reservoirs = [doping_equilibrium_densities(binding.donor_density_m3[node], binding.acceptor_density_m3[node], configured[node]) for node in (0, -1)]
+    reservoirs = [doping_equilibrium_densities(float(binding.donor_density_m3[node]), float(binding.acceptor_density_m3[node]), float(configured[node])) for node in (0, -1)]
     for node, reservoir in zip((0, -1), reservoirs):
         reference_n[node], reference_p[node] = reservoir
     contacts = {entry["side"]: entry for entry in data["contacts"]}
