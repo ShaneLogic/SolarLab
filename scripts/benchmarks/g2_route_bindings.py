@@ -154,9 +154,18 @@ def effective_issues(request, ancestor, case, plan):
     check(request["physical_tolerance_policy"]["profile"] == case["profile"], "profile_mismatch")
     expected_controls = dict(ancestor["controls"], max_step=plan["protocol"]["max_step_s"])
     check(request["controls"] == expected_controls, "only_declared_max_step_control_change")
+    source_rebound = False
+    if "g2_source_rebinding" in request:
+        base = build_effective_request(ancestor, case,
+            source_commit=plan["source_freeze"]["future_execution_commit"],
+            generation_plan_sha256=plan["source_freeze"]["generation_plan_sha256"],
+            gate_spec=plan["definitions"]["gate_spec"])
+        source_rebound = digest(request) == digest(rebind_effective_source(base))
+        check(source_rebound, "effective_source_rebinding_changed")
     for key in ("numeric_packet", "voltage_lift_map", "z0", "zdot0", "budgets", "original_budgets",
                 "segments", "observation_times", "quadrature", "physical_tolerance_policy"):
-        check(digest(request[key]) == digest(ancestor[key]), "saved_physical_input_changed:" + key)
+        check(key == "voltage_lift_map" and source_rebound or digest(request[key]) == digest(ancestor[key]),
+              "saved_physical_input_changed:" + key)
     for key in ("physical_handoff_words_hex", "physical_rate_handoff_words_hex"):
         check(request["initial_segment_frame"][key] == ancestor["initial_segment_frame"][key], "initial_words_changed:" + key)
     policy = request.get("certificate_failure_policy")
@@ -472,6 +481,79 @@ def build_effective_request(ancestor, case, *, source_commit, generation_plan_sh
                 "initial_preparation", "preparation_context_sha256", "initial_segment_frame"):
         require(digest(request[key]) == digest(ancestor[key]), "generated_initial_or_physics_changed:" + key)
     return request
+
+
+def rebind_effective_source(request):
+    """Rebuild source-dependent identities, proving the saved physical words unchanged.
+
+    This explicit N8 probe operation performs the existing non-native initial
+    construction once. It never allocates IDA, changes physical controls, or
+    grants execution. The old effective input remains immutable ancestry.
+    """
+    from scripts.benchmarks import coupled_device_prototype as kernel
+    from scripts.benchmarks.physical_tolerance import run_segment_count
+    from scripts.benchmarks.native_observation import prepare_interval_observation_policy
+    import numpy as np
+
+    inspect_request(request)
+    require("g2_source_rebinding" not in request and "qualification_policy" not in request
+            and request["numeric_packet"]["intervals"] == 8 and run_segment_count(request) == 2,
+            "source_rebinding_N8_probe_scope")
+    packet = request["numeric_packet"]
+    model = kernel.AffineCoupledSlab(kernel.SlabDefinition(**packet["definition"]), 8)
+    require(digest(model.numeric_packet()) == digest(packet), "source_rebinding_physical_packet")
+    mapping = kernel.AffineVoltageMap(model, mapped_input_profile=request["voltage_lift_map"]["mapped_input_profile"])
+    old_map, new_map = request["voltage_lift_map"], mapping.payload()
+    require(digest({k:v for k,v in old_map.items() if k != "physical_model"})
+            == digest({k:v for k,v in new_map.items() if k != "physical_model"}),
+            "source_rebinding_physical_map")
+    out = deepcopy(request)
+    if digest(old_map) == digest(new_map):
+        kernel.validate_voltage_lift_native_request(mapping, tuple(kernel.ProtocolSegment(**s) for s in out["segments"]), out)
+        return out
+    out.update(voltage_lift_map=new_map, map_identity=mapping.identity,
+        physical_charge_forms={name:model.linear_forms["increment"][name].identity
+                               for name in ("body_charge", "metal_charge")})
+    out["g2_source_rebinding"] = {
+        "schema":"solarlab.g2-route.source-rebinding.v1", "parent_effective_input_sha256":digest(request),
+        "parent_physical_model_identity":old_map["physical_model"],
+        "physical_model_identity":model.source_identity,
+        "executing_kernel_sha256":hashlib.sha256(Path(kernel.__file__).read_bytes()).hexdigest(),
+        "numeric_packet_sha256":digest(packet),
+        "saved_initial_preparation_sha256":digest(request["initial_preparation"]),
+        "physical_controls_and_initial_words_changed":False}
+    # Recreate the original dependency order; retained proofs are ancestry,
+    # while these new records bind the currently executing physical source.
+    for key in ("z0", "zdot0", "actual_initial_identity", "initial_preparation",
+                "preparation_context_sha256", "initial_segment_frame", "interval_observation"):
+        out.pop(key, None)
+    out["segment_frame_policy"] = kernel._segment_frame_policy(out, request["segment_frame_policy"]["name"])
+    out["frame_input_policy"] = kernel._frame_input_policy(out, request["frame_input_policy"]["profile"])
+    context = kernel.AffineSamplingContext(model, out)
+    _, z0, zdot0, initial, frame = kernel.voltage_lift_segment_initialization(
+        mapping, context, context.segments[0], 1, np.zeros(model.layout.size), model.reference)
+    require(digest(z0.tolist()) == digest(request["z0"])
+            and digest(zdot0.tolist()) == digest(request["zdot0"])
+            and initial["point_identity"] == request["actual_initial_identity"],
+            "source_rebinding_initial_state")
+    for key in ("physical_handoff_words_hex", "physical_rate_handoff_words_hex",
+                "native_initial_z_hex", "native_initial_zdot_hex"):
+        require(digest(frame[key]) == digest(request["initial_segment_frame"][key]),
+                "source_rebinding_saved_words:" + key)
+    initial_id_fields = {"request_sha256", "source_identity", "map_identity", "segment_frame_identity", "record_sha256"}
+    require(digest({k:v for k,v in initial.items() if k not in initial_id_fields})
+            == digest({k:v for k,v in request["initial_preparation"].items() if k not in initial_id_fields}),
+            "source_rebinding_initial_evidence")
+    out.update(z0=z0.tolist(), zdot0=zdot0.tolist(), actual_initial_identity=initial["point_identity"],
+        initial_preparation=initial, preparation_context_sha256=context.request_sha256, initial_segment_frame=frame)
+    old_observation = request["interval_observation"]
+    out["interval_observation"] = prepare_interval_observation_policy(out,
+        binding_identity=old_observation["binding_identity"], header_sha256=old_observation["header_sha256"],
+        backend_modules=deepcopy(old_observation["backend_modules"]),
+        charge_refinement=old_observation.get("charge_refinement",{}).get("name"))
+    kernel.validate_voltage_lift_native_request(mapping, context.segments, out)
+    inspect_request(out)
+    return out
 
 
 def committed_request_sources(repository, commit):
