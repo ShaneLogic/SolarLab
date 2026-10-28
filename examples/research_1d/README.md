@@ -683,6 +683,26 @@ failed auxiliary-electronic strategy remain recorded failures. The successful
 direct policy does not run that auxiliary solver. The helper checks wall time
 between stages; use a process supervisor when a hard deadline is required.
 
+## Multiple blocking ion domains
+
+The additive two-domain compiler and equation assembly can be exercised with:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_domains
+```
+
+It prepares two explicitly separated blocking layer domains on one electronic
+mesh, with an ion-free gap. The actual residual, sparse Jacobian and physical
+storage retain each domain's species, inventories and original reference
+populations. Signed ionic charge enters the common Poisson equation; ionic
+particle current is exactly zero at blocking endpoints and through the gap.
+
+Assembly checks cover unequal domain grids, positive and independent dual
+populations, shared finite sites and immobile populations, including shared
+storage derivatives. Existing one-domain behavior is preserved. This example
+evaluates a trial state: coupled multi-domain steady/time solving and final
+scientific qualification are not yet established by this assembly slice.
+
 ## Ionic small-signal response
 
 Use the accepted `Steady.json` from the shared-site example above. AC rechecks

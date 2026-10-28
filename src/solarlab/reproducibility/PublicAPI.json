@@ -466,6 +466,15 @@
       "initialize_ionic_steady_state",
       "write_ionic_initialization",
       "read_ionic_initialization"
+    ],
+    "solarlab.device.compile_multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "compile_multiple_ionic_device_1d"
+    ],
+    "solarlab.equations.multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "MultipleIonic1DProblem",
+      "MultipleIonicState1D"
     ]
   },
   "public_imports": {
@@ -993,6 +1002,15 @@
       "initialize_ionic_steady_state",
       "write_ionic_initialization",
       "read_ionic_initialization"
+    ],
+    "solarlab.device.compile_multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "compile_multiple_ionic_device_1d"
+    ],
+    "solarlab.equations.multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "MultipleIonic1DProblem",
+      "MultipleIonicState1D"
     ]
   },
   "checked_consumers": [
