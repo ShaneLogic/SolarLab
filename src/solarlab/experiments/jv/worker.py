@@ -45,7 +45,8 @@ _REGISTRY = SourceDocument("solarlab.steady-jv.worker-registry.v1", b'{"engine":
 _THREADS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
             "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS", "BLIS_NUM_THREADS")
 _PACKAGES = ("numpy", "scipy", "pydantic", "threadpoolctl")
-_ADAPTERS = ("solarlab/experiments/jv/worker.py", "solarlab/experiments/jv/steady.py")
+_ADAPTERS = ("solarlab/experiments/jv/worker.py", "solarlab/experiments/jv/steady.py",
+             "solarlab/sweeps/steady_worker.py")
 
 
 def _document(name: str, value: Any) -> SourceDocument:
@@ -67,7 +68,7 @@ def _source_path(name: str) -> Path:
 
 def _adapter_sources(implementation: BuildSource) -> list[dict[str, Any]]:
     base = {item.id: item for item in implementation.files}
-    # These two actively authored adapters are bound separately from the
+    # These actively authored adapters are bound separately from the
     # supplied committed core. Never label new author bytes as that commit.
     return [{"id": name, "sha256": source.sha256, "content_hex": source.content.hex(),
              "base_sha256": base[name].sha256 if name in base else None}

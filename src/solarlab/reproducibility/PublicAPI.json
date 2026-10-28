@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers, the ion-free classical 1D DC workflow and fixed-reservoir small signal; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, and fixed/finite-rate small signal; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -336,6 +336,11 @@
       "SmallSignalResult1D",
       "voltage_reference_direction",
       "solve_impedance"
+    ],
+    "solarlab.sweeps.steady_worker": [
+      "SteadySweepJobs",
+      "prepare_steady_sweep_jobs",
+      "read_steady_sweep_jobs"
     ]
   },
   "public_imports": {
@@ -742,6 +747,11 @@
       "SmallSignalResult1D",
       "voltage_reference_direction",
       "solve_impedance"
+    ],
+    "solarlab.sweeps.steady_worker": [
+      "SteadySweepJobs",
+      "prepare_steady_sweep_jobs",
+      "read_steady_sweep_jobs"
     ]
   },
   "checked_consumers": [

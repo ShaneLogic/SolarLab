@@ -216,6 +216,7 @@ jobs:
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
           tests/runtime/test_steady_jv_worker.py
+          tests/runtime/test_steady_sweep_worker.py
           tests/runtime/test_steady_job_routes.py
           tests/runtime/test_legacy_engine.py
           tests/runtime/test_event_service.py

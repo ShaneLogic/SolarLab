@@ -188,6 +188,32 @@ outcome. Invalid requests and cancellation use the existing runtime controls;
 readback never starts a solver. The in-process sweep commands above retain
 their documented execution mode.
 
+For a runnable two-point study on that shared process runtime:
+
+```sh
+.venv/bin/python -B examples/research_1d/process_sweep.py run \
+  --build-source-commit "$(git rev-parse HEAD)" \
+  --store "$HOME/.local/share/solarlab/research_1d/process-demo" \
+  --work "$HOME/.local/share/solarlab/research_1d/process-demo-work"
+```
+
+This uses electron lifetimes of 1 and 2 µs, each with 37 nodes and voltages
+0, 0.05 and 0.1 V. Each point is prepared cold and owns a distinct execution
+manifest. The existing supervisor admits one point at a time by default;
+failed, cancelled and previous attempts remain readable. The JSON prints the
+persisted `declaration` path. Read it later without running a solver:
+
+```sh
+.venv/bin/python -B examples/research_1d/process_sweep.py read \
+  --store "$HOME/.local/share/solarlab/research_1d/process-demo" \
+  --declaration /absolute/path/from/the/run-output.json
+```
+
+The Python APIs are `prepare_steady_sweep_jobs`, `SteadySweepJobs.submit` and
+`read_steady_sweep_jobs` in `solarlab.sweeps.steady_worker`. The short example
+does not bracket Voc; its missing metrics stay null. These process checks
+verify execution and result integrity, not mesh convergence.
+
 ## Local HTTP service
 
 The installed `steady_jv` adapter now uses the same new-core worker through
