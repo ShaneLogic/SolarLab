@@ -7,6 +7,7 @@ retain their existing meaning; successful execution is not qualification.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 import importlib.metadata
 import json
 import math
@@ -296,7 +297,8 @@ def read_steady_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None =
         if name in result["array_payloads"] and item["sha256"] != result["array_payloads"][name]:
             raise ValueError("committed array differs from the child's actual payload")
     manifest = store.read_artifact(by_name["execution_manifest"]["artifact_id"])
-    if SourceDocument("manifest", manifest).sha256 != result["manifest_sha256"]:
+    # Aggregate manifests have their own bound, separate from each source file.
+    if hashlib.sha256(manifest).hexdigest() != result["manifest_sha256"]:
         raise ValueError("committed manifest bytes differ from the execution binding")
     saved = ExecutionManifest(manifest, metadata["execution_manifest"]["current_repository_head"])
     saved_document = saved.export()["document"]
