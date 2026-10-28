@@ -182,6 +182,10 @@ def publish_steady_jv(store: RunStore, token: AttemptToken, result: SteadyJVResu
                              "iterations": point.newton.iteration_count,
                              "preparation_iterations": [step.iteration_count for step in point.preparation],
                              "density_basin_initializations": point.density_basin_initializations,
+                             "density_basin_stages": [
+                                 {"voltage_V": voltage, "generation_scale": generation}
+                                 for voltage, generation in point.density_basin_stages
+                             ],
                              "gates": [asdict(gate) for gate in point.newton.gates]}
                             for point in result.solutions],
         "qualification": "run_completed; final_scientific_acceptance_not_established",

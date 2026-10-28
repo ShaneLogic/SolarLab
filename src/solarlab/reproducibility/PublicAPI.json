@@ -265,6 +265,13 @@
       "production_residual_scaling",
       "production_steady_problem",
       "production_steady_linearization"
+    ],
+    "solarlab.experiments.jv.operating_points": [
+      "DirectVocError",
+      "DirectVocResult",
+      "VocBracketError",
+      "VocFailure",
+      "solve_direct_voc"
     ]
   },
   "public_imports": {
@@ -599,6 +606,13 @@
     "solarlab.sweeps.steady": [
       "SteadySweepPoint",
       "run_prepared_steady_sweep"
+    ],
+    "solarlab.experiments.jv.operating_points": [
+      "DirectVocError",
+      "DirectVocResult",
+      "VocBracketError",
+      "VocFailure",
+      "solve_direct_voc"
     ]
   },
   "checked_consumers": [

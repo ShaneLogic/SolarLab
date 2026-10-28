@@ -63,9 +63,11 @@ voltage samples from 0 to 1.25 V at 0.025 V steps, and unchanged
 `SteadyOptions` thresholds.
 This default is a fast workflow example. Independent refinement found its Jsc
 differs from the 145-node result by 1.27e-4 relative, above the final 1e-4 target.
-The 73/145-node difference is 1.10e-5, but continuum-error qualification remains
-unresolved because the 289-node cold start failed. The default interpolated
-Voc is also a voltage-grid estimate; use direct bracketing for precision work.
+The 73/145-node difference is 1.10e-5. The original 289-node cold start failed;
+the density initialization correction now passes that start under the same
+physical gates, while continuum-error qualification remains unresolved.
+The default interpolated Voc underestimates the base device's directly
+bracketed result by about 1.289 mV, above the final 0.1 mV target.
 The independent base-device probe found opposite output-current signs at
 1.20 and 1.225 V. The saved sweep must demonstrate its own bracket; changing
 parameters can move Voc outside this range. `--voltage-max` and
@@ -132,6 +134,26 @@ identities, H_physics binds its actual compiled result and generation scale,
 and H_execution binds protocol, controls, source and runtime identities.
 Failed curves explicitly have no completed compiled-result binding. These
 identities are not presented as the pending formal registry-release contract.
+
+## Direct open-circuit voltage
+
+For a `compiled` device and the actual `curve` returned by `run_steady_jv`,
+refine its solved current bracket with the new-core equations:
+
+```python
+from solarlab.experiments.jv.operating_points import solve_direct_voc
+
+voc = solve_direct_voc(compiled, curve, voltage_tolerance_V=1e-6)
+print(voc.voltage_V, voc.interval_V, voc.output_current_A_m2)
+```
+
+The reported voltage belongs to a solved state. The returned interval is at
+most the requested width; the endpoint estimate uses the full width as its
+voltage uncertainty control. This replaces the interpolation estimate for Voc
+only. It does not certify mesh error, FF, PCE or an exactly zero numerical
+current. Failed refinement attempts and accepted endpoints remain available
+in the result or error. The API requires a unique actual current bracket and
+retains the curve's solver controls.
 
 ## Adding a local model
 
