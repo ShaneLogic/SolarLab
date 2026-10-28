@@ -16,6 +16,7 @@ from numpy.typing import ArrayLike, NDArray
 
 if TYPE_CHECKING:
     from solarlab.equations import CompiledDevice1D
+    from solarlab.io.artifacts import ArtifactPayload
     from solarlab.io.run_store import AttemptToken, RunStore
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D
 
@@ -141,11 +142,11 @@ def run_steady_jv(
                           compiled.identity, _vector(compiled.nodes_m), asdict(controls))
 
 
-def publish_steady_jv(store: RunStore, token: AttemptToken, result: SteadyJVResult) -> dict[str, Any]:
-    """Publish lossless arrays to an already claimed RunStore attempt.
+def steady_jv_payload(result: SteadyJVResult) -> tuple[dict[str, Any], tuple[tuple[str, ArtifactPayload], ...]]:
+    """Encode the completed curve without claiming or inventing an attempt.
 
-    The caller owns lifecycle completion; this function returns the complete
-    result document and artifact IDs for that existing atomic commit.
+    A supervisor may transfer these named payloads before it publishes them.
+    Actual artifact IDs and attempt fields belong to the publishing owner.
     """
     from solarlab.io.artifacts import array_artifact
 
@@ -163,19 +164,16 @@ def publish_steady_jv(store: RunStore, token: AttemptToken, result: SteadyJVResu
     }
     for name, unit in (("potential_V", "V"), ("electron_density_m3", "m^-3"), ("hole_density_m3", "m^-3")):
         arrays[name] = (np.array([getattr(point.state, name) for point in result.solutions]), unit)
-    records = {name: store.publish(token, name, array_artifact(array, unit=unit,
+    payloads = tuple((name, array_artifact(array, unit=unit,
                  metadata={"schema": "solarlab.steady-jv.v1", "engine": "solarlab",
                            "compiled_identity": result.compiled_identity}))
-               for name, (array, unit) in arrays.items()}
-    return {
+               for name, (array, unit) in arrays.items())
+    document = {
         "schema": "solarlab.steady-jv.v1", "engine": "solarlab", "outcome": "completed",
-        "run_id": token.run_id, "attempt_id": token.attempt_id, "generation": token.generation,
         "protocol": "steady_voltage_continuation", "voltage_polarity": result.voltage_polarity,
         "generation_scale": result.generation_scale, "incident_power_W_m2": result.incident_power_W_m2,
         "compiled_identity": result.compiled_identity, "solver_controls": result.solver_controls,
         "metrics": asdict(result.metrics),
-        "arrays": {name: record["artifact_id"] for name, record in records.items()},
-        "artifact_ids": [record["artifact_id"] for record in records.values()],
         "solver_evidence": [{"voltage_V": point.voltage_V, "accepted": point.newton.accepted,
                              "termination": point.newton.termination.value,
                              "scaled_residual": point.newton.scaled_residual,
@@ -190,6 +188,17 @@ def publish_steady_jv(store: RunStore, token: AttemptToken, result: SteadyJVResu
                             for point in result.solutions],
         "qualification": "run_completed; final_scientific_acceptance_not_established",
     }
+    return document, payloads
+
+
+def publish_steady_jv(store: RunStore, token: AttemptToken, result: SteadyJVResult) -> dict[str, Any]:
+    """Publish the same lossless payload to an already claimed RunStore attempt."""
+    document, payloads = steady_jv_payload(result)
+    records = {name: store.publish(token, name, payload) for name, payload in payloads}
+    return {**document, "run_id": token.run_id, "attempt_id": token.attempt_id,
+            "generation": token.generation,
+            "arrays": {name: record["artifact_id"] for name, record in records.items()},
+            "artifact_ids": [record["artifact_id"] for record in records.values()]}
 
 
 def read_steady_jv(store: RunStore, document: dict[str, Any]) -> dict[str, NDArray[np.float64]]:

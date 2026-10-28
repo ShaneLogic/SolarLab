@@ -211,6 +211,7 @@ jobs:
           uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
           tests/runtime/test_run_store.py
           tests/runtime/test_execution.py
+          tests/runtime/test_steady_jv_worker.py
           tests/runtime/test_legacy_engine.py
           tests/runtime/test_event_service.py
           tests/runtime/test_configuration_schema_service.py

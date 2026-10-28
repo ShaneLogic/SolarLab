@@ -306,6 +306,13 @@
       "shifted_logistic_density",
       "shared_site_fractions",
       "shared_site_densities"
+    ],
+    "solarlab.experiments.jv.worker": [
+      "SteadyJVProtocol",
+      "SteadyJVJob",
+      "prepare_steady_jv_job",
+      "steady_jv_worker_binding",
+      "read_steady_jv_job"
     ]
   },
   "public_imports": {
@@ -635,7 +642,8 @@
       "steady_jv_metrics",
       "run_steady_jv",
       "publish_steady_jv",
-      "read_steady_jv"
+      "read_steady_jv",
+      "steady_jv_payload"
     ],
     "solarlab.sweeps.steady": [
       "SteadySweepPoint",
@@ -681,6 +689,13 @@
       "shared_site_fractions",
       "shifted_logistic_density",
       "single_site_density"
+    ],
+    "solarlab.experiments.jv.worker": [
+      "SteadyJVProtocol",
+      "SteadyJVJob",
+      "prepare_steady_jv_job",
+      "steady_jv_worker_binding",
+      "read_steady_jv_job"
     ]
   },
   "checked_consumers": [
