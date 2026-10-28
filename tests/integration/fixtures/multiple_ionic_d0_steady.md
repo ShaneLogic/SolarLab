@@ -12,7 +12,14 @@ species are mobile. The steady state passed its original numerical gates at
 2 mV in the dark. Final scientific qualification remains false.
 
 The transient tests verify the original digest and materialize these bytes in
-local temporary storage. They validate the saved device/profile binding before
-running the four physical time steps; they never regenerate the steady initial.
+local temporary storage. They use the historical coordinates as an unverified
+seed for one current-source steady solve per module, under the original gates.
+The resulting new evidence has its own source identity and digest, which the
+production loader checks before four physical time steps. No archived identity,
+accepted status or field is rewritten.
+
 This fixture replaces a machine-specific cloud path that failed on CI run
-40788604559. The original failure and archived evidence are preserved.
+40788604559. Run 40789506628 then exposed the checkout-path component of the
+configuration source identity; the explicit seeded solve handles that difference
+without weakening production admission. Both original failures and the archived
+accepted evidence are preserved.

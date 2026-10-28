@@ -27,6 +27,7 @@ from solarlab.solvers.time.backward_euler import _storage_mask
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.solvers.time.multiple_ionic_backward_euler import MultipleIonicBackwardEuler1DStep, multiple_ionic_step_accounting
+from solarlab.solvers.nonlinear.multiple_ionic_1d import solve_multiple_ionic_steady_state
 
 STEADY_SHA = "858ef2f39be16018049d49cfe171d3f79f03891c1259b0eff7701945a78ef7f3"
 STEADY_PATH = Path("/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/test/ArchitectureRefactor/Stage04/P04CoreV1/Core1D/MultipleIonDomainsV1/Solvers/Steady.json")
@@ -42,6 +43,29 @@ def d0_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
     path = tmp_path_factory.mktemp("multiple-ionic-d0") / "MixedSteady.json"
     path.write_bytes(payload)
     return path
+
+
+@pytest.fixture(scope="module")
+def current_d0_initial(d0_path: Path, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, str]:
+    """Validate one current-source initial from historical coordinates as a seed.
+
+    Configuration source IDs include the checkout path. The archived accepted
+    result is kept intact; it cannot be relabelled as a current-platform result.
+    """
+    original = _decode(json.loads(d0_path.read_text()))["result"]
+    device = compile_multiple_ionic_device_1d(prepare_mixed_immobile_device(),
+        intervals_per_layer=INTERVALS, ion_domains=DOMAINS)
+    voltage = original["state"]["electronic_state"]["voltage_V"]
+    seed = device.state(original["state"]["u"], voltage_V=voltage)
+    result = solve_multiple_ionic_steady_state(device, voltage_V=voltage, generation_scale=0.0,
+        options=steady_controls(4), initial_state=seed)
+    assert result.accepted, (result.termination, result.error, result.checks)
+    path = tmp_path_factory.mktemp("current-multiple-ionic-d0") / "Steady.json"
+    document = {"schema": "solarlab.multiple_ionic_steady.v1", "result": result,
+                "seed_provenance": {"archived_sha256": D0_SHA, "use": "unverified_coordinates_only"},
+                "qualification": False}
+    path.write_text(json.dumps(_encode(document), indent=2, allow_nan=False) + "\n")
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -179,10 +203,11 @@ def test_actual_four_step_history_and_reuse_saved_reader(tmp_path: Path, monkeyp
     assert read_multiple_ionic_transient(output, digest)["completed"]
 
 
-def test_D0_bound_initial_and_full_native_shared_mass(tmp_path: Path, d0_path: Path) -> None:
+def test_D0_bound_initial_and_full_native_shared_mass(tmp_path: Path, current_d0_initial: tuple[Path, str]) -> None:
+    d0_path, d0_sha = current_d0_initial
     device = compile_multiple_ionic_device_1d(prepare_mixed_immobile_device(),
         intervals_per_layer=INTERVALS, ion_domains=DOMAINS)
-    initial = load_multiple_ionic_steady_initial(device, d0_path, D0_SHA, controls=steady_controls(4))
+    initial = load_multiple_ionic_steady_initial(device, d0_path, d0_sha, controls=steady_controls(4))
     step = MultipleIonicBackwardEuler1DStep(MultipleIonic1DProblem(device, 0.0025, 0.0), initial.state, 0.25)
     y = step.initial_coordinates()
     domain = device.domains[1]
@@ -208,10 +233,11 @@ def test_D0_bound_initial_and_full_native_shared_mass(tmp_path: Path, d0_path: P
                                          controls=steady_controls(4))
 
 
-def test_actual_D0_four_step_history(tmp_path: Path, d0_path: Path) -> None:
+def test_actual_D0_four_step_history(tmp_path: Path, current_d0_initial: tuple[Path, str]) -> None:
     from examples.research_1d.multiple_ionic_transient import run_case
+    d0_path, d0_sha = current_d0_initial
     output = Path(os.environ.get("SOLARLAB_MULTIPLE_D0_TIME_OUTPUT", str(tmp_path / "D0History.json")))
-    result = run_case(d0_path, D0_SHA, output, mixed_immobile=True)
+    result = run_case(d0_path, d0_sha, output, mixed_immobile=True)
     assert result.completed, [(a.termination, a.error) for a in result.failed_attempts]
     assert len(result.states) == 5 and len(result.attempts) == 4
     for attempt in result.attempts:
