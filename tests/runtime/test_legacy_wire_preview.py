@@ -21,6 +21,8 @@ from solarlab.materials.source import SourceDocument
 from solarlab_server.configuration import ConfigurationPreviewContext
 import test_configuration_preview as existing
 
+pytestmark = pytest.mark.frontend
+
 ROOT = existing.ROOT
 catalog = existing.catalog
 resources = existing.resources

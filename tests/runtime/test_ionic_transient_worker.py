@@ -11,6 +11,7 @@ import time
 import numpy as np
 import pytest
 
+
 from examples.research_1d.process_ionic_transient import example_job, source_build
 from solarlab.experiments.ionic_transient_worker import (
     ionic_transient_worker_binding, read_ionic_transient_job,
@@ -21,6 +22,8 @@ from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerReq
 from solarlab.io.artifacts import ArtifactIntegrityError, ArtifactPayload, _json_document
 from solarlab.io.run_store import RunStore
 from solarlab.materials.source import SourceDocument
+
+pytestmark = pytest.mark.requires_clean_core
 
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = ("ionic-transient-completed", "ionic-transient-failed-prefix")

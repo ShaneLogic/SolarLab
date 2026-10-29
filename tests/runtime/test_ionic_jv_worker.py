@@ -13,6 +13,7 @@ import tarfile
 import numpy as np
 import pytest
 
+
 from examples.research_1d.process_ionic_jv import example_job, source_build
 from solarlab.experiments.execution import ProcessSupervisor
 from solarlab.experiments.jv.ionic_results import INITIAL, RAW, _diagnostic_payload, _parse_diagnostics, result_digest
@@ -22,6 +23,8 @@ from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerReq
 from solarlab.io.artifacts import ArtifactIntegrityError, ArtifactPayload, _json_document
 from solarlab.io.run_store import RunStore
 from solarlab.materials.source import SourceDocument
+
+pytestmark = pytest.mark.requires_clean_core
 
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = ("ionic-jv-completed-v2", "ionic-jv-failed-prefix")

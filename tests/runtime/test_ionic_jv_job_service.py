@@ -18,6 +18,7 @@ import httpx
 import numpy as np
 import pytest
 
+
 from examples.research_1d.ionic_jv_service import example_submission, installed_catalog
 from examples.research_1d.process_ionic_transient import source_build
 from solarlab.experiments.execution import JobHandle
@@ -34,6 +35,8 @@ from solarlab_server.job_service import JobService, JobSubmission, canonical
 from test_ionic_transient_job_service import _hold
 from test_ionic_jv_worker import extract_saved_ionic_jv_fixture
 from test_transient_job_service import pool, port_closed, ready, terminal_events
+
+pytestmark = pytest.mark.requires_clean_core
 
 ROOT = Path(__file__).resolve().parents[2]
 FAILED_RUN = "ionic-jv-failed-prefix"

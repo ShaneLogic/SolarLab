@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+
 from solarlab.config.identity import ExecutionEngine
 from solarlab.experiments.execution import JobHandle, ProcessSupervisor, ScanSpec
 from solarlab.experiments.jv.worker import SteadyJVProtocol, steady_jv_worker_binding
@@ -20,6 +21,8 @@ from solarlab.sweeps.steady_worker import (
     SteadySweepJobs, prepare_steady_sweep_jobs, read_steady_sweep_jobs,
 )
 
+pytestmark = pytest.mark.requires_clean_core
+
 ROOT = Path(__file__).resolve().parents[2]
 LIMITS = ResourceLimits(60., 1536 * 1024**2, 96 * 1024**2, None, None)
 PROTOCOL = SteadyJVProtocol((0., .05, .1), 12, 1., None)
@@ -27,10 +30,11 @@ PROTOCOL = SteadyJVProtocol((0., .05, .1), 12, 1., None)
 
 @pytest.fixture(scope="module")
 def implementation():
-    from examples.research_1d.process_sweep import committed_dc_implementation
+    from examples.research_1d.service import committed_implementation
     commit = os.environ.get("SOLARLAB_PROCESS_SWEEP_SOURCE_PIN") or subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=5).strip()
-    return committed_dc_implementation(commit)
+    # The full suite has loaded non-DC modules too; bind their committed bytes.
+    return committed_implementation(commit)
 
 
 @pytest.fixture(scope="module")

@@ -413,7 +413,7 @@ def evaluate_v3(data,**kwargs):
 
 
 def typed_reference(folder,data,*,signal=F(1),error=F(0),kind="rigorous_bound"):
-    from test_g2_route_bindings import frozen_definition
+    from .test_g2_route_bindings import frozen_definition
     request,labels,_,_=data;problem=t.physical_problem_identity(request)
     method=frozen_definition(folder,"ReferenceMethod","solarlab.g2-reference-method.v1",1)
     rows=[{"tag":tag,"q_C":enc(signal*F(float.fromhex(tag["time_hex"]))/F(9.2)),

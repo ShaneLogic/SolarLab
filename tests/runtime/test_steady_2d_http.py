@@ -19,6 +19,7 @@ import httpx
 import numpy as np
 import pytest
 
+
 from examples.research_1d.process_ionic_transient import source_build
 from examples.research_2d.http_steady import example_submission, installed_catalog, resource_limits
 from solarlab.experiments.execution import ProcessSupervisor
@@ -33,6 +34,8 @@ from solarlab_server.steady_2d_preparation import (
     Steady2DJobInput, execute_registered_steady_2d, prepare_steady_2d_input, read_registered_steady_2d_job,
 )
 from test_transient_job_service import port_closed, ready
+
+pytestmark = pytest.mark.requires_clean_core
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_SHA256 = "98f6e3c174106153ec72564e117e316f6395a065353ecee89449faa5abedbaa2"

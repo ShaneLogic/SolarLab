@@ -26,6 +26,7 @@ def decimal(value):
 
 @pytest.fixture
 def physical():
+    pytest.importorskip("flint", reason="Arb representation checks require the solarlab[arb] extra")
     layout = Layout((Support("one", "cell", (1,)), Support("two", "cell", (2,))), (
         VariableSpec("n_m3", "carrier", "one", (1,), PARTICLE/VOLUME),
         VariableSpec("phi_V", "potential", "two", (2,), VOLT),

@@ -244,7 +244,7 @@ def test_bindings_reject_same_V2_case_and_tag_corruption_as_route(bundle, damage
 
 @pytest.mark.parametrize("bad_path", [False, True])
 def test_bindings_validate_supervision_as_metadata_only(bundle, bad_path):
-    from test_g2_route import supervision_fixture
+    from .test_g2_route import supervision_fixture
     plan = bundle[1]
     plan["resources"] = {"rss_bytes_per_case": 4*1024**3, "combined_persisted_case_bytes": 4*1024**3}
     supervision = supervision_fixture(bundle[0].parent)

@@ -17,12 +17,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 @pytest.fixture(scope="session", autouse=True)
-def assembly_budget() -> Iterator[None]:
-    started = time.perf_counter()
+def assembly_budget() -> Iterator[list[float]]:
+    elapsed = [0.0]
     with threadpool_limits(limits=1):
+        yield elapsed
+    assert elapsed[0] < 60.0, f"assembly parity self-test exceeded 60 s: {elapsed[0]:.3f} s"
+
+
+@pytest.fixture(autouse=True)
+def assembly_case_time(assembly_budget: list[float]) -> Iterator[None]:
+    """Charge only this harness; unrelated tests may follow it in the session."""
+    started = time.perf_counter()
+    try:
         yield
-    elapsed = time.perf_counter() - started
-    assert elapsed < 60.0, f"assembly parity self-test exceeded 60 s: {elapsed:.3f} s"
+    finally:
+        assembly_budget[0] += time.perf_counter() - started
 
 
 @pytest.fixture(autouse=True)

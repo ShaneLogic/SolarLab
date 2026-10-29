@@ -11,7 +11,7 @@ import pytest
 from scripts.benchmarks.native_history import HistoryWriter
 from scripts.benchmarks.native_readback import HistoryVerificationError, verify_history, _decode
 from scripts.benchmarks.physical_tolerance import certificate_failure_policy
-from test_native_readback import fixture, tag, digest
+from .test_native_readback import fixture, tag, digest
 
 
 def continued_fixture(*, failure=True, observation="online"):
@@ -380,7 +380,7 @@ def test_d25_actual_sealed_observer_matches_online_arb_and_exact_charge_words(mo
     from scripts.benchmarks.native_readback import _ScientificCheck
     # Import only the existing manufactured packet factory; its plan is unused.
     monkeypatch.setenv("REAL_DEVICE_PLAN", str(Path(__file__)))
-    from test_native_observation import packet, HEADER
+    from .test_native_observation import packet, HEADER
     # This selects the existing static-slab formula tag with invented SI data,
     # a test-source identity and N4 geometry, never a frozen S0 case or run.
     definition = d.SlabDefinition("S0NeutralPublicDeviceV1", str(Path(__file__)), hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), False,
@@ -653,7 +653,7 @@ def test_pipeline_supervision_refuses_bad_pairs_and_preserves_stage_guards(tmp_p
 def test_pipeline_supervision_BE4_context_runs_under_actual_launcher(tmp_path, monkeypatch, record_property):
     import sys
     from scripts.benchmarks import g2_reference_be as be, g2_route_launcher as launcher
-    from test_g2_reference_be import runtime_fixture
+    from .test_g2_reference_be import runtime_fixture
 
     # The two original clocks are created before Popen. Thread getters are
     # manufactured; this checks runtime plumbing without any scientific body.
@@ -771,7 +771,7 @@ def test_pending_T1_never_uses_a_loose_L1_upper_bound_as_a_denominator(tmp_path)
 
 def admitted_metadata_plan(tmp_path,monkeypatch):
     """Complete local metadata fixtures; no real authority or native work."""
-    from test_g2_route_bindings import generation_ancestor,frozen_definition,write_json
+    from .test_g2_route_bindings import generation_ancestor,frozen_definition,write_json
     from scripts.benchmarks import g2_route as g,g2_route_bindings as b
     plan=plan_fixture(tmp_path)
     plan.update(status="admitted");plan["authority"]["scientific_execution_authorized"]=True
@@ -825,7 +825,7 @@ def test_run_admission_does_not_require_unreviewed_evaluator(tmp_path,monkeypatc
 @pytest.mark.parametrize("damage",[None,"source","review_bool"])
 def test_evaluation_requires_its_own_exact_source_review(tmp_path,monkeypatch,damage):
     from scripts.benchmarks import g2_route as g
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     path,plan=admitted_metadata_plan(tmp_path,monkeypatch)
     root=Path(g.__file__).resolve().parent
     sources={str(root/name):hashlib.sha256((root/name).read_bytes()).hexdigest() for name in g.EVALUATOR_FILES}
@@ -861,7 +861,7 @@ def test_run_finishes_with_sealed_producer_output_without_observe(tmp_path,monke
 
 @pytest.mark.parametrize("damage",["body","bytes","review_hash","version_alias"])
 def test_frozen_definition_is_only_a_status_and_freeze_copy(tmp_path,damage):
-    from test_g2_route_bindings import frozen_definition
+    from .test_g2_route_bindings import frozen_definition
     from scripts.benchmarks import g2_route as g
     ref=frozen_definition(tmp_path,"Definition",g.T1_SPEC_SCHEMA,3)
     value=g._pinned(ref)
@@ -876,7 +876,7 @@ def test_frozen_definition_is_only_a_status_and_freeze_copy(tmp_path,damage):
     (["reviewed explanation"],["prospective only"]),("explanation",["rule"]),([],"")])
 def test_freeze_explanations_preserve_exact_reviewed_body(tmp_path,notes,rule):
     from scripts.benchmarks import g2_route
-    from test_g2_route_bindings import frozen_definition
+    from .test_g2_route_bindings import frozen_definition
     ref=frozen_definition(tmp_path,"Definition",g2_route.T1_SPEC_SCHEMA,3)
     value=g2_route._pinned(ref)
     value["freeze"].update(notes=notes,plan_rule=rule)
@@ -890,7 +890,7 @@ def test_freeze_explanations_preserve_exact_reviewed_body(tmp_path,notes,rule):
     ("plan_rule",{}),("plan_rule",1),("unlisted","")])
 def test_freeze_rejects_unlisted_keys_and_nontext_explanations(tmp_path,field,bad):
     from scripts.benchmarks import g2_route
-    from test_g2_route_bindings import frozen_definition
+    from .test_g2_route_bindings import frozen_definition
     ref=frozen_definition(tmp_path,"Definition",g2_route.T1_SPEC_SCHEMA,3)
     value=g2_route._pinned(ref);value["freeze"][field]=bad
     with pytest.raises(ValueError,match="definition_freeze"):
@@ -900,7 +900,7 @@ def test_freeze_rejects_unlisted_keys_and_nontext_explanations(tmp_path,field,ba
 @pytest.mark.parametrize("bad_review",[None,[],False,0,"not a review object"])
 def test_nondict_evaluator_review_blocks_only_evaluation(tmp_path,monkeypatch,bad_review):
     from scripts.benchmarks import g2_route
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     path,plan=admitted_metadata_plan(tmp_path,monkeypatch)
     sources={str(Path(g2_route.__file__).resolve().parent/name):
         hashlib.sha256((Path(g2_route.__file__).resolve().parent/name).read_bytes()).hexdigest()
@@ -930,7 +930,7 @@ def full_metadata_plan(tmp_path, monkeypatch):
     from copy import deepcopy
     from scripts.benchmarks import g2_route as g
     from scripts.benchmarks.g2_route_launcher import CHANNEL_PROTOCOL, Limits, REPOSITORY
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     path, probe = admitted_metadata_plan(tmp_path, monkeypatch)
     producer_pin = write_json(path, probe)
     plan = deepcopy(probe)
@@ -1027,7 +1027,7 @@ def test_H_probes_admit_only_three_cases_with_null_dormant_execution(tmp_path, m
 @pytest.mark.parametrize("execution", [{}, {"wall_s": None}, False])
 def test_H_unadmitted_execution_is_rejected(tmp_path, monkeypatch, execution):
     from scripts.benchmarks import g2_route as g
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     path, plan = admitted_metadata_plan(tmp_path, monkeypatch)
     next(case for case in plan["cases"] if case["stage"] == "full")["execution"] = execution
     write_json(path, plan)
@@ -1037,7 +1037,7 @@ def test_H_unadmitted_execution_is_rejected(tmp_path, monkeypatch, execution):
 
 def test_H_full_phase_requires_three_probe_receipts(tmp_path, monkeypatch):
     from scripts.benchmarks import g2_route as g
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     path, plan = admitted_metadata_plan(tmp_path, monkeypatch)
     plan["admission"] = {"stage": "full", "admitted_case_ids": sorted(case["id"] for case in plan["cases"] if case["stage"] == "full")}
     for case in plan["cases"]: case["execution"] = None
@@ -1057,7 +1057,7 @@ def test_H_full_phase_binds_measured_forecast_and_retains_scientific_failure(tmp
 @pytest.mark.parametrize("damage", ["missing_probe", "receipt_hash", "closure", "exit_alias", "source", "unsealed", "reader", "throughput", "seconds_path", "profile", "steps", "wall", "cap", "slow_model"])
 def test_H_full_phase_rejects_unbound_probe_or_forecast(tmp_path, monkeypatch, damage):
     from scripts.benchmarks import g2_route as g
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     path, plan = full_metadata_plan(tmp_path, monkeypatch)
     refs = plan["probe_evidence"]["B_N8_Coarse_Probe"]
     case = next(case for case in plan["cases"] if case["id"] == "B_N8_Coarse_Full")
@@ -1087,7 +1087,7 @@ def test_H_full_phase_rejects_unbound_probe_or_forecast(tmp_path, monkeypatch, d
 @pytest.mark.parametrize("stage", ["probes", "full"])
 def test_I_dormant_execution_key_must_be_explicit_null(tmp_path, monkeypatch, stage):
     from scripts.benchmarks import g2_route as g
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     factory = admitted_metadata_plan if stage == "probes" else full_metadata_plan
     path, plan = factory(tmp_path, monkeypatch)
     dormant = next(case for case in plan["cases"] if case["execution"] is None)
@@ -1099,7 +1099,7 @@ def test_I_dormant_execution_key_must_be_explicit_null(tmp_path, monkeypatch, st
 
 def test_I_design_only_missing_admission_does_not_grant_execution(tmp_path):
     from scripts.benchmarks import g2_route as g
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     plan = plan_fixture(tmp_path); del plan["admission"]
     for case in plan["cases"]: del case["execution"]
     path = tmp_path/"DesignOnly.json"; write_json(path, plan)
@@ -1114,7 +1114,7 @@ def test_I_design_only_missing_admission_does_not_grant_execution(tmp_path):
 def test_I_full_admission_rejects_contradictory_completed_receipt(tmp_path, monkeypatch, damage):
     from copy import deepcopy
     from scripts.benchmarks import g2_route as g
-    from test_g2_route_bindings import write_json
+    from .test_g2_route_bindings import write_json
     path, plan = full_metadata_plan(tmp_path, monkeypatch)
     refs = plan["probe_evidence"]["B_N8_Coarse_Probe"]
     receipt = g._pinned(refs["runtime_receipt"])

@@ -8,7 +8,7 @@ import pytest
 
 from scripts.benchmarks import g2_compare as c
 from scripts.benchmarks import t1_gate as t
-from test_t1_gate import base_request, SPEC3
+from .test_t1_gate import base_request, SPEC3
 from scripts.benchmarks.g2_route_bindings import sample_labels
 
 
@@ -90,7 +90,7 @@ def quantity_binding(pin,key,labels,*,strict=False):
 
 
 def error_files(folder,reference,*,verdict="accepted",include_radius=True,method=None):
-    from test_g2_route_bindings import frozen_definition
+    from .test_g2_route_bindings import frozen_definition
     labels=[r["tag"] for r in reference["samples"]]
     method=method or frozen_definition(folder,"ErrorMethod","solarlab.g2-reference-method.v1",1)
     history,identity=acceptance_history_files(folder,reference,method)
@@ -275,7 +275,7 @@ def test_N16_projection_preserves_inventory_and_reports_no_order():
 
 
 def test_reader_sample_sink_waits_for_actual_certificate_and_keeps_event_sides(tmp_path):
-    from test_g2_route import continued_fixture,publish_fixture,read_fixture
+    from .test_g2_route import continued_fixture,publish_fixture,read_fixture
     data=continued_fixture(failure=False,observation="sealed-history")
     publish_fixture(tmp_path,data);samples=[]
     verified=read_fixture(tmp_path,sample_sink=lambda tag,row,certificate:samples.append((tag,row,certificate)))
@@ -355,7 +355,7 @@ def test_BE_adapter_calls_the_owned_reader_and_preserves_all_state_words(tmp_pat
 
 
 def loaded_T1(case_id, *, body_defect=F(0)):
-    from test_t1_gate import data_v3,SPEC3
+    from .test_t1_gate import data_v3,SPEC3
     request,labels,intervals,pieces=data_v3()
     for i,row in enumerate(intervals):
         row["case_id"]=case_id
@@ -384,7 +384,7 @@ def test_matched_growth_is_latched_across_events_and_does_not_award_order():
 
 
 def test_decision_slots_remain_unknown_without_Strict_reference_review():
-    from test_t1_gate import SPEC3
+    from .test_t1_gate import SPEC3
     cases={key:case(key) for key in c.FULL_CASES}
     for value in cases.values():
         value["readback"]={"complete_protocol":True,"complete_readback":True,"verified":True,
@@ -412,15 +412,15 @@ def test_comparison_cli_keeps_the_existing_bounded_integer_codec(monkeypatch,cap
 
 def test_unadmitted_compare_cannot_read_any_result(tmp_path,monkeypatch):
     from scripts.benchmarks import g2_route
-    from test_g2_route import plan_fixture
+    from .test_g2_route import plan_fixture
     path=tmp_path/"Pending.json";path.write_text(json.dumps(plan_fixture(tmp_path)))
     monkeypatch.setattr(c,"compare_plan",lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError("read unadmitted data")))
     with pytest.raises(ValueError):g2_route.compare(path)
 
 
 def strict_reference_files(folder,*,zero_charge=False):
-    from test_g2_route_bindings import frozen_definition
-    from test_t1_gate import SPEC3
+    from .test_g2_route_bindings import frozen_definition
+    from .test_t1_gate import SPEC3
     strict,reference=referenced_cases()
     if zero_charge:
         for one in (strict,reference):
@@ -457,7 +457,7 @@ def strict_reference_files(folder,*,zero_charge=False):
 
 
 def test_E2_acceptance_binds_three_inputs_and_keeps_computation_pending(tmp_path):
-    from test_t1_gate import SPEC3
+    from .test_t1_gate import SPEC3
     strict,ref,method,transferred=strict_reference_files(tmp_path)
     labels=[r['tag'] for r in strict['samples']]
     qualified=c.comparison_reference_errors(ref,spec=SPEC3,method_pin=method,labels=labels,strict=strict)
@@ -477,7 +477,7 @@ def test_E2_acceptance_binds_three_inputs_and_keeps_computation_pending(tmp_path
 
 @pytest.mark.parametrize('damage',['root','pin','inputs','rejected','conditions','same_author','claim','missing_f','E_R_review'])
 def test_E2_acceptance_missing_or_mismatched_evidence_is_unknown(tmp_path,damage):
-    from test_t1_gate import SPEC3
+    from .test_t1_gate import SPEC3
     strict,ref,method,_=strict_reference_files(tmp_path)
     review=t._pin(ref['independent_review']['path'],ref['independent_review'])
     if damage=='root':review=[]
@@ -511,7 +511,7 @@ def test_E_R_and_IDA_problem_identity_domains_are_distinct(tmp_path):
 
 
 def test_missing_E2_acceptance_cannot_be_replaced_by_E_R_acceptance(tmp_path):
-    from test_t1_gate import SPEC3
+    from .test_t1_gate import SPEC3
     strict,ref,method,transferred=strict_reference_files(tmp_path)
     ref['independent_review']=transferred['inputs']['E_R_acceptance']
     result=t.reference_status_v3(ref,spec=SPEC3,labels=sample_labels(base_request()),problem_identity=strict['problem_identity'])
@@ -535,8 +535,8 @@ def test_charge_series_never_rebases_after_a_missing_piece(missing):
 def sealed_comparison_fixture(folder,monkeypatch,*,missing_sample=False):
     from scripts.benchmarks import g2_route as route
     from scripts.benchmarks.native_history import HistoryWriter
-    from test_t1_gate import document
-    from test_g2_route import supervision_fixture
+    from .test_t1_gate import document
+    from .test_g2_route import supervision_fixture
     labels=sample_labels(base_request());request=base_request()
     doc=document();doc.update(schema=t.SPEC_SCHEMA_V3,version=3)
     doc['physical_context'].update(n_ref_m3=100,p_ref_m3=200,c_ref_m3=300)
@@ -627,7 +627,7 @@ def test_compare_plan_reads_each_manufactured_sealed_stream_once(tmp_path,monkey
 
 
 def test_incomplete_control_family_cannot_keep_Main_unresolved_L_U2(tmp_path):
-    from test_t1_gate import SPEC3
+    from .test_t1_gate import SPEC3
     strict,ref,method,_=strict_reference_files(tmp_path,zero_charge=True)
     main=deepcopy(strict);main['case_id']=c.FULL_CASES[1]
     cases={c.FULL_CASES[1]:main,c.FULL_CASES[2]:strict}
@@ -673,7 +673,7 @@ def test_comparison_first_failure_is_ordered_across_ports_and_states():
 
 
 def test_sample_normalization_preserves_lowest_mapped_word_and_raw_DC():
-    from test_native_readback import tag as encode
+    from .test_native_readback import tag as encode
     count=9;size=count*5
     layers=[2.**(-10-55*i) for i in range(12)];tiny=layers[-1]
     roots={'phi_V':0.,'n_m3':100.,'p_m3':200.,'c_m3':300.,'f':.5}

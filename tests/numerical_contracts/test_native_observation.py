@@ -28,8 +28,13 @@ from scripts.benchmarks.native_observation import (
 )
 
 
+def _ball_integrator(**controls):
+    pytest.importorskip("flint", reason="Arb observation checks require the solarlab[arb] extra")
+    return BallIntegrator(**controls)
+
+
 REPO = Path(__file__).resolve().parents[2]
-PLAN = Path(os.environ['REAL_DEVICE_PLAN'])
+PLAN = Path(os.environ['REAL_DEVICE_PLAN']) if os.environ.get('REAL_DEVICE_PLAN') else None
 CASES = ('S0NeutralPublicDeviceV1', 'DynamicAcceptorIonPublicDeviceV1')
 HEADER = '04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce'
 STAMP_NAMES = ('IDAGetNumSteps', 'IDAGetCurrentTime', 'IDAGetLastStep',
@@ -239,6 +244,8 @@ def log(request, **values):
 
 
 def context(case):
+    if PLAN is None:
+        pytest.skip("REAL_DEVICE_PLAN is unset: this device observation requires an explicitly bound plan")
     model = AffineCoupledSlab(SlabDefinition.from_plan(PLAN, REPO, case, area=0.37), 8)
     mapping = AffineVoltageMap(model)
     segments = protocol_from_plan(PLAN, case)
@@ -327,7 +334,7 @@ def test_correlated_voltage_error_reaches_carrier_and_ion_currents(case, request
     prepared = prepare_physical_polynomial(binding, raw_polynomials(mapping), middle_clock(binding.segment))
     observer = SlabPathObserver(mapping.model, prepared.path)
     carrier, ion = voltage_current_sensitivity(mapping, observer)
-    arithmetic = BallIntegrator(bits=512)
+    arithmetic = _ball_integrator(bits=512)
     delta = Fraction(1, 2**40)
     phi = mapping.model.layout.offsets['phi_V']
     errors = []
@@ -514,7 +521,7 @@ def test_frame_map_clock_event_and_prefix_compose(restart, request):
     owner, generation = ('B',1) if restart == 'fresh_owner' else ('A',2)
     second = read(packet(size=m.layout.size, previous=b.segment.start, tn=.125,
                          owner=owner,generation=generation,endpoint_y=dz))
-    arithmetic = BallIntegrator()
+    arithmetic = _ball_integrator()
     previous = AcceptedIntervalObserver(a,first,arithmetic=arithmetic)
     current = AcceptedIntervalObserver(b,second,arithmetic=arithmetic,previous=previous)
     assert previous.prepared.path.clock.owner == 'A'
@@ -588,7 +595,7 @@ def manufactured_map():
 
 def test_simultaneous_physical_path_against_independent_fraction_oracle(request):
     mapping,binding,prepared,expected,k,fields,oracle_source=manufactured_map()
-    observer=SlabPathObserver(mapping.model,prepared.path); arithmetic=BallIntegrator()
+    observer=SlabPathObserver(mapping.model,prepared.path); arithmetic=_ball_integrator()
     # A work goal for exact polynomial oracle arithmetic, not a physical gate.
     goal=Fraction(1,2**160)
     result=observer.integrate(arithmetic,goal)
@@ -667,7 +674,7 @@ def test_point_source_readback_bounds_and_current_gate(case,request):
     zdot[mapping.model.layout.offsets['phi_V'].stop-1]+=2.**-24
     native=dict(time=time,z=z,zdot=zdot)
     pair=supplied_pair(mapping,binding,native)
-    evidence=readback_current_evidence(binding,prepared,pair,z,zdot,BallIntegrator(),1.e-300)
+    evidence=readback_current_evidence(binding,prepared,pair,z,zdot,_ball_integrator(),1.e-300)
     assert not evidence['passed']
     assert evidence['input_error_included_once'] and not evidence['native_rate_or_state_changed']
     actual=evidence['readback']['physical_state_enclosures']
@@ -700,6 +707,8 @@ def current_controller_input(case):
     """One source-aware factory shared by every new controller/history test."""
     from scripts.benchmarks.coupled_device_prototype import prepare_voltage_lift_native_request, digest
 
+    if PLAN is None:
+        pytest.skip("REAL_DEVICE_PLAN is unset: this controller requires an explicitly bound plan")
     original=original_native_request(case)
     model=AffineCoupledSlab(SlabDefinition.from_plan(PLAN,REPO,case),8)
     mapping=AffineVoltageMap(model); segments=protocol_from_plan(PLAN,case)
@@ -722,7 +731,7 @@ def test_interval_errors_prefix_and_reconstruction_history(case,monkeypatch,requ
     mapping,bindings=context(case); binding=bindings[1]; m=mapping.model
     selected=middle_clock(binding.segment)
     frame=read(packet(size=m.layout.size,previous=float(selected.predecessor),tn=float(selected.tn),nsteps=2))
-    observer=AcceptedIntervalObserver(binding,frame,arithmetic=BallIntegrator())
+    observer=AcceptedIntervalObserver(binding,frame,arithmetic=_ball_integrator())
     left_native=native_row(frame,'predecessor'); right_native=native_row(frame,'endpoint')
     left=supplied_pair(mapping,binding,left_native); right=supplied_pair(mapping,binding,right_native,left[0])
     budget=original_native_request(case)['budgets']['charge_C']

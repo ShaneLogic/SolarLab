@@ -26,6 +26,11 @@ from scripts.benchmarks.coupled_device_prototype import (
 )
 
 REPO = Path(__file__).resolve().parents[2]
+if not os.environ.get("REAL_DEVICE_PLAN"):
+    pytest.skip(
+        "REAL_DEVICE_PLAN is unset: this module requires the source-bound device plan and readiness gates",
+        allow_module_level=True,
+    )
 PLAN = Path(os.environ["REAL_DEVICE_PLAN"])
 GATES = json.loads(PLAN.read_text())["readiness_contract"]
 CASES = GATES["cases"]

@@ -35,6 +35,7 @@ env:
   MKL_NUM_THREADS: "1"
   VECLIB_MAXIMUM_THREADS: "1"
   NUMEXPR_NUM_THREADS: "1"
+  BLIS_NUM_THREADS: "1"
 
 jobs:
   static:
@@ -67,9 +68,20 @@ jobs:
           tests/unit/test_pytest_isolation.py tests/unit/backend/conftest.py
           tests/integration/backend/conftest.py ../scripts/benchmarks/probe_ida_binding.py
 
+      - name: Guard root test discovery and explicit exclusions
+        working-directory: .
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -s -p no:cacheprovider
+          tests/ci --junitxml=${{ runner.temp }}/test-discovery.xml
+
   core:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .
+    env:
+      PYTEST_CI_JOB: core
     strategy:
       fail-fast: false
       matrix:
@@ -80,71 +92,23 @@ jobs:
         with:
           version: "0.12.13"
           python-version: ${{ matrix.python }}
-      - run: uv sync --frozen --extra dev
-      - name: Core imports, negative inputs and independent arithmetic oracles
+      - run: uv sync --frozen --extra dev --extra arb --extra ida
+      - name: Existing coinstalled legacy kernel smoke
+        working-directory: perovskite-sim
         run: >-
-          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider
           tests/unit/test_pytest_isolation.py::test_core_pytest_does_not_import_backend
           tests/unit/test_blas_marker_selection.py
           tests/unit/physics/test_dynamic_storage.py
           tests/unit/discretization/test_fe_operators.py
-      - name: Public contracts, precision, storage and sparse support
-        working-directory: .
-        env:
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-        # Native IDA qualification campaigns retain their own setting-specific
-        # pass/fail records; these commands only cover the named slices.
-        run: |
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_contracts.py tests/numerical_contracts/test_precision.py tests/numerical_contracts/test_primitive_difference.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_storage.py -k 'not test_nc01_ida_all_native_intervals'
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_sparse.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_public_interface.py tests/numerical_contracts/test_state_authority.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_temporal_interface.py tests/numerical_contracts/test_trial_interface.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_linear_forms.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_conservative_device.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_band_steps.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_framed_time_derivative.py -m 'not slow'
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_segment_startup.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_history.py tests/numerical_contracts/test_native_runner.py tests/numerical_contracts/test_runtime_timing.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_execution_wall.py
-          # Outer G2 supervisor: synthetic process groups only, no native solver.
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_g2_route_launcher.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_error_weights.py::TestInitialWeightSource::test_pins_and_real_callback_route
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_readback.py tests/numerical_contracts/test_qualification_bridge.py
-          # G2-R latched producer/refresh/reader slice and metadata-only route checks.
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_reference_refresh.py tests/numerical_contracts/test_g2_route.py tests/numerical_contracts/test_g2_route_bindings.py
-          # Offline T1 evaluation, comparison and reference-error algebra (python-flint cases skip here).
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_t1_gate.py tests/numerical_contracts/test_g2_compare.py tests/numerical_contracts/test_g2_reference_error.py
-          # BE reference driver; its real Accelerate probe is skipped off macOS.
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_g2_reference_be.py
-          # Repository-only comparison arithmetic; prepared campaign IO has separate evidence.
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_qualification_comparison.py::ArithmeticTests
-          REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_transfer.py
-          # This selection uses synthetic packets only and reads no device plan.
-          REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_native_observation.py -k 'charge_refinement or partial_charge_observation or packet_extended_size_requires_matching_qualification_policy'
-          REAL_DEVICE_PLAN=/dev/null "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_interval_observation.py -k 'contained_observation_range or fixed4'
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_device.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/numerical_contracts/test_ports.py -k 'not test_rc_ida_trajectory_and_every_native_interval'
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/refactor/test_hysteresis_current_bounds.py tests/refactor/test_hysteresis_mobile_bounds.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider tests/refactor/test_scaps_reference.py
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m unittest discover -s tests/refactor -p test_reference_map.py
-      - name: P04-A route-independent kernels (M/N parity and analytic checks)
-        working-directory: .
-        env:
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-          # The core environment is the legacy perovskite-sim project; the new
-          # solarlab packages are imported from the checkout source tree.
-          PYTHONPATH: src
+      # Test-local prerequisites and strict xfails are documented in
+      # tests/ci/exclusions.json; no failure is hidden with -k or --deselect.
+      - name: Discover all root kernels and numerical contracts
         run: >-
-          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider
-          tests/unit/contracts tests/unit/mesh tests/unit/discretization
-          tests/unit/physics/electrostatics tests/unit/physics/statistics
-          tests/unit/physics/contacts tests/unit/physics/transport tests/unit/physics/ions
-          tests/unit/physics/band_structure tests/unit/physics/field_mobility tests/independent/p04
-          --deselect tests/independent/p04/test_p04_legacy_golden.py::test_legacy_reproduces_golden_bitwise
-          --deselect tests/independent/p04/test_p04_legacy_golden.py::test_candidate_against_golden
-      # The recorded legacy golden is bitwise for its macOS/Accelerate capture
-      # host only (libm differs on Linux); live legacy-vs-new parity runs here.
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/unit tests/numerical_contracts tests/independent
+          -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/core-${{ matrix.python }}.xml
 
   packages:
     runs-on: ubuntu-24.04
@@ -168,97 +132,13 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv lock --check
       - run: uv sync --frozen --extra dev --extra server --no-editable
-      - name: New-core DC and research workflow
+      - name: Discover all root integration and package tests
         env:
-          OPENBLAS_NUM_THREADS: "1"
-          OMP_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          VECLIB_MAXIMUM_THREADS: "1"
+          PYTEST_CI_JOB: packages
         run: >-
-          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
-          tests/unit/solvers/test_nonlinear_analytic.py
-          tests/unit/solvers/test_balance_convergence.py
-          tests/unit/solvers/test_frequency_domain.py
-          tests/integration/test_impedance_1d.py
-          tests/integration/test_impedance_finite_contacts.py
-          tests/integration/test_impedance_selective_contacts.py
-          tests/integration/test_transient_1d.py
-          tests/integration/test_transient_voltage_1d.py
-          tests/integration/test_transient_results.py
-          tests/runtime/test_transient_worker.py
-          tests/runtime/test_transient_job_service.py
-          tests/integration/test_ionic_1d.py
-          tests/integration/test_ionic_multilayer_1d.py
-          tests/integration/test_ionic_steady_1d.py
-          tests/integration/test_ionic_backward_euler_1d.py
-          tests/integration/test_ionic_transient_1d.py
-          tests/integration/test_dual_ionic_1d.py
-          tests/integration/test_dual_ionic_solvers_1d.py
-          tests/integration/test_shared_site_ionic_1d.py
-          tests/integration/test_shared_site_ionic_solvers_1d.py
-          tests/integration/test_ionic_small_signal_1d.py
-          tests/integration/test_ionic_impedance_1d.py
-          tests/integration/test_immobile_ions_1d.py
-          tests/integration/test_ionic_steady_jv_1d.py
-          tests/integration/test_ionic_initialization_1d.py
-          tests/integration/test_ionic_pv_1d.py
-          tests/integration/test_multiple_ionic_domains_1d.py
-          tests/integration/test_multiple_ionic_steady_1d.py
-          tests/integration/test_multiple_ionic_transient_1d.py
-          tests/integration/test_multiple_ionic_small_signal_1d.py
-          tests/integration/test_neutral_defects_1d.py
-          tests/integration/test_neutral_defect_energy_reference_1d.py
-          tests/integration/test_field_transport_1d.py
-          tests/integration/test_field_transport_ac_guards.py
-          tests/integration/test_field_transport_ac_1d.py
-          tests/integration/test_optical_generation_1d.py
-          tests/integration/test_dc_2d.py
-          tests/integration/test_steady_2d.py
-          tests/integration/test_grain_2d.py
-          tests/runtime/test_ionic_transient_worker.py
-          tests/runtime/test_ionic_jv_worker.py
-          tests/runtime/test_ionic_jv_job_service.py
-          tests/runtime/test_ionic_transient_job_service.py
-          tests/unit/experiments/test_steady_jv_metrics.py
-          tests/unit/experiments/test_operating_points.py
-          tests/integration/test_core_1d.py
-          tests/integration/test_research_1d_workflow.py
-      - name: Package boundaries and dependency continuity
-        run: >-
-          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
-          tests/refactor/test_package_preparation.py
-          tests/refactor/test_package_boundaries.py
-          tests/refactor/test_configuration_preparation.py
-          tests/refactor/test_registry_preparation.py
-          tests/refactor/test_device_configuration_preparation.py
-          tests/refactor/test_complex_configuration_preparation.py
-          tests/refactor/test_structured_registry_preparation.py
-          tests/refactor/test_execution_identity_preparation.py
-          tests/refactor/test_behavior_context.py
-          tests/refactor/test_experiment_registry_startup.py
-          tests/refactor/test_input_domain_closure.py
-          tests/refactor/test_legacy_behavior_execution.py
-          tests/refactor/test_legacy_execution_context.py
-          tests/refactor/test_effective_behavior_identity.py
-          tests/refactor/test_configuration_migration.py
-          tests/refactor/test_execution_manifest.py
-          tests/refactor/test_release_bundle.py
-          tests/refactor/test_binding_identity.py
-          tests/refactor/test_registry_mapping.py
-          tests/refactor/test_configuration_schema_export.py
-          tests/refactor/test_configuration_input_types.py::test_json_mode_matches_public_metadata_and_preserves_default
-      # Separate process: the pool budgets include the parent process family RSS.
-      - name: Runtime store, execution pool and services
-        run: >-
-          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
-          tests/runtime/test_run_store.py
-          tests/runtime/test_execution.py
-          tests/runtime/test_steady_jv_worker.py
-          tests/runtime/test_steady_sweep_worker.py
-          tests/runtime/test_steady_job_routes.py
-          tests/runtime/test_legacy_engine.py
-          tests/runtime/test_event_service.py
-          tests/runtime/test_configuration_schema_service.py
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/integration tests/refactor -m 'not slow and not frontend'
+          --durations=20 --junitxml=${{ runner.temp }}/packages-${{ matrix.python }}.xml
       - name: Check typed configuration, registry and runtime preparation
         run: |
           uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_input_types.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/refactor/test_experiment_registry_startup.py tests/refactor/test_input_domain_closure.py tests/refactor/test_legacy_behavior_execution.py tests/refactor/test_legacy_execution_context.py tests/refactor/legacy_driver_observer.py tests/refactor/test_effective_behavior_identity.py tests/refactor/test_configuration_migration.py tests/refactor/test_execution_manifest.py tests/refactor/test_release_bundle.py tests/refactor/test_binding_identity.py tests/refactor/test_registry_mapping.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/test_legacy_engine.py tests/runtime/legacy_fixtures.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py tests/runtime/test_configuration_schema_service.py tests/runtime/test_configuration_preview.py tests/unit/contracts tests/unit/mesh tests/unit/discretization tests/unit/physics/electrostatics tests/unit/physics/statistics tests/unit/physics/contacts tests/unit/physics/transport tests/unit/physics/band_structure tests/unit/physics/field_mobility
@@ -313,6 +193,18 @@ jobs:
           tests/unit/backend/test_experiment_protocol_api.py
           tests/integration/backend/test_twod_configs_api.py
 
+      - name: Install the locked root service and runtime dependencies
+        working-directory: .
+        run: uv sync --frozen --extra dev --extra server --no-editable
+      - name: Discover all root runtime and HTTP tests
+        working-directory: .
+        env:
+          PYTEST_CI_JOB: backend
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/backend-${{ matrix.python }}.xml
+
   binding:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -353,20 +245,14 @@ jobs:
       - name: Install locked Python schema and service dependencies
         working-directory: .
         run: uv sync --frozen --extra dev --extra server --no-editable
-      - name: Verify generated input types and compile-time contracts
+      - name: Discover Python and TypeScript browser contracts
         working-directory: .
+        env:
+          PYTEST_CI_JOB: frontend
         run: >-
-          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
-          --confcutdir=tests/refactor -o addopts=
-          tests/refactor/test_configuration_input_types.py
-      - name: Stored-run and configuration clients with a real loopback service
-        working-directory: .
-        run: >-
-          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
-          --confcutdir=tests/runtime -o addopts=
-          tests/runtime/test_run_client_contract.py
-          tests/runtime/test_configuration_preview.py
-          tests/runtime/test_legacy_wire_preview.py
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/refactor tests/runtime -m 'not slow and frontend' --durations=20
+          --junitxml=${{ runner.temp }}/frontend-python.xml
       - run: SOLARLAB_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python" npm run test:run
       - run: npm run build
 

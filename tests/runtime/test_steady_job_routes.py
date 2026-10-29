@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 import numpy as np
 import pytest
 
+
 from examples.research_1d.service import ROOT, committed_implementation
 from examples.research_1d.steady import load_device
 from solarlab.experiments.execution import JobHandle, ProcessSupervisor
@@ -23,6 +24,8 @@ from solarlab.materials.source import SourceDocument
 from solarlab_server.app import create_app
 from solarlab_server.job_service import JobService, JobSubmission, canonical
 from solarlab_server.steady_preparation import SteadyPreparationContext, steady_execution_catalog
+
+pytestmark = pytest.mark.requires_clean_core
 
 
 @pytest.fixture(scope="module")

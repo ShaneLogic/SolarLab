@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import numpy as np
 import pytest
@@ -51,6 +52,7 @@ def recaptured():
 
 
 @pytest.mark.parametrize("case", CASES)
+@pytest.mark.skipif(sys.platform != "darwin", reason="bitwise golden was captured on macOS/Accelerate; live legacy parity runs on Linux")
 def test_legacy_reproduces_golden_bitwise(case, recaptured):
     stored = DOCUMENT["cases"][case]["outputs"]
     fresh = recaptured[case]["outputs"]
@@ -71,6 +73,7 @@ def test_quoted_existing_values_are_reproduced():
 
 
 @pytest.mark.parametrize("case", CASES)
+@pytest.mark.skipif(sys.platform != "darwin", reason="bitwise golden was captured on macOS/Accelerate; independent analytic gates run on Linux")
 def test_candidate_against_golden(case):
     cls = adapter.change_class(CAPABILITY[case])
     if cls == "P":

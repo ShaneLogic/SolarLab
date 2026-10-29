@@ -25,6 +25,8 @@ from solarlab_server.app import create_app
 from solarlab_server.configuration import ConfigurationPreviewContext
 from test_event_service import _HTTPServer
 
+pytestmark = pytest.mark.frontend
+
 ROOT = Path(__file__).resolve().parents[2]
 LEGACY = ROOT / "perovskite-sim/perovskite_sim"
 CONFIGS = ROOT / "perovskite-sim/tests/fixtures/configs"

@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 import httpx
 import numpy as np
 import pytest
+
 import uvicorn
 
 from examples.research_1d.transient_service import ROOT, example_submission, installed_catalog
@@ -27,6 +28,8 @@ from solarlab.io.run_store import RunStore
 from solarlab.materials.source import SourceDocument
 from solarlab_server.app import create_app
 from solarlab_server.job_service import JobService, JobSubmission, canonical
+
+pytestmark = pytest.mark.requires_clean_core
 
 
 def terminal_events(store, run_id):

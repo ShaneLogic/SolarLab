@@ -10,6 +10,7 @@ import time
 
 import pytest
 
+
 from examples.research_1d.process_transient import example_job, source_build
 from examples.research_1d.service import committed_implementation
 from solarlab.experiments.execution import ProcessSupervisor
@@ -18,6 +19,8 @@ from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerReq
 from solarlab.io.artifacts import ArtifactIntegrityError, ArtifactPayload, _json_document, bytes_artifact
 from solarlab.io.run_store import RunStore
 from solarlab.materials.source import SourceDocument
+
+pytestmark = pytest.mark.requires_clean_core
 
 ROOT = Path(__file__).resolve().parents[2]
 

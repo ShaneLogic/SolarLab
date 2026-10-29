@@ -11,6 +11,7 @@ import time
 
 import pytest
 
+
 from solarlab.config.identity import BuildSource, ExecutionEngine
 from solarlab.experiments.execution import ProcessSupervisor
 from solarlab.experiments.jv.worker import (
@@ -19,6 +20,8 @@ from solarlab.experiments.jv.worker import (
 from solarlab.experiments.worker import ResourceLimits, WorkerBinding
 from solarlab.io.run_store import RunStore
 from solarlab.materials.source import SourceDocument
+
+pytestmark = pytest.mark.requires_clean_core
 
 ROOT = Path(__file__).resolve().parents[2]
 

@@ -24,6 +24,8 @@ from solarlab.io.run_store import RunStore
 from test_event_service import _HTTPServer, _receipt
 from test_execution import REGISTRY, SCHEMA, assert_reaped, limits, ready, release, request
 
+pytestmark = pytest.mark.frontend
+
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 IDENTITY = {"H_input": "run-client:infrastructure-input",

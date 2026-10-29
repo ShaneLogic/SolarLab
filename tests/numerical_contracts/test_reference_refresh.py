@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from test_native_transfer import diagnostic_transfer_case
+from .test_native_transfer import diagnostic_transfer_case
 from scripts.benchmarks.contract_prototype import ContractError
 from scripts.benchmarks.precision_prototype import PrimitiveExpansion, decode_point, encode_point
 

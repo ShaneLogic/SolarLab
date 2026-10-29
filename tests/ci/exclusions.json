@@ -1,0 +1,21 @@
+{
+  "schema": "solarlab.ci-test-exclusions.v1",
+  "files": {},
+  "conditional_tests": {
+    "tests/numerical_contracts/test_coupled_device.py": "Collected by core; skips explicitly if REAL_DEVICE_PLAN with source-bound readiness gates is absent. No archive or physical campaign is invented in CI.",
+    "tests/independent/p04/test_p04_legacy_golden.py::test_legacy_reproduces_golden_bitwise": "Bitwise reference was captured on macOS/Accelerate; Linux still runs live legacy parity and independent analytic tests.",
+    "tests/independent/p04/test_p04_legacy_golden.py::test_candidate_against_golden": "Bitwise macOS/Accelerate capture; no threshold is relaxed on Linux.",
+    "tests/refactor/test_reference_map.py::ComparisonScopeTests::test_actual_scope_links_and_protected_payloads": "Needs the source-bound archive; when present OI-RefMapPin remains a strict xfail for MapError, never a passing reference check.",
+    "tests/integration/test_multiple_ionic_transient_1d.py::test_actual_four_step_history_and_reuse_saved_reader": "Requires explicit PYTEST_MULTIPLE_TRANSIENT_INITIAL with exact current model/source/control identity; the historical absolute path is not a portable initial."
+  },
+  "markers": {
+    "slow": "Excluded from the default fast command; run root slow tests explicitly with -m slow. The optional CI slow job retains its existing legacy regression scope.",
+    "frontend": "Collected from tests/refactor and tests/runtime by frontend CI after npm ci; other jobs exclude this marker.",
+    "requires_clean_core": "Skipped only when bound src/solarlab Python files are changed or Git provenance is unavailable; clean CI runs the test."
+  },
+  "optional_dependencies": {
+    "arb": "python-flint==0.8.0 is locked and installed in core CI; local tests requiring it skip explicitly when absent.",
+    "ida": "scikit-sundae==1.1.3 is locked and installed in core CI; the five original failing IDA cases run as strict xfails.",
+    "uv": "The packages job installs pinned uv; isolated release installation tests skip with a reason when uv is absent locally."
+  }
+}

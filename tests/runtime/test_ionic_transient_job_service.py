@@ -16,6 +16,7 @@ import httpx
 import numpy as np
 import pytest
 
+
 from examples.research_1d.ionic_transient_service import ROOT, example_submission, installed_catalog
 from examples.research_1d.process_ionic_transient import example_job, source_build
 from solarlab.experiments.execution import JobHandle
@@ -28,6 +29,8 @@ from solarlab_server.ionic_transient_preparation import (
 )
 from solarlab_server.job_service import JobService, JobSubmission, canonical
 from test_transient_job_service import live_http, pool, port_closed, ready, terminal_events
+
+pytestmark = pytest.mark.requires_clean_core
 
 
 def save(name, data):

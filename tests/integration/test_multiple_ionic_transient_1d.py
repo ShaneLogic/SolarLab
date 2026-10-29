@@ -183,7 +183,9 @@ def test_solver_free_saved_reader_preserves_failed_prefix(tmp_path: Path, monkey
 def test_actual_four_step_history_and_reuse_saved_reader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """One real regression from supplied saved DC evidence; never a cold solve."""
     from examples.research_1d.multiple_ionic_transient import run_case
-    path = Path(os.environ.get("SOLARLAB_MULTIPLE_TRANSIENT_INITIAL", str(STEADY_PATH)))
+    if not os.environ.get("PYTEST_MULTIPLE_TRANSIENT_INITIAL"):
+        pytest.skip("requires explicit PYTEST_MULTIPLE_TRANSIENT_INITIAL bound to this source; historical absolute paths are not portable")
+    path = Path(os.environ["PYTEST_MULTIPLE_TRANSIENT_INITIAL"])
     if not path.exists():
         pytest.skip("requires the reviewed saved two-domain DC artifact; no cold substitute")
     output = Path(os.environ.get("SOLARLAB_MULTIPLE_TRANSIENT_OUTPUT", str(tmp_path / "History.json")))

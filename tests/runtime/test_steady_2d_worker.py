@@ -25,6 +25,8 @@ from solarlab.io.run_store import RunStore
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
 from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions
 
+pytestmark = pytest.mark.requires_clean_core
+
 ROOT = Path(__file__).resolve().parents[2]
 
 

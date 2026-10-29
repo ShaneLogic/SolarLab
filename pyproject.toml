@@ -28,10 +28,13 @@ server = ["fastapi==0.141.1", "uvicorn==0.52.4", "pydantic==2.13.5"]
 queue = ["celery[redis]==5.5.3"]
 research = ["openpyxl>=3.1", "pymupdf>=1.24"]
 ida = ["scikit-sundae==1.1.3"]
+# Optional rigorous Arb observer arithmetic; installed explicitly in core CI.
+arb = ["python-flint==0.8.0"]
 dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "httpx==0.28.1",
+    "jsonschema==4.26.0",
     "ruff>=0.15.20",
     "mypy>=1.18",
     "import-linter>=2.5",
@@ -89,9 +92,11 @@ disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not slow'"
+addopts = "-ra -m 'not slow'"
 markers = [
     "slow: marks tests as slow (run with -m slow)",
+    "requires_clean_core: binds the running core to committed source; skips on changed bound Python files",
+    "frontend: Python/TypeScript client contracts executed by the frontend CI job",
     "regression: physical-sanity regression tests (V_oc / J_sc / FF envelopes, parity gates)",
     "validation: physics trend validation against literature windows (V_oc vs Eg, FF vs mobility, etc.)",
 ]

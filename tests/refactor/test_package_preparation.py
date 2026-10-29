@@ -21,7 +21,10 @@ def test_transition_lock_preserves_every_existing_dependency_record():
     new = tomllib.loads((ROOT / "uv.lock").read_text())
     old_packages = [p for p in old["package"] if p["name"] != "perovskite-sim"]
     new_packages = [p for p in new["package"] if p["name"] != "solarlab"]
-    assert new_packages == old_packages
+    # The new optional Arb observer is the only additional locked package.
+    assert [p for p in new_packages if p["name"] != "python-flint"] == old_packages
+    added = [p for p in new_packages if p["name"] == "python-flint"]
+    assert len(added) == 1 and added[0]["version"] == "0.8.0"
     assert new["requires-python"] == old["requires-python"]
     assert new["resolution-markers"] == old["resolution-markers"]
     old_metadata = tomllib.loads((ROOT / "perovskite-sim/pyproject.toml").read_text())
@@ -30,7 +33,11 @@ def test_transition_lock_preserves_every_existing_dependency_record():
     assert metadata["project"]["dependencies"] == [
         *old_metadata["project"]["dependencies"], "pydantic==2.13.5",
     ]
-    assert metadata["project"]["optional-dependencies"] == old_metadata["project"]["optional-dependencies"]
+    previous_extras = old_metadata["project"]["optional-dependencies"]
+    extras = metadata["project"]["optional-dependencies"]
+    expected_dev = list(previous_extras["dev"])
+    expected_dev.insert(expected_dev.index("httpx==0.28.1") + 1, "jsonschema==4.26.0")
+    assert extras == {**previous_extras, "dev": expected_dev, "arb": ["python-flint==0.8.0"]}
     assert "scripts" not in metadata["project"]
 
 

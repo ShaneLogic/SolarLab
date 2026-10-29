@@ -51,8 +51,13 @@ from scripts.benchmarks.interval_observation import (
 from perovskite_sim.constants import Q
 
 
+def _ball_integrator(**controls):
+    pytest.importorskip("flint", reason="Arb observation checks require the solarlab[arb] extra")
+    return BallIntegrator(**controls)
+
+
 REPO = Path(__file__).resolve().parents[2]
-PLAN = Path(os.environ["REAL_DEVICE_PLAN"])
+PLAN = Path(os.environ["REAL_DEVICE_PLAN"]) if os.environ.get("REAL_DEVICE_PLAN") else None
 CASES = ("S0NeutralPublicDeviceV1", "DynamicAcceptorIonPublicDeviceV1")
 # These are numerical oracle work goals, not replacements for a physical gate.
 ORACLE_GOAL = Fraction(1, 2**160)
@@ -180,6 +185,8 @@ def clock(**changes):
 
 @lru_cache(maxsize=4)
 def model(case_id, area):
+    if PLAN is None:
+        pytest.skip("REAL_DEVICE_PLAN is unset: this device observation requires an explicitly bound plan")
     return AffineCoupledSlab(SlabDefinition.from_plan(PLAN, REPO, case_id, area=area), 8)
 
 
@@ -310,6 +317,8 @@ def test_newton_basis_fraction_and_quotient(request):
 
 
 def test_actual_saved_predecessor_strip_rejected(request):
+    if not os.environ.get("IDA_SAVED_READBACK_AUDIT"):
+        pytest.skip("IDA_SAVED_READBACK_AUDIT is unset: requires the explicitly bound saved readback audit")
     source = Path(os.environ["IDA_SAVED_READBACK_AUDIT"])
     evidence = json.loads(source.read_text())["native_interval_vs_previous_time_discrepancies"][0]
     current = evidence["current_step"]
@@ -392,7 +401,7 @@ def test_public_full_word_endpoints_are_retained(request):
 
 @pytest.mark.parametrize("value", [Fraction(-1, 10), Fraction(0), Fraction(1, 10), Fraction(1, 2**90)])
 def test_bernoulli_decimal120_including_removable_zero(value, request):
-    a = BallIntegrator()
+    a = _ball_integrator()
     result = a.point(lambda x, _: a.bernoulli(x), value)
     with localcontext() as ctx:
         ctx.prec = 120
@@ -406,7 +415,7 @@ def test_bernoulli_decimal120_including_removable_zero(value, request):
 
 
 def test_integral_known_exact_value_and_absolute_kink(request):
-    a = BallIntegrator()
+    a = _ball_integrator()
     polynomial = a.integrate(lambda z, _: 3*z*z+2*z+1, 0, 1, ORACLE_GOAL)
     absolute = a.absolute_bound(lambda z, _: z, -1, 1, ORACLE_GOAL)
     assert abs(polynomial.center-3) <= polynomial.radius
@@ -418,7 +427,7 @@ def test_integral_known_exact_value_and_absolute_kink(request):
 
 @pytest.mark.parametrize("sign", [-1, 0, 1])
 def test_absolute_bound_signed_weak_and_strict_zero(sign, request):
-    a = BallIntegrator()
+    a = _ball_integrator()
     value = sign*Fraction(1, 2**120)
     bound = a.absolute_bound(lambda z, _: a.number(value), -1, 1, ORACLE_GOAL)
     assert 2*abs(value) <= bound.upper <= 2*abs(value)+ORACLE_GOAL
@@ -430,7 +439,7 @@ def test_absolute_bound_signed_weak_and_strict_zero(sign, request):
 
 
 def test_varying_bernoulli_integral_independent_decimal_series(request):
-    a = BallIntegrator()
+    a = _ball_integrator()
     actual = a.integrate(lambda z, _: a.bernoulli(z), 1, 2, ORACLE_GOAL)
     with localcontext() as context:
         context.prec = 140
@@ -446,7 +455,7 @@ def test_varying_bernoulli_integral_independent_decimal_series(request):
 
 
 def test_varying_vacancy_log_integral(request):
-    a = BallIntegrator()
+    a = _ball_integrator()
     actual = a.integrate(lambda z, analytic: (1-z).log(analytic=analytic), 0, Fraction(1, 2), ORACLE_GOAL)
     with localcontext() as context:
         context.prec = 120
@@ -457,7 +466,7 @@ def test_varying_vacancy_log_integral(request):
 
 
 def test_negative_ball_analytic_and_budget_cases(request):
-    a = BallIntegrator(evaluations=1)
+    a = _ball_integrator(evaluations=1)
     with pytest.raises(ContractError) as failure:
         a.integrate(lambda z, _: z.exp(), 0, 1, ORACLE_GOAL)
     # The mature library may stop at its own soft work limit before asking
@@ -468,7 +477,7 @@ def test_negative_ball_analytic_and_budget_cases(request):
         assert a.calls[-1]["evaluations"] <= 1
     with pytest.raises(ContractError, match="nonfinite_or_nonreal"):
         a.point(lambda z, analytic: z.log(analytic=analytic), -1)
-    ordinary = BallIntegrator()
+    ordinary = _ball_integrator()
     with pytest.raises(ContractError, match="absolute_requires_real_enclosure"):
         ordinary.absolute_bound(lambda z, _: ordinary.flint.acb(0, 1), 0, 1, ORACLE_GOAL)
     report(request, bounded_rejection=str(failure.value), invalid_log_domain_rejected=True,
@@ -479,7 +488,7 @@ def test_negative_ball_analytic_and_budget_cases(request):
 
 
 def test_complex_callback_with_real_squared_integral_rejected(request):
-    a = BallIntegrator()
+    a = _ball_integrator()
     # Integral (1+i*u)^2 is real4/3, but sqrt(8/3) does not bound
     # integral |1+i*u|. Reject the range before using that false L1 proof.
     with pytest.raises(ContractError, match="absolute_requires_real_enclosure"):
@@ -494,7 +503,7 @@ def test_complex_callback_with_real_squared_integral_rejected(request):
 def test_physical_integrals_independent_decimal_fv(case_id, area, request):
     device = model(case_id, area)
     path = path_for(device, sign=-1 if area == 0.37 else 1)
-    observer, arithmetic = SlabPathObserver(device, path), BallIntegrator()
+    observer, arithmetic = SlabPathObserver(device, path), _ball_integrator()
     result = observer.integrate(arithmetic, ORACLE_GOAL)
     errors = []
     with localcontext() as context:
@@ -523,7 +532,7 @@ def test_uncovered_strip_explicit_extension_debit(request):
     with pytest.raises(ContractError, match="uncovered_predecessor_strip"):
         SlabPathObserver(device, path)
     extended = replace(path, origin="declared_reconstruction", clock_policy="declared_polynomial_extension")
-    debit = SlabPathObserver(device, extended).strip_current_debit(BallIntegrator())
+    debit = SlabPathObserver(device, extended).strip_current_debit(_ball_integrator())
     assert c.strip == Fraction(1, 2**55)
     assert all(x >= 0 for rows in debit.values() for x in rows)
     assert extended.identity != path.identity

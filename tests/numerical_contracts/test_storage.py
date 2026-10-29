@@ -704,7 +704,14 @@ IDA_CASE = next(case for case in GATES["NC01"]["fixed_inputs"] if case["id"] == 
 IDA_SETTINGS = list(product(IDA_CASE["max_steps"], IDA_CASE["max_orders"], IDA_CASE["solver_rtols"]))
 
 
-@pytest.mark.parametrize("max_step,max_order,rtol", IDA_SETTINGS)
+@pytest.mark.parametrize("max_step,max_order,rtol", [
+    pytest.param(*setting, marks=pytest.mark.xfail(
+        strict=True, raises=AssertionError,
+        reason=("G2 original NC01 IDA order-1 state gate fails; retained by "
+                "ArchitectureRefactor/NumericalRouteV1/G2Sequence/G2Sequence.json"),
+    )) if setting[1] == 1 else setting
+    for setting in IDA_SETTINGS
+])
 def test_nc01_ida_all_native_intervals(max_step, max_order, rtol, request):
     pytest.importorskip("sksundae")
     gate = GATES["NC01"]

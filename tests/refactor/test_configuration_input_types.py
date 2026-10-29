@@ -18,6 +18,10 @@ from solarlab.materials.full_parameters import FullParameterInput
 from solarlab.materials.optics import CigsOpticsInput
 from solarlab.materials.parameters import LayerValuesInput
 
+import pytest
+
+pytestmark = pytest.mark.frontend
+
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
 EXPORTER = ROOT / "scripts/generate_configuration_schema.py"

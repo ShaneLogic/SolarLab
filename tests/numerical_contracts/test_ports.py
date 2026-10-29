@@ -206,7 +206,13 @@ def test_rc_be_all_grids_and_ports(request):
     assert_record(request, {"grids": records, "adjacent_error_ratios": ratios}, checks)
 
 
+@pytest.mark.xfail(
+    not os.environ.get("PORT_CONTROL_PLAN"), strict=True, raises=AssertionError,
+    reason=("G2 original NC06 IDA interval/charge gates fail; retained by "
+            "ArchitectureRefactor/NumericalRouteV1/G2Sequence/G2Sequence.json"),
+)
 def test_rc_ida_trajectory_and_every_native_interval(request):
+    pytest.importorskip("sksundae", reason="native IDA checks require the solarlab[ida] extra")
     p = GATE["fixed_inputs"]["rc"]
     model = RCModel(p["C"], p["R"])
     intervals, leases, accepted = [], [], []

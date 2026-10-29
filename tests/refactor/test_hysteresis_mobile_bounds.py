@@ -7,6 +7,7 @@ from fractions import Fraction
 import importlib.util
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 
 
@@ -153,7 +154,16 @@ class BoundsTests(unittest.TestCase):
                 mobile.mobile_flux_bounds(base,[0,0],ions,[1],[1],limits,1,Fraction.from_float(.999999))
 
     def test_no_production_imports(self):
-        self.assertFalse(any(name.startswith("perovskite_sim") for name in sys.modules))
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", """
+import runpy, sys
+runpy.run_path(sys.argv[1], run_name="isolated_bounds_import")
+assert not any(name == "perovskite_sim" or name.startswith("perovskite_sim.")
+               for name in sys.modules)
+""", str(Path(__file__).resolve())],
+            cwd=REPO, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
