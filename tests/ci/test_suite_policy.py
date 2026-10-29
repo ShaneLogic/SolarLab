@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,9 +23,11 @@ def test_every_root_test_file_has_an_ordinary_ci_job_or_reasoned_exclusion():
     selections = workflow_selections(workflow)
     report = audit(ROOT, selections, exclusions)
     print(json.dumps({key: report[key] for key in (
-        "test_files", "uncovered_files", "duplicate_files", "conflicting_exclusions")}))
+        "test_files", "uncovered_files", "duplicate_files", "duplicate_invocations",
+        "conflicting_exclusions", "isolated_groups", "archive_dependent_tests")}))
     assert report["uncovered_files"] == [], report
     assert report["duplicate_files"] == {}, report
+    assert report["duplicate_invocations"] == {}, report
     assert report["conflicting_exclusions"] == [], report
     assert {selection.job for selection in selections} >= {"static", "core", "packages", "backend", "frontend"}
 
@@ -87,6 +90,87 @@ def test_duplicate_ci_jobs_fail_for_a_synthetic_file():
     jobs = (Selection("core", ("tests",), "not slow"), Selection("packages", ("tests",), "not slow"))
     with pytest.raises(ValueError, match="duplicate CI job assignments"):
         audit_files(sources, jobs, {"files": {}})
+
+
+def test_repeated_process_in_the_same_job_is_not_hidden_by_job_deduplication():
+    sources = {"tests/test_overlap.py": "def test_overlap(): pass\n"}
+    selection = Selection("core", ("tests",), "not slow")
+    with pytest.raises(ValueError, match="duplicate CI process invocations"):
+        audit_files(sources, (selection, selection), {"files": {}})
+
+
+def isolated_workflow():
+    sources = {"tests/runtime/test_pool.py": "def test_pool(): pass\n",
+               "tests/runtime/test_other.py": "def test_other(): pass\n"}
+    policy = {"files": {}, "isolated_groups": {"pool": {
+        "job": "backend", "files": ["tests/runtime/test_pool.py"],
+        "reason": "RSS includes the collecting pytest process"}}}
+    bulk = {"run": "python -m pytest tests/runtime --ignore tests/runtime/test_pool.py"}
+    isolated = {"env": {"PYTEST_CI_ISOLATED_GROUP": "pool"},
+                "run": "python -m pytest tests/runtime/test_pool.py"}
+    workflow = {"jobs": {"backend": {"steps": [bulk, isolated]}}}
+    return sources, policy, workflow
+
+
+def test_documented_isolated_group_has_exact_single_job_and_process_ownership():
+    sources, policy, workflow = isolated_workflow()
+    report = audit_files(sources, workflow_selections(workflow), policy)
+    assert report["uncovered_files"] == []
+    assert report["duplicate_invocations"] == {}
+    assert report["isolated_groups"] == {"pool": {
+        "job": "backend", "files": ["tests/runtime/test_pool.py"], "invocations": 1}}
+    assert all(jobs == ["backend"] for jobs in report["assignments"].values())
+
+
+@pytest.mark.parametrize("change,reason", [
+    ("bulk_overlap", "duplicate CI process"),
+    ("missing_group", "exactly once"),
+    ("repeated_group", "exactly once"),
+    ("wrong_job", "exact files and job"),
+    ("unknown_group", "exactly once"),
+    ("unrelated_file", "exact files and job"),
+    ("hidden_tests", "hides fast tests"),
+    ("optional_step", "exactly once"),
+])
+def test_isolation_guard_rejects_missing_duplicate_misrouted_or_hidden_groups(change, reason):
+    sources, policy, workflow = isolated_workflow()
+    steps = workflow["jobs"]["backend"]["steps"]
+    if change == "bulk_overlap":
+        steps[0]["run"] = "python -m pytest tests/runtime"
+    elif change == "missing_group":
+        steps.pop()
+    elif change == "repeated_group":
+        steps.append(deepcopy(steps[1]))
+    elif change == "wrong_job":
+        workflow["jobs"]["frontend"] = {"steps": [steps.pop()]}
+    elif change == "unknown_group":
+        steps[1]["env"]["PYTEST_CI_ISOLATED_GROUP"] = "unregistered"
+    elif change == "unrelated_file":
+        steps[1]["run"] += " tests/runtime/test_other.py"
+    elif change == "hidden_tests":
+        steps[1]["run"] += " -m frontend"
+    else:
+        steps[1]["if"] = "manual"
+    with pytest.raises(ValueError, match=reason):
+        audit_files(sources, workflow_selections(workflow), policy)
+
+
+def test_archive_prerequisite_category_requires_a_real_collected_test_and_reason():
+    name = "tests/test_archive.py::TestArchive::test_saved"
+    sources = {"tests/test_archive.py": "class TestArchive:\n    def test_saved(self): pass\n"}
+    policy = {"files": {}, "conditional_tests": {name: "Requires the source-bound archive"},
+              "archive_dependent_tests": [name]}
+    jobs = (Selection("packages", ("tests",), "not slow"),)
+    report = audit_files(sources, jobs, policy)
+    assert report["archive_dependent_tests"] == [name] and report["uncovered_files"] == []
+    for change in ("missing_reason", "missing_test"):
+        changed = deepcopy(policy)
+        if change == "missing_reason":
+            changed["conditional_tests"].clear()
+        else:
+            changed["archive_dependent_tests"] = [name + "_removed"]
+        with pytest.raises(ValueError, match="archive-dependent"):
+            audit_files(sources, jobs, changed)
 
 
 def test_covered_file_cannot_also_be_excluded():

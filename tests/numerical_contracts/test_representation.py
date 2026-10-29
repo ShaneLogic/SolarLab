@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError, replace
 from decimal import Decimal, localcontext
 from fractions import Fraction
 from types import SimpleNamespace
+import warnings
 
 import numpy as np
 import pytest
@@ -252,8 +253,15 @@ def test_binding_domain_units_zero_and_mutation_rejections(physical):
     model,point,rate=physical; rep=chart(physical); image=rep.forward(point,rate)
     with pytest.raises(FrozenInstanceError): rep.gauge=1
     shape=image.coordinates.shape
-    with pytest.warns(DeprecationWarning):
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
         image.coordinates.shape=(2,2)
+    if np.lib.NumpyVersion(np.__version__) >= "2.5.0":
+        assert len(seen) == 1
+        assert issubclass(seen[0].category, DeprecationWarning)
+        assert "Setting the shape on a NumPy array" in str(seen[0].message)
+    else:
+        assert seen == []
     assert image.coordinates.shape==shape
     with pytest.raises(ContractError,match="column_dimension"):
         chart(physical,column_units={"n_m3":UnitExpression(VOLT,1,"wrong")})

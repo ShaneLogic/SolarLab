@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
@@ -15,7 +16,8 @@ from scipy.linalg import LinAlgWarning, lu_factor, lu_solve
 
 
 REPO = Path(__file__).resolve().parents[2]
-ARCHIVE = Path("/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab")
+ARCHIVE = Path(os.environ.get("SOLARLAB_ARCHIVE", str(
+    Path.home()/"Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab")))
 spec = importlib.util.spec_from_file_location("factor_cache_test_subject",
                                            REPO/"scripts/benchmarks/hysteresis_reference.py")
 hr = importlib.util.module_from_spec(spec)
@@ -208,6 +210,7 @@ class TestExactDenseLUCache(unittest.TestCase):
 
 
 class TestFactorPolicyWiring(unittest.TestCase):
+    @unittest.skipUnless(ARCHIVE.is_dir(), "Archive-dependent factor policy check requires the source-bound SOLARLAB_ARCHIVE root")
     def test_plan_default_stays_absent_and_optin_is_identity_bound(self):
         with patch.object(hr, "source_binding", return_value={}), patch.object(hr, "environment_binding", return_value={}):
             args = (REPO, ARCHIVE, "hi_diffusivity_00", 240, 2, 2)
@@ -265,6 +268,7 @@ class TestFactorPolicyWiring(unittest.TestCase):
             self.assertEqual([r["hits"] for r in method.factor_cache_reports], [1, 0])
             self.assertEqual((times, states), ([0.], [(1.,)]))
 
+    @unittest.skipUnless(ARCHIVE.is_dir(), "Archive-dependent factor policy check requires the source-bound SOLARLAB_ARCHIVE root")
     def test_bridge_preserves_failure_history_and_factor_counters(self):
         bundle = hr.load_inputs(REPO, ARCHIVE, "hi_diffusivity_00")
         control = hr.make_timeline(bundle["contract"], bundle["request"], 2)[3].controls[0]

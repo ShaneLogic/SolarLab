@@ -173,6 +173,8 @@ jobs:
   backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      PYTEST_CI_JOB: backend
     strategy:
       fail-fast: false
       matrix:
@@ -198,12 +200,21 @@ jobs:
         run: uv sync --frozen --extra dev --extra server --no-editable
       - name: Discover all root runtime and HTTP tests
         working-directory: .
-        env:
-          PYTEST_CI_JOB: backend
         run: >-
           uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
-          tests/runtime -m 'not slow and not frontend' --durations=20
+          tests/runtime --ignore tests/runtime/test_scan_execution.py
+          -m 'not slow and not frontend' --durations=20
           --junitxml=${{ runner.temp }}/backend-${{ matrix.python }}.xml
+      # Separate process: pool RSS includes pytest and its process family.
+      # The discovery guard verifies this group and bulk ignore together.
+      - name: Isolated scan execution pool contracts
+        working-directory: .
+        env:
+          PYTEST_CI_ISOLATED_GROUP: scan_execution
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime/test_scan_execution.py -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/backend-scan-${{ matrix.python }}.xml
 
   binding:
     runs-on: ubuntu-24.04
@@ -227,6 +238,8 @@ jobs:
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      PYTEST_CI_JOB: frontend
     defaults:
       run:
         working-directory: web
@@ -247,12 +260,20 @@ jobs:
         run: uv sync --frozen --extra dev --extra server --no-editable
       - name: Discover Python and TypeScript browser contracts
         working-directory: .
-        env:
-          PYTEST_CI_JOB: frontend
         run: >-
           uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
-          tests/refactor tests/runtime -m 'not slow and frontend' --durations=20
+          tests/refactor tests/runtime --ignore tests/runtime/test_run_client_contract.py
+          -m 'not slow and frontend' --durations=20
           --junitxml=${{ runner.temp }}/frontend-python.xml
+      # Do not import the whole numerical suite into the client's RSS budget.
+      - name: Isolated stored-run client pool contracts
+        working-directory: .
+        env:
+          PYTEST_CI_ISOLATED_GROUP: run_client
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime/test_run_client_contract.py -m 'not slow and frontend' --durations=20
+          --junitxml=${{ runner.temp }}/frontend-run-client.xml
       - run: SOLARLAB_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python" npm run test:run
       - run: npm run build
 

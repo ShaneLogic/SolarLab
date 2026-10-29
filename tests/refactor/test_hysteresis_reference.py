@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,8 @@ from unittest.mock import Mock, patch
 
 
 REPO = Path(__file__).resolve().parents[2]
-ARCHIVE = Path("/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab")
+ARCHIVE = Path(os.environ.get("SOLARLAB_ARCHIVE", str(
+    Path.home()/"Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab")))
 SOURCE = REPO/"scripts/benchmarks/hysteresis_reference.py"
 spec = importlib.util.spec_from_file_location("hysteresis_reference_test_subject", SOURCE)
 hr = importlib.util.module_from_spec(spec)
@@ -85,6 +87,7 @@ class TestSourcesAndInput(FrozenFixture):
                 request["params"]["v_rate"] = case["scan_rate_V_s"]
                 self.assertEqual(hr.digest(request), case["request_sha256"])
 
+    @unittest.skipUnless(ARCHIVE.is_dir(), "Archive-dependent request check requires the source-bound SOLARLAB_ARCHIVE root")
     def test_exact_archived_requests_distinguish_D0_and_c0(self):
         d0 = hr.load_inputs(REPO, ARCHIVE, "hi_diffusivity_00")
         c0 = hr.load_inputs(REPO, ARCHIVE, "hi_density_00")
@@ -97,6 +100,7 @@ class TestSourcesAndInput(FrozenFixture):
         self.assertEqual((c_layer["D_ion"], c_layer["P0"]), (2.585e-18, 0))
         self.assertNotEqual(d0["case"]["request_sha256"], c0["case"]["request_sha256"])
 
+    @unittest.skipUnless(ARCHIVE.is_dir(), "Archive-dependent request check requires the source-bound SOLARLAB_ARCHIVE root")
     def test_nominal_saved_request_is_bound(self):
         bundle = hr.load_inputs(REPO, ARCHIVE, "hi_rate_40")
         self.assertEqual(bundle["request"], self.request)
@@ -370,6 +374,7 @@ class TestThinBridgeAndAnalyticCurrent(FrozenFixture):
 class TestPrebiasFirstStepPolicy(FrozenFixture):
     """Constructor/bridge mocks only; no Radau step or device solve is run."""
 
+    @unittest.skipUnless(ARCHIVE.is_dir(), "Archive-dependent prebias policy check requires the source-bound SOLARLAB_ARCHIVE root")
     def test_default_plan_omits_policy_and_request_stays_exact(self):
         with patch.object(hr, "source_binding", return_value={}), patch.object(hr, "environment_binding", return_value={}):
             default = hr.build_plan(REPO, ARCHIVE, "hi_diffusivity_00", 60, 2, 2)

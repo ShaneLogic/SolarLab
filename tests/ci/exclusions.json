@@ -6,7 +6,12 @@
     "tests/independent/p04/test_p04_legacy_golden.py::test_legacy_reproduces_golden_bitwise": "Bitwise reference was captured on macOS/Accelerate; Linux still runs live legacy parity and independent analytic tests.",
     "tests/independent/p04/test_p04_legacy_golden.py::test_candidate_against_golden": "Bitwise macOS/Accelerate capture; no threshold is relaxed on Linux.",
     "tests/refactor/test_reference_map.py::ComparisonScopeTests::test_actual_scope_links_and_protected_payloads": "Needs the source-bound archive; when present OI-RefMapPin remains a strict xfail for MapError, never a passing reference check.",
-    "tests/integration/test_multiple_ionic_transient_1d.py::test_actual_four_step_history_and_reuse_saved_reader": "Requires explicit PYTEST_MULTIPLE_TRANSIENT_INITIAL with exact current model/source/control identity; the historical absolute path is not a portable initial."
+    "tests/integration/test_multiple_ionic_transient_1d.py::test_actual_four_step_history_and_reuse_saved_reader": "Requires explicit PYTEST_MULTIPLE_TRANSIENT_INITIAL with exact current model/source/control identity; the historical absolute path is not a portable initial.",
+    "tests/refactor/test_factor_cache.py::TestFactorPolicyWiring::test_bridge_preserves_failure_history_and_factor_counters": "Archive-dependent factor policy witness; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
+    "tests/refactor/test_factor_cache.py::TestFactorPolicyWiring::test_plan_default_stays_absent_and_optin_is_identity_bound": "Archive-dependent factor policy input; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
+    "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_exact_archived_requests_distinguish_D0_and_c0": "Archive-dependent original request bytes; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
+    "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_nominal_saved_request_is_bound": "Archive-dependent nominal request bytes; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
+    "tests/refactor/test_hysteresis_reference.py::TestPrebiasFirstStepPolicy::test_default_plan_omits_policy_and_request_stays_exact": "Archive-dependent prebias policy input; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent."
   },
   "markers": {
     "slow": "Excluded from the default fast command; run root slow tests explicitly with -m slow. The optional CI slow job retains its existing legacy regression scope.",
@@ -17,5 +22,29 @@
     "arb": "python-flint==0.8.0 is locked and installed in core CI; local tests requiring it skip explicitly when absent.",
     "ida": "scikit-sundae==1.1.3 is locked and installed in core CI; the five original failing IDA cases run as strict xfails.",
     "uv": "The packages job installs pinned uv; isolated release installation tests skip with a reason when uv is absent locally."
+  },
+  "archive_dependent_tests": [
+    "tests/refactor/test_factor_cache.py::TestFactorPolicyWiring::test_bridge_preserves_failure_history_and_factor_counters",
+    "tests/refactor/test_factor_cache.py::TestFactorPolicyWiring::test_plan_default_stays_absent_and_optin_is_identity_bound",
+    "tests/refactor/test_hysteresis_reference.py::TestPrebiasFirstStepPolicy::test_default_plan_omits_policy_and_request_stays_exact",
+    "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_exact_archived_requests_distinguish_D0_and_c0",
+    "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_nominal_saved_request_is_bound",
+    "tests/refactor/test_reference_map.py::ComparisonScopeTests::test_actual_scope_links_and_protected_payloads"
+  ],
+  "isolated_groups": {
+    "scan_execution": {
+      "job": "backend",
+      "files": [
+        "tests/runtime/test_scan_execution.py"
+      ],
+      "reason": "Pool RSS includes the pytest parent process family; importing all numerical/runtime modules first exhausts the unchanged per-job budgets. Run this file once in its own pytest process and ignore it only in bulk discovery."
+    },
+    "run_client": {
+      "job": "frontend",
+      "files": [
+        "tests/runtime/test_run_client_contract.py"
+      ],
+      "reason": "The supervised browser client uses the existing bounded pool; broad schema/runtime collection retains unrelated numerical modules in the parent. Run this file once in its own pytest process with unchanged RSS limits."
+    }
   }
 }
