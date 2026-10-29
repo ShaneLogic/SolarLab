@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 import hashlib
 import json
 
@@ -14,6 +15,32 @@ from solarlab.physics.recombination.explicit_neutral import (
     NeutralDefectSpecies, NeutralExplicitDefectModel, compile_neutral_defect_species,
 )
 
+LITERAL_ABOVE_VB_DOS_REFERENCE_V1 = "neutral_literal_above_vb_dos_reference_v1"
+
+
+def _literal_band_edge_references(
+    species: NeutralDefectSpecies, conduction_dos_m3: np.ndarray, valence_dos_m3: np.ndarray,
+) -> NeutralDefectSpecies:
+    """Convert DEF1's intrinsic reference while retaining the literal document.
+
+    Ei-Ev = Eg/2 + VT/2*log(Nv/Nc). Thus n1 needs sqrt(Nc/Nv)
+    and p1 its reciprocal. The original species and arithmetic are returned
+    unchanged when physical DOS are equal on every owned node.
+    """
+    changed = species.active_nodes & (conduction_dos_m3 != valence_dos_m3)
+    if not np.any(changed):
+        return species
+    n1, p1 = np.array(species.n1_m3, copy=True), np.array(species.p1_m3, copy=True)
+    with np.errstate(over="ignore", under="ignore", divide="ignore", invalid="ignore"):
+        # Separate square roots avoid overflowing Nc/Nv before its square root.
+        factor = np.sqrt(conduction_dos_m3[changed]) / np.sqrt(valence_dos_m3[changed])
+        n1[changed] *= factor
+        p1[changed] /= factor
+    if any(not np.all(np.isfinite(value[changed])) or np.any(value[changed] <= 0.0)
+           for value in (n1, p1)):
+        raise ValueError("literal above-VB reference densities must be finite and representable positive values")
+    return replace(species, n1_m3=n1, p1_m3=p1)
+
 
 def bind_neutral_defects(
     layers: Sequence[PreparedLayer], masks: Sequence[np.ndarray], *,
@@ -23,9 +50,9 @@ def bind_neutral_defects(
     """Preserve declared species order, resolved documents and supplied ownership.
 
     Masks are the compiler's RIGHT_LAYER_WINS masks. Capture lifetimes and
-    reference densities are evaluated only by the unchanged historical law.
-    Its intrinsic-density/midgap convention preserves a declared energy above
-    the valence band only when the physical conduction and valence DOS agree.
+    the SRH rate use the unchanged historical law. Its reference
+    populations receive the physical DOS correction for a literal energy above
+    the valence band; equal-DOS nodes keep the exact historical arithmetic.
     """
     if len(layers) != len(masks):
         raise ValueError("one node ownership mask is required per electrical layer")
@@ -39,10 +66,10 @@ def bind_neutral_defects(
             raise CapabilityError(f"{where}: an explicit inventory requires explicit_quasi_steady")
         if any(not isinstance(item, PreparedDefect) for item in layer.defects):
             raise CapabilityError(f"{where}: multivalent defects are not bound")
-        if np.any(conduction_dos_m3[mask] != valence_dos_m3[mask]):
+        if any(value.shape != ni_sq_m6.shape or not np.all(np.isfinite(value[mask]))
+               or np.any(value[mask] <= 0.0) for value in (conduction_dos_m3, valence_dos_m3)):
             raise CapabilityError(
-                f"{where}: neutral DEF-1 requires equal physical conduction and valence DOS "
-                "on owned nodes to preserve the declared above-valence-band energy"
+                f"{where}: literal defect energies require finite positive physical DOS on owned nodes"
             )
         resolved = [item.to_mapping() for item in layer.defects]
         document = {"schema_version": layer.defect_schema_version,
@@ -63,7 +90,7 @@ def bind_neutral_defects(
             if center < 0.0 or np.any(center > band_gap_eV[mask]):
                 raise CapabilityError(f"{where}.{item['id']}: resolved level lies outside the physical gap")
             try:
-                species.append(compile_neutral_defect_species(
+                compiled = compile_neutral_defect_species(
                     identifier=identifier, document_sha256=digest, active_nodes=mask,
                     ni_sq_m6=ni_sq_m6, band_gap_eV=band_gap_eV, thermal_voltage_V=thermal_voltage_V,
                     total_density_m3=distribution["total_density_m3"], center_eV_above_vb=center,
@@ -72,7 +99,8 @@ def bind_neutral_defects(
                     thermal_velocity_p_m_s=kinetics["thermal_velocity_p_m_s"],
                     charge_transition=item["charge_transition"], distribution=distribution["kind"],
                     degeneracy=item["degeneracy"],
-                ))
+                )
+                species.append(_literal_band_edge_references(compiled, conduction_dos_m3, valence_dos_m3))
             except ValueError as error:
                 raise CapabilityError(f"{where}.{item['id']}: {error}") from error
     if not species:

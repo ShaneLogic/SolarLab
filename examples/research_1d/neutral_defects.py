@@ -2,6 +2,7 @@
 
 Run from the repository root:
     python -m examples.research_1d.neutral_defects --output neutral.json
+    python -m examples.research_1d.neutral_defects --unequal-dos --output neutral_unequal_dos.json
 
 The default declaration adds one absorber species to the existing device.json
 fixture. An explicit --config supplies its own complete validated declaration.
@@ -25,6 +26,7 @@ from examples.research_1d.transient import json_value
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.inputs import DeviceInput
+from solarlab.device.neutral_defects import LITERAL_ABOVE_VB_DOS_REFERENCE_V1
 from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_1d import DC1DProblem
 from solarlab.materials.source import SourceDocument
@@ -64,29 +66,59 @@ def prepare_case(config: Path | None = None) -> PreparedDevice:
                           sources=(*base.sources, source))
 
 
+def prepare_unequal_dos_case() -> PreparedDevice:
+    """Explicit physical variant: double absorber Nv, with consistent ni²."""
+    base = prepare_case()
+    declaration = base.to_input().editing_data()
+    absorber = next(layer for layer in declaration["layers"] if layer["id"] == "absorber")
+    parameters = absorber["parameters"]
+    parameters["Nv300"] *= 2.0
+    for name in ("ni", "n1", "p1"):
+        parameters[name] *= 2.0**0.5
+    raw = json.dumps(declaration, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    source = SourceDocument("research_1d.neutral_defects.unequal_dos.declaration", raw)
+    return resolve_device(DeviceInput.model_validate(declaration), base.defaults, base.resources,
+                          sources=(*base.sources, source))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--unequal-dos", action="store_true",
+                        help="use the explicit default-case variant with doubled absorber Nv")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError("the output already exists; retain the original attempt")
-    prepared = prepare_case(args.config)
+    if args.unequal_dos and args.config is not None:
+        raise ValueError("--unequal-dos selects the declared default variant; use --config for a complete custom input")
+    prepared = prepare_unequal_dos_case() if args.unequal_dos else prepare_case(args.config)
     device = compile_device_1d(prepared, intervals_per_layer=INTERVALS)
     model = device.recombination.explicit_defects
     if model is None:
         raise ValueError("this example requires a configured explicit neutral inventory")
     controls = SteadyOptions()
+    unequal = model.owned_nodes & (device.parameters.conduction_dos_m3 != device.parameters.valence_dos_m3)
     summary: dict[str, Any] = {
         "node_count": device.node_count, "prepared_identity": prepared.content_sha256,
         "compiled_identity": device.identity, "defect_model_identity": model.identity_sha256,
+        "defect_reference_binding": (LITERAL_ABOVE_VB_DOS_REFERENCE_V1 if np.any(unequal)
+                                     else "historical_def1_equal_dos"),
+        "unequal_dos_owned_node_count": int(np.count_nonzero(unequal)),
         "source_documents": [{"id": source.id, "sha256": source.sha256} for source in prepared.sources],
         "voltage_V": VOLTAGE_V, "generation_scale": GENERATION_SCALE,
         "controls": asdict(controls), "physical_certificate_status": "not_evaluated",
         "qualification": False,
     }
     payload: dict[str, Any] = {"summary": summary, "binding": asdict(model),
-                              "prepared_declaration": prepared.to_mapping()}
+                              "prepared_declaration": prepared.to_mapping(),
+                              "physical_reference_inputs": {
+                                  "conduction_dos_m3": device.parameters.conduction_dos_m3,
+                                  "valence_dos_m3": device.parameters.valence_dos_m3,
+                                  "band_gap_eV": device.parameters.band_structure.physical_band_gap_eV,
+                                  "ni_sq_m6": device.parameters.intrinsic_product_m6,
+                                  "thermal_voltage_V": device.thermal_voltage_V,
+                              }}
     started = time.monotonic()
     try:
         result = solve_steady_state(device, voltage_V=VOLTAGE_V,

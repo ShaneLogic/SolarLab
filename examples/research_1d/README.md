@@ -1027,6 +1027,8 @@ or more neutral single-level species on the owning layer's nodes:
 ```sh
 .venv/bin/python -B -m examples.research_1d.neutral_defects \
   --output outputs/neutral_defects.json
+.venv/bin/python -B -m examples.research_1d.neutral_defects \
+  --unequal-dos --output outputs/neutral_defects_unequal_dos.json
 ```
 
 The default example adds a neutral absorber level to `device.json` and runs a
@@ -1037,11 +1039,14 @@ partials, final fields, original residual and solver outcome.
 
 The explicit inventory replaces lifetime SRH on its owned nodes; radiative and
 Auger terms and other layers remain active. Neutral species add no trap charge.
-The current historical DEF1 energy convention requires equal physical
-conduction and valence densities of states on explicit-defect nodes. Other
-layers do not have this restriction. Unequal-DOS explicit nodes, charged,
-distributed, multivalent and metastable defects are rejected by this binding.
-The bounded example passed the original numerical gates; broader material,
+Declared energies remain literal distances above the valence-band edge.
+The binding converts the historical DEF1 reference populations using the
+physical conduction and valence densities of states, including unequal DOS;
+equal-DOS nodes retain their original arithmetic. `--unequal-dos` doubles the
+absorber valence DOS and adjusts the declared intrinsic populations consistently.
+Its output includes the physical DOS, band gap and thermal voltage for inspection.
+Charged, distributed, multivalent and metastable defects remain unsupported.
+Both bounded examples passed the original numerical gates; broader material,
 mesh and final scientific qualification remain pending.
 
 ## Field-dependent carrier transport

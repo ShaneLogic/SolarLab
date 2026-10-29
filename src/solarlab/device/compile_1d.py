@@ -3,7 +3,7 @@
 Supported physics is explicit: Maxwell-Boltzmann carriers, fully ionized
 dopants, static temperature/doping/band grading, DOS-aware SG transport,
 semiconductor work-function contacts, local lifetime or explicit neutral
-single-level SRH (equal physical conduction/valence DOS on defect-owned nodes)
+single-level SRH with literal above-valence-band energies and physical DOS
 with radiative/Auger,
 smooth Caughey-Thomas face transport without Poole-Frenkel enhancement,
 and monochromatic Beer-Lambert or a node-aligned fixed generation resource.
@@ -22,7 +22,7 @@ from typing import Any, Literal, TypedDict, cast
 import numpy as np
 
 from solarlab.device.resolved import PreparedDevice, PreparedLayer
-from solarlab.device.neutral_defects import bind_neutral_defects
+from solarlab.device.neutral_defects import LITERAL_ABOVE_VB_DOS_REFERENCE_V1, bind_neutral_defects
 from solarlab.equations.dc_1d import (
     CapabilityError,
     CompiledDevice1D,
@@ -324,6 +324,9 @@ def compile_device_1d(
     )
     if explicit_defects is not None:
         identity_parts += (explicit_defects.identity_sha256,)
+        owned = explicit_defects.owned_nodes
+        if np.any(binding.conduction_dos_m3[owned] != binding.valence_dos_m3[owned]):
+            identity_parts += (LITERAL_ABOVE_VB_DOS_REFERENCE_V1,)
     if field_transport is not None:
         identity_parts += (field_transport.identity_sha256,)
     identity = hashlib.sha256(json.dumps(

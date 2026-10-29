@@ -103,7 +103,7 @@ def test_nonzero_rate_exact_partials_and_physical_temperature_binding(prepared: 
     assert np.min(actual.total_rate_m3_s[mask]) > 0.0
 
 
-def test_literal_energy_refuses_asymmetric_owned_dos_only(
+def test_literal_energy_binds_asymmetric_owned_dos_only(
     prepared: PreparedDevice, device: CompiledDevice1D,
 ) -> None:
     model = device.recombination.explicit_defects
@@ -114,12 +114,22 @@ def test_literal_energy_refuses_asymmetric_owned_dos_only(
     document = prepared.to_input().editing_data()
     parameters = document["layers"][1]["parameters"]
     parameters["Nv300"] *= 2.0
-    # Keep Maxwell-Boltzmann mass action consistent, so the DOS scope guard
-    # itself rejects the literal energy convention rather than another gate.
+    # Declare a consistent physical DOS variant; lifetime SRH on other layers
+    # and the original species document remain unchanged.
     for name in ("ni", "n1", "p1"):
         parameters[name] *= 2.0**0.5
-    with pytest.raises(CapabilityError, match="equal physical conduction and valence DOS"):
-        compile_device_1d(edited(prepared, document), intervals_per_layer=example.INTERVALS)
+    changed = compile_device_1d(edited(prepared, document), intervals_per_layer=example.INTERVALS)
+    actual = changed.recombination.explicit_defects
+    assert actual is not None and actual.identity_sha256 == model.identity_sha256
+    assert changed.identity != device.identity
+    owned = actual.owned_nodes
+    gap = changed.parameters.band_structure.physical_band_gap_eV[owned]
+    expected_n1 = changed.parameters.conduction_dos_m3[owned] * np.exp((.75 - gap) / changed.thermal_voltage_V)
+    expected_p1 = changed.parameters.valence_dos_m3[owned] * np.exp(-.75 / changed.thermal_voltage_V)
+    np.testing.assert_allclose(actual.species[0].n1_m3[owned], expected_n1, rtol=3e-14)
+    np.testing.assert_allclose(actual.species[0].p1_m3[owned], expected_p1, rtol=3e-14)
+    np.testing.assert_allclose(actual.species[0].n1_m3[owned], model.species[0].n1_m3[owned], rtol=2e-15)
+    np.testing.assert_allclose(actual.species[0].p1_m3[owned], 2.0 * model.species[0].p1_m3[owned], rtol=2e-15)
 
 
 def test_prepared_conduction_referenced_energy_is_bound_losslessly(prepared: PreparedDevice) -> None:
