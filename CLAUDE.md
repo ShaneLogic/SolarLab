@@ -105,14 +105,24 @@ additional activity ledgers. Repository-required guidance stays in Git; plans,
 evidence and scientific run artifacts stay in the archive. Use the supported Orca
 task/message/lifecycle workflow and respect each Dispatch's file ownership.
 
-The refactor commander and sole integrator is the user-appointed Codex
-session `01a180c3-f826-7873-8d0b-44b2e40899c4` (Orca terminal
-`term_3c65f4db-0a9b-41c7-b337-956eff7204dd`), appointed by the user on
-2026-10-28, replacing Claude session `7438e21f-2c98-4223-948f-1a0308439ec4`.
-The active Run remains `run_b01db3902366`. Execution is authorized. Prioritize
-a runnable new-core 1D research release: configuration, physical models,
-equation assembly, nonlinear solver, steady state/J-V, scans, and result reading,
-with a model-extension example, verification, and a reproducible environment.
+The refactor commander and sole integrator is the user-appointed Claude Code
+session `0537b216-df76-4292-bb73-949175abc111` (model `claude-opus-5-5`, effort
+`max`, Orca terminal `term_a33ad446-8ee7-473b-b4b7-00aea210c562`), appointed by
+the user on 2026-10-29 and bound to Run `run_b01db3902366` at consumer
+generation 6. It replaces Codex session `01a180c3-f826-7873-8d0b-44b2e40899c4`
+(Orca terminal `term_3c65f4db-0a9b-41c7-b337-956eff7204dd`), which is now deputy
+and standby commander. The deputy makes no Git mutations, dispatches or state
+writes; it takes over only when the commander has been unreachable for more
+than 2 hours. Execution is authorized. The runnable new-core 1D research
+release has been delivered (research packages up to V8). The next delivery is
+the user-selected engineering milestone (option A, 2026-10-29): one unified
+layout/term/assembly layer serving steady, transient and AC analyses, a
+one-command green test suite, full CI coverage, and the existing new-core
+capabilities migrated onto it. Functionality not yet migrated stays explicitly
+behind the legacy facade, and G9P remains the final endpoint. The commander
+sets the product time-integration route deadline (proposed 2026-11-08). If IDA
+is not qualified by then, a new-core adaptive BDF becomes the product default
+and IDA becomes optional; final scientific gates are unchanged.
 Then continue the remaining approved scope. Clearly distinguish implementation,
 verification, and scientific qualification; legacy execution is not new-core completion.
 Routine reversible implementation and sequencing decisions belong to the commander.
