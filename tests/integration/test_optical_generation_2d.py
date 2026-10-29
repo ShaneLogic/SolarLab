@@ -216,21 +216,25 @@ def test_isolated_original195_rows_jacobian_and_contact_half_cell_photons(prepar
         np.testing.assert_allclose(carrier, contact_expected, rtol=1e-12, atol=0.0)
 
 
-def test_isolated_active_optical_sources_are_captured_and_off_stays_old(prepared, monkeypatch):
+def test_isolated_active_optical_sources_are_captured_and_off_model_stays_off(prepared, monkeypatch):
+    import hashlib
     import sys
+    from solarlab.reproducibility.job_provenance import job_provenance, admitted_source_pins
+    from support.provenance import checked_provenance_owner
     from examples.research_1d.steady import load_device
-    from solarlab.solvers.nonlinear.steady_2d import sources
     active, off = coupled_device(prepared), coupled_device(load_device())
-    capture = sources(active)
-    names = ("solarlab.device.optical_generation_2d", "solarlab.device.optical_generation",
-             "solarlab.physics.generation.optical_binding", "solarlab.physics.generation.transfer_matrix")
+    names = ('solarlab.device.optical_generation_2d', 'solarlab.device.optical_generation', 'solarlab.physics.generation.optical_binding', 'solarlab.physics.generation.transfer_matrix')
+    with checked_provenance_owner(), job_provenance({"compiled_identity": active.identity}, operator="DC2DProblem") as active_job:
+        capture = admitted_source_pins()
+    with checked_provenance_owner(), job_provenance({"compiled_identity": off.identity}, operator="DC2DProblem") as off_job:
+        off_capture = admitted_source_pins()
     for name in names:
         assert capture[name] == hashlib.sha256(Path(sys.modules[name].__file__).read_bytes()).hexdigest()
-        assert name not in sources(off)
-    assert sources(off) == sources()
-    old = capture[names[0]]
+        assert capture[name] == off_capture[name]
+    assert active_job.export()["input_sha256"] != off_job.export()["input_sha256"]
+    old = dict(capture)
     monkeypatch.setattr(sys.modules[names[0]], "__file__", sys.modules[names[1]].__file__)
-    assert sources(active)[names[0]] != old
+    assert capture == old  # Immutable admission snapshot, no numeric-file rehash.
 
 
 def test_optical_prefix_is_source_only_until_electrical_compiler_admission(prepared):

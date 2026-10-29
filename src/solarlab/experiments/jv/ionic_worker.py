@@ -6,6 +6,8 @@ supervisor publishes artifacts and commits a terminal; no numerical fallback.
 """
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import JobProvenance
+
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
@@ -257,71 +259,72 @@ def run_ionic_jv_worker(request: WorkerRequest, worker: WorkerContext) -> Worker
             or any(getattr(binding.execution, k) != v for k, v in _roles(prepared, body, binding.execution.implementation).items())):
         raise ValueError("ionic J-V request/initial/configuration differs from manifest")
     _verify_sources(binding.execution)
-    capture: dict[str, Any] = {"scope": "ionic_compile_initialization_and_steady_jv_in_worker",
-        "started_utc": datetime.now(timezone.utc).isoformat(), "prepared_sha256": prepared.content_sha256,
-        "request_sha256": request.request.sha256, "manifest_sha256": binding.expected_sha256,
-        "build_source_commit": binding.execution.implementation.build_source_commit}
-    dark = illumination = curve = admitted = None
-    with threadpool_limits(limits=1):
-        pools = threadpool_info()
-        if any(pool["num_threads"] != 1 for pool in pools):
-            raise ValueError("child thread limit was not installed")
-        capture.update(runtime=asdict(observe_environment(_PACKAGES, _THREADS)), threadpools=pools)
-        worker.progress({"stage": "ionic_jv_compile"})
-        compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
-                                         ion_domain_layer=domain, ion_domain_endpoints=endpoints)
-        worker.check_cancel()
-        if initial.policy == "saved_accepted":
-            assert initial.artifact_bytes is not None and initial.artifact_sha256 is not None
-            initial_bytes = initial.artifact_bytes
-            state, generation, _ = _admit_evidence(compiled, initial_bytes.decode(), initial.artifact_sha256, steady)
-            if generation != protocol.generation_scale or state.voltage_V != initial.voltage_V:
-                raise ValueError("saved initial voltage/illumination differs from explicit recipe")
-            admitted = IonicTransientInitial(state, generation, steady, "request-supplied:ionic_jv_initial",
-                                            initial.artifact_sha256, initial_bytes.decode())
-        else:
-            worker.progress({"stage": "ionic_jv_cold_dark", "electrical_nodes": compiled.node_count, "ion_nodes": compiled.ion_node_count})
-            dark = solve_ionic_steady_state(compiled, voltage_V=initial.voltage_V, generation_scale=0., options=steady)
-            initial_bytes = initial_document(compiled.identity, dark, initial.voltage_V, 0.)
+    with worker.admit_provenance(request, operator="Ionic1DProblem.steady_jv"):
+        capture: dict[str, Any] = {"scope": "ionic_compile_initialization_and_steady_jv_in_worker",
+            "started_utc": datetime.now(timezone.utc).isoformat(), "prepared_sha256": prepared.content_sha256,
+            "request_sha256": request.request.sha256, "manifest_sha256": binding.expected_sha256,
+            "build_source_commit": binding.execution.implementation.build_source_commit}
+        dark = illumination = curve = admitted = None
+        with threadpool_limits(limits=1):
+            pools = threadpool_info()
+            if any(pool["num_threads"] != 1 for pool in pools):
+                raise ValueError("child thread limit was not installed")
+            capture.update(runtime=asdict(observe_environment(_PACKAGES, _THREADS)), threadpools=pools)
+            worker.progress({"stage": "ionic_jv_compile"})
+            compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
+                                             ion_domain_layer=domain, ion_domain_endpoints=endpoints)
             worker.check_cancel()
-            if dark.accepted:
-                assert dark.state is not None
-                dark_input = IonicTransientInitial(dark.state, 0., steady, "worker-produced:ionic_jv_dark",
-                    hashlib.sha256(initial_bytes).hexdigest(), initial_bytes.decode())
-                worker.progress({"stage": "ionic_jv_direct_density_initialization"})
-                illumination = initialize_ionic_steady_state(compiled, initial=dark_input,
-                    voltage_V=initial.voltage_V, generation_scale=protocol.generation_scale,
-                    options=IonicInitializationOptions(steady, "direct_density_seed_v1", initial.wall_s))
-                initial_bytes = initial_document(compiled.identity, illumination.coupled_result, initial.voltage_V,
-                                                protocol.generation_scale)
-                if illumination.accepted:
-                    assert illumination.state is not None
-                    admitted = IonicTransientInitial(illumination.state, protocol.generation_scale, steady,
-                        "worker-produced:ionic_jv_initial", hashlib.sha256(initial_bytes).hexdigest(), initial_bytes.decode())
-        worker.check_cancel()
-        if admitted is not None:
-            worker.progress({"stage": "ionic_jv_curve", "requested_points": len(protocol.voltage_V)})
-            curve = run_ionic_steady_jv(compiled, protocol.voltage_V, generation_scale=protocol.generation_scale,
-                options=options, initial_policy="saved_accepted", initial=admitted, incident_power_W_m2=protocol.incident_power_W_m2)
-        worker.check_cancel()
-    _verify_sources(binding.execution)
-    summary, payloads = ionic_jv_payload(compiled, body, dark, illumination, curve, initial_bytes)
-    sources = {s.id: s.sha256 for s in binding.execution.implementation.files}
-    sources.update({s["id"]: s["sha256"] for s in json.loads(binding.execution.preparation.content)["adapter_sources"]})
-    capture.update(finished_utc=datetime.now(timezone.utc).isoformat(), compiled_identity=compiled.identity,
-        initial_artifact_sha256=hashlib.sha256(initial_bytes).hexdigest(),
-        initial_state=None if admitted is None else _fingerprint(admitted.state.u),
-        source_sha256=sources, result_sha256=result_digest(summary, payloads), curve_started=curve is not None)
-    capture = json.loads(_document("ionic-jv-capture", capture).content)
-    return WorkerResult.from_dict({"schema": RESULT_SCHEMA, "engine": "solarlab", "H_input": request.H_input,
-        "H_physics": request.H_physics, "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
-        "prepared_sha256": prepared.content_sha256, "ionic_jv_result": summary, "reason": summary["reason"],
-        "capture": capture, "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
-        for name, p in payloads.items()}, "scientific_qualification": False}, artifacts=tuple(payloads.items()),
-        state="succeeded" if summary["outcome"] == "completed" else "failed")
+            if initial.policy == "saved_accepted":
+                assert initial.artifact_bytes is not None and initial.artifact_sha256 is not None
+                initial_bytes = initial.artifact_bytes
+                state, generation, _ = _admit_evidence(compiled, initial_bytes.decode(), initial.artifact_sha256, steady)
+                if generation != protocol.generation_scale or state.voltage_V != initial.voltage_V:
+                    raise ValueError("saved initial voltage/illumination differs from explicit recipe")
+                admitted = IonicTransientInitial(state, generation, steady, "request-supplied:ionic_jv_initial",
+                                                initial.artifact_sha256, initial_bytes.decode())
+            else:
+                worker.progress({"stage": "ionic_jv_cold_dark", "electrical_nodes": compiled.node_count, "ion_nodes": compiled.ion_node_count})
+                dark = solve_ionic_steady_state(compiled, voltage_V=initial.voltage_V, generation_scale=0., options=steady)
+                initial_bytes = initial_document(compiled.identity, dark, initial.voltage_V, 0.)
+                worker.check_cancel()
+                if dark.accepted:
+                    assert dark.state is not None
+                    dark_input = IonicTransientInitial(dark.state, 0., steady, "worker-produced:ionic_jv_dark",
+                        hashlib.sha256(initial_bytes).hexdigest(), initial_bytes.decode())
+                    worker.progress({"stage": "ionic_jv_direct_density_initialization"})
+                    illumination = initialize_ionic_steady_state(compiled, initial=dark_input,
+                        voltage_V=initial.voltage_V, generation_scale=protocol.generation_scale,
+                        options=IonicInitializationOptions(steady, "direct_density_seed_v1", initial.wall_s))
+                    initial_bytes = initial_document(compiled.identity, illumination.coupled_result, initial.voltage_V,
+                                                    protocol.generation_scale)
+                    if illumination.accepted:
+                        assert illumination.state is not None
+                        admitted = IonicTransientInitial(illumination.state, protocol.generation_scale, steady,
+                            "worker-produced:ionic_jv_initial", hashlib.sha256(initial_bytes).hexdigest(), initial_bytes.decode())
+            worker.check_cancel()
+            if admitted is not None:
+                worker.progress({"stage": "ionic_jv_curve", "requested_points": len(protocol.voltage_V)})
+                curve = run_ionic_steady_jv(compiled, protocol.voltage_V, generation_scale=protocol.generation_scale,
+                    options=options, initial_policy="saved_accepted", initial=admitted, incident_power_W_m2=protocol.incident_power_W_m2)
+            worker.check_cancel()
+        summary, payloads = ionic_jv_payload(compiled, body, dark, illumination, curve, initial_bytes)
+        sources = {s.id: s.sha256 for s in binding.execution.implementation.files}
+        sources.update({s["id"]: s["sha256"] for s in json.loads(binding.execution.preparation.content)["adapter_sources"]})
+        capture.update(finished_utc=datetime.now(timezone.utc).isoformat(), compiled_identity=compiled.identity,
+            initial_artifact_sha256=hashlib.sha256(initial_bytes).hexdigest(),
+            initial_state=None if admitted is None else _fingerprint(admitted.state.u),
+            source_sha256=sources, result_sha256=result_digest(summary, payloads), curve_started=curve is not None)
+        capture = json.loads(_document("ionic-jv-capture", capture).content)
+        return WorkerResult.from_dict({"schema": RESULT_SCHEMA, "engine": "solarlab", "H_input": request.H_input,
+            "H_physics": request.H_physics, "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
+            "prepared_sha256": prepared.content_sha256, "ionic_jv_result": summary, "reason": summary["reason"],
+            "capture": capture, "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
+            for name, p in payloads.items()}, "scientific_qualification": False}, artifacts=tuple(payloads.items()),
+            state="succeeded" if summary["outcome"] == "completed" else "failed")
 
 
-def read_ionic_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_ionic_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     """Read exact committed data without importing a compiler/equation/solver."""
     from solarlab.experiments.jv.ionic_results import read_ionic_jv_job as read
-    return read(store, run_id, attempt_id=attempt_id)
+    return read(store, run_id, attempt_id=attempt_id, current_identity=current_identity, strict_same_source=strict_same_source)

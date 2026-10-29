@@ -492,3 +492,38 @@ def test_real_legacy_facade_scan_matches_single_runs_serial_and_random_parallel(
     path = os.environ.get("SOLARLAB_SCAN_EVIDENCE")
     if path:
         Path(path).write_bytes(canonical({"real_legacy_points": evidence}) + b"\n")
+
+
+def test_job_provenance_is_sealed_to_the_actual_manifest_and_claimed_attempt(make_spec, tmp_path):
+    from copy import deepcopy
+    from solarlab.reproducibility.job_provenance import JobProvenance, worker_result_provenance
+    spec, execution = make_spec(action="provenance")
+    with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work") as owner:
+        handle = owner.submit("provenance", "point", spec.request, spec.limits, execution=execution)
+        receipt = owner.wait(handle, 8).data
+        assert receipt["store_state"] == "succeeded", receipt
+        assert receipt["process_exit_observed"] and receipt["process_joined"]
+        attempt = store.attempts("provenance")[0]
+        result = attempt["result"]["worker_result"]
+        records = {store.artifact(ref["artifact_id"])["name"]: store.artifact(ref["artifact_id"])
+                   for ref in attempt["terminal"]["artifacts"]}
+        assert set(records) == {"words", "execution_manifest"} and len(terminals(store, "provenance")) == 1
+        manifest = records["execution_manifest"]
+        assert store.read_artifact(manifest["artifact_id"]) == execution.manifest.canonical_json
+        expected = bytes.fromhex(json.loads(execution.execution.initial_state.content)["words"])
+        assert store.read_artifact(records["words"]["artifact_id"]) == expected
+        reference = manifest["metadata"]["job_provenance_sha256"]
+        kwargs = dict(store_id=store.store_id, provenance_ref=reference,
+                      execution_document=execution.manifest.export()["document"])
+        loaded = worker_result_provenance(result, store.get_run("provenance"), attempt, **kwargs)
+        record = loaded["producer_identity"]["record"]
+        assert record["attempt_ref"]["owner_id"] == attempt["owner_id"]
+        assert record["execution_manifest_sha256"] == execution.expected_sha256
+        assert record["assembler"]["unified_assembler"] is False
+        swapped = deepcopy(result)
+        other = dict(record)
+        other["git_commit"] = "0" * 40
+        swapped["job_provenance"] = JobProvenance.from_record(other).envelope()
+        with pytest.raises(ValueError, match="publication reference"):
+            worker_result_provenance(swapped, store.get_run("provenance"), attempt, **kwargs)
+        assert store.read_artifact(records["words"]["artifact_id"]) == expected

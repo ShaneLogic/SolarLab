@@ -8,12 +8,12 @@ assembled globally, retaining both original domain balance blocks.
 
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import admitted_source_pins
+
 from dataclasses import dataclass, field
 import hashlib
 import json
 import math
-from pathlib import Path
-import sys
 from typing import Any, cast
 
 import numpy as np
@@ -52,19 +52,6 @@ def scope(device: CompiledMultipleIonicDevice1D, ion_mode: str = "mobile") -> No
             raise CapabilityError("two-domain AC requires both endpoints of every domain explicitly blocking")
 
 
-def _sources() -> dict[str, str]:
-    names = (__name__, "solarlab.equations.multiple_ionic_1d", "solarlab.equations.ionic_small_signal",
-             "solarlab.equations.ionic_1d", "solarlab.equations.dc_1d", "solarlab.equations.ionic_closure",
-             "solarlab.physics.ions.migration", "solarlab.physics.ions.finite_site",
-             "solarlab.physics.ions.shared_site", "solarlab.physics.transport.electrochemical_flux",
-             "solarlab.physics.electrostatics.poisson", "solarlab.discretization.stable_bernoulli")
-    result = {}
-    for name in names:
-        filename = sys.modules[name].__file__
-        if filename is None:
-            raise ValueError("multiple-domain AC requires actual source-file bindings")
-        result[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
-    return result
 
 
 def _sum_complex(values: ArrayLike) -> complex:
@@ -129,7 +116,7 @@ class MultipleIonicSmallSignal1D:
         object.__setattr__(self, "working_state_identity", hashlib.sha256(json.dumps((
             device.identity, float(state.voltage_V).hex(), float(self.problem.generation_scale).hex(), digest,
         )).encode()).hexdigest())
-        object.__setattr__(self, "source_sha256", _sources())
+        object.__setattr__(self, "source_sha256", admitted_source_pins())
 
     @property
     def device(self) -> CompiledMultipleIonicDevice1D:
@@ -271,8 +258,6 @@ class MultipleIonicSmallSignal1D:
         bounds += omega * float(np.sum(abs(gauss)))
         positive_electrode = 0 if component.voltage_polarity > 0.0 else -1
         input_current = component.voltage_polarity * total[positive_electrode]
-        if _sources() != self.source_sha256:
-            raise RuntimeError("multiple-domain AC physical source changed during observation")
         return {"frequency_Hz": frequency, "voltage_phasor_V": voltage, "ion_mode": "mobile",
             "coordinate_form": form, "solve_coordinate_perturbation": x.copy(),
             "fixed_coordinate_perturbation": fixed_x, "moving_coordinate_perturbation": moving_x,

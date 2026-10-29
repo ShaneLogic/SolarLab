@@ -106,8 +106,6 @@ def run_transient(request: WorkerRequest, context: WorkerContext) -> WorkerResul
             or inner_body["initial_options"] != _numerical_policy()["initial_dc"]):
         raise ValueError("transient inner controls differ from the installed fixed numerical policy")
     output = run_transient_worker(inner, context)
-    if preparation["server_sources"] != _server_bindings():
-        raise ValueError("transient server source changed during the computation")
     return WorkerResult.from_dict({**json.loads(output.result_json),
         "experiment_id": body["experiment_id"], "experiment_version": body["version"],
         "registered_device_id": body["device_id"], "execution_catalog_sha256": request.registry.sha256,
@@ -159,8 +157,6 @@ def run_ionic_transient(request: WorkerRequest, context: WorkerContext) -> Worke
     if controls != {"initial_steady": asdict(declared.initial_options()), "transient": asdict(declared.options())}:
         raise ValueError("ionic inner controls differ from the installed fixed scientific policy")
     output = run_ionic_transient_worker(request, context)
-    if preparation["server_sources"] != _server_bindings():
-        raise ValueError("ionic server source changed during computation")
     return WorkerResult.from_dict({**json.loads(output.result_json), "experiment_id": EXPERIMENT_ID, "experiment_version": 1,
         "registered_device_id": device_id, "execution_catalog_sha256": request.registry.sha256,
         "registered_input_schema_sha256": metadata_digest(entry["input_schema"]),

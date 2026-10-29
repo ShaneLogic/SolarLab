@@ -228,22 +228,24 @@ def test_composed_full195_rows_and_grain_contact_preservation(grain, contact, po
     assert np.max(abs(numeric - omitted @ direction) / scale) > 1e-4
 
 
-def test_composed_active_source_guard_has_actual_law_hashes_and_off_stays_old(monkeypatch):
+def test_composed_active_source_inventory_has_actual_law_hashes_and_off_model_stays_off(monkeypatch):
     import hashlib
     import sys
-    from solarlab.solvers.nonlinear.steady_2d import sources
+    from solarlab.reproducibility.job_provenance import job_provenance, admitted_source_pins
+    from support.provenance import checked_provenance_owner
     active, off = integrated_case(), integrated_case(active=False)
-    names = ("solarlab.equations.field_transport_2d", "solarlab.physics.transport.field_mobility",
-             "solarlab.physics.transport.field_mobility_tangents")
-    capture = sources(active)
+    names = ('solarlab.equations.field_transport_2d', 'solarlab.physics.transport.field_mobility', 'solarlab.physics.transport.field_mobility_tangents')
+    with checked_provenance_owner(), job_provenance({"compiled_identity": active.identity}, operator="DC2DProblem") as active_job:
+        capture = admitted_source_pins()
+    with checked_provenance_owner(), job_provenance({"compiled_identity": off.identity}, operator="DC2DProblem") as off_job:
+        off_capture = admitted_source_pins()
     for name in names:
         assert capture[name] == hashlib.sha256(Path(sys.modules[name].__file__).read_bytes()).hexdigest()
-        assert name not in sources(off)
-    assert sources(off) == sources()
-    old = capture[names[0]]
-    module = sys.modules[names[0]]
-    monkeypatch.setattr(module, "__file__", sys.modules[names[1]].__file__)
-    assert sources(active)[names[0]] != old
+        assert capture[name] == off_capture[name]
+    assert active_job.export()["input_sha256"] != off_job.export()["input_sha256"]
+    old = dict(capture)
+    monkeypatch.setattr(sys.modules[names[0]], "__file__", sys.modules[names[1]].__file__)
+    assert capture == old  # Immutable admission snapshot, no numeric-file rehash.
 
 
 def test_example_configuration_is_explicit_and_preparation_performs_no_solve(tmp_path, monkeypatch):

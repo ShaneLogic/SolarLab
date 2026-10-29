@@ -34,7 +34,7 @@ def test_active_field_transport_is_refused_before_jv_work(
     def forbidden(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("CT J-V reached source capture, diagnostics or a solver")
 
-    for name in ("solve_steady_state_2d", "_sources", "steady_sources", "steady_diagnostics"):
+    for name in ("solve_steady_state_2d", "job_provenance", "admitted_source_pins", "steady_diagnostics"):
         monkeypatch.setattr(driver, name, forbidden)
     monkeypatch.setattr(solver, "solve_newton", forbidden)
     _, u = coordinates(ct_device, lateral=False)

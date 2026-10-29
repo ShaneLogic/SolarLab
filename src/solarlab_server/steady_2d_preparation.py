@@ -249,8 +249,6 @@ def execute_registered_steady_2d(request: WorkerRequest, context: WorkerContext)
     if body["spatial"] != declared.spatial.declaration().editing_data():
         raise ValueError("2D core geometry differs from the explicit installed geometry")
     output = run_steady_2d_worker(request, context)
-    if installation["server_sources"] != _server_bindings():
-        raise ValueError("2D server source changed during computation")
     return WorkerResult.from_dict({**json.loads(output.result_json), "experiment_id": EXPERIMENT_ID, "experiment_version": 1,
         "registered_device_id": device_id, "execution_catalog_sha256": request.registry.sha256,
         "registered_input_schema_sha256": metadata_digest(entry["input_schema"]),

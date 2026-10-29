@@ -249,3 +249,30 @@ def test_changed_installed_source_data_and_unbound_content_refuse(frozen, tmp_pa
     with pytest.raises(ValueError, match="changed|unbound|escapes"):
         verify_release_installation(bundle, root, expected_sha256=bundle.sha256,
             module_origins=(("solarlab", str(root / "site/solarlab/__init__.py")),), required_modules=("solarlab",))
+
+
+def test_release_job_provenance_keeps_full_pins_and_strict_source_policy(frozen, tmp_path):
+    bundle = frozen[1]
+    original = bundle.canonical_json
+    recorded = bundle.job_provenance({"declared_input": "source-only test"}, operator="test.release")
+    assert recorded.export()["git_commit"] == bundle.build_source_commit
+    assert recorded.export()["dirty_policy"] == "refuse"
+    assert len(recorded.export()["source_files"]) == len(bundle.files)
+    from solarlab.experiments.worker import observe_environment
+    root = tmp_path / "installed"
+    write_release_bundle(bundle, root)
+    environment = observe_environment(("numpy",), ("OMP_NUM_THREADS",))
+    checks = dict(installation_root=root, expected_bundle_sha256=bundle.sha256,
+        module_origins=(("solarlab.config.identity", str(root / "site/solarlab/config/identity.py")),),
+        required_modules=("solarlab.config.identity",), environment=environment)
+    verified = bundle.verify_job_provenance(recorded.envelope(), recorded, **checks)
+    assert verified["status"] == "same" and verified["scientific_qualification"] is False
+    with pytest.raises(ValueError, match="environment"):
+        bundle.verify_job_provenance(recorded.envelope(), recorded,
+            **{**checks, "environment": replace(environment, python_version="0.0.0")})
+    changed = replace(bundle, files=tuple(replace(item, content=item.content+b"\n")
+        if item.source_path == "src/solarlab/config/identity.py" else item for item in bundle.files))
+    current = changed.job_provenance({}, operator="test.release")
+    with pytest.raises(ValueError, match="strict_same_source"):
+        bundle.verify_job_provenance(recorded.envelope(), current, **checks)
+    assert bundle.canonical_json == original

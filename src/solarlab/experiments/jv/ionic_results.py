@@ -5,6 +5,10 @@ accepted points only; steady currents have no displacement/time interpretation.
 """
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, validate_recorded_sources, worker_result_provenance,
+)
+
 from dataclasses import asdict
 import hashlib
 import json
@@ -333,7 +337,8 @@ def ionic_jv_payload(compiled: CompiledIonicDevice1D, body: dict[str, Any], dark
     return summary, payloads
 
 
-def read_ionic_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_ionic_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     """Validate exact terminal, manifest, request and immutable physical payloads."""
     from solarlab.experiments.jv.ionic_worker import REGISTRY, REQUEST_SCHEMA, RESULT_SCHEMA
 
@@ -429,8 +434,13 @@ def read_ionic_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = 
     sources.update({s["id"]: s["sha256"] for s in roles["preparation"]["adapter_sources"]})
     curve = raw["curve"]
     for producer in (raw["illumination"], curve):
-        if producer is not None and any(sources.get(name.replace(".", "/") + ".py") != sha for name, sha in producer["source_sha256"].items()):
-            raise ValueError("original numerical producer source differs from computation-time binding")
+        if producer is not None:
+            if producer.get("job_provenance") is not None:
+                if producer["job_provenance"] != result.get("job_provenance"):
+                    raise ValueError("numerical producer differs from admitted job provenance")
+                validate_recorded_sources(producer)
+            elif any(sources.get(name.replace(".", "/") + ".py") != sha for name, sha in producer["source_sha256"].items()):
+                raise ValueError("original numerical producer source differs from computation-time binding")
     initial_state = None if curve is None else curve["initial_provenance"]["state"]["u"]
     if (capture["scope"] != "ionic_compile_initialization_and_steady_jv_in_worker"
             or capture["build_source_commit"] != bound["implementation"]["build_source_commit"]
@@ -444,4 +454,6 @@ def read_ionic_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = 
     return {"document": {**summary, "run_id": run_id, "attempt_id": selected, "generation": attempt["generation"],
         "arrays": {name: by_name[name]["artifact_id"] for name in stored_units()}, "logical_array_units": units(species)},
         "arrays": arrays, "stored_arrays": stored, "diagnostics": raw, "initial_bytes": payloads[INITIAL].data,
-        "worker_result": result, "manifest": manifest.export(), "run_state": attempt["state"]}
+        "worker_result": result, "manifest": manifest.export(), "run_state": attempt["state"], "provenance_comparison": worker_result_provenance(result, run, attempt, store_id=store.store_id,
+            current=current_identity, strict_same_source=strict_same_source,
+            provenance_ref=by_name["execution_manifest"]["metadata"].get("job_provenance_sha256"), execution_document=document)}

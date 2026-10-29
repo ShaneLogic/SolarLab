@@ -229,3 +229,23 @@ def test_actual_matrix_selection_uses_new_files_and_refuses_the_old_reader(matri
     (destination / path).write_bytes(b"{}")
     with pytest.raises(ValueError, match="content binding"):
         load_selected_configuration_v2(candidate, selected_id, source_root=tmp_path, defaults=context[0], resources=context[1])
+
+
+def test_exact_selected_input_reconciles_derived_metadata_without_relabelling(matrix, context, plan, monkeypatch):
+    import solarlab.reproducibility.configuration_migration as module
+    from types import SimpleNamespace
+    row = json.loads(plan.selection_json)["configurations"][0]
+    document = next(doc for _, doc in plan.files if doc.id == row["document_id"])
+    original = document.content
+    actual = module.read_configuration_v2(document, defaults=context[0], resources=context[1], sources=matrix.sources.documents)
+    derived = SimpleNamespace(content_sha256="0" * 64, to_input=actual.to_input)
+    monkeypatch.setattr(module, "read_configuration_v2", lambda *a, **k: derived)
+    comparison = {}
+    with pytest.warns(RuntimeWarning, match="derived preparation metadata"):
+        reopened = module.read_selected_configuration_v2(matrix, SourceDocument("selection", plan.selection_json), row["id"],
+            documents=(document,), defaults=context[0], resources=context[1], reconciliation=comparison)
+    assert reopened is derived and comparison["status"] == "different"
+    assert comparison["recorded_prepared_sha256"] == row["prepared_content_sha256"] and document.content == original
+    with pytest.raises(ValueError, match="differs from the original"):
+        module.read_selected_configuration_v2(matrix, SourceDocument("selection", plan.selection_json), row["id"],
+            documents=(document,), defaults=context[0], resources=context[1], strict_derived_metadata=True)

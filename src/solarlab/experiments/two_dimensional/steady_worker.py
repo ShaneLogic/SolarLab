@@ -5,6 +5,8 @@ adapter binds a separate dimension-two execution, without a legacy fallback.
 """
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import JobProvenance
+
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
@@ -311,71 +313,72 @@ def run_steady_2d_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
                    _roles(prepared, body, binding.execution.implementation).items())):
         raise ValueError("2D request/input/model/controls differ from the bound execution")
     _verify_sources(binding.execution)
-    started = time.monotonic()
-    attempts = []
-    capture: dict[str, Any] = {"started_utc": datetime.now(timezone.utc).isoformat(),
-        "build_source_commit": binding.execution.implementation.build_source_commit,
-        "runtime": json.loads(json.dumps(asdict(observe_environment(PACKAGES, THREADS)))),
-        "manifest_sha256": binding.expected_sha256, "request_sha256": request.request.sha256,
-        "prepared_sha256": prepared.content_sha256, "scope": "cold_auxiliary_seed_then_connected_2d_newton_in_worker"}
-    with threadpool_limits(limits=1):
-        pools = threadpool_info()
-        if any(pool["num_threads"] != 1 for pool in pools):
-            raise ValueError("requested native thread ceiling was not installed")
-        device = compile_device_2d(prepared, spatial)
-        deadline = started + options.wall_s
-        for scale in protocol.generation_scales:
-            worker.check_cancel()
-            target = {"voltage_V": protocol.voltage_V, "generation_scale": scale}
-            seed, result, failed_seed = None, None, None
-            seed_called, full_called = False, False
-            try:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("whole2D path exhausted before auxiliary seed")
-                worker.progress({"stage": "steady_2d_auxiliary_seed", "target": target})
-                seed_called = True
-                seed = solve_steady_state(device.column, **target, initial_state=None, options=SteadyOptions())
-                initial = _lateral_initial(device, seed.state.u, voltage_V=protocol.voltage_V)
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("whole2D path exhausted during auxiliary seed")
+    with worker.admit_provenance(request, operator="DC2DProblem.steady"):
+        started = time.monotonic()
+        attempts = []
+        capture: dict[str, Any] = {"started_utc": datetime.now(timezone.utc).isoformat(),
+            "build_source_commit": binding.execution.implementation.build_source_commit,
+            "runtime": json.loads(json.dumps(asdict(observe_environment(PACKAGES, THREADS)))),
+            "manifest_sha256": binding.expected_sha256, "request_sha256": request.request.sha256,
+            "prepared_sha256": prepared.content_sha256, "scope": "cold_auxiliary_seed_then_connected_2d_newton_in_worker"}
+        with threadpool_limits(limits=1):
+            pools = threadpool_info()
+            if any(pool["num_threads"] != 1 for pool in pools):
+                raise ValueError("requested native thread ceiling was not installed")
+            device = compile_device_2d(prepared, spatial)
+            deadline = started + options.wall_s
+            for scale in protocol.generation_scales:
                 worker.check_cancel()
-                worker.progress({"stage": "steady_2d_full_newton", "target": target, "coordinates": 3 * device.node_count})
-                full_called = True
-                result = solve_steady_state_2d(device, **target, options=replace(options, wall_s=remaining),
-                    initial_state=initial, initial_provenance={
-                        "kind": "lateral perturbation of auxiliary1D numerical seed", "auxiliary_seed_is_2d_completion": False,
-                        "auxiliary_1d_compiled_identity": device.column.identity,
-                        "auxiliary_1d_state_sha256": hashlib.sha256(seed.state.u.tobytes()).hexdigest(),
-                        "perturbation": INITIAL_POLICY["perturbation"]})
-                accepted, termination, error = result.accepted, result.termination, result.error
-            except Exception as exc:
-                accepted, termination, error = False, "preparation_or_evaluation_failed", f"{type(exc).__name__}: {str(exc)[:600]}"
-                if isinstance(exc, SteadyStateError):
-                    failed_seed = exc.result
-            attempts.append({"target": target, "accepted": accepted, "termination": termination, "error": error,
-                "auxiliary_1d_seed_called": seed_called, "full_2d_adapter_called": full_called,
-                "auxiliary_1d_seed": seed, "failed_auxiliary_seed_newton": failed_seed, "result_2d": result,
-                "auxiliary_seed_is_2d_completion": False})
-            if not accepted:
-                break
-        worker.check_cancel()
-    _verify_sources(binding.execution)
-    summary, payloads = steady_2d_payload(device, prepared, body, attempts, time.monotonic() - started)
-    sources = {s.id: s.sha256 for s in binding.execution.implementation.files}
-    sources.update({s["id"]: s["sha256"] for s in json.loads(binding.execution.preparation.content)["adapter_sources"]})
-    capture.update(finished_utc=datetime.now(timezone.utc).isoformat(), source_sha256=sources,
-        compiled_identity=device.identity, geometry_identity=device.geometry.sha256,
-        result_sha256=result_digest(summary, payloads), threadpools=pools, native_thread_counts_observed=bool(pools))
-    return WorkerResult.from_dict({"schema": RESULT_SCHEMA, "engine": "solarlab", "H_input": request.H_input,
-        "H_physics": request.H_physics, "H_execution": request.execution_identity.sha256,
-        "manifest_sha256": binding.expected_sha256, "prepared_sha256": prepared.content_sha256,
-        "steady_2d_result": summary, "capture": capture, "reason": summary["reason"],
-        "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
-                     for name, p in payloads.items()}, "scientific_qualification": False},
-        artifacts=tuple(payloads.items()), state="succeeded" if summary["completed"] else "failed")
+                target = {"voltage_V": protocol.voltage_V, "generation_scale": scale}
+                seed, result, failed_seed = None, None, None
+                seed_called, full_called = False, False
+                try:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("whole2D path exhausted before auxiliary seed")
+                    worker.progress({"stage": "steady_2d_auxiliary_seed", "target": target})
+                    seed_called = True
+                    seed = solve_steady_state(device.column, **target, initial_state=None, options=SteadyOptions())
+                    initial = _lateral_initial(device, seed.state.u, voltage_V=protocol.voltage_V)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("whole2D path exhausted during auxiliary seed")
+                    worker.check_cancel()
+                    worker.progress({"stage": "steady_2d_full_newton", "target": target, "coordinates": 3 * device.node_count})
+                    full_called = True
+                    result = solve_steady_state_2d(device, **target, options=replace(options, wall_s=remaining),
+                        initial_state=initial, initial_provenance={
+                            "kind": "lateral perturbation of auxiliary1D numerical seed", "auxiliary_seed_is_2d_completion": False,
+                            "auxiliary_1d_compiled_identity": device.column.identity,
+                            "auxiliary_1d_state_sha256": hashlib.sha256(seed.state.u.tobytes()).hexdigest(),
+                            "perturbation": INITIAL_POLICY["perturbation"]})
+                    accepted, termination, error = result.accepted, result.termination, result.error
+                except Exception as exc:
+                    accepted, termination, error = False, "preparation_or_evaluation_failed", f"{type(exc).__name__}: {str(exc)[:600]}"
+                    if isinstance(exc, SteadyStateError):
+                        failed_seed = exc.result
+                attempts.append({"target": target, "accepted": accepted, "termination": termination, "error": error,
+                    "auxiliary_1d_seed_called": seed_called, "full_2d_adapter_called": full_called,
+                    "auxiliary_1d_seed": seed, "failed_auxiliary_seed_newton": failed_seed, "result_2d": result,
+                    "auxiliary_seed_is_2d_completion": False})
+                if not accepted:
+                    break
+            worker.check_cancel()
+        summary, payloads = steady_2d_payload(device, prepared, body, attempts, time.monotonic() - started)
+        sources = {s.id: s.sha256 for s in binding.execution.implementation.files}
+        sources.update({s["id"]: s["sha256"] for s in json.loads(binding.execution.preparation.content)["adapter_sources"]})
+        capture.update(finished_utc=datetime.now(timezone.utc).isoformat(), source_sha256=sources,
+            compiled_identity=device.identity, geometry_identity=device.geometry.sha256,
+            result_sha256=result_digest(summary, payloads), threadpools=pools, native_thread_counts_observed=bool(pools))
+        return WorkerResult.from_dict({"schema": RESULT_SCHEMA, "engine": "solarlab", "H_input": request.H_input,
+            "H_physics": request.H_physics, "H_execution": request.execution_identity.sha256,
+            "manifest_sha256": binding.expected_sha256, "prepared_sha256": prepared.content_sha256,
+            "steady_2d_result": summary, "capture": capture, "reason": summary["reason"],
+            "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
+                         for name, p in payloads.items()}, "scientific_qualification": False},
+            artifacts=tuple(payloads.items()), state="succeeded" if summary["completed"] else "failed")
 
 
-def read_steady_2d_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_steady_2d_job(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     from solarlab.experiments.two_dimensional.steady_results import read_steady_2d_job as read
-    return read(store, run_id, attempt_id=attempt_id)
+    return read(store, run_id, attempt_id=attempt_id, current_identity=current_identity, strict_same_source=strict_same_source)

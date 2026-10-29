@@ -1,6 +1,10 @@
 """Cold ionic steady/time jobs on the existing supervisor, manifest and store."""
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, worker_result_provenance,
+)
+
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
@@ -226,49 +230,50 @@ def run_ionic_transient_worker(request: WorkerRequest, worker: WorkerContext) ->
         raise ValueError("ionic request/configuration/protocol/controls differ from manifest")
     _verify_sources(binding.execution)
     worker.check_cancel()
-    capture: dict[str, Any] = {"scope": "cold_ionic_compile_steady_and_time_in_worker", "started_utc": datetime.now(timezone.utc).isoformat(),
-        "prepared_sha256": prepared.content_sha256, "request_sha256": request.request.sha256,
-        "manifest_sha256": binding.expected_sha256, "build_source_commit": binding.execution.implementation.build_source_commit}
-    with threadpool_limits(limits=1):
-        pools = threadpool_info()
-        if any(pool["num_threads"] != 1 for pool in pools):
-            raise ValueError("child thread limit was not installed")
-        capture.update(runtime=asdict(observe_environment(_PACKAGES, _THREADS)), threadpools=pools)
-        worker.progress({"stage": "ionic_cold_compile"})
-        compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
-                                         ion_domain_layer=domain, ion_domain_endpoints=endpoints)
-        worker.check_cancel()
-        worker.progress({"stage": "ionic_initial_steady", "electrical_nodes": compiled.node_count, "ion_nodes": compiled.ion_node_count})
-        initial = solve_ionic_steady_state(compiled, voltage_V=float(protocol.voltage_V[0]),
-            generation_scale=float(protocol.generation_scale[0]), options=initial_options)
-        initial_bytes = ionic_initial_document(compiled, initial, protocol)
-        initial_sha256 = hashlib.sha256(initial_bytes).hexdigest()
-        worker.check_cancel()
-        history = None
-        if initial.accepted:
-            assert initial.state is not None
-            admitted = IonicTransientInitial(initial.state, float(protocol.generation_scale[0]), initial_options,
-                                              INITIAL_ROLE, initial_sha256, initial_bytes.decode())
-            worker.progress({"stage": "ionic_time_steps", "requested_steps": protocol.times_s.size - 1})
-            history = solve_ionic_transient(compiled, admitted, protocol, options=options)
-        worker.check_cancel()
-    _verify_sources(binding.execution)
-    summary, payloads = ionic_transient_payload(compiled, initial, protocol, history, initial_bytes)
-    sources = {source.id: source.sha256 for source in binding.execution.implementation.files}
-    sources.update({item["id"]: item["sha256"] for item in json.loads(binding.execution.preparation.content)["adapter_sources"]})
-    capture.update(finished_utc=datetime.now(timezone.utc).isoformat(), compiled_identity=compiled.identity,
-        initial_artifact_sha256=initial_sha256, initial_state=None if initial.state is None else _fingerprint(initial.state.u),
-        source_sha256=sources, result_sha256=result_digest(summary, payloads), time_solve_started=initial.accepted)
-    capture = json.loads(_document("ionic-capture", capture).content)
-    return WorkerResult.from_dict({"schema": _RESULT, "engine": "solarlab", "H_input": request.H_input,
-        "H_physics": request.H_physics, "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
-        "prepared_sha256": prepared.content_sha256, "ionic_result": summary, "reason": summary["reason"],
-        "capture": capture, "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
-        for name, p in payloads.items()}, "scientific_qualification": False}, artifacts=tuple(payloads.items()),
-        state="succeeded" if summary["outcome"] == "completed" else "failed")
+    with worker.admit_provenance(request, operator="IonicBackwardEuler1DStep"):
+        capture: dict[str, Any] = {"scope": "cold_ionic_compile_steady_and_time_in_worker", "started_utc": datetime.now(timezone.utc).isoformat(),
+            "prepared_sha256": prepared.content_sha256, "request_sha256": request.request.sha256,
+            "manifest_sha256": binding.expected_sha256, "build_source_commit": binding.execution.implementation.build_source_commit}
+        with threadpool_limits(limits=1):
+            pools = threadpool_info()
+            if any(pool["num_threads"] != 1 for pool in pools):
+                raise ValueError("child thread limit was not installed")
+            capture.update(runtime=asdict(observe_environment(_PACKAGES, _THREADS)), threadpools=pools)
+            worker.progress({"stage": "ionic_cold_compile"})
+            compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
+                                             ion_domain_layer=domain, ion_domain_endpoints=endpoints)
+            worker.check_cancel()
+            worker.progress({"stage": "ionic_initial_steady", "electrical_nodes": compiled.node_count, "ion_nodes": compiled.ion_node_count})
+            initial = solve_ionic_steady_state(compiled, voltage_V=float(protocol.voltage_V[0]),
+                generation_scale=float(protocol.generation_scale[0]), options=initial_options)
+            initial_bytes = ionic_initial_document(compiled, initial, protocol)
+            initial_sha256 = hashlib.sha256(initial_bytes).hexdigest()
+            worker.check_cancel()
+            history = None
+            if initial.accepted:
+                assert initial.state is not None
+                admitted = IonicTransientInitial(initial.state, float(protocol.generation_scale[0]), initial_options,
+                                                  INITIAL_ROLE, initial_sha256, initial_bytes.decode())
+                worker.progress({"stage": "ionic_time_steps", "requested_steps": protocol.times_s.size - 1})
+                history = solve_ionic_transient(compiled, admitted, protocol, options=options)
+            worker.check_cancel()
+        summary, payloads = ionic_transient_payload(compiled, initial, protocol, history, initial_bytes)
+        sources = {source.id: source.sha256 for source in binding.execution.implementation.files}
+        sources.update({item["id"]: item["sha256"] for item in json.loads(binding.execution.preparation.content)["adapter_sources"]})
+        capture.update(finished_utc=datetime.now(timezone.utc).isoformat(), compiled_identity=compiled.identity,
+            initial_artifact_sha256=initial_sha256, initial_state=None if initial.state is None else _fingerprint(initial.state.u),
+            source_sha256=sources, result_sha256=result_digest(summary, payloads), time_solve_started=initial.accepted)
+        capture = json.loads(_document("ionic-capture", capture).content)
+        return WorkerResult.from_dict({"schema": _RESULT, "engine": "solarlab", "H_input": request.H_input,
+            "H_physics": request.H_physics, "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
+            "prepared_sha256": prepared.content_sha256, "ionic_result": summary, "reason": summary["reason"],
+            "capture": capture, "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
+            for name, p in payloads.items()}, "scientific_qualification": False}, artifacts=tuple(payloads.items()),
+            state="succeeded" if summary["outcome"] == "completed" else "failed")
 
 
-def read_ionic_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_ionic_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     """Verify committed completed/partial ionic history without solver imports."""
     from solarlab.experiments.ionic_transient_results import (
         SCHEMA, result_digest, storage_components, stored_units, units, unpack_ionic_arrays, validate_ionic_history,
@@ -373,4 +378,6 @@ def read_ionic_transient_job(store: RunStore, run_id: str, *, attempt_id: str | 
             "raw_diagnostic_fields": ["state_coordinates", "ion_nodes_m"],
             "cell_inventory_definition": "declared ion cell measure times committed species density"}},
         "arrays": arrays, "stored_arrays": stored, "diagnostics": raw,
-        "worker_result": result, "manifest": manifest.export(), "run_state": attempt["state"]}
+        "worker_result": result, "manifest": manifest.export(), "run_state": attempt["state"], "provenance_comparison": worker_result_provenance(result, run, attempt, store_id=store.store_id,
+            current=current_identity, strict_same_source=strict_same_source,
+            provenance_ref=by_name["execution_manifest"]["metadata"].get("job_provenance_sha256"), execution_document=document)}

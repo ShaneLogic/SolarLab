@@ -14,9 +14,10 @@ from pathlib import Path
 import re
 from typing import Any
 
-from solarlab.config.identity import BuildSource
+from solarlab.config.identity import BuildSource, RuntimeEnvironment
 from solarlab.materials.source import SourceDocument
 from solarlab.reproducibility.sources import relative_path
+from solarlab.reproducibility.job_provenance import JobProvenance, capture_job_provenance, compare_provenance
 
 __all__ = ["ReleaseFile", "ReleaseBundle", "snapshot_release_bundle", "write_release_bundle",
            "read_release_bundle", "verify_release_installation"]
@@ -130,6 +131,47 @@ class ReleaseBundle:
             SourceDocument("release:content-manifest.v1", self.canonical_json),
             *(SourceDocument(item.source_path, item.content) for item in self.files if item.content),
         ))
+
+    def job_provenance(self, inputs: dict[str, Any], *, operator: str,
+                       assembler_identity: str | None = None,
+                       analysis_identity: str | None = None) -> JobProvenance:
+        """Admission from this trusted bundle; full release file pins stay intact.
+
+        The caller still verifies the installed bundle before executing. This
+        record is provenance only and never grants scientific qualification.
+        """
+        lock = next(item.content for item in self.files if item.path == "share/uv.lock")
+        return capture_job_provenance(inputs, dirty_policy="refuse", operator=operator,
+            git_commit=self.build_source_commit, source_files=tuple((item.source_path, item.content) for item in self.files),
+            environment_lock=lock, source_attested=True, assembler_identity=assembler_identity,
+            analysis_identity=analysis_identity)
+
+    def verify_job_provenance(
+        self, producer: dict[str, Any], current: JobProvenance, *, installation_root: Path,
+        expected_bundle_sha256: str, module_origins: tuple[tuple[str, str], ...],
+        required_modules: tuple[str, ...], environment: RuntimeEnvironment,
+    ) -> dict[str, Any]:
+        """Strict prerequisite checks; no scientific qualification is awarded.
+
+        The trusted release launcher supplies module origins and the environment
+        from its existing locked execution contract. Matching metadata alone is
+        insufficient: retain the full installed-file and actual environment checks.
+        """
+        from solarlab.experiments.worker import observe_environment
+        installation = verify_release_installation(self, installation_root,
+            expected_sha256=expected_bundle_sha256, module_origins=module_origins,
+            required_modules=required_modules)
+        observed = observe_environment(tuple(name for name, _ in environment.packages),
+                                       tuple(name for name, _ in environment.settings))
+        if observed != environment:
+            raise ValueError("strict release environment differs from its admitted locked contract")
+        value = current.export()
+        expected = self.job_provenance({}, operator=value["assembler"]["operator"],
+            assembler_identity=value["assembler"]["identity"], analysis_identity=value["assembler"]["analysis_identity"])
+        compare_provenance(expected.envelope(), current, strict_same_source=True)
+        return {**compare_provenance(producer, current, strict_same_source=True),
+                "installation": installation, "environment_admitted": True,
+                "scientific_qualification": False}
 
 
 def snapshot_release_bundle(

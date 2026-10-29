@@ -8,10 +8,9 @@ their genuine owner-produced contracts require a separately reviewed extension.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
-from pathlib import Path
 from typing import Any
 
 from solarlab.config.migration import read_configuration_v2
@@ -21,6 +20,7 @@ from solarlab.reproducibility.configuration_migration import (
 )
 from solarlab.reproducibility.preparation import read_preparation_context
 from solarlab.reproducibility.registry import MigrationRegistry, canonical, record_digest, validate_registry_pair
+from solarlab.reproducibility.job_provenance import verify_loaded_source
 from solarlab.reproducibility.sources import SourceSet, SymbolRef, relative_path
 
 __all__ = ["RegistryMapping", "prepare_registry_mapping", "read_registry_mapping"]
@@ -56,7 +56,7 @@ def _base(registry: MigrationRegistry) -> dict[str, str]:
     return {"id": registry.source.id, "kind": registry.spec.kind, "canonical_sha256": record_digest(data)}
 
 
-def _consumer_bindings(sources: SourceSet) -> list[dict[str, Any]]:
+def _consumer_bindings(sources: SourceSet, *, admission: bool = True) -> list[dict[str, Any]]:
     required = {path for path, _, _ in _CONSUMERS}
     if {ref.path for ref in sources.references} != required:
         raise ValueError("mapping requires the exact current v2 consumer source set")
@@ -64,8 +64,8 @@ def _consumer_bindings(sources: SourceSet) -> list[dict[str, Any]]:
     for path, symbol, consumer in _CONSUMERS:
         document = sources.at_path(path)
         sources.verify_symbol(SymbolRef(source_id=document.id, symbol=symbol))
-        if hashlib.sha256(Path(consumer.__code__.co_filename).read_bytes()).hexdigest() != document.sha256:
-            raise ValueError("loaded v2 consumer differs from the bound source bytes")
+        if admission:
+            verify_loaded_source(document.content, consumer.__code__.co_filename, label="v2 consumer")
         result.append({"source": sources.reference(document.id).model_dump(mode="json"), "symbol": symbol,
                        "kind": "data_preparation_only", "can_execute": False})
     return result
@@ -74,6 +74,7 @@ def _consumer_bindings(sources: SourceSet) -> list[dict[str, Any]]:
 @dataclass(frozen=True, slots=True)
 class RegistryMapping:
     document: SourceDocument
+    reconciliation: dict[str, Any] | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if type(self.document) is not SourceDocument:
@@ -103,10 +104,11 @@ class RegistryMapping:
                 "migration_plan_sha256": self.export()["migration_plan_sha256"]}
 
 
-def prepare_registry_mapping(
+def _mapping(
     matrix: MigrationRegistry, refinement: MigrationRegistry, *, migration: ConfigurationMigrationPlan,
     expected_migration_sha256: str, consumer_sources: SourceSet,
     document_id: str = "reproducibility/PreparationMappingV2.json",
+    reprepare: bool = True,
 ) -> RegistryMapping:
     """Map every actual entry and consume all proposed configuration bytes.
 
@@ -117,7 +119,7 @@ def prepare_registry_mapping(
     relative_path(document_id)
     if type(migration) is not ConfigurationMigrationPlan or migration.sha256 != expected_migration_sha256 or not migration.supported:
         raise ValueError("mapping requires the exact complete configuration migration plan")
-    consumers = _consumer_bindings(consumer_sources)
+    consumers = _consumer_bindings(consumer_sources, admission=reprepare)
     report, selection = migration.export(), json.loads(migration.selection_json)
     config_ids = {entry.id for entry in matrix.spec.entries if entry.section == "configs"}
     if (set(report["selected_ids"]) != config_ids or len(report["selected_ids"]) != len(config_ids)
@@ -131,9 +133,9 @@ def prepare_registry_mapping(
             or {(path, doc.id, doc.sha256) for path, doc in migration.files}
                != {(row["path"], row["document_id"], row["sha256"]) for row in rows}):
         raise ValueError("mapping file paths/content differ from the frozen migration selection")
-    defaults, resources = read_preparation_context(matrix)
-    if (report["default_catalog_sha256"] != defaults.content_sha256
-            or report["resource_library_sha256"] != resources.content_sha256):
+    context = matrix.spec.preparation_context
+    if (context is None or report["default_catalog_sha256"] != context.default_catalog_sha256
+            or report["resource_library_sha256"] != context.resource_library_sha256):
         raise ValueError("mapping preparation context differs from the frozen migration plan")
     # The W09 selection is still prospective. Do not override any active source
     # selector; one would require an explicit new joint mapping/switch review.
@@ -141,12 +143,27 @@ def prepare_registry_mapping(
         raise ValueError("this mapping domain requires the inactive W09 source selection")
     selection_source = SourceDocument("ConfigurationSourcesV2.json", migration.selection_json)
     configurations = {}
+    defaults, resources = read_preparation_context(matrix) if reprepare else (None, None)
     for row in rows:
         relative_path(row["path"])
-        prepared = read_selected_configuration_v2(matrix, selection_source, row["id"],
-            documents=(files[row["path"]],), defaults=defaults, resources=resources)
+        document = files[row["path"]]
+        raw = json.loads(document.content)
+        original_document = matrix.sources.document(row["original_source"]["id"])
+        preparation = matrix.entry(row["id"]).preparation
+        if (row["original_source"]["sha256"] != original_document.sha256 or raw["source"] != row["original_source"]
+                or raw["default_catalog_sha256"] != context.default_catalog_sha256
+                or raw["resource_library_sha256"] != context.resource_library_sha256
+                or preparation is None or row["prepared_content_sha256"] != preparation.content_sha256):
+            raise ValueError("mapping recorded input/dependency identity mismatch")
+        # This digest uses the original serialized typed input, not today's resolver.
+        typed_sha = hashlib.sha256(canonical(raw["input"])).hexdigest()
+        if reprepare:
+            assert defaults is not None and resources is not None
+            prepared = read_selected_configuration_v2(matrix, selection_source, row["id"],
+                documents=(document,), defaults=defaults, resources=resources)
+            typed_sha = hashlib.sha256(prepared.input_json).hexdigest()
         configurations[row["id"]] = {**row, "proposed_path": "reproducibility/ConfigurationsV2/" + row["path"],
-            "typed_input_sha256": hashlib.sha256(prepared.input_json).hexdigest(),
+            "typed_input_sha256": typed_sha,
             "input_identity_kind": "prepared_content_only; not H_input", "data_verified": True,
             "publication": "pending_WS4_editor_and_consumer_adaptation"}
     entries: list[dict[str, Any]] = []
@@ -179,27 +196,52 @@ def prepare_registry_mapping(
             "reader": r.spec.original_reader.model_dump(mode="json"), "verification": r.spec.historical_verification}
                              for r in (matrix, refinement)],
         "migration_plan_sha256": migration.sha256, "configuration_selection_sha256": report["selection_sha256"],
-        "preparation_context": {"default_catalog_sha256": defaults.content_sha256, "resource_library_sha256": resources.content_sha256},
+        "preparation_context": {"default_catalog_sha256": context.default_catalog_sha256, "resource_library_sha256": context.resource_library_sha256},
         "inventory_counts": dict(Counter(entry["section"] for entry in entries)),
         "entries": sorted(entries, key=lambda entry: entry["id"]),
         "activation": "pending_migration", "can_execute": False, "scientific_gates_awarded": []}
     return RegistryMapping(SourceDocument(document_id, canonical(value)))
 
 
+def prepare_registry_mapping(
+    matrix: MigrationRegistry, refinement: MigrationRegistry, *, migration: ConfigurationMigrationPlan,
+    expected_migration_sha256: str, consumer_sources: SourceSet,
+    document_id: str = "reproducibility/PreparationMappingV2.json",
+) -> RegistryMapping:
+    """Prepare new data; installed consumer consistency is an admission check."""
+    return _mapping(matrix, refinement, migration=migration,
+        expected_migration_sha256=expected_migration_sha256, consumer_sources=consumer_sources,
+        document_id=document_id, reprepare=True)
+
+
 def read_registry_mapping(
     matrix: MigrationRegistry, refinement: MigrationRegistry, source: SourceDocument, *,
     migration: ConfigurationMigrationPlan, expected_migration_sha256: str,
     expected_sha256: str, consumer_sources: SourceSet,
+    reconcile_current: bool = False, strict_same_source: bool = False,
 ) -> RegistryMapping:
-    """Consume the complete bound map, including every real v2 preparation."""
+    """Check immutable input/entry bindings; current re-preparation is explicit."""
     validate_registry_pair(matrix, refinement)
     reference = matrix.spec.preparation_mapping
     if (reference is None or source.id != reference.path or source.sha256 != reference.sha256
             or source.sha256 != expected_sha256 or reference.migration_plan_sha256 != expected_migration_sha256):
         raise ValueError("mapping source differs from the two registries and the external expected pins")
     actual = RegistryMapping(source)
-    expected = prepare_registry_mapping(matrix, refinement, migration=migration,
-        expected_migration_sha256=expected_migration_sha256, consumer_sources=consumer_sources, document_id=source.id)
+    expected = _mapping(matrix, refinement, migration=migration,
+        expected_migration_sha256=expected_migration_sha256, consumer_sources=consumer_sources, document_id=source.id, reprepare=False)
     if actual.document.content != expected.document.content:
         raise ValueError("mapping content differs from actual configurations, original evidence, entries or pending context")
+    if reconcile_current or strict_same_source:
+        try:
+            now = prepare_registry_mapping(matrix, refinement, migration=migration,
+                expected_migration_sha256=expected_migration_sha256, consumer_sources=consumer_sources,
+                document_id=source.id)
+            comparison = {"status": "same" if now.sha256 == actual.sha256 else "different",
+                          "producer_sha256": actual.sha256, "current_sha256": now.sha256}
+        except ValueError as exc:
+            comparison = {"status": "different", "producer_sha256": actual.sha256,
+                          "reason": str(exc)}
+        if strict_same_source and comparison["status"] != "same":
+            raise ValueError("strict_same_source mapping reconciliation differs")
+        return replace(actual, reconciliation=comparison)
     return actual

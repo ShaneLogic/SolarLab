@@ -1,6 +1,10 @@
 """Immutable 2D steady payloads and readers; no compiler/equation/solver imports."""
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, validate_recorded_sources, worker_result_provenance,
+)
+
 import hashlib
 import json
 import math
@@ -248,7 +252,8 @@ def steady_2d_payload(device: CompiledDevice2D, prepared: PreparedDevice, body: 
     return summary, payloads
 
 
-def read_steady_2d_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_steady_2d_job(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     from solarlab.experiments.two_dimensional.steady_worker import REGISTRY, REQUEST_SCHEMA, RESULT_SCHEMA, _request_contract
     run = store.get_run(run_id)
     selected = run["current_attempt_id"] if attempt_id is None else attempt_id
@@ -331,10 +336,15 @@ def read_steady_2d_job(store: RunStore, run_id: str, *, attempt_id: str | None =
         raise ValueError("2D computation capture differs from bound sources/runtime/result")
     for item in raw["attempts"]:
         result = item["result_2d"]
-        if result is not None and any(sources.get(name.replace(".", "/") + ".py") != digest for name, digest in result["source_sha256"].items()):
-            raise ValueError("original 2D numerical source differs from execution binding")
+        if result is not None:
+            if worker.get("job_provenance") is not None:
+                validate_recorded_sources({**result, "job_provenance": worker["job_provenance"]})
+            elif any(sources.get(name.replace(".", "/") + ".py") != pin for name, pin in result["source_sha256"].items()):
+                raise ValueError("original 2D numerical source differs from execution binding")
     return {"document": {**summary, "run_id": run_id, "attempt_id": selected, "generation": attempt["generation"],
         "logical_array_units": UNITS, "arrays": {name: by_name[name]["artifact_id"] for name in STORED_UNITS}},
         "run_state": attempt["state"], "arrays": arrays, "stored_arrays": packed, "diagnostics": raw,
         "worker_result": worker, "manifest": manifest.export(),
-        "array_fingerprints": {name: _fingerprint(a) for name, a in arrays.items()}}
+        "array_fingerprints": {name: _fingerprint(a) for name, a in arrays.items()}, "provenance_comparison": worker_result_provenance(worker, run, attempt, store_id=store.store_id,
+            current=current_identity, strict_same_source=strict_same_source,
+            provenance_ref=by_name["execution_manifest"]["metadata"].get("job_provenance_sha256"), execution_document=document)}

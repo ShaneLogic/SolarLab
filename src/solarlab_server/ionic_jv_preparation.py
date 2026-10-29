@@ -276,8 +276,6 @@ def execute_registered_ionic_jv(request: WorkerRequest, context: WorkerContext) 
             or body["grid"]["ion_domain_endpoints"] != installation["ion_domain_endpoints"]):
         raise ValueError("ionic J-V initial/domain differs from explicit installed recipe")
     output = run_ionic_jv_worker(request, context)
-    if installation["server_sources"] != _server_bindings():
-        raise ValueError("ionic J-V server source changed during computation")
     return WorkerResult.from_dict({**json.loads(output.result_json), "experiment_id": EXPERIMENT_ID, "experiment_version": 1,
         "registered_device_id": declared.device_id, "execution_catalog_sha256": request.registry.sha256,
         "registered_input_schema_sha256": metadata_digest(entry["input_schema"]),

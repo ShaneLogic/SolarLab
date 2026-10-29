@@ -6,6 +6,10 @@ retain their existing meaning; successful execution is not qualification.
 """
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, worker_result_provenance,
+)
+
 from dataclasses import asdict, dataclass
 import hashlib
 import importlib.metadata
@@ -251,26 +255,27 @@ def run_steady_jv_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
     from threadpoolctl import threadpool_info, threadpool_limits
 
     _verify_sources(binding.execution)  # Check newly imported numerical modules before native work.
-    with threadpool_limits(limits=1):
-        pools = threadpool_info()
-        if any(pool["num_threads"] != 1 for pool in pools):
-            raise ValueError("child numerical thread limit was not installed")
-        worker.progress({"stage": "steady_jv_native", "voltage_points": len(protocol.voltage_V)})
-        compiled = compile_device_1d(prepared, intervals_per_layer=protocol.intervals_per_layer)
-        result = run_steady_jv(compiled, protocol.voltage_V, generation_scale=protocol.generation_scale,
-            incident_power_W_m2=protocol.incident_power_W_m2, options=SteadyOptions())
-    worker.check_cancel()
-    _verify_sources(binding.execution)
-    document, payloads = steady_jv_payload(result)
-    return WorkerResult.from_dict({"schema": "solarlab.steady-jv.worker-result.v1",
-        "engine": "solarlab", "prepared_sha256": prepared.content_sha256,
-        "H_input": request.H_input, "H_physics": request.H_physics,
-        "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
-        "steady_result": document, "array_payloads": {name: payload.sha256 for name, payload in payloads},
-        "threadpools": pools, "scientific_qualification": False}, artifacts=payloads)
+    with worker.admit_provenance(request, operator="DC1DProblem.steady_jv"):
+        with threadpool_limits(limits=1):
+            pools = threadpool_info()
+            if any(pool["num_threads"] != 1 for pool in pools):
+                raise ValueError("child numerical thread limit was not installed")
+            worker.progress({"stage": "steady_jv_native", "voltage_points": len(protocol.voltage_V)})
+            compiled = compile_device_1d(prepared, intervals_per_layer=protocol.intervals_per_layer)
+            result = run_steady_jv(compiled, protocol.voltage_V, generation_scale=protocol.generation_scale,
+                incident_power_W_m2=protocol.incident_power_W_m2, options=SteadyOptions())
+        worker.check_cancel()
+        document, payloads = steady_jv_payload(result)
+        return WorkerResult.from_dict({"schema": "solarlab.steady-jv.worker-result.v1",
+            "engine": "solarlab", "prepared_sha256": prepared.content_sha256,
+            "H_input": request.H_input, "H_physics": request.H_physics,
+            "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
+            "steady_result": document, "array_payloads": {name: payload.sha256 for name, payload in payloads},
+            "threadpools": pools, "scientific_qualification": False}, artifacts=payloads)
 
 
-def read_steady_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_steady_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     """Bind real committed artifact IDs/attempts, then use the existing reader."""
     from solarlab.experiments.jv.steady import read_steady_jv
 
@@ -324,4 +329,6 @@ def read_steady_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None =
             or document["generation_scale"] != protocol["generation_scale"]
             or document["incident_power_W_m2"] != protocol["incident_power_W_m2"]):
         raise ValueError("committed result differs from its exact protocol")
-    return {"document": document, "arrays": arrays, "worker_result": result}
+    return {"document": document, "arrays": arrays, "worker_result": result, "provenance_comparison": worker_result_provenance(result, run, attempt, store_id=store.store_id,
+            current=current_identity, strict_same_source=strict_same_source,
+            provenance_ref=by_name["execution_manifest"]["metadata"].get("job_provenance_sha256"), execution_document=saved_document)}

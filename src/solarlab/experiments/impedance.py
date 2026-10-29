@@ -8,12 +8,16 @@ explicitly when converting the reported coordinate perturbation.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from solarlab.reproducibility.job_provenance import (
+    admitted_source_pins, current_provenance, job_provenance,
+)
+
+from typing import Any
+
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
-from pathlib import Path
-import sys
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -46,29 +50,6 @@ def voltage_reference_direction(device: CompiledDevice1D) -> np.ndarray:
     return result
 
 
-def _sources(*, field_transport: bool = False) -> dict[str, str]:
-    names: tuple[str, ...] = (
-        __name__, "solarlab.equations.dc_1d",
-        "solarlab.physics.transport.electrochemical_flux",
-        "solarlab.discretization.stable_bernoulli",
-        "solarlab.physics.recombination.bulk", "solarlab.physics.recombination.reaction",
-        "solarlab.physics.contacts.boundary_flux", "solarlab.physics.contacts.exchange",
-        "solarlab.physics.electrostatics.poisson",
-        "solarlab.solvers.linear.frequency_domain",
-        "solarlab.solvers.nonlinear.production", "solarlab.solvers.nonlinear.steady_1d",
-        "solarlab.experiments.jv.operating_points",
-    )
-    if field_transport:
-        names += ("solarlab.equations.field_transport_1d",
-                  "solarlab.physics.transport.field_mobility",
-                  "solarlab.physics.transport.field_mobility_tangents")
-    result = {}
-    for name in names:
-        path = sys.modules[name].__file__
-        if path is None:
-            raise RuntimeError(f"small-signal source cannot be pinned: {name}")
-        result[name] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    return result
 
 
 @dataclass(frozen=True)
@@ -111,6 +92,8 @@ class SmallSignalResult1D:
     source_sha256: dict[str, str]
     revalidation_solver_controls: dict[str, object]
     linear_solver_controls: dict[str, object]
+
+    job_provenance: dict[str, Any] | None = field(default_factory=current_provenance)
 
     def __post_init__(self) -> None:
         real = {"frequency_Hz", "nodes_m", "reference_direction_per_V", "maxwell_spread_A_m2_V", "residual_balance_bound_A_m2_V"}
@@ -358,139 +341,138 @@ def solve_impedance(
         for carrier in ("n", "p"):
             if all(compiled.channel(carrier, side).kind == "blocking" for side in ("left", "right")):
                 raise ValueError(f"zero-frequency {carrier} blocked at both ends is not validated by this small-signal slice")
-    source_pins = _sources(field_transport=compiled.field_transport is not None)
-    problem = DC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale)
-    u = operating_point.state.u
-    J, K = problem.jacobian(u), problem.storage_jacobian(u)
-    scaled = production_residual_scaling(
-        compiled, poisson_tolerance=controls.poisson_tolerance,
-        continuity_tolerance_A_m2=controls.continuity_tolerance_A_m2,
-        contact_log_tolerance=controls.contact_log_tolerance,
-    ).scaled(problem.residual(u))
-    norm = production_convergence_norm(compiled, convergence_policy=controls.convergence_policy)
-    recorded_norm = float(np.max(abs(scaled))) if norm is None else norm(scaled)
-    if recorded_norm != operating_point.newton.scaled_residual:
-        raise ValueError("supplied DC convergence norm does not match the recorded metric")
-    count = compiled.node_count
-    c = voltage_reference_direction(compiled)
-    lift = np.zeros(3 * count)
-    lift[count - 1] = -compiled.voltage_polarity
-    fixed_coordinates: dict[int, complex] = {0: 0.0j, count - 1: 0.0j}
-    for carrier, offset in (("n", count), ("p", 2 * count)):
-        for side, node in (("left", 0), ("right", count - 1)):
-            if compiled.channel(carrier, side).kind == "fixed_reservoir":
-                lift[offset + node] = (
-                    -lift[node] / compiled.thermal_voltage_V + c[offset + node]
-                )
-                fixed_coordinates[offset + node] = 0.0j
-    rhs = -_moving_voltage_partial(problem, u, lift) * voltage
-    rhs_rate = _lifted_storage_drive(problem, u, lift) * voltage
-    transform = eye(3 * count, format="csc")
-    solve_J, solve_K = J, K
-    anchors: tuple[int, int] | None = None
-    if any(channel.kind != "fixed_reservoir" for channel in compiled.channels):
-        solve_J, solve_K, transform, anchors = _reference_anchor_system(problem, u, J, K)
-    reduced_solutions = solve_frequency_systems(
-        solve_J, solve_K, rhs, frequencies_Hz, options=linear, fixed_coordinates=fixed_coordinates, rhs_rate=rhs_rate,
-    )
-    original_rhs = -_moving_voltage_partial(problem, u) * voltage
-    original_rate = (K @ c) * voltage
-    full_solutions = []
-    for item in reduced_solutions:
-        omega = 2.0 * math.pi * item.frequency_Hz
-        matrix = J + 1j * omega * K
-        y = transform @ item.solution + lift * voltage
-        b = original_rhs + 1j * omega * original_rate
-        residual = matrix @ y - b
-        denominator = abs(matrix) @ abs(y) + abs(b)
-        error = float(np.max(np.divide(
-            abs(residual), denominator, out=np.zeros_like(denominator), where=denominator != 0.0,
-        )))
-        if not math.isfinite(error) or error > linear.relative_tolerance:
-            raise ArithmeticError("reconstructed small-signal state fails the full original system")
-        full_solutions.append(FrequencySolution(item.frequency_Hz, y, residual, error, item.refinement_steps))
-    solved = tuple(full_solutions)
-    moving_x = np.stack([item.solution for item in solved])
-    fixed_x = moving_x - c * voltage
-    phi = fixed_x[:, :count]
-    n, p = operating_point.state.electron_density_m3, operating_point.state.hole_density_m3
-    references = tuple(
-        after - before for before, after in zip(
-            compiled.carrier_reference_energies(0.0), compiled.carrier_reference_energies(1.0),
-        )
-    )
-    dn = n * ((phi + references[0] * voltage) / compiled.thermal_voltage_V + moving_x[:, count:2 * count])
-    dp = -p * ((phi + references[1] * voltage) / compiled.thermal_voltage_V + moving_x[:, 2 * count:])
-    charge = Q * (dp - dn)
-    field = -np.diff(phi, axis=1) / np.diff(compiled.nodes_m)
-    displacement = -np.diff(phi, axis=1) * compiled.poisson.face_capacitance_F_m2
-    terminal_D = np.stack((
-        displacement[:, 0] - widths[0] * charge[:, 0],
-        displacement[:, -1] + widths[-1] * charge[:, -1],
-    ), axis=1)
-    rate = problem.recombination_rate(n, p)
-    assert rate.d_rate_dn is not None and rate.d_rate_dp is not None
-    pair_perturbation = -widths * (rate.d_rate_dn * dn + rate.d_rate_dp * dp)
-    conduction_rows: list[np.ndarray] = []
-    terminal_rows: list[list[complex]] = []
-    bounds: list[float] = []
-    for index, item in enumerate(solved):
-        omega = 2.0 * math.pi * item.frequency_Hz
-        fn, fp = _particle_perturbations(problem, u, moving_x[index], voltage)
-        conduction_rows.append(-Q * fn + Q * fp)
-        terminals = []
-        for side, node, face, orientation in (("left", 0, 0, -1.0), ("right", count - 1, -1, 1.0)):
-            current = 0.0j
-            for carrier, density_perturbation, flux, charge_sign in (("n", dn[index], fn, -Q), ("p", dp[index], fp, Q)):
-                channel = compiled.channel(carrier, side)
-                if channel.kind == "fixed_reservoir":
-                    exchange = flux[face] + orientation * (
-                        pair_perturbation[index, node] - 1j * omega * widths[node] * density_perturbation[node]
-                    )
-                else:
-                    slope = boundary_particle_flux(channel, channel.reservoir_density_m3).density_derivative
-                    exchange = slope * density_perturbation[node]
-                current += charge_sign * exchange
-            terminals.append(current)
-        terminal_rows.append(terminals)
-        residual = abs(item.residual[count:]).copy()
-        for carrier, offset in (("n", 0), ("p", count)):
+    with job_provenance({"compiled_identity": compiled.identity, "state_sha256": state_digest(operating_point.state.u), "voltage_V": operating_point.voltage_V, "generation_scale": operating_point.generation_scale, "frequencies_Hz": np.asarray(frequencies_Hz).tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "steady": asdict(controls), "linear": asdict(linear), "current_absolute_tolerance_A_m2_V": current_absolute_tolerance_A_m2_V, "current_relative_tolerance": current_relative_tolerance}, operator="DC1DProblem.small_signal"):
+        source_pins = admitted_source_pins()
+        problem = DC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale)
+        u = operating_point.state.u
+        J, K = problem.jacobian(u), problem.storage_jacobian(u)
+        scaled = production_residual_scaling(
+            compiled, poisson_tolerance=controls.poisson_tolerance,
+            continuity_tolerance_A_m2=controls.continuity_tolerance_A_m2,
+            contact_log_tolerance=controls.contact_log_tolerance,
+        ).scaled(problem.residual(u))
+        norm = production_convergence_norm(compiled, convergence_policy=controls.convergence_policy)
+        recorded_norm = float(np.max(abs(scaled))) if norm is None else norm(scaled)
+        if recorded_norm != operating_point.newton.scaled_residual:
+            raise ValueError("supplied DC convergence norm does not match the recorded metric")
+        count = compiled.node_count
+        c = voltage_reference_direction(compiled)
+        lift = np.zeros(3 * count)
+        lift[count - 1] = -compiled.voltage_polarity
+        fixed_coordinates: dict[int, complex] = {0: 0.0j, count - 1: 0.0j}
+        for carrier, offset in (("n", count), ("p", 2 * count)):
             for side, node in (("left", 0), ("right", count - 1)):
                 if compiled.channel(carrier, side).kind == "fixed_reservoir":
-                    residual[offset + node] = 0.0
-        bounds.append((Q * float(np.sum(residual)) + omega * float(np.sum(abs(item.residual[1:count - 1])))) / abs(voltage))
-    conduction = np.asarray(conduction_rows)
-    terminal_conduction = np.asarray(terminal_rows)
-    omegas = 2.0 * math.pi * np.asarray([item.frequency_Hz for item in solved])
-    displacement_current = 1j * omegas[:, None] * displacement
-    terminal_displacement = 1j * omegas[:, None] * terminal_D
-    total = conduction + displacement_current
-    terminal_total = terminal_conduction + terminal_displacement
-    all_faces = np.c_[terminal_total[:, :1], total, terminal_total[:, 1:]] / voltage
-    spread = np.max(abs(all_faces - all_faces[:, :1]), axis=1)
-    scale = np.max(abs(all_faces), axis=1)
-    if np.any(spread > current_absolute_tolerance_A_m2_V + current_relative_tolerance * scale):
-        raise ArithmeticError(f"small-signal Maxwell-current closure failed: {float(np.max(spread)):g} A/m^2/V")
-    positive_electrode = 0 if compiled.voltage_polarity > 0.0 else 1
-    input_current = compiled.voltage_polarity * terminal_total[:, positive_electrode]
-    if _sources(field_transport=compiled.field_transport is not None) != source_pins:
-        raise RuntimeError("small-signal source changed during the solve")
-    digest = state_digest(u)
-    identity = hashlib.sha256(json.dumps((
-        compiled.identity, float(operating_point.voltage_V).hex(), float(operating_point.generation_scale).hex(), digest,
-    )).encode()).hexdigest()
-    source_identity = hashlib.sha256(json.dumps(source_pins, sort_keys=True).encode()).hexdigest()
-    return SmallSignalResult1D(
-        np.asarray([item.frequency_Hz for item in solved]), voltage, compiled.nodes_m,
-        fixed_x, moving_x, c, phi, field, dn, dp, conduction, displacement_current,
-        total, terminal_conduction, terminal_displacement, terminal_total, input_current,
-        input_current / voltage, spread, np.asarray(bounds), solved, compiled.identity,
-        identity, digest, operating_point.voltage_V, operating_point.generation_scale,
-        compiled.voltage_polarity, source_identity, source_pins, asdict(controls), {
-            **asdict(linear), "fixed_coordinate_indices": sorted(fixed_coordinates),
-            "carrier_reference_anchor_coordinates": anchors,
-            "coordinate_form": "boundary-voltage lifted moving reference; full original residual verified",
-            "current_absolute_tolerance_A_m2_V": current_absolute_tolerance_A_m2_V,
-            "current_relative_tolerance": current_relative_tolerance,
-        },
-    )
+                    lift[offset + node] = (
+                        -lift[node] / compiled.thermal_voltage_V + c[offset + node]
+                    )
+                    fixed_coordinates[offset + node] = 0.0j
+        rhs = -_moving_voltage_partial(problem, u, lift) * voltage
+        rhs_rate = _lifted_storage_drive(problem, u, lift) * voltage
+        transform = eye(3 * count, format="csc")
+        solve_J, solve_K = J, K
+        anchors: tuple[int, int] | None = None
+        if any(channel.kind != "fixed_reservoir" for channel in compiled.channels):
+            solve_J, solve_K, transform, anchors = _reference_anchor_system(problem, u, J, K)
+        reduced_solutions = solve_frequency_systems(
+            solve_J, solve_K, rhs, frequencies_Hz, options=linear, fixed_coordinates=fixed_coordinates, rhs_rate=rhs_rate,
+        )
+        original_rhs = -_moving_voltage_partial(problem, u) * voltage
+        original_rate = (K @ c) * voltage
+        full_solutions = []
+        for item in reduced_solutions:
+            omega = 2.0 * math.pi * item.frequency_Hz
+            matrix = J + 1j * omega * K
+            y = transform @ item.solution + lift * voltage
+            b = original_rhs + 1j * omega * original_rate
+            residual = matrix @ y - b
+            denominator = abs(matrix) @ abs(y) + abs(b)
+            error = float(np.max(np.divide(
+                abs(residual), denominator, out=np.zeros_like(denominator), where=denominator != 0.0,
+            )))
+            if not math.isfinite(error) or error > linear.relative_tolerance:
+                raise ArithmeticError("reconstructed small-signal state fails the full original system")
+            full_solutions.append(FrequencySolution(item.frequency_Hz, y, residual, error, item.refinement_steps))
+        solved = tuple(full_solutions)
+        moving_x = np.stack([item.solution for item in solved])
+        fixed_x = moving_x - c * voltage
+        phi = fixed_x[:, :count]
+        n, p = operating_point.state.electron_density_m3, operating_point.state.hole_density_m3
+        references = tuple(
+            after - before for before, after in zip(
+                compiled.carrier_reference_energies(0.0), compiled.carrier_reference_energies(1.0),
+            )
+        )
+        dn = n * ((phi + references[0] * voltage) / compiled.thermal_voltage_V + moving_x[:, count:2 * count])
+        dp = -p * ((phi + references[1] * voltage) / compiled.thermal_voltage_V + moving_x[:, 2 * count:])
+        charge = Q * (dp - dn)
+        field = -np.diff(phi, axis=1) / np.diff(compiled.nodes_m)
+        displacement = -np.diff(phi, axis=1) * compiled.poisson.face_capacitance_F_m2
+        terminal_D = np.stack((
+            displacement[:, 0] - widths[0] * charge[:, 0],
+            displacement[:, -1] + widths[-1] * charge[:, -1],
+        ), axis=1)
+        rate = problem.recombination_rate(n, p)
+        assert rate.d_rate_dn is not None and rate.d_rate_dp is not None
+        pair_perturbation = -widths * (rate.d_rate_dn * dn + rate.d_rate_dp * dp)
+        conduction_rows: list[np.ndarray] = []
+        terminal_rows: list[list[complex]] = []
+        bounds: list[float] = []
+        for index, item in enumerate(solved):
+            omega = 2.0 * math.pi * item.frequency_Hz
+            fn, fp = _particle_perturbations(problem, u, moving_x[index], voltage)
+            conduction_rows.append(-Q * fn + Q * fp)
+            terminals = []
+            for side, node, face, orientation in (("left", 0, 0, -1.0), ("right", count - 1, -1, 1.0)):
+                current = 0.0j
+                for carrier, density_perturbation, flux, charge_sign in (("n", dn[index], fn, -Q), ("p", dp[index], fp, Q)):
+                    channel = compiled.channel(carrier, side)
+                    if channel.kind == "fixed_reservoir":
+                        exchange = flux[face] + orientation * (
+                            pair_perturbation[index, node] - 1j * omega * widths[node] * density_perturbation[node]
+                        )
+                    else:
+                        slope = boundary_particle_flux(channel, channel.reservoir_density_m3).density_derivative
+                        exchange = slope * density_perturbation[node]
+                    current += charge_sign * exchange
+                terminals.append(current)
+            terminal_rows.append(terminals)
+            residual = abs(item.residual[count:]).copy()
+            for carrier, offset in (("n", 0), ("p", count)):
+                for side, node in (("left", 0), ("right", count - 1)):
+                    if compiled.channel(carrier, side).kind == "fixed_reservoir":
+                        residual[offset + node] = 0.0
+            bounds.append((Q * float(np.sum(residual)) + omega * float(np.sum(abs(item.residual[1:count - 1])))) / abs(voltage))
+        conduction = np.asarray(conduction_rows)
+        terminal_conduction = np.asarray(terminal_rows)
+        omegas = 2.0 * math.pi * np.asarray([item.frequency_Hz for item in solved])
+        displacement_current = 1j * omegas[:, None] * displacement
+        terminal_displacement = 1j * omegas[:, None] * terminal_D
+        total = conduction + displacement_current
+        terminal_total = terminal_conduction + terminal_displacement
+        all_faces = np.c_[terminal_total[:, :1], total, terminal_total[:, 1:]] / voltage
+        spread = np.max(abs(all_faces - all_faces[:, :1]), axis=1)
+        scale = np.max(abs(all_faces), axis=1)
+        if np.any(spread > current_absolute_tolerance_A_m2_V + current_relative_tolerance * scale):
+            raise ArithmeticError(f"small-signal Maxwell-current closure failed: {float(np.max(spread)):g} A/m^2/V")
+        positive_electrode = 0 if compiled.voltage_polarity > 0.0 else 1
+        input_current = compiled.voltage_polarity * terminal_total[:, positive_electrode]
+        digest = state_digest(u)
+        identity = hashlib.sha256(json.dumps((
+            compiled.identity, float(operating_point.voltage_V).hex(), float(operating_point.generation_scale).hex(), digest,
+        )).encode()).hexdigest()
+        source_identity = hashlib.sha256(json.dumps(source_pins, sort_keys=True).encode()).hexdigest()
+        return SmallSignalResult1D(
+            np.asarray([item.frequency_Hz for item in solved]), voltage, compiled.nodes_m,
+            fixed_x, moving_x, c, phi, field, dn, dp, conduction, displacement_current,
+            total, terminal_conduction, terminal_displacement, terminal_total, input_current,
+            input_current / voltage, spread, np.asarray(bounds), solved, compiled.identity,
+            identity, digest, operating_point.voltage_V, operating_point.generation_scale,
+            compiled.voltage_polarity, source_identity, source_pins, asdict(controls), {
+                **asdict(linear), "fixed_coordinate_indices": sorted(fixed_coordinates),
+                "carrier_reference_anchor_coordinates": anchors,
+                "coordinate_form": "boundary-voltage lifted moving reference; full original residual verified",
+                "current_absolute_tolerance_A_m2_V": current_absolute_tolerance_A_m2_V,
+                "current_relative_tolerance": current_relative_tolerance,
+            },
+        )

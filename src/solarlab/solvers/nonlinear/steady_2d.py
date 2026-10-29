@@ -8,11 +8,10 @@ No column solve, seed solver, continuation or legacy fallback is hidden here.
 
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import admitted_source_pins
+
 from dataclasses import asdict, dataclass, field
-import hashlib
 import math
-from pathlib import Path
-import sys
 import time
 from typing import Any
 
@@ -94,26 +93,13 @@ def _settings(device: CompiledDevice2D, options: Steady2DOptions, gate: Any) -> 
 
 
 def sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
-    names: tuple[str, ...] = (__name__, "solarlab.equations.dc_2d", "solarlab.equations.dc_1d", "solarlab.mesh.geometry_2d",
-        "solarlab.physics.transport.electrochemical_flux", "solarlab.physics.recombination.reaction",
-        "solarlab.contracts.terms", "solarlab.solvers.nonlinear.newton", "solarlab.solvers.nonlinear.problem",
-        "solarlab.physics.contacts.boundary_flux", "solarlab.physics.contacts.exchange")
-    if device is not None and device.field_transport is not None:
-        names += ("solarlab.equations.field_transport_2d", "solarlab.physics.transport.field_mobility",
-                  "solarlab.physics.transport.field_mobility_tangents")
-    if device is not None and device.generation_y.method == "transfer_matrix":
-        names += ("solarlab.device.optical_generation_2d", "solarlab.device.optical_generation",
-                  "solarlab.physics.generation.optical_binding", "solarlab.physics.generation.transfer_matrix",
-                  "solarlab.physics.generation.profile", "solarlab.physics.generation.spectrum",
-                  "solarlab.physics.generation._validation", "solarlab.materials.resources")
-    result = {}
-    for name in names:
-        module = sys.modules.get(name)
-        filename = None if module is None else getattr(module, "__file__", None)
-        if filename is None:
-            raise ValueError("2D steady source must be bound to actual source files: " + name)
-        result[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
-    return result
+    """Return already admitted job metadata; a bare solver has no source claim.
+
+    Keep the promoted public accessor without moving capture back into the
+    numerical layer. The device argument remains compatible with Part B;
+    inventory membership does not claim an enabled physical model.
+    """
+    return admitted_source_pins()
 
 
 def diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) -> dict[str, Any]:
@@ -249,7 +235,7 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
         provenance = {"kind": "provided full2D numerical guess"}
     provenance.update({} if initial_provenance is None else initial_provenance)
     provenance["state_sha256"] = state_digest(u)
-    pins = sources(device)
+    pins = admitted_source_pins()
     deadline = started + controls.wall_s
     candidate = u.copy()
     counts = {"residual": 0, "jacobian": 0, "diagnostics": 0}
@@ -257,8 +243,6 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
     def checkpoint() -> None:
         if time.monotonic() >= deadline:
             raise TimeoutError("2D steady owned wall budget exhausted; no retry")
-        if sources(device) != pins:
-            raise RuntimeError("2D steady physical source changed during the solve")
     def evaluate(kind: str, values: np.ndarray) -> Any:
         nonlocal candidate
         candidate = np.array(values, copy=True)

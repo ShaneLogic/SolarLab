@@ -126,9 +126,13 @@ def test_actual_histories_have_exact_artifacts_one_terminal_and_closed_process(s
             read_transient_job(store, name, attempt_id="different-attempt")
 
 
-def test_fresh_reader_process_imports_no_numerical_execution(saved, tmp_path):
+def _fresh_reader_process(store_path, tmp_path, *, expected_reader_sha256=None):
+    # -I deliberately reads the installed package, ignoring PYTHONPATH. Diagnose
+    # a mixed installation before an old reader can misreport a capture error.
+    reader_path = Path(read_transient_job.__code__.co_filename).resolve()
+    expected = expected_reader_sha256 or hashlib.sha256(reader_path.read_bytes()).hexdigest()
     code = '''
-import importlib.abc, pathlib, sys
+import hashlib, importlib.abc, pathlib, sys
 class NoSolver(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if any(fullname == p or fullname.startswith(p + '.') for p in (
@@ -138,16 +142,30 @@ class NoSolver(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, NoSolver())
 from solarlab.experiments.transient_worker import read_transient_job
 from solarlab.io.run_store import RunStore
+reader_path = pathlib.Path(read_transient_job.__code__.co_filename).resolve()
+assert hashlib.sha256(reader_path.read_bytes()).hexdigest() == sys.argv[2], (
+    'fresh-reader installation differs from tested source: ' + str(reader_path))
 with RunStore(pathlib.Path(sys.argv[1]), read_only=True) as store:
     for name in ('transient-completed', 'transient-failed-prefix'):
         result = read_transient_job(store, name)
         assert len(result['arrays']) == 14
         print(name, result['run_state'], result['arrays']['accepted_times_s'].tolist())
 '''
-    check = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(saved[0])], cwd=tmp_path,
-                           capture_output=True, text=True, timeout=20)
+    return subprocess.run([sys.executable, "-I", "-B", "-c", code, str(store_path), expected], cwd=tmp_path,
+                          capture_output=True, text=True, timeout=20)
+
+
+def test_fresh_reader_process_imports_no_numerical_execution(saved, tmp_path):
+    check = _fresh_reader_process(saved[0], tmp_path)
     assert check.returncode == 0, check.stderr
     evidence("SolverFreeRead.json", {"returncode": check.returncode, "stdout": check.stdout, "stderr": check.stderr})
+
+
+def test_fresh_reader_reports_mixed_installation_before_opening_store(tmp_path):
+    check = _fresh_reader_process(tmp_path / "not-a-store", tmp_path, expected_reader_sha256="0" * 64)
+    assert check.returncode != 0
+    assert "fresh-reader installation differs from tested source:" in check.stderr
+    assert "transient computation capture differs" not in check.stderr
 
 
 def reseal(saved, target, change):

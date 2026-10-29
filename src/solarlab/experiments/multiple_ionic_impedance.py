@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, admitted_source_pins, current_provenance, job_provenance, result_provenance,
+)
+
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
 from pathlib import Path
-import sys
 import time
 from typing import Any
 
@@ -43,6 +46,8 @@ class MultipleIonicImpedanceResult:
     phasor_convention: str = "exp(+i omega t)"
     physical_certificate_status: str = "not_evaluated"
 
+    job_provenance: dict[str, Any] | None = field(default_factory=current_provenance)
+
     def __post_init__(self) -> None:
         values = np.array(self.requested_frequencies_Hz, dtype=float, copy=True)
         values.setflags(write=False)
@@ -57,19 +62,6 @@ class MultipleIonicImpedanceResult:
         return tuple(attempt for attempt in self.attempts if not attempt.accepted)
 
 
-def _sources() -> dict[str, str]:
-    names = (__name__, "solarlab.equations.multiple_ionic_small_signal", "solarlab.equations.multiple_ionic_1d",
-        "solarlab.equations.ionic_small_signal", "solarlab.equations.ionic_1d", "solarlab.equations.dc_1d",
-        "solarlab.experiments.multiple_ionic_transient", "solarlab.experiments.ionic_impedance",
-        "solarlab.solvers.linear.frequency_domain", "solarlab.solvers.nonlinear.multiple_ionic_1d",
-        "solarlab.solvers.nonlinear.ionic_1d", "solarlab.solvers.nonlinear.production")
-    result = {}
-    for name in names:
-        filename = sys.modules[name].__file__
-        if filename is None:
-            raise ValueError("multiple-domain AC requires actual source-file bindings")
-        result[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
-    return result
 
 
 def _checks(device: CompiledMultipleIonicDevice1D, observed: dict[str, Any], linear: FrequencySolution,
@@ -118,58 +110,57 @@ def solve_multiple_ionic_impedance(device: CompiledMultipleIonicDevice1D, initia
     voltage = complex(voltage_phasor_V)
     if not np.isfinite(voltage) or voltage == 0.0:
         raise ValueError("voltage normalization must be finite and nonzero")
-    pins = _sources()
-    state, generation, initial_checks = _admit(device, initial.evidence_json, initial.source_sha256, initial.steady_controls)
-    if not _same_record(_decode(_encode(state)), _decode(_encode(initial.state))) or initial.generation_scale != generation:
-        raise ValueError("initial object disagrees with its exact admitted evidence")
-    operator = build_multiple_ionic_small_signal(device, state, generation_scale=generation)
-    pins.update(operator.source_sha256)
-    deadline = started + controls.wall_s
-    attempts, calls = [], 0
-    def checkpoint() -> None:
-        if time.monotonic() >= deadline:
-            raise TimeoutError("multiple-domain AC wall budget exhausted; no retry")
-        if any(pins[name] != digest for name, digest in _sources().items()):
-            raise RuntimeError("multiple-domain AC source changed during the sweep")
-    for supplied in requested:
-        frequency, began = float(supplied), time.monotonic()
-        solved, observed, error, representation = None, None, None, None
-        checks: tuple[GateOutcome, ...] = ()
-        try:
-            checkpoint()
-            system = operator.system(frequency, voltage_phasor_V=voltage)
-            representation = system.coordinate_form
-            if system.original_rows_enforced != tuple(range(device.state_size)):
-                raise ValueError("AC system omitted an original two-domain balance row")
-            calls += 1
-            solved = solve_frequency_systems(system.jacobian, system.storage_jacobian, system.rhs, [frequency],
-                options=controls.linear, fixed_coordinates=system.fixed_coordinates, rhs_rate=system.rhs_rate)[0]
-            checkpoint()
-            observed = operator.observe(solved.solution, frequency, voltage_phasor_V=voltage)
-            if (not _finite(observed) or observed["original_rows_enforced"] != tuple(range(device.state_size))
-                    or not np.array_equal(observed["solve_coordinate_perturbation"], solved.solution)
-                    or observed["coordinate_form"] != representation):
-                raise ValueError("AC observation lost finite original rows or raw solve coordinates")
-            observed["inventory_constraint_rows"] = system.constraint_rows
-            checks = _checks(device, observed, solved, voltage, controls)
-            checkpoint()
-            accepted = all(item.passed for item in checks)
-            termination = "converged" if accepted else "numerical_check_failed"
-        except Exception as exc:
-            accepted = False
-            termination = "wall_budget_exhausted" if isinstance(exc, TimeoutError) else "evaluation_error"
-            error = f"{type(exc).__name__}: {str(exc)[:400]}"
-        attempts.append(IonicImpedanceAttempt(frequency, accepted, termination, solved, observed, checks,
-                                              time.monotonic() - began, error, representation))
-        if not accepted:
-            break
-    provenance = {"source_path": initial.source_path, "source_sha256": initial.source_sha256,
-        "state_sha256": state_digest(state.u), "voltage_V": state.voltage_V, "generation_scale": generation,
-        "steady_controls": asdict(initial.steady_controls), "initial_admission_checks": initial_checks}
-    recorded = asdict(controls)
-    recorded["voltage_normalization"] = "linear derivative; not a finite-amplitude voltage experiment"
-    return MultipleIonicImpedanceResult(requested, voltage, tuple(attempts), provenance, device.identity,
-        device.original_prepared_sha256, device.binding_manifest, pins, recorded, calls, time.monotonic() - started)
+    with job_provenance({"compiled_identity": device.identity, "initial_sha256": initial.source_sha256, "steady_controls": asdict(initial.steady_controls), "frequencies_Hz": requested.tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "ion_mode": ion_mode, "controls": asdict(controls)}, operator="MultipleIonicSmallSignal1D"):
+        pins = admitted_source_pins()
+        state, generation, initial_checks = _admit(device, initial.evidence_json, initial.source_sha256, initial.steady_controls)
+        if not _same_record(_decode(_encode(state)), _decode(_encode(initial.state))) or initial.generation_scale != generation:
+            raise ValueError("initial object disagrees with its exact admitted evidence")
+        operator = build_multiple_ionic_small_signal(device, state, generation_scale=generation)
+        pins.update(operator.source_sha256)
+        deadline = started + controls.wall_s
+        attempts, calls = [], 0
+        def checkpoint() -> None:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("multiple-domain AC wall budget exhausted; no retry")
+        for supplied in requested:
+            frequency, began = float(supplied), time.monotonic()
+            solved, observed, error, representation = None, None, None, None
+            checks: tuple[GateOutcome, ...] = ()
+            try:
+                checkpoint()
+                system = operator.system(frequency, voltage_phasor_V=voltage)
+                representation = system.coordinate_form
+                if system.original_rows_enforced != tuple(range(device.state_size)):
+                    raise ValueError("AC system omitted an original two-domain balance row")
+                calls += 1
+                solved = solve_frequency_systems(system.jacobian, system.storage_jacobian, system.rhs, [frequency],
+                    options=controls.linear, fixed_coordinates=system.fixed_coordinates, rhs_rate=system.rhs_rate)[0]
+                checkpoint()
+                observed = operator.observe(solved.solution, frequency, voltage_phasor_V=voltage)
+                if (not _finite(observed) or observed["original_rows_enforced"] != tuple(range(device.state_size))
+                        or not np.array_equal(observed["solve_coordinate_perturbation"], solved.solution)
+                        or observed["coordinate_form"] != representation):
+                    raise ValueError("AC observation lost finite original rows or raw solve coordinates")
+                observed["inventory_constraint_rows"] = system.constraint_rows
+                checks = _checks(device, observed, solved, voltage, controls)
+                checkpoint()
+                accepted = all(item.passed for item in checks)
+                termination = "converged" if accepted else "numerical_check_failed"
+            except Exception as exc:
+                accepted = False
+                termination = "wall_budget_exhausted" if isinstance(exc, TimeoutError) else "evaluation_error"
+                error = f"{type(exc).__name__}: {str(exc)[:400]}"
+            attempts.append(IonicImpedanceAttempt(frequency, accepted, termination, solved, observed, checks,
+                                                  time.monotonic() - began, error, representation))
+            if not accepted:
+                break
+        provenance = {"source_path": initial.source_path, "source_sha256": initial.source_sha256,
+            "state_sha256": state_digest(state.u), "voltage_V": state.voltage_V, "generation_scale": generation,
+            "steady_controls": asdict(initial.steady_controls), "initial_admission_checks": initial_checks}
+        recorded = asdict(controls)
+        recorded["voltage_normalization"] = "linear derivative; not a finite-amplitude voltage experiment"
+        return MultipleIonicImpedanceResult(requested, voltage, tuple(attempts), provenance, device.identity,
+            device.original_prepared_sha256, device.binding_manifest, pins, recorded, calls, time.monotonic() - started)
 
 
 def write_multiple_ionic_impedance_result(result: MultipleIonicImpedanceResult, path: str | Path) -> str:
@@ -182,7 +173,10 @@ def write_multiple_ionic_impedance_result(result: MultipleIonicImpedanceResult, 
     return hashlib.sha256(raw).hexdigest()
 
 
-def read_multiple_ionic_impedance_result(path: str | Path, sha256: str) -> dict[str, Any]:
+def read_multiple_ionic_impedance_result(path: str | Path, sha256: str, *,
+    current_identity: JobProvenance | dict[str, Any] | None = None,
+    strict_same_source: bool = False,
+) -> dict[str, Any]:
     """Checksum-checked prefix validation without compiling, solving or an operator."""
     raw = Path(path).read_bytes()
     if hashlib.sha256(raw).hexdigest() != sha256:
@@ -220,4 +214,9 @@ def read_multiple_ionic_impedance_result(path: str | Path, sha256: str) -> dict[
             raise ValueError("AC completion contradicts its retained attempts")
     except (KeyError, TypeError, AttributeError, IndexError) as exc:
         raise ValueError("incomplete or malformed multiple-domain AC artifact") from exc
+    record["provenance_comparison"] = result_provenance(result, current_identity,
+        strict_same_source=strict_same_source, expected_inputs=None if result.get("job_provenance") is None else {"compiled_identity": result["compiled_identity"], "initial_sha256": result["initial_provenance"]["source_sha256"],
+            "steady_controls": result["initial_provenance"]["steady_controls"], "frequencies_Hz": result["requested_frequencies_Hz"].tolist(),
+            "voltage_phasor_V": [voltage.real, voltage.imag], "ion_mode": result["ion_mode"],
+            "controls": {k: v for k, v in result["solver_controls"].items() if k != "voltage_normalization"}})
     return record

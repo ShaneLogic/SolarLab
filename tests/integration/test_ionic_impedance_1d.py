@@ -274,14 +274,18 @@ def test_cooperative_wall_budget_exhaustion_does_not_start_a_frequency(case, res
     assert len(result.attempts) == 1 and result.attempts[0].termination == "wall_budget_exhausted"
 
 
-def test_source_change_stops_before_a_solve(case, responses, monkeypatch):
-    operator, _ = saved_operator(case, responses)
+def test_source_change_is_informational_and_does_not_stop_a_solve(case, responses, monkeypatch, tmp_path):
+    operator, first = saved_operator(case, responses)
     monkeypatch.setattr(core, "build_ionic_small_signal", lambda *args, **kwargs: operator)
-    pins = iter(({"source": "original"}, {"source": "changed"}))
-    monkeypatch.setattr(driver, "_source_pins", lambda: next(pins))
-    result = driver.solve_ionic_impedance(*case, [0.0, 1.0])
-    assert result.linear_solver_calls == 0 and len(result.failed_attempts) == 1
-    assert "source changed" in result.failed_attempts[0].error
+    changed = tmp_path / "edited_source.py"
+    changed.write_text("# edited after admission\n")
+    def controlled(*args, **kwargs):
+        monkeypatch.setattr(core, "__file__", str(changed))
+        return (first,)
+    monkeypatch.setattr(driver, "solve_frequency_systems", controlled)
+    result = driver.solve_ionic_impedance(*case, [0.0])
+    assert result.completed and result.linear_solver_calls == 1 and not result.failed_attempts
+    assert result.job_provenance["record"]["source_tree_sha256"]
 
 
 def test_result_reading_roundtrips_complex_arrays_without_any_solver(case, responses, monkeypatch, tmp_path):

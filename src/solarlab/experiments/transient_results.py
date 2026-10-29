@@ -11,16 +11,15 @@ from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 import hashlib
-import importlib.metadata
 import math
-from pathlib import Path
-import platform
 import re
-import sys
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, admitted_source_pins, job_provenance, read_provenance, result_provenance, publication_binding,
+)
 from solarlab.experiments.results import decode_array, encode_array
 from solarlab.io.artifacts import (
     ArtifactPayload, _json_document, _parse_document, array_artifact, bytes_artifact,
@@ -230,15 +229,6 @@ def _result_digest(data: dict[str, Any], payloads: dict[str, ArtifactPayload]) -
     return _digest({"summary": data, "payloads": {name: value.sha256 for name, value in payloads.items()}})
 
 
-def _sources() -> dict[str, str]:
-    root = Path(__file__).resolve().parents[1]
-    result = {}
-    for name in _SOURCE_MODULES:
-        origin = getattr(sys.modules.get(name), "__file__", None)
-        if origin is None or not Path(origin).resolve().is_relative_to(root):
-            raise ValueError("transient execution source cannot be bound: " + name)
-        result["solarlab/" + Path(origin).resolve().relative_to(root).as_posix()] = hashlib.sha256(Path(origin).read_bytes()).hexdigest()
-    return result
 
 
 def _inputs(compiled_identity: str, arrays: dict[str, np.ndarray], initial: dict[str, Any], controls: Any) -> dict[str, Any]:
@@ -272,28 +262,26 @@ def run_transient_for_publication(
     inferred. Sources are contemporaneous file hashes, not a source archive.
     """
     from solarlab.experiments.transient import solve_transient
-    from threadpoolctl import threadpool_info
     nodes = np.frombuffer(compiled.nodes_m.tobytes(), dtype=compiled.nodes_m.dtype).reshape(compiled.nodes_m.shape)
     arrays = {"requested_times_s": protocol.times_s, "requested_voltage_V": protocol.voltage_V,
               "requested_generation_scale": protocol.generation_scale, "nodes_m": nodes}
     inputs = _inputs(compiled.identity, arrays, _decode(_encode(initial)), asdict(initial_options))
-    description = {"scope": "solve_transient_call", "inputs": inputs, "numerics": _encode(asdict(options)),
-        "sources": _sources(), "runtime": {"python": sys.version, "platform": platform.platform(),
-            "packages": {name: importlib.metadata.version(name) for name in ("numpy", "scipy", "threadpoolctl")},
-            "threadpools": threadpool_info()},
-        "source_content": "selected execution/admission file hashes; not a complete dependency or release attestation",
-        "build_source_commit": None,
-        "compiled_device_history": None, "initial_dc_history": None}
-    started = datetime.now(timezone.utc).isoformat()
-    result = solve_transient(compiled, initial, protocol, options=options, initial_options=initial_options)
-    if _sources() != description["sources"]:
-        raise ValueError("loaded core source changed during transient computation")
-    data, payloads = _payload(result, nodes)
-    identity = {"H_input": _digest(inputs), "H_physics": compiled.identity, "H_execution": _digest(description)}
-    record = {"status": "captured_at_computation", "started_utc": started,
-        "finished_utc": datetime.now(timezone.utc).isoformat(), "description": description,
-        "identity": identity, "result_sha256": _result_digest(data, payloads)}
-    return CapturedTransientRun(result, nodes, _json_document(record))
+    with job_provenance({"inputs": inputs, "numerics": _encode(asdict(options))},
+                        operator="BackwardEuler1DStep") as admitted:
+        description = {"scope": "solve_transient_call", "inputs": inputs, "numerics": _encode(asdict(options)),
+            "sources": admitted_source_pins(path_keys=True), "job_provenance": admitted.envelope(),
+            "runtime": admitted.export()["runtime_observed"],
+            "source_content": "admitted execution snapshot; historical inputs retain their own identities",
+            "build_source_commit": admitted.export()["git_commit"],
+            "compiled_device_history": None, "initial_dc_history": None}
+        started = datetime.now(timezone.utc).isoformat()
+        result = solve_transient(compiled, initial, protocol, options=options, initial_options=initial_options)
+        data, payloads = _payload(result, nodes)
+        identity = {"H_input": _digest(inputs), "H_physics": compiled.identity, "H_execution": _digest(description)}
+        record = {"status": "captured_at_computation", "started_utc": started,
+            "finished_utc": datetime.now(timezone.utc).isoformat(), "description": description,
+            "identity": identity, "result_sha256": _result_digest(data, payloads)}
+        return CapturedTransientRun(result, nodes, _json_document(record))
 
 
 def publish_transient_result(
@@ -315,9 +303,14 @@ def publish_transient_result(
         if identity != record["identity"]:
             raise ValueError("RunStore identity differs from the captured computation")
         provenance = record
+    publication = None
+    if provenance.get("description", {}).get("job_provenance") is not None:
+        publication = publication_binding(provenance["description"]["job_provenance"], owner=asdict(token),
+            request_identity=identity, result_sha256=_result_digest(data, payloads))
     records = {name: store.publish(token, name, payload) for name, payload in payloads.items()}
     manifest = {"summary": data, "store_id": token.store_id, "run_id": token.run_id, "attempt_id": token.attempt_id, "generation": token.generation,
         "identity": identity, "provenance": provenance,
+        **({"provenance_publication": publication} if publication is not None else {}),
         "current_alignment": "accepted_times_s[1:]; no displacement current exists at the initial sample",
         "payloads": {name: {"artifact_id": item["artifact_id"], "sha256": item["sha256"],
                      "metadata": item["metadata"]} for name, item in records.items()}}
@@ -329,7 +322,8 @@ def publish_transient_result(
         "artifact_ids": [*[item["artifact_id"] for item in records.values()], record["artifact_id"]]}
 
 
-def read_transient_result(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_transient_result(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     """Read committed complete/partial results and raw diagnostics without a solver."""
     run = store.get_run(run_id)
     selected = run["current_attempt_id"] if attempt_id is None else attempt_id
@@ -388,16 +382,33 @@ def read_transient_result(store: RunStore, run_id: str, *, attempt_id: str | Non
     if provenance["status"] == "captured_at_computation":
         description = provenance["description"]
         inputs = _inputs(document["compiled_identity"], arrays, diagnostics["initial"], diagnostics["initial_controls"])
+        job = description.get("job_provenance")
+        if job is not None:
+            expected_publication = publication_binding(job,
+                owner={"store_id": store.store_id, "run_id": run_id, "attempt_id": selected,
+                       "owner_id": attempt["owner_id"], "generation": attempt["generation"]},
+                request_identity=run["request"]["identity"], result_sha256=provenance["result_sha256"])
+            if manifest.get("provenance_publication") != expected_publication:
+                raise ValueError("transient provenance publication owner/input/result binding differs")
+        if job is None:
+            if description["build_source_commit"] is not None:
+                raise ValueError("legacy transient capture cannot invent a build source commit")
+        elif read_provenance(job).export()["git_commit"] != description["build_source_commit"]:
+            raise ValueError("transient capture source commit differs from admitted provenance")
         expected = {"H_input": _digest(inputs), "H_physics": document["compiled_identity"], "H_execution": _digest(description)}
         if (description["scope"] != "solve_transient_call"
-                or any(description[name] is not None for name in ("build_source_commit", "compiled_device_history", "initial_dc_history"))
+                or any(description[name] is not None for name in ("compiled_device_history", "initial_dc_history"))
                 or description["inputs"] != inputs or provenance["identity"] != expected or manifest["identity"] != expected
                 or provenance["result_sha256"] != _result_digest(manifest["summary"], payloads)):
             raise ValueError("transient computation capture differs from the saved inputs/result")
     elif provenance["status"] != "not_recorded":
         raise ValueError("unknown transient provenance status")
     return {"document": document, "manifest": manifest, "arrays": arrays, "diagnostics": diagnostics,
-            "run_state": attempt["state"], "provenance": provenance}
+            "run_state": attempt["state"], "provenance": provenance,
+            "provenance_comparison": result_provenance(provenance.get("description", {}), current_identity,
+                strict_same_source=strict_same_source,
+                expected_inputs=None if provenance["status"] != "captured_at_computation" else {
+                    "inputs": provenance["description"]["inputs"], "numerics": provenance["description"]["numerics"]})}
 
 # Public entry point for trusted companion preparation.
 transient_result_payload = _payload

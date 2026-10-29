@@ -7,6 +7,10 @@ never used. Sampled PV metrics retain the existing interpolation limitations.
 
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, admitted_source_pins, current_provenance, job_provenance, result_provenance,
+)
+
 from dataclasses import asdict, dataclass, field, replace
 from collections.abc import Callable
 import hashlib
@@ -14,7 +18,6 @@ import json
 import math
 import os
 from pathlib import Path
-import sys
 import time
 from typing import Any
 
@@ -30,13 +33,14 @@ from solarlab.io.artifacts import bytes_artifact
 from solarlab.solvers.nonlinear.problem import GateOutcome, state_digest
 from solarlab.solvers.nonlinear.steady_2d import (
     Steady2DOptions, Steady2DResult, checks as steady_checks, diagnostics as steady_diagnostics, scope as steady_scope,
-    sources as steady_sources, solve_steady_state_2d,
+    solve_steady_state_2d,
 )
 
 __all__ = ["SteadyJV2DOptions", "SteadyJV2DInitial", "SteadyJV2DAttempt", "SteadyJV2DResult",
            "load_steady_jv_2d_initial", "run_steady_jv_2d", "write_steady_jv_2d", "read_steady_jv_2d",
            "read_steady_jv_2d_checkpoint", "admit_steady_jv_2d_checkpoint", "continue_steady_jv_2d"]
-SCHEMA = "solarlab.steady_jv_2d.v1"
+LEGACY_SCHEMA = "solarlab.steady_jv_2d.v1"
+SCHEMA = "solarlab.steady_jv_2d.v2"
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,8 @@ class SteadyJV2DResult:
     wall_s: float
     physical_certificate_status: str = "not_evaluated"
 
+    job_provenance: dict[str, Any] | None = field(default_factory=current_provenance)
+
     def __post_init__(self) -> None:
         for name in ("requested_voltage_V", "voltage_V", "output_current_A_m2", "terminal_current_per_depth_A_m"):
             array = np.array(getattr(self, name), dtype=float, copy=True)
@@ -132,12 +138,7 @@ def _grain_model(device: CompiledDevice2D) -> dict[str, Any] | None:
     _scope(device)
     names = ("solarlab.device.grain_2d", "solarlab.device.compile_2d", "solarlab.equations.dc_2d",
              "solarlab.physics.recombination.bulk", "solarlab.mesh.grid")
-    sources = {}
-    for name in names:
-        filename = sys.modules[name].__file__
-        if filename is None:
-            raise ValueError("grain2D J-V requires the actual binding source files")
-        sources[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+    sources = {name: pin for name, pin in admitted_source_pins().items() if name in names}
     return {"model_id": grain.model_id, "geometry_sha256": grain.geometry_sha256,
         "effective_origin": grain.effective_origin,
         "regions": [{"declaration": r.declaration.normalized_data(), "x_overlap_fraction": r.x_overlap_fraction,
@@ -201,9 +202,11 @@ def _admit(device: CompiledDevice2D, text: str, sha256: str,
                     or document["error"] is not None or document["full_2d_newton_calls"] != 1):
                 raise ValueError("initial artifact requires actual accepted neutral grain2D Newton evidence")
             binding = document["grain_binding"]
-            if (document["result_2d"]["source_sha256"] != steady_sources()
-                    or any(document["source_sha256"].get(name) != pin for name, pin in model["source_sha256"].items())):
-                raise ValueError("grain initial physical source binding differs from current source")
+            result_provenance(document)
+            result_provenance(document["result_2d"])
+            if any(document["source_sha256"].get(name, pin) != pin
+                   for name, pin in document["result_2d"]["source_sha256"].items()):
+                raise ValueError("saved grain initial source records contradict each other")
             for name in ("model_id", "geometry_sha256", "effective_origin"):
                 if binding[name] != model[name]:
                     raise ValueError("initial physical grain declaration/model differs from the compiled device")
@@ -273,23 +276,6 @@ def _voltages(value: ArrayLike, maximum: int) -> np.ndarray:
     return result.copy()
 
 
-def _sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
-    names = (__name__, "solarlab.solvers.nonlinear.steady_2d", "solarlab.solvers.nonlinear.newton",
-        "solarlab.equations.dc_2d", "solarlab.equations.dc_1d", "solarlab.mesh.geometry_2d",
-        "solarlab.experiments.jv.steady", "solarlab.experiments.transient_results",
-        "solarlab.experiments.worker", "solarlab.io.artifacts",
-        "solarlab.physics.transport.electrochemical_flux", "solarlab.physics.recombination.reaction")
-    result = {}
-    for name in names:
-        filename = sys.modules[name].__file__
-        if filename is None:
-            raise ValueError("steady2D J-V requires actual source-file bindings")
-        result[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
-    if device is not None:
-        model = _grain_model(device)
-        if model is not None:
-            result.update(model["source_sha256"])
-    return result
 
 
 def _metrics(voltage: np.ndarray, current: np.ndarray, incident: float | None) -> SteadyJVMetrics:
@@ -343,6 +329,7 @@ def read_steady_jv_2d_checkpoint(directory: str | Path, manifest_sha256: str) ->
             raise ValueError("2D checkpoint member SHA-256 mismatch")
         return _decode(json.loads(data))
     request = read_bound("Request.json", manifest["request_sha256"])
+    result_provenance(request)
     initial = request["initial_evidence_artifact"]
     if initial["path"] != "Initial.json" or initial["sha256"] != request["initial_source_sha256"]:
         raise ValueError("initial2D checkpoint artifact descriptor changed")
@@ -395,7 +382,7 @@ def admit_steady_jv_2d_checkpoint(device: CompiledDevice2D, directory: str | Pat
     if "continuation_prefix" in request:
         raise ValueError("a wall-tail checkpoint requires the explicit continuation entry; no automatic retry")
     if (request["compiled_identity"] != device.identity or request["controls"] != asdict(controls)
-            or request["source_sha256"] != _sources(device)):
+           ):
         raise ValueError("2D checkpoint model/control binding changed")
     text = (Path(directory) / request["initial_evidence_artifact"]["path"]).read_text()
     state, generation, _ = _admit(device, text, request["initial_source_sha256"], controls.steady)
@@ -459,10 +446,6 @@ def _admit_wall_prefix(device: CompiledDevice2D, path: str | Path, sha256: str,
                     "source_sha256": linked["original_initial_artifact"]["sha256"]}
     if result["compiled_identity"] != device.identity or result["solver_controls"] != asdict(controls):
         raise ValueError("wall-prefix2D model or controls changed")
-    current = _sources(device)
-    if {k: v for k, v in current.items() if k != __name__} != {
-            k: v for k, v in result["source_sha256"].items() if k != __name__}:
-        raise ValueError("wall-prefix2D physical source changed")
     _, generation, _ = _admit(device, Path(original["source_path"]).read_text(),
                               original["source_sha256"], controls.steady)
     if result["generation_scale"] != generation:
@@ -471,8 +454,7 @@ def _admit_wall_prefix(device: CompiledDevice2D, path: str | Path, sha256: str,
     state = None
     for attempt in points:
         point = attempt["solution"]
-        if (point["solver_controls"]["numerical"]["electronic"] != asdict(controls.steady.electronic)
-                or point["source_sha256"] != steady_sources()):
+        if (point["solver_controls"]["numerical"]["electronic"] != asdict(controls.steady.electronic)):
             raise ValueError("wall-prefix2D point physical source or controls changed")
         state = device.state(point["state"]["u"], voltage_V=attempt["voltage_V"])
         if any(not np.array_equal(point["state"][name], getattr(state, name))
@@ -523,132 +505,132 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
     requested = _voltages(voltage_V, controls.max_points)
     if incident_power_W_m2 is not None and (not math.isfinite(incident_power_W_m2) or incident_power_W_m2 <= 0.0):
         raise ValueError("efficiency requires explicitly supplied finite positive irradiance W/m2")
-    pins = _sources(device)
-    if wall_prefix_admission is None:
-        previous, generation, admission = _admit(device, initial.evidence_json, initial.source_sha256, controls.steady)
-    else:
-        previous, generation, admission = initial.state, initial.generation_scale, wall_prefix_admission
-    if not np.array_equal(_state(device, initial.state).u, previous.u) or initial.generation_scale != generation:
-        raise ValueError("initial object differs from its admitted saved state")
-    deadline = started + controls.wall_s
-    if absolute_deadline_s is not None:
-        if not math.isfinite(absolute_deadline_s):
-            raise ValueError("parent-owned absolute monotonic deadline must be finite")
-        deadline = min(deadline, absolute_deadline_s)
-    journal = None
-    manifest: dict[str, Any] | None = None
-    if checkpoint_directory is not None:
-        journal = Path(checkpoint_directory)
-        journal.mkdir(parents=True, exist_ok=False)
-        (journal / "Points").mkdir()
-        raw_initial = initial.evidence_json.encode()
-        initial_digest = _checkpoint_artifact(journal / "Initial.json", raw_initial)
-        request = {"schema": "solarlab.steady_jv_2d.checkpoint_request.v1", "requested_voltage_V": requested,
-            "compiled_identity": device.identity, "generation_scale": generation,
-            "initial_source_sha256": initial.source_sha256,
-            "initial_evidence_artifact": {"path": "Initial.json", "sha256": initial_digest, "nbytes": len(raw_initial)},
-            "controls": asdict(controls), "source_sha256": pins, "incident_power_W_m2": incident_power_W_m2,
-            "absolute_compute_deadline_s": deadline}
-        grain_model = _grain_model(device)
-        if grain_model is not None:
-            request["grain_model"] = grain_model
-        if wall_prefix_admission is not None:
-            request["continuation_prefix"] = {"path": initial.source_path, "sha256": initial.source_sha256}
-        digest = _checkpoint_write(journal / "Request.json", request, exclusive=True)
-        manifest = {"request_sha256": digest, "points": [], "active": None, "finished": False}
-        _checkpoint_write(journal / "Manifest.json", manifest)
-    attempts: list[SteadyJV2DAttempt] = []
-    voltages, output, terminals = [], [], []
-    calls = 0
-    for index, supplied in enumerate(requested):
-        voltage, began = float(supplied), time.monotonic()
-        seed, solution, error = None, None, None
-        called = False
-        first_kind = "accepted_saved_initial" if wall_prefix_admission is None else "accepted_wall_prefix"
-        provenance = {"kind": first_kind if index == 0 else "previous_accepted2D",
-            "previous_voltage_V": previous.voltage_V, "previous_state_sha256": state_digest(previous.u)}
-        try:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("2D J-V wave wall budget exhausted before next point")
-            if _sources(device) != pins:
-                raise RuntimeError("2D J-V source changed during the wave")
-            seed = _rebase(device, previous, voltage)
-            provenance["rebased_state_sha256"] = state_digest(seed.u)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                raise TimeoutError("2D J-V wave wall budget exhausted before solver call")
-            effective = replace(controls.steady, wall_s=min(controls.steady.wall_s, remaining))
-            if journal is not None and manifest is not None:
-                marker = {"index": index, "voltage_V": voltage, "initial_guess": seed,
-                    "seed_provenance": provenance, "request_sha256": manifest["request_sha256"],
-                    "status": "solver_entry_pending_or_running", "solver_called": None}
-                manifest["active"] = _checkpoint_write(journal / "Active.json", marker)
-                _checkpoint_write(journal / "Manifest.json", manifest)
+    with job_provenance({"compiled_identity": device.identity, "geometry_identity": device.geometry.sha256, "initial_sha256": initial.source_sha256, "voltage_V": requested.tolist(), "controls": asdict(controls), "incident_power_W_m2": incident_power_W_m2}, operator="DC2DProblem.steady_jv"):
+        pins = admitted_source_pins()
+        if wall_prefix_admission is None:
+            previous, generation, admission = _admit(device, initial.evidence_json, initial.source_sha256, controls.steady)
+        else:
+            previous, generation, admission = initial.state, initial.generation_scale, wall_prefix_admission
+        if not np.array_equal(_state(device, initial.state).u, previous.u) or initial.generation_scale != generation:
+            raise ValueError("initial object differs from its admitted saved state")
+        deadline = started + controls.wall_s
+        if absolute_deadline_s is not None:
+            if not math.isfinite(absolute_deadline_s):
+                raise ValueError("parent-owned absolute monotonic deadline must be finite")
+            deadline = min(deadline, absolute_deadline_s)
+        journal = None
+        manifest: dict[str, Any] | None = None
+        if checkpoint_directory is not None:
+            journal = Path(checkpoint_directory)
+            journal.mkdir(parents=True, exist_ok=False)
+            (journal / "Points").mkdir()
+            raw_initial = initial.evidence_json.encode()
+            initial_digest = _checkpoint_artifact(journal / "Initial.json", raw_initial)
+            request = {"schema": "solarlab.steady_jv_2d.checkpoint_request.v1", "requested_voltage_V": requested,
+                "compiled_identity": device.identity, "generation_scale": generation,
+                "initial_source_sha256": initial.source_sha256,
+                "initial_evidence_artifact": {"path": "Initial.json", "sha256": initial_digest, "nbytes": len(raw_initial)},
+                "controls": asdict(controls), "source_sha256": pins, "job_provenance": current_provenance(),
+                "incident_power_W_m2": incident_power_W_m2,
+                "absolute_compute_deadline_s": deadline}
+            grain_model = _grain_model(device)
+            if grain_model is not None:
+                request["grain_model"] = grain_model
+            if wall_prefix_admission is not None:
+                request["continuation_prefix"] = {"path": initial.source_path, "sha256": initial.source_sha256}
+            digest = _checkpoint_write(journal / "Request.json", request, exclusive=True)
+            manifest = {"request_sha256": digest, "points": [], "active": None, "finished": False}
+            _checkpoint_write(journal / "Manifest.json", manifest)
+        attempts: list[SteadyJV2DAttempt] = []
+        voltages, output, terminals = [], [], []
+        calls = 0
+        for index, supplied in enumerate(requested):
+            voltage, began = float(supplied), time.monotonic()
+            seed, solution, error = None, None, None
+            called = False
+            first_kind = "accepted_saved_initial" if wall_prefix_admission is None else "accepted_wall_prefix"
+            provenance = {"kind": first_kind if index == 0 else "previous_accepted2D",
+                "previous_voltage_V": previous.voltage_V, "previous_state_sha256": state_digest(previous.u)}
+            try:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("2D J-V wave wall budget exhausted before next point")
+                seed = _rebase(device, previous, voltage)
+                provenance["rebased_state_sha256"] = state_digest(seed.u)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0.0:
-                    raise TimeoutError("2D compute deadline reached after durable solver-entry marker")
+                    raise TimeoutError("2D J-V wave wall budget exhausted before solver call")
                 effective = replace(controls.steady, wall_s=min(controls.steady.wall_s, remaining))
-            called, calls = True, calls + 1
-            solution = solve_steady_state_2d(device, voltage_V=voltage, generation_scale=generation,
-                options=effective, initial_state=seed, initial_provenance=provenance)
-            accepted, termination, error = solution.accepted, solution.termination, solution.error
-            if accepted:
-                if solution.state is None or solution.diagnostics is None:
-                    raise ValueError("accepted2D point must retain its original state and current ledger")
-                checks = steady_checks(steady_diagnostics(DC2DProblem(device, voltage, generation), solution.state.u, effective), effective)
-                if not all(item.passed for item in checks):
-                    raise ValueError("accepted2D point fails original physical gates on readback")
-                previous = _state(device, solution.state)
-                terminal = np.asarray(solution.diagnostics["terminal_current_per_depth_A_m"])
-                voltages.append(voltage)
-                terminals.append(terminal)
-                output.append(-device.column.voltage_polarity * terminal[0] / device.geometry.lateral_length_m)
-        except Exception as exc:
-            accepted = False
-            termination = "wave_wall_budget_exhausted" if isinstance(exc, TimeoutError) else "evaluation_error"
-            error = f"{type(exc).__name__}: {str(exc)[:600]}"
-        attempt = SteadyJV2DAttempt(index, voltage, accepted, termination, seed, provenance, solution, called,
-                                    time.monotonic() - began, error)
-        attempts.append(attempt)
+                if journal is not None and manifest is not None:
+                    marker = {"index": index, "voltage_V": voltage, "initial_guess": seed,
+                        "seed_provenance": provenance, "request_sha256": manifest["request_sha256"],
+                        "status": "solver_entry_pending_or_running", "solver_called": None}
+                    manifest["active"] = _checkpoint_write(journal / "Active.json", marker)
+                    _checkpoint_write(journal / "Manifest.json", manifest)
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0.0:
+                        raise TimeoutError("2D compute deadline reached after durable solver-entry marker")
+                    effective = replace(controls.steady, wall_s=min(controls.steady.wall_s, remaining))
+                called, calls = True, calls + 1
+                solution = solve_steady_state_2d(device, voltage_V=voltage, generation_scale=generation,
+                    options=effective, initial_state=seed, initial_provenance=provenance)
+                accepted, termination, error = solution.accepted, solution.termination, solution.error
+                if accepted:
+                    if solution.state is None or solution.diagnostics is None:
+                        raise ValueError("accepted2D point must retain its original state and current ledger")
+                    checks = steady_checks(steady_diagnostics(DC2DProblem(device, voltage, generation), solution.state.u, effective), effective)
+                    if not all(item.passed for item in checks):
+                        raise ValueError("accepted2D point fails original physical gates on readback")
+                    previous = _state(device, solution.state)
+                    terminal = np.asarray(solution.diagnostics["terminal_current_per_depth_A_m"])
+                    voltages.append(voltage)
+                    terminals.append(terminal)
+                    output.append(-device.column.voltage_polarity * terminal[0] / device.geometry.lateral_length_m)
+            except Exception as exc:
+                accepted = False
+                termination = "wave_wall_budget_exhausted" if isinstance(exc, TimeoutError) else "evaluation_error"
+                error = f"{type(exc).__name__}: {str(exc)[:600]}"
+            attempt = SteadyJV2DAttempt(index, voltage, accepted, termination, seed, provenance, solution, called,
+                                        time.monotonic() - began, error)
+            attempts.append(attempt)
+            if journal is not None and manifest is not None:
+                name = f"Points/{index:05d}.json"
+                raw_point = json.dumps(_encode({"request_sha256": manifest["request_sha256"], "attempt": attempt}),
+                                       sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+                digest = _checkpoint_artifact(journal / name, raw_point)
+                manifest["points"].append({"path": name, "sha256": digest})
+                manifest["active"] = None
+                _checkpoint_write(journal / "Manifest.json", manifest)
+            if on_point is not None:
+                on_point(attempt)
+            if not accepted:
+                break
         if journal is not None and manifest is not None:
-            name = f"Points/{index:05d}.json"
-            raw_point = json.dumps(_encode({"request_sha256": manifest["request_sha256"], "attempt": attempt}),
-                                   sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-            digest = _checkpoint_artifact(journal / name, raw_point)
-            manifest["points"].append({"path": name, "sha256": digest})
-            manifest["active"] = None
+            manifest["finished"] = True
             _checkpoint_write(journal / "Manifest.json", manifest)
-        if on_point is not None:
-            on_point(attempt)
-        if not accepted:
-            break
-    if journal is not None and manifest is not None:
-        manifest["finished"] = True
-        _checkpoint_write(journal / "Manifest.json", manifest)
-    accepted_v: np.ndarray = np.asarray(voltages, dtype=float)
-    accepted_j: np.ndarray = np.asarray(output, dtype=float)
-    g = device.geometry
-    geometry = {"identity": g.sha256, "shape_Ny_Nx": g.shape, "x_m": g.x_m, "y_m": device.column.nodes_m,
-        "cell_areas_m2": g.contract_geometry.volumes, "face_lengths_m": g.contract_geometry.face_measures,
-        "face_pairs": g.contract_geometry.pairs, "lateral_width_m": g.lateral_length_m}
-    grain_model = _grain_model(device)
-    if grain_model is not None:
-        geometry["grain_model"] = grain_model
-    initial_provenance = {"source_path": initial.source_path, "source_sha256": initial.source_sha256,
-        "state_sha256": state_digest(initial.state.u), "operating_voltage_V": initial.state.voltage_V,
-        "admission_checks": admission, "no_new_cold_or_1d_seed": True}
-    if wall_prefix_admission is not None:
-        initial_provenance["continuation_prefix"] = {"path": initial.source_path, "sha256": initial.source_sha256}
-    elif grain_model is not None:
-        original = _decode(json.loads(initial.evidence_json))["result_2d"]["source_sha256"]
-        current = steady_sources()
-        initial_provenance["grain_source_admission"] = {"saved_result_source_sha256": original,
-            "current_result_source_sha256": current, "exact_source_match": original == current,
-            "current_original_gate_revalidation": True, "original_saved_acceptance_preserved": True}
-    return SteadyJV2DResult(requested, accepted_v, accepted_j, np.asarray(terminals, dtype=float).reshape(-1, 2),
-        tuple(attempts), _metrics(accepted_v, accepted_j, incident_power_W_m2), generation, incident_power_W_m2,
-        device.column.voltage_polarity, g.lateral_length_m, initial_provenance, device.identity, geometry,
-        asdict(controls), pins, calls, time.monotonic() - started)
+        accepted_v: np.ndarray = np.asarray(voltages, dtype=float)
+        accepted_j: np.ndarray = np.asarray(output, dtype=float)
+        g = device.geometry
+        geometry = {"identity": g.sha256, "shape_Ny_Nx": g.shape, "x_m": g.x_m, "y_m": device.column.nodes_m,
+            "cell_areas_m2": g.contract_geometry.volumes, "face_lengths_m": g.contract_geometry.face_measures,
+            "face_pairs": g.contract_geometry.pairs, "lateral_width_m": g.lateral_length_m}
+        grain_model = _grain_model(device)
+        if grain_model is not None:
+            geometry["grain_model"] = grain_model
+        initial_provenance = {"source_path": initial.source_path, "source_sha256": initial.source_sha256,
+            "state_sha256": state_digest(initial.state.u), "operating_voltage_V": initial.state.voltage_V,
+            "admission_checks": admission, "no_new_cold_or_1d_seed": True}
+        if wall_prefix_admission is not None:
+            initial_provenance["continuation_prefix"] = {"path": initial.source_path, "sha256": initial.source_sha256}
+        elif grain_model is not None:
+            original = _decode(json.loads(initial.evidence_json))["result_2d"]["source_sha256"]
+            current = admitted_source_pins()
+            initial_provenance["grain_source_admission"] = {"saved_result_source_sha256": original,
+                "current_result_source_sha256": current, "exact_source_match": original == current,
+                "current_original_gate_revalidation": True, "original_saved_acceptance_preserved": True}
+        return SteadyJV2DResult(requested, accepted_v, accepted_j, np.asarray(terminals, dtype=float).reshape(-1, 2),
+            tuple(attempts), _metrics(accepted_v, accepted_j, incident_power_W_m2), generation, incident_power_W_m2,
+            device.column.voltage_polarity, g.lateral_length_m, initial_provenance, device.identity, geometry,
+            asdict(controls), pins, calls, time.monotonic() - started)
 
 
 def write_steady_jv_2d(result: SteadyJV2DResult, path: str | Path) -> str:
@@ -685,9 +667,10 @@ def _linked_tail(prefix: dict[str, Any], tail: dict[str, Any]) -> dict[str, Any]
                  "incident_power_W_m2", "solver_controls"):
         if tail[name] != old[name]:
             raise ValueError("linked2D continuation model, generation, units or controls changed")
-    if {k: v for k, v in tail["source_sha256"].items() if k != __name__} != {
+    if tail.get("job_provenance") is None and {
+            k: v for k, v in tail["source_sha256"].items() if k != __name__} != {
             k: v for k, v in old["source_sha256"].items() if k != __name__}:
-        raise ValueError("linked2D continuation changed a physical source")
+        raise ValueError("linked2D v1 continuation changed a physical source")
     last = old["attempts"][local_accepted - 1]["solution"]["state"]
     seed = tail["initial_provenance"]
     if seed["operating_voltage_V"] != last["voltage_V"] or seed["state_sha256"] != state_digest(last["u"]):
@@ -709,8 +692,12 @@ def _linked_tail(prefix: dict[str, Any], tail: dict[str, Any]) -> dict[str, Any]
         "metrics": asdict(_metrics(voltage, current, tail["incident_power_W_m2"])),
         "completed": voltage.size == requested.size,
         "total_actual_solver_calls": (old["solver_calls"] if prior is None else prior["total_actual_solver_calls"]) + tail["solver_calls"],
-        "prefix_driver_sha256": old["source_sha256"][__name__],
-        "tail_driver_sha256": tail["source_sha256"][__name__], "qualification": False}
+        "prefix_driver_sha256": old["source_sha256"].get(__name__),
+        "tail_driver_sha256": tail["source_sha256"].get(__name__), "qualification": False}
+    if tail.get("job_provenance") is not None:
+        linked["schema"] = "solarlab.steady_jv_2d.continuation.v2"
+        linked["producer_provenance"] = {"prefix": old.get("job_provenance"), "tail": tail["job_provenance"]}
+        linked["source_comparison"] = result_provenance(old, tail["job_provenance"])["status"]
     if prior is not None:
         linked["preserved_prefix_failure"]["index"] += offset - local_accepted
         linked["endpoint_only"] = True
@@ -719,16 +706,21 @@ def _linked_tail(prefix: dict[str, Any], tail: dict[str, Any]) -> dict[str, Any]
     return linked
 
 
-def read_steady_jv_2d(path: str | Path, sha256: str) -> dict[str, Any]:
+def read_steady_jv_2d(path: str | Path, sha256: str, *,
+    current_identity: JobProvenance | dict[str, Any] | None = None,
+    strict_same_source: bool = False,
+) -> dict[str, Any]:
     """Validate saved identity and accepted/failed prefix without any solver."""
     raw = Path(path).read_bytes()
     if hashlib.sha256(raw).hexdigest() != sha256:
         raise ValueError("steady2D J-V artifact SHA-256 mismatch")
     try:
         document = _decode(json.loads(raw))
-        if document["schema"] != SCHEMA or document["qualification"] is not False:
+        if document["schema"] not in {LEGACY_SCHEMA, SCHEMA} or document["qualification"] is not False:
             raise ValueError("unsupported steady2D J-V result schema")
         result = document["result"]
+        if document["schema"] == LEGACY_SCHEMA and result.get("job_provenance") is not None:
+            raise ValueError("legacy2D producer identity cannot be relabelled with new job provenance")
         _read_grain_model(result["geometry"])
         requested = _voltages(result["requested_voltage_V"], result["solver_controls"]["max_points"])
         attempts = result["attempts"]
@@ -741,6 +733,11 @@ def read_steady_jv_2d(path: str | Path, sha256: str) -> dict[str, Any]:
                     or type(attempt["accepted"]) is not bool
                     or (not attempt["accepted"] and index != len(attempts) - 1)):
                 raise ValueError("2D J-V attempts must retain the exact prefix and first failure")
+            point = attempt["solution"]
+            if point is not None:
+                for name, pin in point["source_sha256"].items():
+                    if name in result["source_sha256"] and result["source_sha256"][name] != pin:
+                        raise ValueError("saved2D point source differs from its recorded producer")
             if attempt["accepted"]:
                 point = attempt["solution"]
                 if (point["accepted"] is not True or point["newton"]["accepted"] is not True
@@ -772,4 +769,8 @@ def read_steady_jv_2d(path: str | Path, sha256: str) -> dict[str, Any]:
             raise ValueError("linked2D continuation requires a bound original prefix artifact")
     except (KeyError, TypeError, AttributeError, IndexError) as exc:
         raise ValueError("incomplete steady2D J-V artifact") from exc
+    document["provenance_comparison"] = result_provenance(result, current_identity,
+        strict_same_source=strict_same_source, expected_inputs=None if result.get("job_provenance") is None else {"compiled_identity": result["compiled_identity"], "geometry_identity": result["geometry"]["identity"],
+            "initial_sha256": result["initial_provenance"]["source_sha256"], "voltage_V": result["requested_voltage_V"].tolist(),
+            "controls": result["solver_controls"], "incident_power_W_m2": result["incident_power_W_m2"]})
     return document

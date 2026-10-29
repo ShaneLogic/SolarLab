@@ -226,20 +226,23 @@ def test_wall_exhaustion_retains_unstarted_first_point_without_a_solve(curve, mo
     assert result.failed_attempts[0].termination == "wall_budget_exhausted"
 
 
-def test_source_change_after_call_keeps_candidate_but_does_not_accept_or_seed_it(curve, monkeypatch):
+def test_source_change_after_call_keeps_physical_acceptance_and_seeding(curve, monkeypatch, tmp_path):
+    from solarlab.solvers.nonlinear import ionic_1d
     device, record, _, _ = curve
-    first = restored_point(device, record["result"]["attempts"][0]["solution"])
+    points = [restored_point(device, a["solution"]) for a in record["result"]["attempts"][:2]]
     called = []
-    monkeypatch.setattr(driver, "_sources", lambda: {"source": "changed" if called else "original"})
+    changed = tmp_path / "edited_source.py"
+    changed.write_text("# source edit after admission\n")
     def controlled(compiled, **kwargs):
         called.append(kwargs["voltage_V"])
-        return replace(first, initial_state=kwargs["initial_state"], solver_controls=asdict(kwargs["options"]))
+        monkeypatch.setattr(ionic_1d, "__file__", str(changed))
+        return replace(points[len(called)-1], initial_state=kwargs["initial_state"], solver_controls=asdict(kwargs["options"]))
     monkeypatch.setattr(driver, "solve_ionic_steady_state", controlled)
     result = driver.run_ionic_steady_jv(device, [0.001, 0.002], generation_scale=0.0,
         options=driver.IonicSteadyJVOptions(controls(13)), initial_policy="compiled_cold")
-    assert called == [0.001] and result.voltage_V.size == 0
-    assert result.failed_attempts[0].solution.accepted
-    assert "source changed" in result.failed_attempts[0].error
+    assert called == [0.001, 0.002] and result.completed
+    assert all(a.accepted and a.error is None for a in result.attempts)
+    np.testing.assert_array_equal(result.attempts[1].initial_guess.u, driver._rebase_guess(device, points[0].state, .002).u)
 
 
 def test_common_metrics_are_used_only_with_actual_brackets():

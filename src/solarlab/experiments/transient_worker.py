@@ -6,6 +6,10 @@ and resource overrides discard late output through the existing owner.
 """
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, read_provenance, validate_recorded_sources, worker_result_provenance,
+)
+
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import importlib.metadata
@@ -197,44 +201,45 @@ def run_transient_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
         raise ValueError("whole-job counter budgets are not observed by this transient adapter")
     _verify_sources(binding.execution)
     worker.check_cancel()
-    started = datetime.now(timezone.utc).isoformat()
-    with threadpool_limits(limits=1):
-        pools = threadpool_info()
-        if any(pool["num_threads"] != 1 for pool in pools):
-            raise ValueError("child numerical thread limit was not installed")
-        runtime = asdict(observe_environment(_PACKAGES, _THREADS))
-        worker.progress({"stage": "transient_cold_compile", "requested_steps": protocol.times_s.size - 1})
-        compiled = compile_device_1d(prepared, intervals_per_layer=intervals)
+    with worker.admit_provenance(request, operator="BackwardEuler1DStep"):
+        started = datetime.now(timezone.utc).isoformat()
+        with threadpool_limits(limits=1):
+            pools = threadpool_info()
+            if any(pool["num_threads"] != 1 for pool in pools):
+                raise ValueError("child numerical thread limit was not installed")
+            runtime = asdict(observe_environment(_PACKAGES, _THREADS))
+            worker.progress({"stage": "transient_cold_compile", "requested_steps": protocol.times_s.size - 1})
+            compiled = compile_device_1d(prepared, intervals_per_layer=intervals)
+            worker.check_cancel()
+            worker.progress({"stage": "transient_initial_dc", "nodes": compiled.node_count})
+            initial = solve_steady_state(compiled, voltage_V=float(protocol.voltage_V[0]),
+                generation_scale=float(protocol.generation_scale[0]), options=initial_options)
+            worker.check_cancel()
+            cold = {"scope": "cold_compile_and_initial_dc_in_worker", "started_utc": started,
+                "finished_utc": datetime.now(timezone.utc).isoformat(), "prepared_sha256": prepared.content_sha256,
+                "compiled_identity": compiled.identity, "manifest_sha256": binding.expected_sha256,
+                "runtime": runtime, "threadpools": pools}
+            worker.progress({"stage": "transient_time_steps", "nodes": compiled.node_count})
+            captured = run_transient_for_publication(compiled, initial, protocol,
+                                                   options=options, initial_options=initial_options)
         worker.check_cancel()
-        worker.progress({"stage": "transient_initial_dc", "nodes": compiled.node_count})
-        initial = solve_steady_state(compiled, voltage_V=float(protocol.voltage_V[0]),
-            generation_scale=float(protocol.generation_scale[0]), options=initial_options)
-        worker.check_cancel()
-        cold = {"scope": "cold_compile_and_initial_dc_in_worker", "started_utc": started,
-            "finished_utc": datetime.now(timezone.utc).isoformat(), "prepared_sha256": prepared.content_sha256,
-            "compiled_identity": compiled.identity, "manifest_sha256": binding.expected_sha256,
-            "runtime": runtime, "threadpools": pools}
-        worker.progress({"stage": "transient_time_steps", "nodes": compiled.node_count})
-        captured = run_transient_for_publication(compiled, initial, protocol,
-                                               options=options, initial_options=initial_options)
-    worker.check_cancel()
-    _verify_sources(binding.execution)
-    summary, payloads = _payload(captured.result, captured.nodes_m)
-    capture = json.loads(captured.capture_json)
-    # Link the pre-transient cold execution to the wrapper's actual input words.
-    cold["inputs"] = capture["description"]["inputs"]
-    return WorkerResult.from_dict({"schema": _RESULT, "engine": "solarlab",
-        "prepared_sha256": prepared.content_sha256, "H_input": request.H_input, "H_physics": request.H_physics,
-        "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
-        "transient_result": summary, "reason": summary["reason"], "cold_start": json.loads(_document("cold", cold).content),
-        "transient_capture": capture,
-        "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
-                     for name, p in payloads.items()},
-        "scientific_qualification": False}, artifacts=tuple(payloads.items()),
-        state="succeeded" if captured.result.completed else "failed")
+        summary, payloads = _payload(captured.result, captured.nodes_m)
+        capture = json.loads(captured.capture_json)
+        # Link the pre-transient cold execution to the wrapper's actual input words.
+        cold["inputs"] = capture["description"]["inputs"]
+        return WorkerResult.from_dict({"schema": _RESULT, "engine": "solarlab",
+            "prepared_sha256": prepared.content_sha256, "H_input": request.H_input, "H_physics": request.H_physics,
+            "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
+            "transient_result": summary, "reason": summary["reason"], "cold_start": json.loads(_document("cold", cold).content),
+            "transient_capture": capture,
+            "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
+                         for name, p in payloads.items()},
+            "scientific_qualification": False}, artifacts=tuple(payloads.items()),
+            state="succeeded" if captured.result.completed else "failed")
 
 
-def read_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
+def read_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None = None,
+    current_identity: JobProvenance | dict[str, Any] | None = None, strict_same_source: bool = False) -> dict[str, Any]:
     """Verify one committed complete/partial history without importing a solver."""
     import numpy as np
     from solarlab.experiments.transient_results import (
@@ -306,14 +311,21 @@ def read_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None =
     inputs = _inputs(summary["compiled_identity"], arrays, diagnostics["initial"], diagnostics["initial_controls"])
     expected_identity = {"H_input": _digest(inputs), "H_physics": summary["compiled_identity"], "H_execution": _digest(description)}
     if (capture["status"] != "captured_at_computation" or description["scope"] != "solve_transient_call"
-            or any(description[n] is not None for n in ("build_source_commit", "compiled_device_history", "initial_dc_history"))
+            or any(description[n] is not None for n in ("compiled_device_history", "initial_dc_history"))
             or description["inputs"] != inputs or capture["identity"] != expected_identity
             or description["numerics"] != controls["transient"]
             or capture["result_sha256"] != _result_digest(summary, payloads)):
         raise ValueError("transient computation capture differs from saved inputs/results")
     sources = {s["id"]: s["sha256"] for s in document["implementation_content"]}
     sources.update({s["id"]: s["sha256"] for s in roles["preparation"]["adapter_sources"]})
-    if any(sources.get(name) != digest for name, digest in description["sources"].items()):
+    if description.get("job_provenance") is not None:
+        if description["job_provenance"] != result.get("job_provenance"):
+            raise ValueError("transient producer differs from admitted job provenance")
+        validate_recorded_sources(description)
+        if description["build_source_commit"] != read_provenance(description["job_provenance"]).export()["git_commit"]:
+            raise ValueError("transient build commit differs from admitted job provenance")
+    elif description["build_source_commit"] is not None or any(
+            sources.get(name) != digest for name, digest in description["sources"].items()):
         raise ValueError("transient execution source differs from the request source binding")
     if (cold["scope"] != "cold_compile_and_initial_dc_in_worker" or cold["inputs"] != inputs
             or cold["compiled_identity"] != summary["compiled_identity"]
@@ -324,7 +336,9 @@ def read_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None =
     return {"document": {**summary, "run_id": run_id, "attempt_id": selected, "generation": attempt["generation"],
                 "arrays": {name: by_name[name]["artifact_id"] for name in _UNITS}},
             "arrays": arrays, "diagnostics": diagnostics, "worker_result": result,
-            "run_state": attempt["state"], "manifest": manifest.export()}
+            "run_state": attempt["state"], "manifest": manifest.export(), "provenance_comparison": worker_result_provenance(result, run, attempt, store_id=store.store_id,
+            current=current_identity, strict_same_source=strict_same_source,
+            provenance_ref=by_name["execution_manifest"]["metadata"].get("job_provenance_sha256"), execution_document=document)}
 
 # Public entry point for trusted companion preparation.
 transient_identity_inputs = _identity_inputs

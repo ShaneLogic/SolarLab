@@ -10,6 +10,7 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 import json
+import warnings
 from pathlib import Path, PurePosixPath
 import posixpath
 from typing import Any
@@ -55,21 +56,38 @@ class ConfigurationMigrationPlan:
 def prepare_registered_configuration_v2(
     registry: MigrationRegistry, id: str, document: SourceDocument, *,
     defaults: DefaultCatalog, resources: ResourceLibrary,
+    expected_document_sha256: str | None = None, strict_derived_metadata: bool = False,
+    reconciliation: dict[str, Any] | None = None,
 ) -> PreparedDevice | PreparedTandem:
     """Consume v2 directly; old-source labels remain original evidence only."""
     entry = registry.entry(id)
     expected = entry.preparation
     if entry.section != "configs" or expected is None or expected.status != "prepared_only":
         raise ValueError("the selected original configuration has no accepted data preparation")
+    if expected_document_sha256 is not None and document.sha256 != expected_document_sha256:
+        raise ValueError("v2 selected configuration content binding mismatch")
     value = read_configuration_v2(document, defaults=defaults, resources=resources, sources=registry.sources.documents)
-    if value.to_input().id != expected.input_id or value.content_sha256 != expected.content_sha256:
+    if value.to_input().id != expected.input_id:
         raise ValueError("v2 data differs from the original registered preparation; retain the old path")
+    comparison = {"recorded_prepared_sha256": expected.content_sha256,
+                  "current_prepared_sha256": value.content_sha256,
+                  "status": "same" if value.content_sha256 == expected.content_sha256 else "different"}
+    if reconciliation is not None:
+        reconciliation.update(comparison)
+    if comparison["status"] == "different":
+        # Without an independent original-document digest a changed declaration
+        # cannot be distinguished from derived metadata drift.
+        if expected_document_sha256 is None or strict_derived_metadata:
+            raise ValueError("v2 data differs from the original registered preparation; retain the old path")
+        warnings.warn("bound v2 input bytes unchanged; derived preparation metadata differs from the recorded identity",
+                      RuntimeWarning, stacklevel=2)
     return value
 
 
 def read_selected_configuration_v2(
     registry: MigrationRegistry, selection: SourceDocument, id: str, *, documents: tuple[SourceDocument, ...],
     defaults: DefaultCatalog, resources: ResourceLibrary,
+    strict_derived_metadata: bool = False, reconciliation: dict[str, Any] | None = None,
 ) -> PreparedDevice | PreparedTandem:
     """The actual consumer of the published data-source selection manifest."""
     reference = registry.spec.configuration_selection
@@ -104,9 +122,12 @@ def read_selected_configuration_v2(
     if (document is None or document.sha256 != row["sha256"]
             or row["original_source"] != {"id": original.id, "sha256": original.sha256}):
         raise ValueError("v2 selected configuration content binding mismatch")
-    value = prepare_registered_configuration_v2(registry, id, document, defaults=defaults, resources=resources)
-    if value.content_sha256 != row["prepared_content_sha256"]:
+    expected = registry.entry(id).preparation
+    if expected is None or row["prepared_content_sha256"] != expected.content_sha256:
         raise ValueError("v2 selected preparation content binding mismatch")
+    value = prepare_registered_configuration_v2(registry, id, document, defaults=defaults, resources=resources,
+        expected_document_sha256=row["sha256"], strict_derived_metadata=strict_derived_metadata,
+        reconciliation=reconciliation)
     return value
 
 

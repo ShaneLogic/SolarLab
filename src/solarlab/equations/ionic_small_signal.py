@@ -11,12 +11,12 @@ known voltage terms remain separate through physical density/current evaluation.
 
 from __future__ import annotations
 
+from solarlab.reproducibility.job_provenance import admitted_source_pins
+
 from dataclasses import dataclass, field
 import hashlib
 import json
 import math
-from pathlib import Path
-import sys
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -42,22 +42,6 @@ def frequency_voltage(frequency_Hz: float, voltage_phasor_V: complex, ion_mode: 
     return frequency, voltage
 
 
-def _source_pins(*, field_transport: bool = False) -> dict[str, str]:
-    names: tuple[str, ...] = (__name__, "solarlab.equations.ionic_1d", "solarlab.equations.dc_1d",
-             "solarlab.physics.ions.migration", "solarlab.physics.ions.finite_site",
-             "solarlab.physics.ions.shared_site", "solarlab.physics.transport.electrochemical_flux",
-             "solarlab.physics.electrostatics.poisson", "solarlab.equations.ionic_closure")
-    if field_transport:
-        names += ("solarlab.equations.field_transport_1d",
-                  "solarlab.physics.transport.field_mobility",
-                  "solarlab.physics.transport.field_mobility_tangents")
-    result = {}
-    for name in names:
-        path = sys.modules[name].__file__
-        if path is None:
-            raise ValueError("ionic AC source must be bound to actual source files")
-        result[name] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    return result
 
 
 @dataclass(frozen=True)
@@ -164,7 +148,7 @@ class IonicSmallSignal1D:
         object.__setattr__(self, "working_state_identity", hashlib.sha256(json.dumps((
             device.identity, float(state.voltage_V).hex(), float(self.problem.generation_scale).hex(), digest,
         )).encode()).hexdigest())
-        object.__setattr__(self, "source_sha256", _source_pins(field_transport=device.electronic_component.field_transport is not None))
+        object.__setattr__(self, "source_sha256", admitted_source_pins())
 
     @property
     def device(self) -> CompiledIonicDevice1D:
@@ -413,8 +397,6 @@ class IonicSmallSignal1D:
         input_current = component.voltage_polarity * total[positive_electrode]
         bound = (Q * (float(np.sum(abs(carrier_balance))) + sum(float(np.sum(abs(v))) for v in ion_balance.values()))
                  + omega * float(np.sum(abs(gauss)))) / abs(voltage)
-        if _source_pins(field_transport=component.field_transport is not None) != self.source_sha256:
-            raise RuntimeError("ionic AC physical source changed during observation")
         result: dict[str, object] = {
             "frequency_Hz": frequency, "voltage_phasor_V": voltage, "ion_mode": ion_mode,
             "coordinate_form": form, "coordinate_representation": form, "solve_coordinate_perturbation": solve_coordinates,

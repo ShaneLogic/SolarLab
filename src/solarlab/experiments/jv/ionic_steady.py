@@ -7,13 +7,16 @@ Saved data can be read without constructing a device or invoking a solver.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, result_provenance,
+    admitted_source_pins, current_provenance, job_provenance,
+)
+
+from dataclasses import asdict, dataclass, replace, field
 import hashlib
-import importlib
 import json
 import math
 from pathlib import Path
-import sys
 import time
 from typing import Any
 
@@ -92,6 +95,8 @@ class IonicSteadyJVResult:
     experiment_kind: str = "equilibrated_ionic_steady_jv"
     physical_certificate_status: str = "not_evaluated"
 
+    job_provenance: dict[str, Any] | None = field(default_factory=current_provenance)
+
     def __post_init__(self) -> None:
         for name in ("requested_voltage_V", "voltage_V", "current_density_A_m2", "output_current_A_m2",
                      "ion_weights_m", "nodes_m"):
@@ -124,25 +129,6 @@ def _identity(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
-def _sources() -> dict[str, str]:
-    names = [__name__, "solarlab.experiments.ionic_transient", "solarlab.experiments.jv.steady",
-        "solarlab.experiments.transient_results", "solarlab.experiments.results",
-        "solarlab.device.compile_ionic_1d", "solarlab.device.compile_1d", "solarlab.equations.ionic_1d",
-        "solarlab.equations.dc_1d", "solarlab.solvers.nonlinear.ionic_1d", "solarlab.solvers.nonlinear.newton",
-        "solarlab.solvers.nonlinear.production", "solarlab.physics.ions.migration", "solarlab.physics.ions.finite_site",
-        "solarlab.physics.ions.shared_site", "solarlab.physics.transport.electrochemical_flux",
-        "solarlab.physics.electrostatics.poisson", "solarlab.physics.electrostatics.charge",
-        "solarlab.physics.recombination.bulk", "solarlab.physics.recombination.reaction",
-        "solarlab.physics.contacts.exchange", "solarlab.discretization.bernoulli", "solarlab.discretization.stable_bernoulli"]
-    if "solarlab.equations.ionic_closure" in sys.modules:
-        names.append("solarlab.equations.ionic_closure")
-    result = {}
-    for name in names:
-        filename = importlib.import_module(name).__file__
-        if filename is None:
-            raise ValueError("steady J-V requires actual source files for provenance")
-        result[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
-    return result
 
 
 def _rebase_guess(device: CompiledIonicDevice1D, state: IonicState1D, voltage: float) -> IonicState1D:
@@ -203,102 +189,101 @@ def run_ionic_steady_jv(
     polarity = float(compiled.electronic_component.voltage_polarity)
     if polarity not in {-1.0, 1.0}:
         raise ValueError("terminal voltage polarity must be explicitly signed")
-    pins = _sources()
-    previous = None
-    initial_provenance: dict[str, Any] = {"policy": initial_policy}
-    if initial_policy == "saved_accepted":
-        if not isinstance(initial, IonicTransientInitial) or initial.steady_controls != options.steady:
-            raise ValueError("saved initial requires an accepted artifact and matching declared steady controls")
-        previous, initial_generation, checks = _admit_evidence(
-            compiled, initial.evidence_json, initial.source_sha256, initial.steady_controls)
-        if not _same_state(previous, initial.state) or initial_generation != initial.generation_scale:
-            raise ValueError("initial object disagrees with its pinned steady evidence")
-        initial_provenance.update(source_path=initial.source_path, source_sha256=initial.source_sha256,
-            state=previous, state_sha256=state_digest(previous.u), generation_scale=initial_generation,
-            admission_checks=checks)
-    elif initial is not None:
-        raise ValueError("compiled_cold policy cannot accept a hidden supplied initial state")
-    controls = asdict(options)
-    request = {"voltage_V": requested.tolist(), "generation_scale": generation,
-        "incident_power_W_m2": incident_power_W_m2, "initial_policy": initial_policy,
-        "initial_source_sha256": initial_provenance.get("source_sha256"), "controls": controls}
-    deadline = started + options.wall_s
-    attempts: list[IonicSteadyJVAttempt] = []
-    accepted_voltages, currents = [], []
-    calls, counts = 0, {"residual": 0, "jacobian": 0}
+    with job_provenance({"compiled_identity": compiled.identity, "voltage_V": requested.tolist(), "generation_scale": generation, "controls": asdict(options), "initial_policy": initial_policy, "initial_sha256": None if initial is None else initial.source_sha256, "incident_power_W_m2": incident_power_W_m2}, operator="Ionic1DProblem.steady_jv"):
+        pins = admitted_source_pins()
+        previous = None
+        initial_provenance: dict[str, Any] = {"policy": initial_policy}
+        if initial_policy == "saved_accepted":
+            if not isinstance(initial, IonicTransientInitial) or initial.steady_controls != options.steady:
+                raise ValueError("saved initial requires an accepted artifact and matching declared steady controls")
+            previous, initial_generation, checks = _admit_evidence(
+                compiled, initial.evidence_json, initial.source_sha256, initial.steady_controls)
+            if not _same_state(previous, initial.state) or initial_generation != initial.generation_scale:
+                raise ValueError("initial object disagrees with its pinned steady evidence")
+            initial_provenance.update(source_path=initial.source_path, source_sha256=initial.source_sha256,
+                state=previous, state_sha256=state_digest(previous.u), generation_scale=initial_generation,
+                admission_checks=checks)
+        elif initial is not None:
+            raise ValueError("compiled_cold policy cannot accept a hidden supplied initial state")
+        controls = asdict(options)
+        request = {"voltage_V": requested.tolist(), "generation_scale": generation,
+            "incident_power_W_m2": incident_power_W_m2, "initial_policy": initial_policy,
+            "initial_source_sha256": initial_provenance.get("source_sha256"), "controls": controls}
+        deadline = started + options.wall_s
+        attempts: list[IonicSteadyJVAttempt] = []
+        accepted_voltages, currents = [], []
+        calls, counts = 0, {"residual": 0, "jacobian": 0}
 
-    def checkpoint() -> None:
-        if time.monotonic() >= deadline:
-            raise _WaveWallLimit("ionic J-V wave wall budget exhausted; no retry")
-        if _sources() != pins:
-            raise RuntimeError("ionic J-V source changed during the wave")
+        def checkpoint() -> None:
+            if time.monotonic() >= deadline:
+                raise _WaveWallLimit("ionic J-V wave wall budget exhausted; no retry")
 
-    for index, supplied in enumerate(requested):
-        voltage = float(supplied)
-        attempt_started = time.monotonic()
-        seed, solution, error = None, None, None
-        called = False
-        seed_provenance: dict[str, Any] = {"policy": initial_policy if index == 0 else "previous_accepted"}
-        try:
-            checkpoint()
-            if previous is None:
-                seed = compiled.initial_state(voltage_V=voltage)
-            else:
-                seed_provenance.update(previous_voltage_V=previous.voltage_V,
-                    previous_state_sha256=state_digest(previous.u), previous_accepted_point=None if index == 0 else index - 1)
-                seed = _rebase_guess(compiled, previous, voltage)
-            seed_provenance["rebased_state_sha256"] = state_digest(seed.u)
-            checkpoint()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                raise _WaveWallLimit("ionic J-V wave wall budget exhausted before solver call")
-            effective = replace(options.steady, wall_s=min(options.steady.wall_s, remaining))
-            calls += 1
-            called = True
-            solution = solve_ionic_steady_state(compiled, voltage_V=voltage, generation_scale=generation,
-                                               options=effective, initial_state=seed)
-            for name, number in solution.evaluation_counts.items():
-                counts[name] = counts.get(name, 0) + number
-            checkpoint()
-            accepted = solution.accepted
-            termination, error = solution.termination, solution.error
-            if accepted:
-                if (solution.state is None or solution.newton is None or not solution.newton.accepted
-                        or not solution.checks or not all(check.passed for check in solution.checks)
-                        or solution.compiled_identity != compiled.identity
-                        or solution.original_prepared_identity != compiled.original_prepared_sha256
-                        or solution.binding_manifest != compiled.binding_manifest
-                        or solution.solver_controls != asdict(effective)
-                        or solution.state.voltage_V != voltage
-                        or not _same_state(solution.state, compiled.state(solution.state.u, voltage_V=voltage))
-                        or solution.diagnostics is None):
-                    raise ValueError("accepted solver result has inconsistent state, controls or provenance")
-                current = np.asarray(solution.diagnostics["total_current_density_A_m2"], dtype=float)
-                if current.shape != (compiled.node_count + 1,) or not np.all(np.isfinite(current)):
-                    raise ValueError("accepted J-V point must retain all internal and external current faces")
-                currents.append(current.copy())
-                accepted_voltages.append(voltage)
-                previous = solution.state
-        except Exception as exc:
-            accepted = False
-            termination = "wall_budget_exhausted" if isinstance(exc, _WaveWallLimit) else "evaluation_error"
-            error = f"{type(exc).__name__}: {str(exc)[:400]}"
-        attempts.append(IonicSteadyJVAttempt(index, voltage, accepted, termination, seed,
-            seed_provenance, solution, called, time.monotonic() - attempt_started, error))
-        if not accepted:
-            break
-    voltage_array: np.ndarray = np.asarray(accepted_voltages, dtype=float)
-    current_array = np.asarray(currents, dtype=float).reshape((-1, compiled.node_count + 1))
-    output = -polarity * current_array[:, 0]
-    targets = {"positive": compiled.reference_inventory_m2}
-    if compiled.ion_species_count == 2:
-        targets["negative"] = compiled.negative_reference_inventory_m2
-    return IonicSteadyJVResult(requested, voltage_array, current_array, output, tuple(attempts),
-        _metrics(voltage_array, output, incident_power_W_m2), generation, incident_power_W_m2, polarity,
-        initial_provenance, compiled.identity, compiled.original_prepared_sha256, compiled.binding_manifest,
-        pins, _identity(pins), _identity(controls), _identity(request), controls, compiled.ion_species_names,
-        targets, compiled.ion_geometry.cell_measures_m, compiled.electronic_component.nodes_m,
-        calls, counts, time.monotonic() - started)
+        for index, supplied in enumerate(requested):
+            voltage = float(supplied)
+            attempt_started = time.monotonic()
+            seed, solution, error = None, None, None
+            called = False
+            seed_provenance: dict[str, Any] = {"policy": initial_policy if index == 0 else "previous_accepted"}
+            try:
+                checkpoint()
+                if previous is None:
+                    seed = compiled.initial_state(voltage_V=voltage)
+                else:
+                    seed_provenance.update(previous_voltage_V=previous.voltage_V,
+                        previous_state_sha256=state_digest(previous.u), previous_accepted_point=None if index == 0 else index - 1)
+                    seed = _rebase_guess(compiled, previous, voltage)
+                seed_provenance["rebased_state_sha256"] = state_digest(seed.u)
+                checkpoint()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    raise _WaveWallLimit("ionic J-V wave wall budget exhausted before solver call")
+                effective = replace(options.steady, wall_s=min(options.steady.wall_s, remaining))
+                calls += 1
+                called = True
+                solution = solve_ionic_steady_state(compiled, voltage_V=voltage, generation_scale=generation,
+                                                   options=effective, initial_state=seed)
+                for name, number in solution.evaluation_counts.items():
+                    counts[name] = counts.get(name, 0) + number
+                checkpoint()
+                accepted = solution.accepted
+                termination, error = solution.termination, solution.error
+                if accepted:
+                    if (solution.state is None or solution.newton is None or not solution.newton.accepted
+                            or not solution.checks or not all(check.passed for check in solution.checks)
+                            or solution.compiled_identity != compiled.identity
+                            or solution.original_prepared_identity != compiled.original_prepared_sha256
+                            or solution.binding_manifest != compiled.binding_manifest
+                            or solution.solver_controls != asdict(effective)
+                            or solution.state.voltage_V != voltage
+                            or not _same_state(solution.state, compiled.state(solution.state.u, voltage_V=voltage))
+                            or solution.diagnostics is None):
+                        raise ValueError("accepted solver result has inconsistent state, controls or provenance")
+                    current = np.asarray(solution.diagnostics["total_current_density_A_m2"], dtype=float)
+                    if current.shape != (compiled.node_count + 1,) or not np.all(np.isfinite(current)):
+                        raise ValueError("accepted J-V point must retain all internal and external current faces")
+                    currents.append(current.copy())
+                    accepted_voltages.append(voltage)
+                    previous = solution.state
+            except Exception as exc:
+                accepted = False
+                termination = "wall_budget_exhausted" if isinstance(exc, _WaveWallLimit) else "evaluation_error"
+                error = f"{type(exc).__name__}: {str(exc)[:400]}"
+            attempts.append(IonicSteadyJVAttempt(index, voltage, accepted, termination, seed,
+                seed_provenance, solution, called, time.monotonic() - attempt_started, error))
+            if not accepted:
+                break
+        voltage_array: np.ndarray = np.asarray(accepted_voltages, dtype=float)
+        current_array = np.asarray(currents, dtype=float).reshape((-1, compiled.node_count + 1))
+        output = -polarity * current_array[:, 0]
+        targets = {"positive": compiled.reference_inventory_m2}
+        if compiled.ion_species_count == 2:
+            targets["negative"] = compiled.negative_reference_inventory_m2
+        return IonicSteadyJVResult(requested, voltage_array, current_array, output, tuple(attempts),
+            _metrics(voltage_array, output, incident_power_W_m2), generation, incident_power_W_m2, polarity,
+            initial_provenance, compiled.identity, compiled.original_prepared_sha256, compiled.binding_manifest,
+            pins, _identity(pins), _identity(controls), _identity(request), controls, compiled.ion_species_names,
+            targets, compiled.ion_geometry.cell_measures_m, compiled.electronic_component.nodes_m,
+            calls, counts, time.monotonic() - started)
 
 
 def write_ionic_steady_jv(result: IonicSteadyJVResult, path: str | Path) -> str:
@@ -312,7 +297,10 @@ def write_ionic_steady_jv(result: IonicSteadyJVResult, path: str | Path) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def read_ionic_steady_jv(path: str | Path, sha256: str) -> dict[str, Any]:
+def read_ionic_steady_jv(path: str | Path, sha256: str, *,
+    current_identity: JobProvenance | dict[str, Any] | None = None,
+    strict_same_source: bool = False,
+) -> dict[str, Any]:
     """Validate saved checks, hashes and prefix consistency without a model solve."""
     raw = Path(path).read_bytes()
     if hashlib.sha256(raw).hexdigest() != sha256:
@@ -393,4 +381,9 @@ def read_ionic_steady_jv(path: str | Path, sha256: str) -> dict[str, Any]:
             raise ValueError("ionic J-V metrics contradict the accepted voltage brackets")
     except (KeyError, TypeError, IndexError, AttributeError) as exc:
         raise ValueError("incomplete or malformed ionic steady J-V artifact") from exc
+    record["provenance_comparison"] = result_provenance(result, current_identity,
+        strict_same_source=strict_same_source, expected_inputs=None if result.get("job_provenance") is None else {"compiled_identity": result["compiled_identity"], "voltage_V": result["requested_voltage_V"].tolist(),
+            "generation_scale": result["generation_scale"], "controls": result["solver_controls"],
+            "initial_policy": result["initial_provenance"]["policy"], "initial_sha256": result["initial_provenance"].get("source_sha256"),
+            "incident_power_W_m2": result["incident_power_W_m2"]})
     return record

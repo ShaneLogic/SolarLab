@@ -42,11 +42,9 @@ def initial_path():
 
 
 @pytest.fixture
-def source_matched_fixture(device, initial_path):
-    """Synthetic current labels; retained physical314 fields, no new solve."""
+def model_matched_fixture(device, initial_path):
+    """Synthetic model relocation; preserve historical source labels and314 fields."""
     record = _decode(json.loads(initial_path.read_bytes()))
-    record["result_2d"]["source_sha256"] = driver.steady_sources()
-    record["source_sha256"].update(driver._grain_model(device)["source_sha256"])
     # Example source paths participate in identity. Rebind this in-memory test
     # fixture after relocation; never change the original numerical artifact.
     record["compiled_identity"] = device.identity
@@ -56,32 +54,40 @@ def source_matched_fixture(device, initial_path):
     return record
 
 
-def test_current_source_grain_admission_rechecks_full_rows_without_solver(device, source_matched_fixture, monkeypatch):
+def test_current_source_grain_admission_rechecks_full_rows_without_solver(device, model_matched_fixture, monkeypatch):
     monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("admission solved"))
-    text = json.dumps(_encode(source_matched_fixture))
+    text = json.dumps(_encode(model_matched_fixture))
     state, generation, _ = driver._admit(device, text, hashlib.sha256(text.encode()).hexdigest(), driver.SteadyJV2DOptions().steady)
     assert state.u.shape == (195,) and generation == 1.0 and state.voltage_V == .002
     model = driver._grain_model(device)
     assert model["model_id"] == device.grain_recombination.model_id
-    np.testing.assert_array_equal(state.u, source_matched_fixture["result_2d"]["state"]["u"])
-    assert model["regions"][0]["declaration"] == source_matched_fixture["grain_binding"]["regions"][0]["declaration"]
+    np.testing.assert_array_equal(state.u, model_matched_fixture["result_2d"]["state"]["u"])
+    assert model["regions"][0]["declaration"] == model_matched_fixture["grain_binding"]["regions"][0]["declaration"]
 
 
-def test_original_source_mismatch_is_refused_before_solver(device, initial_path, monkeypatch):
-    monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("source mismatch solved"))
-    with pytest.raises(ValueError, match="physical source binding"):
-        driver.load_steady_jv_2d_initial(device, initial_path, INITIAL_SHA)
+def test_historical_source_drift_keeps_same_model_physical_admission(device, model_matched_fixture, monkeypatch):
+    monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("source drift admission solved"))
+    saved_sources = dict(model_matched_fixture["result_2d"]["source_sha256"])
+    text = json.dumps(_encode(model_matched_fixture))
+    state, generation, checks = driver._admit(device, text, hashlib.sha256(text.encode()).hexdigest(), driver.SteadyJV2DOptions().steady)
+    assert state.u.shape == (195,) and generation == 1.0 and all(c.passed for c in checks)
+    assert model_matched_fixture["result_2d"]["source_sha256"] == saved_sources
 
 
-def test_grain_binding_source_change_is_refused_and_no_grain_guard_keys_stay_unchanged(device, source_matched_fixture):
-    source_matched_fixture["source_sha256"]["solarlab.device.grain_2d"] = "wrong"
-    text = json.dumps(_encode(source_matched_fixture))
-    with pytest.raises(ValueError, match="physical source binding"):
+def test_grain_saved_source_tampering_refused_and_inventory_does_not_enable_grain(device, model_matched_fixture):
+    model_matched_fixture["source_sha256"]["solarlab.device.grain_2d"] = "wrong"
+    text = json.dumps(_encode(model_matched_fixture))
+    with pytest.raises(ValueError, match="SHA-256|saved grain"):
         driver._admit(device, text, hashlib.sha256(text.encode()).hexdigest(), driver.SteadyJV2DOptions().steady)
     ordinary = compile_device_2d(load_device(), spatial_input())
-    assert driver._sources() == driver._sources(ordinary)
-    assert "solarlab.device.grain_2d" not in driver._sources()
-    assert "solarlab.device.grain_2d" in driver._sources(device)
+    from solarlab.reproducibility.job_provenance import job_provenance, admitted_source_pins
+    from support.provenance import checked_provenance_owner
+    with checked_provenance_owner(), job_provenance({"compiled_identity": ordinary.identity}, operator="DC2DProblem"):
+        pins = admitted_source_pins()
+        assert "solarlab.device.grain_2d" in pins
+        assert driver._grain_model(ordinary) is None
+        assert driver._grain_model(device)["model_id"] == device.grain_recombination.model_id
+
 
 
 def test_grain_reference_rebase_preserves_density_and_full_lateral_fields(device, initial_path):
@@ -96,9 +102,9 @@ def test_grain_reference_rebase_preserves_density_and_full_lateral_fields(device
 
 
 @pytest.mark.parametrize("change", ["model", "fraction", "failure", "auxiliary"])
-def test_changed_grain_model_or_unaccepted_initial_refused_before_solver(device, source_matched_fixture, monkeypatch, change):
+def test_changed_grain_model_or_unaccepted_initial_refused_before_solver(device, model_matched_fixture, monkeypatch, change):
     monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("invalid admission solved"))
-    record = source_matched_fixture
+    record = model_matched_fixture
     if change == "model":
         record["grain_binding"]["model_id"] = "wrong"
     elif change == "fraction":

@@ -184,7 +184,7 @@ def test_unsupported_populations_refused_without_assembling(kind, immobile, monk
         build_multiple_ionic_small_signal(device, device.initial_state())
 
 
-def test_mode_contacts_shape_identity_and_changed_source_refused(case, monkeypatch, tmp_path):
+def test_mode_contacts_shape_identity_refused_but_source_drift_is_informational(case, monkeypatch, tmp_path):
     device, state, operator = case
     with pytest.raises(CapabilityError, match="only mobile"):
         operator.system(1.0, ion_mode="frozen")
@@ -196,8 +196,9 @@ def test_mode_contacts_shape_identity_and_changed_source_refused(case, monkeypat
     changed = tmp_path / "changed.py"
     changed.write_text("changed source\n")
     monkeypatch.setattr(multiple_ionic_1d, "__file__", str(changed))
-    with pytest.raises(RuntimeError, match="physical source changed"):
-        operator.observe(np.zeros(47), 1.0)
+    observed = operator.observe(np.zeros(47), 1.0)
+    assert observed["working_state_digest"] == operator.working_state_digest
+    assert operator.source_sha256 == {}  # Bare numerical call makes no source claim.
 
 
 def test_nonfixed_contacts_and_CT_refused_before_operator(monkeypatch):

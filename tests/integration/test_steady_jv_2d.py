@@ -257,6 +257,8 @@ def test_real_large_initial_and_full_point_checkpoint_without_solver(case, monke
 @pytest.fixture
 def wall_prefix(case, monkeypatch, tmp_path):
     """Synthetic wall-stop control flow, without a numerical acceptance claim."""
+    from support.provenance import checked_provenance_owner
+
     device, state = case
     initial_path = tmp_path / "SyntheticInitial.json"
     initial_path.write_text("synthetic")
@@ -282,10 +284,11 @@ def wall_prefix(case, monkeypatch, tmp_path):
             "converged" if accepted else "wall_budget_exhausted", newton, initial_state.u, candidate,
             initial_provenance, data, data if accepted else None, (check,) if accepted else (), device.identity,
             voltage_V, generation_scale, {"numerical": asdict(options), "hidden_seed_or_fallback_calls": 0},
-            driver.steady_sources(), {"residual": 1, "jacobian": 1}, 0.0,
+            driver.admitted_source_pins(), {"residual": 1, "jacobian": 1}, 0.0,
             None if accepted else "synthetic wall stop")
     monkeypatch.setattr(driver, "solve_steady_state_2d", solve)
-    result = driver.run_steady_jv_2d(device, initial, np.array([0.0, .025, .05, .075, .1]))
+    with checked_provenance_owner():
+        result = driver.run_steady_jv_2d(device, initial, np.array([0.0, .025, .05, .075, .1]))
     prefix = tmp_path / "WallPrefix.json"
     digest = driver.write_steady_jv_2d(result, prefix)
     return device, prefix, digest, result, solve, calls
@@ -326,7 +329,7 @@ def test_explicit_wall_tail_admits_last_accepted_without_replaying_prefix(wall_p
         driver.read_steady_jv_2d(path, hashlib.sha256(path.read_bytes()).hexdigest())
 
 
-def test_wall_tail_refuses_numerical_failure_and_changed_source_controls(wall_prefix, monkeypatch, tmp_path):
+def test_wall_tail_refuses_numerical_failure_changed_controls_and_saved_source_tampering(wall_prefix, monkeypatch, tmp_path):
     device, prefix, digest, _old, _solve, _calls = wall_prefix
     monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("refusal reached solver"))
     controls = driver.SteadyJV2DOptions(max_points=5)
@@ -339,10 +342,10 @@ def test_wall_tail_refuses_numerical_failure_and_changed_source_controls(wall_pr
     with pytest.raises(ValueError, match="wall-stopped"):
         driver.continue_steady_jv_2d(device, path, hashlib.sha256(path.read_bytes()).hexdigest())
     changed = _decode(json.loads(prefix.read_bytes()))
-    changed["result"]["source_sha256"]["solarlab.equations.dc_2d"] = "changed"
+    changed["result"]["source_sha256"]["solarlab.equations.dc_2d"] = "0" * 64
     path = tmp_path / "ChangedSource.json"
     path.write_text(json.dumps(_encode(changed)))
-    with pytest.raises(ValueError, match="physical source changed"):
+    with pytest.raises(ValueError, match="producer provenance|recorded producer"):
         driver.continue_steady_jv_2d(device, path, hashlib.sha256(path.read_bytes()).hexdigest())
 
 
@@ -460,3 +463,57 @@ def test_saved_actual51point_request_retains_completed_or_failed_prefix_without_
                 "open_circuit_voltage_V", "maximum_power_W_m2", "fill_factor"))
     saved_summary = example.summary(record)
     assert saved_summary["accepted_points"] == accepted + offset and saved_summary["qualification"] is False
+
+
+def test_source_changed_v2_tail_preserves_distinct_admissions_and_original_failure(wall_prefix, monkeypatch, tmp_path):
+    from solarlab.reproducibility.job_provenance import provenance_owner
+    device, prefix, digest, _old, solve, calls = wall_prefix
+    original = prefix.read_bytes()
+    def fake_success(device, **kwargs):
+        calls.clear()
+        return solve(device, **kwargs)
+    monkeypatch.setattr(driver, "solve_steady_state_2d", fake_success)
+    with provenance_owner(source_files=(("solarlab/experiments/jv/steady_2d.py", b"synthetic changed driver"),),
+            git_commit="a" * 40, environment_lock=b"synthetic locked environment", source_attested=True):
+        tail = driver.continue_steady_jv_2d(device, prefix, digest)
+    path = tmp_path / "DifferentSourceTail.json"
+    sha = driver.write_steady_jv_2d(tail, path)
+    monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("readback solved"))
+    saved = driver.read_steady_jv_2d(path, sha)
+    assert saved["schema"] == "solarlab.steady_jv_2d.v2"
+    linked = saved["continuation"]
+    assert linked["source_comparison"] == "different" and linked["completed"]
+    assert linked["producer_provenance"]["prefix"] != linked["producer_provenance"]["tail"]
+    assert linked["prefix_completed"] is False and linked["preserved_prefix_failure"]["voltage_V"] == .05
+    assert prefix.read_bytes() == original
+    with pytest.raises(ValueError, match="strict_same_source"):
+        driver.read_steady_jv_2d(path, sha, current_identity=linked["producer_provenance"]["prefix"], strict_same_source=True)
+
+
+def test_v1_source_map_rules_are_preserved_and_never_retrofitted(wall_prefix, monkeypatch, tmp_path):
+    from copy import deepcopy
+    from support.provenance import checked_provenance_owner
+    device, prefix, digest, _old, solve, calls = wall_prefix
+    old = _decode(json.loads(prefix.read_bytes()))
+    old["schema"] = "solarlab.steady_jv_2d.v1"
+    old["result"].pop("job_provenance")
+    legacy_path = tmp_path / "SyntheticV1.json"
+    original = json.dumps(_encode(old)).encode()
+    legacy_path.write_bytes(original)
+    legacy_digest = hashlib.sha256(original).hexdigest()
+    def fake_success(device, **kwargs):
+        calls.clear()
+        return solve(device, **kwargs)
+    monkeypatch.setattr(driver, "solve_steady_state_2d", fake_success)
+    with checked_provenance_owner():
+        tail = asdict(driver.continue_steady_jv_2d(device, legacy_path, legacy_digest))
+    tail.pop("job_provenance")
+    linked = driver._linked_tail(old, tail)
+    assert "producer_provenance" not in linked and "schema" not in linked
+    broken = deepcopy(tail)
+    broken["source_sha256"]["solarlab.equations.dc_2d"] = "0" * 64
+    with pytest.raises(ValueError, match="v1 continuation changed"):
+        driver._linked_tail(old, broken)
+    loaded = driver.read_steady_jv_2d(legacy_path, legacy_digest)
+    assert loaded["schema"] == "solarlab.steady_jv_2d.v1" and not loaded["completed"]
+    assert legacy_path.read_bytes() == original and loaded["result"]["source_sha256"] == old["result"]["source_sha256"]

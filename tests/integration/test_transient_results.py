@@ -74,6 +74,7 @@ def saved(tmp_path_factory):
     from solarlab.experiments.transient import TransientProtocol
     from solarlab.solvers.nonlinear.problem import SolveBudget
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
+    from support.provenance import checked_provenance_owner
     from threadpoolctl import threadpool_limits
 
     output = {"calculations": 2, "shared_initial_dc_solves": 1, "cases": {}}
@@ -88,8 +89,9 @@ def saved(tmp_path_factory):
         )
         with RunStore(root / "store") as store:
             for name, protocol, options in cases:
-                capture = run_transient_for_publication(compiled, initial, protocol,
-                    options=options, initial_options=initial_controls)
+                with checked_provenance_owner():
+                    capture = run_transient_for_publication(compiled, initial, protocol,
+                        options=options, initial_options=initial_controls)
                 result = capture.result
                 assert result.completed == (name == "completed")
                 source_words = expected(result, compiled.nodes_m)
@@ -148,6 +150,7 @@ def test_reader_does_not_import_transient_solver_or_consult_current_sources(save
     root, _ = saved
     code = '''
 import importlib.abc, json, pathlib, sys
+sys.path.insert(0, sys.argv[2])
 class NoSolver(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if any(fullname == p or fullname.startswith(p + '.') for p in (
@@ -166,7 +169,7 @@ with RunStore(pathlib.Path(sys.argv[1]), read_only=True) as store:
         assert len(loaded['arrays']) == 14
         print(json.dumps(dict(run_id=name, state=loaded['run_state'], provenance=loaded['provenance']['status'])))
 '''
-    result = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(root / "store")],
+    result = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(root / "store"), str(Path(read_transient_result.__code__.co_filename).resolve().parents[2])],
         cwd=tmp_path, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
     rows = [json.loads(line) for line in result.stdout.splitlines()]
@@ -180,8 +183,12 @@ def test_capture_is_limited_to_this_call_and_unknown_history_stays_unknown(saved
         captured = read_transient_result(store, "completed")["provenance"]
         description = captured["description"]
         assert description["scope"] == "solve_transient_call"
-        assert all(description[name] is None for name in ("build_source_commit", "compiled_device_history", "initial_dc_history"))
-        assert description["sources"] and not any("ionic" in name for name in description["sources"])
+        assert all(description[name] is None for name in ("compiled_device_history", "initial_dc_history"))
+        job = description["job_provenance"]["record"]
+        assert description["build_source_commit"] == job["git_commit"]
+        assert job["environment_lock_sha256"] and description["sources"]
+        # Complete inventory membership does not enable an ionic physical law.
+        assert job["assembler"]["operator"] == "BackwardEuler1DStep"
         unknown = read_transient_result(store, "uncaptured")["provenance"]
         assert unknown["status"] == "not_recorded" and "shape_checked_only" in unknown["node_grid"]
         with pytest.raises(ValueError, match="committed terminal"):
@@ -275,3 +282,29 @@ def test_corrupt_payload_never_returns_arrays(saved, tmp_path):
         path.write_bytes(raw)
         with pytest.raises(ArtifactIntegrityError):
             read_transient_result(store, "fixture")
+
+
+@pytest.mark.parametrize("name", ["completed", "failed-prefix"])
+def test_source_edit_does_not_break_saved_readback_and_strict_still_refuses(saved, tmp_path, monkeypatch, name):
+    from solarlab.reproducibility import job_provenance as provenance
+    root, witness = saved
+    source = tmp_path / "later_source.py"
+    source.write_bytes(b"refactored implementation")
+    with RunStore(root / "store", read_only=True) as store:
+        original = read_transient_result(store, name)
+        recorded = provenance.read_provenance(original["provenance"]["description"]["job_provenance"])
+        arrays_before = words(original["arrays"])
+        producer_before = recorded.canonical_json
+        current = provenance.capture_job_provenance({}, dirty_policy="record", operator="BackwardEuler1DStep",
+            git_commit=recorded.export()["git_commit"], source_files=(("solarlab/later_source.py", source.read_bytes()),),
+            source_attested=True, environment_lock=b"different locked environment")
+        # A real source edit cannot trigger a read-time file inspection or solve.
+        source.write_bytes(b"another source edit after capture")
+        monkeypatch.setattr(provenance, "capture_job_provenance", lambda *a, **k: pytest.fail("reader captured current source"))
+        result = read_transient_result(store, name, current_identity=current)
+        assert result["provenance_comparison"]["status"] == "different"
+        assert words(result["arrays"]) == arrays_before == witness["cases"][name]["expected"]["arrays"]
+        assert provenance.read_provenance(result["provenance"]["description"]["job_provenance"]).canonical_json == producer_before
+        assert result["run_state"] == witness["cases"][name]["terminal_state"]
+        with pytest.raises(ValueError, match="strict_same_source"):
+            read_transient_result(store, name, current_identity=current, strict_same_source=True)

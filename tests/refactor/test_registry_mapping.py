@@ -14,6 +14,10 @@ from solarlab.reproducibility.registry_mapping import prepare_registry_mapping, 
 from solarlab.reproducibility.sources import SourceRef, SourceSet
 from test_registry_migration import ROOT, registries as registries
 
+# The bound consumer is an installed-code admission consistency fixture.
+# Ordinary saved mapping readback is covered below with current capture forbidden.
+pytestmark = pytest.mark.requires_clean_core
+
 
 @pytest.fixture(scope="module")
 def consumer_sources():
@@ -90,7 +94,11 @@ def test_complete_original_mapping_has_exact_data_and_honest_context_gaps(regist
         assert (ROOT/registry.source.id).read_bytes() == registry.source.content
 
 
-def test_actual_bound_consumer_rechecks_all_real_inputs_without_activating_any_entry(registries, prepared, migration, consumer_sources, record_property):
+def test_saved_mapping_checks_inputs_without_current_preparation(registries, prepared, migration, consumer_sources, record_property, monkeypatch):
+    import solarlab.reproducibility.registry_mapping as module
+    monkeypatch.setattr(module, "prepare_registry_mapping", lambda *a, **k: pytest.fail("reader reran preparation"))
+    monkeypatch.setattr(module, "read_preparation_context", lambda *a, **k: pytest.fail("reader rebuilt defaults"))
+    monkeypatch.setattr(module, "verify_loaded_source", lambda *a, **k: pytest.fail("reader checked installed sources"))
     result = read(registries, prepared, migration, consumer_sources)
     assert result.document == prepared.document
     assert result.reference() == {"path": prepared.document.id, "sha256": prepared.sha256, "migration_plan_sha256": migration.sha256}
@@ -171,3 +179,18 @@ def test_current_reader_source_is_verified_without_a_guessed_commit(registries, 
     with pytest.raises(ValueError, match="loaded v2 consumer"):
         prepare_registry_mapping(*registries, migration=migration,
             expected_migration_sha256=migration.sha256, consumer_sources=altered)
+
+
+def test_source_drift_mapping_reconciliation_is_explicit_and_strict(registries, prepared, migration, consumer_sources, monkeypatch):
+    import solarlab.reproducibility.registry_mapping as module
+    original = prepared.document.content
+    monkeypatch.setattr(module, "verify_loaded_source", lambda *a, **k: (_ for _ in ()).throw(ValueError("changed installed consumer")))
+    selected = bind(registries, prepared.document, migration.sha256)
+    kwargs = dict(migration=migration, expected_migration_sha256=migration.sha256,
+                  expected_sha256=prepared.sha256, consumer_sources=consumer_sources)
+    saved = read_registry_mapping(*selected, prepared.document, **kwargs)
+    assert saved.document.content == original and saved.reconciliation is None
+    reconciled = read_registry_mapping(*selected, prepared.document, reconcile_current=True, **kwargs)
+    assert reconciled.document.content == original and reconciled.reconciliation["status"] == "different"
+    with pytest.raises(ValueError, match="strict_same_source"):
+        read_registry_mapping(*selected, prepared.document, strict_same_source=True, **kwargs)

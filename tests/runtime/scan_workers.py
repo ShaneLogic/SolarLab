@@ -46,6 +46,11 @@ def point(request, context):
     context.counters(accepted_steps=1, calls=1)
     initial = binding.execution.initial_state
     words = bytes.fromhex(json.loads(initial.content)["words"])
+    if action == "provenance":
+        with context.admit_provenance(request, operator="non_scientific_scan_fixture"):
+            return WorkerResult.from_dict({"point": payload["point"], "manifest_sha256": binding.expected_sha256,
+                "initial_state_sha256": initial.sha256, "scientific_qualification": False},
+                artifacts=(("words", bytes_artifact(words, metadata={"unit": "fixture", "missing_reason": None})),))
     return WorkerResult.from_dict({"point": payload["point"], "initial_state_sha256": initial.sha256,
         "scientific_qualification": False, "evidence_level": "unclassified", "fresh_process_state": True},
         artifacts=(("words", bytes_artifact(words, metadata={"unit": "fixture", "missing_reason": None})),))

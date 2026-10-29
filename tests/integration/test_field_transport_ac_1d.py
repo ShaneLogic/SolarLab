@@ -298,17 +298,23 @@ def test_bound_pre_edit_no_ct_arrays_remain_bitwise_exact():
                 assert actual.tobytes() == arrays[kind + "_" + key].tobytes()
 
 
-def test_ct_operator_pins_actual_field_law_and_rejects_changed_source(ionic_case, monkeypatch, tmp_path):
+def test_ct_source_capture_belongs_to_job_and_operator_survives_source_drift(ionic_case, monkeypatch, tmp_path):
     from solarlab.equations import field_transport_1d
-    device, _state, operator = ionic_case
-    assert "solarlab.equations.field_transport_1d" in operator.source_sha256
-    assert "solarlab.physics.transport.field_mobility" in operator.source_sha256
-    assert "solarlab.physics.transport.field_mobility_tangents" in operator.source_sha256
+    from solarlab.reproducibility.job_provenance import job_provenance, admitted_source_pins
+    from support.provenance import checked_provenance_owner
+    device, state, bare_operator = ionic_case
+    assert bare_operator.source_sha256 == {}
+    with checked_provenance_owner(), job_provenance({"compiled_identity": device.identity}, operator="IonicSmallSignal1D"):
+        operator = build_ionic_small_signal(device, state)
+        pins = admitted_source_pins()
+    for name in ("solarlab.equations.field_transport_1d", "solarlab.physics.transport.field_mobility",
+                 "solarlab.physics.transport.field_mobility_tangents"):
+        assert operator.source_sha256[name] == pins[name]
     path = tmp_path / "changed_field_transport.py"
     path.write_text("changed source\n")
     monkeypatch.setattr(field_transport_1d, "__file__", str(path))
-    with pytest.raises(RuntimeError, match="physical source changed"):
-        operator.observe(np.zeros(device.state_size, dtype=complex), 1.0)
+    operator.observe(np.zeros(device.state_size, dtype=complex), 1.0)
+    assert operator.source_sha256 == pins
 
 
 @pytest.mark.parametrize("kind", ["ion-free", "shared"])

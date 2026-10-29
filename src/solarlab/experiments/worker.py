@@ -9,12 +9,15 @@ is replaceable UI metadata. Required state history must be an artifact.
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import importlib
 import importlib.util
 import importlib.metadata
 import inspect
+import json
 import math
 import os
 import platform
@@ -28,6 +31,9 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from solarlab.io.artifacts import ArtifactPayload, _json_document, _parse_document, bytes_artifact
 from solarlab.materials.source import SourceDocument
+from solarlab.reproducibility.job_provenance import (
+    JobProvenance, execution_checkout, job_provenance, provenance_owner, worker_input_record,
+)
 
 if TYPE_CHECKING:
     from solarlab.config.identity import (
@@ -392,6 +398,19 @@ class WorkerContext:
         self._manifest_consumed = True
         return binding
 
+    @contextmanager
+    def admit_provenance(self, request: WorkerRequest, *, operator: str,
+                         assembler_identity: str | None = None,
+                         analysis_identity: str | None = None) -> Iterator[JobProvenance]:
+        """Enter only after installed binding/input checks, before numerical work."""
+        if self._execution is not None and not self._manifest_consumed:
+            raise ValueError("job provenance requires prior manifest admission")
+        with job_provenance({"request_sha256": request.request.sha256,
+                             "H_input": request.H_input, "H_physics": request.H_physics},
+                            operator=operator, assembler_identity=assembler_identity,
+                            analysis_identity=analysis_identity) as record:
+            yield record
+
     @property
     def cancelled(self) -> bool:
         return bool(self._stop.is_set())
@@ -523,6 +542,7 @@ def _child_main(
     state = "failed"
     result: dict[str, Any] = {}
     artifacts: list[dict[str, Any]] = []
+    owner: dict[str, Any] = {}
     try:
         os.chdir(path)
         log = os.open(path / "worker.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -550,7 +570,30 @@ def _child_main(
         if not inspect.isfunction(function) or function.__qualname__ != binding.symbol or function.__module__ != binding.module:
             raise ValueError("registered worker is not a module-level function")
         context.check_cancel()
-        output = function(request, context)
+        options: dict[str, Any] = {"dirty_policy": "record", "attempt_ref": token,
+            "execution_manifest_sha256": None if execution is None else execution.expected_sha256,
+            "input_record": worker_input_record(request.to_document(),
+                None if execution is None else execution.manifest.export()["document"])}
+        checkout = execution_checkout()
+        if checkout is not None:
+            options["source_root"] = checkout
+        elif execution is not None:
+            # Supplied source bytes passed installed checks in the route before
+            # admission. Absent lock/build coverage remains explicit unknown.
+            files = {s.id: s.content for s in execution.execution.implementation.files}
+            adapters = json.loads(execution.execution.preparation.content).get("adapter_sources", [])
+            files.update({a["id"]: bytes.fromhex(a["content_hex"]) for a in adapters})
+            options.update(source_files=tuple(files.items()),
+                git_commit=execution.execution.implementation.build_source_commit,
+                source_attested=True,
+                source_dirty_paths=tuple(a["id"] for a in adapters if a.get("base_sha256") != a["sha256"]),
+                environment_lock=files.get("uv.lock", files.get("share/uv.lock")))
+        with provenance_owner(**options) as owner:
+            output = function(request, context)
+        if type(output) is WorkerResult and owner.get("_record") is not None:
+            recorded = _parse_document(output.result_json)
+            recorded["job_provenance"] = owner["_record"].envelope()
+            output = WorkerResult.from_dict(recorded, artifacts=output.artifacts, state=output.state)
         if type(output) is not WorkerResult:
             raise ValueError("worker must return a validated WorkerResult")
         output = WorkerResult(output.result_json, output.artifacts, output.state)
@@ -559,7 +602,8 @@ def _child_main(
                 raise ValueError("worker returned without consuming its execution manifest")
             output = WorkerResult(output.result_json, (*output.artifacts, ("execution_manifest", bytes_artifact(
                 execution.manifest.canonical_json, metadata={"schema": "solarlab.execution-manifest.v1",
-                    "manifest_sha256": execution.expected_sha256, "scientific_qualification": False}))), output.state)
+                    "manifest_sha256": execution.expected_sha256, "scientific_qualification": False,
+                    **({"job_provenance_sha256": owner["_record"].sha256} if owner.get("_record") is not None else {})}))), output.state)
         for name, observed, cap in zip(("accepted_steps", "calls"), context._counts, (limits.accepted_steps, limits.calls)):
             if cap is not None and observed is None:
                 raise ValueError("requested counter is unobserved: " + name)
@@ -581,6 +625,8 @@ def _child_main(
         result, artifacts = {"reason": error.reason, "observed": error.observed}, []
     except BaseException as error:
         result, artifacts = {"reason": "worker_exception", "exception_type": type(error).__name__, "detail": str(error)[:2048]}, []
+    if owner.get("_record") is not None:
+        result.setdefault("job_provenance", owner["_record"].envelope())
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     manifest = {"token": token, "worker_source_sha256": binding.source_sha256, "state": state,
                 "result": result, "artifacts": artifacts,
