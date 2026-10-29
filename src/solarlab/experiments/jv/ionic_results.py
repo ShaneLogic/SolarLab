@@ -390,7 +390,22 @@ def read_ionic_jv_job(store: RunStore, run_id: str, *, attempt_id: str | None = 
     roles = {name: json.loads(bytes.fromhex(v["content_hex"])) for name, v in document["content_roles"].items()}
     transport = WorkerRequest.from_bytes(_json_document(run["request"]["input_metadata"]["transport"]).encode())
     submitted = json.loads(transport.request.content)
-    if (transport.registry != REGISTRY or transport.schema != REQUEST_SCHEMA
+    request_contract = transport.registry == REGISTRY and transport.schema == REQUEST_SCHEMA
+    if not request_contract:
+        # HTTP retains the actual core request body and supplies an explicit
+        # installed catalog. Check its stored contract without server imports.
+        catalog = json.loads(transport.registry.content)
+        entries = [e for e in catalog.get("bindings", ()) if e.get("driver") == "ionic_steady_jv"]
+        request_contract = (transport.registry.id == "solarlab.execution-catalog.v1"
+            and transport.schema.id == "solarlab.job-submission.schema.v1"
+            and catalog.get("schema") == "solarlab.execution-catalog.v1"
+            and catalog.get("job_schema_sha256") == transport.schema.sha256 and len(entries) == 1
+            and entries[0].get("experiment_id") == "ionic_steady_jv" and entries[0].get("version") == 1
+            and entries[0].get("engine") == "solarlab" and entries[0].get("result_schema") == RESULT_SCHEMA
+            and entries[0].get("worker_source_sha256") == result["capture"]["source_sha256"].get("solarlab/experiments/jv/ionic_worker.py")
+            and result.get("execution_catalog_sha256") == transport.registry.sha256
+            and result.get("experiment_id") == "ionic_steady_jv" and result.get("experiment_version") == 1)
+    if (not request_contract
             or transport.H_input != identity["H_input"] or transport.H_physics != identity["H_physics"]
             or transport.execution_identity.sha256 != identity["H_execution"]
             or submitted["schema"] != REQUEST_SCHEMA.id or submitted["engine"] != "solarlab"

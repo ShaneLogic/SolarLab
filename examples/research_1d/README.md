@@ -749,6 +749,41 @@ serialization failure remains a separate failed attempt with no curve data.
 PCE stays unavailable without declared irradiance, and scientific qualification
 remains pending. This process entry has no HTTP or browser binding yet.
 
+## Ionic J–V HTTP jobs
+
+Start the installed illuminated shared-site service from a committed checkout:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.ionic_jv_service \
+  --build-source-commit "$(git rev-parse HEAD)" \
+  --current-repository-head "$(git rev-parse HEAD)" \
+  --store outputs/ionic_jv_http_store --work outputs/ionic_jv_http_work --port 8000
+```
+
+Use the submission and catalog-header code in **Local HTTP service**, with:
+
+```python
+from examples.research_1d.ionic_jv_service import example_submission
+
+job = example_submission("my-ionic-jv")
+```
+
+The installed protocol uses 51 voltages from 0 to 1.25 V, generation scale one,
+12 intervals per layer, two mobile shared-site species and a blocking absorber
+domain. The catalog advertises the exact initial-state recipe and numerical
+controls. The new core performs the dark initial solve, coupled illuminated
+initialization and actual steady curve through the existing process supervisor.
+
+The service preserves the core request bytes and binds the installed model,
+source and maintenance context to the stored manifest. GET result/artifact
+endpoints and SSE expose completed curves and genuine failed prefixes. Reading
+an existing attempt never submits a new calculation. The accepted HTTP witness
+contains 51 samples, 15 artifacts and 23 logical arrays; the independent reader
+also verified the original failed process prefix. Missing irradiance leaves PCE
+unavailable, and sampled/interpolated PV metrics remain scientifically unqualified.
+Other grids, protocols, ionic domains and CT transport require separate verified
+admission; they are outside this fixed HTTP entry.
+
 ## Multiple blocking ion domains
 
 The additive two-domain compiler and equation assembly can be exercised with:

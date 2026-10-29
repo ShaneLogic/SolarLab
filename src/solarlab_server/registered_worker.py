@@ -168,3 +168,9 @@ def run_ionic_transient(request: WorkerRequest, context: WorkerContext) -> Worke
         "registered_numerical_policy": preparation["fixed_numerical_policy"],
         "server_sources": preparation["server_sources"], "server_runtime": preparation["server_runtime"]},
         artifacts=output.artifacts, state=output.state)
+
+
+def run_ionic_jv(request: WorkerRequest, context: WorkerContext) -> WorkerResult:
+    """Dispatch the source-checked ionic J-V installation to its existing worker."""
+    from solarlab_server.ionic_jv_preparation import execute_registered_ionic_jv
+    return execute_registered_ionic_jv(request, context)

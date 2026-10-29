@@ -210,6 +210,7 @@ jobs:
           tests/integration/test_field_transport_ac_guards.py
           tests/runtime/test_ionic_transient_worker.py
           tests/runtime/test_ionic_jv_worker.py
+          tests/runtime/test_ionic_jv_job_service.py
           tests/runtime/test_ionic_transient_job_service.py
           tests/unit/experiments/test_steady_jv_metrics.py
           tests/unit/experiments/test_operating_points.py

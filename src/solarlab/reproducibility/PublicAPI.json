@@ -503,7 +503,8 @@
       "prepare_ionic_jv_job",
       "ionic_jv_worker_binding",
       "run_ionic_jv_worker",
-      "read_ionic_jv_job"
+      "read_ionic_jv_job",
+      "ionic_jv_identity_inputs"
     ]
   },
   "public_imports": {
@@ -1068,7 +1069,11 @@
       "prepare_ionic_jv_job",
       "ionic_jv_worker_binding",
       "run_ionic_jv_worker",
-      "read_ionic_jv_job"
+      "read_ionic_jv_job",
+      "ionic_jv_identity_inputs"
+    ],
+    "solarlab.experiments.jv.ionic_results": [
+      "ionic_jv_payload"
     ]
   },
   "checked_consumers": [

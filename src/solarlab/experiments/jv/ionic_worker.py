@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from solarlab.io.run_store import RunStore
 
 __all__ = ["IonicJVProtocol", "IonicJVInitial", "IonicJVJob", "prepare_ionic_jv_job",
-           "ionic_jv_worker_binding", "run_ionic_jv_worker", "read_ionic_jv_job"]
+           "ionic_jv_worker_binding", "run_ionic_jv_worker", "read_ionic_jv_job", "ionic_jv_identity_inputs"]
 WORKER_ID = "ionic_steady_jv"
 REQUEST_SCHEMA = _document("solarlab.ionic-jv.worker-request.v1", {
     "engine": "solarlab", "fields": ["schema", "engine", "prepared_sha256", "protocol", "grid", "controls", "initial"]})
@@ -119,6 +119,11 @@ def _identity_inputs(prepared: PreparedDevice, implementation: BuildSource) -> I
     selection = select_models(registry, topology, context, defaults, parameters, {})
     return IdentityInputs(prepared, selection, registry, ModelInputs.from_mappings(defaults=defaults, overrides={}),
                           (SemanticProjection(ref, "all_values_v1", sources),))
+
+
+def ionic_jv_identity_inputs(prepared: PreparedDevice, implementation: BuildSource) -> IdentityInputs:
+    """Expose the unchanged identity recipe for explicitly installed adapters."""
+    return _identity_inputs(prepared, implementation)
 
 
 def _validate(prepared: PreparedDevice, protocol: IonicJVProtocol, intervals: tuple[int, ...], domain: str,
