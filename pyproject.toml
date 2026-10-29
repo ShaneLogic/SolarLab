@@ -118,6 +118,7 @@ only-include = [
     "pyproject.toml",
     "uv.lock",
     "examples/research_1d",
+    "examples/research_2d",
     "tests/integration/test_research_1d_workflow.py",
     "src/solarlab",
     "src/solarlab_research",
