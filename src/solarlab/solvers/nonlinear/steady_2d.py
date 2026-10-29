@@ -48,9 +48,10 @@ def _scope(device: CompiledDevice2D) -> None:
     if device.geometry.name != RECTANGULAR_HALF_ENDPOINT_2D_V1:
         raise ValueError("2D steady requires physical half-endpoint Neumann geometry")
     if (device.column.field_transport is not None or device.column.recombination.explicit_defects is not None
-            or device.column.additional_recombination is not None
-            or any(channel.kind != "fixed_reservoir" for channel in device.column.channels)):
-        raise ValueError("2D steady supports constant mobility, lifetime SRH and fixed stack reservoirs")
+            or device.column.additional_recombination is not None):
+        raise ValueError("2D steady supports constant mobility and lifetime SRH")
+    if all(channel.kind == "blocking" for channel in device.column.channels):
+        raise ValueError("fully_blocking_contacts: a closed carrier inventory constraint is not bound in 2D steady")
 
 
 def _poisson_weights(device: CompiledDevice2D) -> np.ndarray:
@@ -73,16 +74,15 @@ def _settings(device: CompiledDevice2D, options: Steady2DOptions, gate: Any) -> 
     c, N = options.electronic, device.node_count
     weights = np.full(3 * N, 2 * N * Q / (device.geometry.lateral_length_m * c.continuity_tolerance_A_m2))
     weights[:N] = _poisson_weights(device) / c.poisson_tolerance
-    contacts = device.geometry.contact_nodes
-    for offset in (N, 2 * N):
-        weights[offset + contacts] = 1.0 / c.contact_log_tolerance
+    contact_mask = device.fixed_carrier_mask
+    weights[N:].reshape(2, N)[contact_mask] = 1.0 / c.contact_log_tolerance
     steps = np.r_[np.full(N, c.potential_step_V), np.full(2 * N, c.quasi_fermi_step)]
     settings = NewtonSettings(ResidualScaling(weights), 1.0, StepControl(steps), c.budget(), (gate,), False)
     norm = None
     if c.convergence_policy == POISSON_CONTACT_BALANCE_V1:
         fixed: np.ndarray = np.zeros(3 * N, dtype=bool)
         fixed[:N] = True
-        fixed[N + contacts] = fixed[2 * N + contacts] = True
+        fixed[N:] = contact_mask.ravel()
         def balance_norm(scaled: np.ndarray) -> float:
             if scaled.shape != (3 * N,) or not np.all(np.isfinite(scaled)):
                 return math.inf
@@ -96,7 +96,8 @@ def _settings(device: CompiledDevice2D, options: Steady2DOptions, gate: Any) -> 
 def _sources() -> dict[str, str]:
     names = (__name__, "solarlab.equations.dc_2d", "solarlab.equations.dc_1d", "solarlab.mesh.geometry_2d",
         "solarlab.physics.transport.electrochemical_flux", "solarlab.physics.recombination.reaction",
-        "solarlab.contracts.terms", "solarlab.solvers.nonlinear.newton", "solarlab.solvers.nonlinear.problem")
+        "solarlab.contracts.terms", "solarlab.solvers.nonlinear.newton", "solarlab.solvers.nonlinear.problem",
+        "solarlab.physics.contacts.boundary_flux", "solarlab.physics.contacts.exchange")
     result = {}
     for name in names:
         module = sys.modules.get(name)
@@ -116,10 +117,10 @@ def _diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) 
     fluxes = problem.fluxes(u)
     source = (problem.generation_scale * d.generation_source_m3_s
               - problem.recombination_rate(n, p, derivatives=False).rate) * g.contract_geometry.volumes
-    contacts = g.contact_nodes
+    contact_mask = d.fixed_carrier_mask
     carrier_rows = residual[N:].reshape(2, N).copy()
-    contact_logs = carrier_rows[:, contacts].copy()
-    carrier_rows[:, contacts] = 0.0
+    contact_logs = carrier_rows[contact_mask].copy()
+    carrier_rows[contact_mask] = 0.0
     terminal_particles = np.stack(problem.contact_particle_fluxes(u))
     rates = np.array([[math.fsum((values * g.x_widths_m).tolist()) for values in carrier]
                       for carrier in terminal_particles])
@@ -140,9 +141,9 @@ def _diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) 
     settings, norm = _settings(d, options, lambda values: GateOutcome("unused", True, 0.0, 1.0))
     scaled = settings.scaling.scaled(residual)
     row_norm = float(np.max(abs(scaled))) if norm is None else norm(scaled)
-    return {"original_residual": residual, "scaled_residual": scaled, "original_rows": tuple(range(3 * N)),
+    result: dict[str, Any] = {"original_residual": residual, "scaled_residual": scaled, "original_rows": tuple(range(3 * N)),
         "convergence_norm": row_norm, "poisson_normalized_max": float(np.max(abs(normalized_phi))),
-        "contact_log_max": float(np.max(abs(contact_logs))),
+        "contact_log_max": float(np.max(abs(contact_logs), initial=0.0)),
         "carrier_balance_bound_A_m2": Q * float(np.sum(abs(carrier_rows))) / width,
         "physical_carrier_balance_per_depth_m_s": physical,
         "source_terminal_particle_balance_per_depth_m_s": source_balance,
@@ -164,6 +165,10 @@ def _diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) 
         "generation_current_limit_per_depth_A_m": d.generation_limit_A_m * problem.generation_scale,
         "physical_limits": {"poisson": controls.poisson_tolerance, "contact_log": controls.contact_log_tolerance,
             "continuity_A_m2": controls.continuity_tolerance_A_m2, "current_spread_A_m2": controls.current_spread_tolerance_A_m2}}
+    if any(channel.kind != "fixed_reservoir" for channel in d.column.channels):
+        result.update(fixed_carrier_mask=contact_mask,
+            carrier_contact_channels=[dict(asdict(channel), kind=channel.kind) for channel in d.column.channels])
+    return result
 
 
 def _checks(values: dict[str, Any], options: Steady2DOptions) -> tuple[GateOutcome, ...]:
@@ -221,9 +226,9 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
         phi = u[:device.node_count]
         bottom, top = device.column.contact_potentials(voltage_V)
         phi[:device.geometry.nx], phi[-device.geometry.nx:] = bottom, top
-        for offset, ref in zip((device.node_count, 2 * device.node_count), device.reference_potentials(voltage_V)):
-            contact = device.geometry.contact_nodes
-            u[offset + contact] = (ref[contact] - phi[contact]) / device.thermal_voltage_V
+        for offset, ref, mask in zip((device.node_count, 2 * device.node_count), device.reference_potentials(voltage_V),
+                                     device.fixed_carrier_mask):
+            u[offset:offset + device.node_count][mask] = (ref[mask] - phi[mask]) / device.thermal_voltage_V
         provenance = {"kind": "compiler physical reference; no seed solve"}
     else:
         if not isinstance(initial_state, State2D) or initial_state.device_sha256 != device.identity or initial_state.voltage_V != voltage_V:
@@ -285,12 +290,15 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
         accepted = False
         termination = "wall_budget_exhausted" if isinstance(exc, TimeoutError) else "evaluation_error"
         error = f"{type(exc).__name__}: {str(exc)[:600]}"
-    recorded = {"numerical": asdict(controls), "row_units": {"gauss": "C/m depth", "carrier": "particles/(m depth*s)",
+    recorded: dict[str, Any] = {"numerical": asdict(controls), "row_units": {"gauss": "C/m depth", "carrier": "particles/(m depth*s)",
         "contact_phi": "V", "contact_carrier": "dimensionless log"},
         "current_gate_normalization": "raw A/m divided by actual lateral width[m] gives A/m2",
         "lateral_boundary": "zero normal displacement and particle flux", "full_2d_newton_calls": newton_calls,
         "evaluation_count_semantics": "residual/jacobian count Newton callbacks; diagnostics count separate initial/gate/final physical rechecks",
         "hidden_seed_or_fallback_calls": 0}
+    if any(channel.kind != "fixed_reservoir" for channel in device.column.channels):
+        recorded["row_units"]["contact_carrier"] = "fixed: dimensionless log; finite/blocking: particles/(m depth*s)"
+        recorded["carrier_contact_channels"] = [dict(asdict(channel), kind=channel.kind) for channel in device.column.channels]
     return Steady2DResult(state, accepted, termination, newton, u, candidate, provenance, initial_data,
         diagnostics, checks, device.identity, voltage_V, generation_scale, recorded, pins, counts,
         time.monotonic() - started, error)

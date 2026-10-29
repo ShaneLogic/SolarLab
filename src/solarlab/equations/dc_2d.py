@@ -3,6 +3,7 @@
 Unknowns are (phi, z_n, z_p) using the accepted majority-electrode references.
 Gauss and carrier balances use physical areas and face lengths per unit depth;
 fixed-reservoir contact rows are unweighted potential/log-density constraints.
+Finite exchange and blocking contacts retain conservative carrier rows.
 There is no independent-column residual, nonlinear solver or transient route.
 """
 
@@ -24,6 +25,8 @@ from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M
 from solarlab.equations.dc_1d import CompiledDevice1D, _quasi_fermi_potential_tangents
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
+from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
+from solarlab.physics.contacts.exchange import CarrierExchangeChannel
 from solarlab.physics.electrostatics.charge import ChargeEntry, ChargeLedger
 from solarlab.physics.generation.profile import GenerationProfile
 from solarlab.physics.recombination.bulk import RecombinationRate
@@ -102,8 +105,10 @@ class CompiledDevice2D:
             raise ValueError("column coefficients must match the 2D stack grid and identity")
         if column.field_transport is not None or column.recombination.explicit_defects is not None:
             raise ValueError("2D DC currently requires constant mobility and lifetime SRH")
-        if column.additional_recombination is not None or any(c.kind != "fixed_reservoir" for c in column.channels):
-            raise ValueError("2D DC requires the bound bulk reaction and fixed contact reservoirs")
+        if column.additional_recombination is not None:
+            raise ValueError("2D DC requires the bound bulk reaction")
+        if all(c.kind == "blocking" for c in column.channels):
+            raise ValueError("fully_blocking_contacts: a closed carrier inventory constraint is not bound in 2D DC")
         eps = frozen_array(self.relative_permittivity_y)
         if eps.shape != (geometry.ny,) or np.any(eps <= 0.0):
             raise ValueError("positive physical permittivity is required on every stack node")
@@ -149,6 +154,18 @@ class CompiledDevice2D:
     @property
     def thermal_voltage_V(self) -> float:
         return self.column.thermal_voltage_V
+
+    @property
+    def fixed_carrier_mask(self) -> NDArray[np.bool_]:
+        """Density-constraint rows, indexed by (electron/hole, node)."""
+        mask: NDArray[np.bool_] = np.zeros((2, self.node_count), dtype=bool)
+        sides = self.geometry.contact_nodes.reshape(2, self.geometry.nx)
+        for carrier_index, carrier in enumerate(("n", "p")):
+            for side, nodes in zip(("left", "right"), sides):
+                if self.column.channel(carrier, side).kind == "fixed_reservoir":
+                    mask[carrier_index, nodes] = True
+        mask.flags.writeable = False
+        return mask
 
     @property
     def generation_limit_A_m(self) -> float:
@@ -240,6 +257,22 @@ class DC2DProblem:
         left, right = self.device.geometry.contract_geometry.pairs.T
         return -self.device.face_capacitance_F_m2 * (phi[right] - phi[left])
 
+    def _contact_exchange(self, u: Vector, channel: CarrierExchangeChannel,
+                          nodes: NDArray[np.int64]) -> tuple[Vector, float]:
+        """The 1D contact law/expm1 construction on a whole y contact face.
+
+        Left/right means y-min/y-max here. Gamma is directed along +y,
+        in particles/(m2*s); its exact density slope is n_out*S.
+        """
+        d, count = self.device, self.device.node_count
+        references = d.reference_potentials(self.voltage_V)
+        reference = references[0] if channel.carrier == "n" else references[1]
+        shift = (u[nodes] - reference[nodes]) / d.thermal_voltage_V
+        exponent = shift + u[count + nodes] if channel.carrier == "n" else -shift - u[2 * count + nodes]
+        boundary = boundary_particle_flux(channel, channel.reservoir_density_m3)
+        excess = channel.reservoir_density_m3 * np.expm1(exponent)
+        return boundary.density_derivative * excess, boundary.density_derivative
+
     def residual(self, u: ArrayLike) -> Vector:
         d, count = self.device, self.device.node_count
         values = np.asarray(u, dtype=float)
@@ -261,9 +294,16 @@ class DC2DProblem:
         bottom, top = d.column.contact_potentials(self.voltage_V)
         outputs[0][:d.geometry.nx] = phi[:d.geometry.nx] - bottom
         outputs[0][-d.geometry.nx:] = phi[-d.geometry.nx:] - top
-        contacts = d.geometry.contact_nodes
-        for rows, offset, sign, reference in zip(outputs[1:], (count, 2 * count), (1.0, -1.0), d.reference_potentials(self.voltage_V)):
-            rows[contacts] = sign * ((phi[contacts] - reference[contacts]) / d.thermal_voltage_V + values[offset + contacts])
+        sides = d.geometry.contact_nodes.reshape(2, d.geometry.nx)
+        for carrier, rows, offset, sign, reference in zip(("n", "p"), outputs[1:], (count, 2 * count),
+                                                          (1.0, -1.0), d.reference_potentials(self.voltage_V)):
+            for side, nodes, inflow in zip(("left", "right"), sides, (1.0, -1.0)):
+                channel = d.column.channel(carrier, side)
+                if channel.kind == "fixed_reservoir":
+                    rows[nodes] = sign * ((phi[nodes] - reference[nodes]) / d.thermal_voltage_V + values[offset + nodes])
+                else:
+                    exchange, _ = self._contact_exchange(values, channel, nodes)
+                    rows[nodes] += inflow * exchange * d.geometry.x_widths_m
         return np.concatenate(outputs)
 
     def jacobian(self, u: ArrayLike) -> csc_matrix:
@@ -311,9 +351,19 @@ class DC2DProblem:
                 matrix[row, 2 * count + node] += area * source_p[node]
         for node in d.geometry.contact_nodes:
             matrix.rows[node], matrix.data[node] = [int(node)], [1.0]
-            for offset, sign in ((count, 1.0), (2 * count, -1.0)):
-                matrix.rows[offset + node] = [int(node), int(offset + node)]
-                matrix.data[offset + node] = [sign / thermal, sign]
+        sides = d.geometry.contact_nodes.reshape(2, d.geometry.nx)
+        for carrier, offset, sign, density in (("n", count, 1.0, n), ("p", 2 * count, -1.0, p)):
+            for side, nodes, inflow in zip(("left", "right"), sides, (1.0, -1.0)):
+                channel = d.column.channel(carrier, side)
+                if channel.kind == "fixed_reservoir":
+                    for node in nodes:
+                        matrix.rows[offset + node] = [int(node), int(offset + node)]
+                        matrix.data[offset + node] = [sign / thermal, sign]
+                else:
+                    _, slope = self._contact_exchange(values, channel, nodes)
+                    for node, width in zip(nodes, d.geometry.x_widths_m):
+                        matrix[offset + node, node] += inflow * slope * sign * density[node] / thermal * width
+                        matrix[offset + node, offset + node] += inflow * slope * sign * density[node] * width
         return matrix.tocsc()
 
     def current_density(self, u: ArrayLike) -> Vector:
@@ -327,7 +377,13 @@ class DC2DProblem:
         return np.sum(current_y * g.x_widths_m[None, :], axis=1)
 
     def contact_particle_fluxes(self, u: ArrayLike) -> tuple[Vector, Vector]:
-        """Bottom/top flux densities along +y; include lateral contact-cell inflow."""
+        """Y-min/y-max flux densities along +y, using each channel's own law.
+
+        Fixed channels close the contact-cell balance, including lateral
+        inflow and half-cell generation/recombination. Finite/blocking
+        channels use their actual exchange; a failed row is never closed by
+        substituting an inferred terminal flux.
+        """
         d, g = self.device, self.device.geometry
         _, n, p = d.fields(u, voltage_V=self.voltage_V)
         source = self.generation_scale * d.generation_source_m3_s - self.recombination_rate(n, p, derivatives=False).rate
@@ -335,15 +391,20 @@ class DC2DProblem:
         fluxes = self.fluxes(u)
         result = []
         horizontal_pairs = g.contract_geometry.pairs[:g.x_face_count]
-        for flux in (fluxes.electron.flux, fluxes.hole.flux):
+        for carrier, flux in zip(("n", "p"), (fluxes.electron.flux, fluxes.hole.flux)):
             x_inflow = np.zeros(d.node_count)
             weighted = flux[:g.x_face_count] * g.contract_geometry.face_measures[:g.x_face_count]
             np.add.at(x_inflow, horizontal_pairs[:, 0], -weighted)
             np.add.at(x_inflow, horizontal_pairs[:, 1], weighted)
             x_inflow = x_inflow.reshape(g.shape)
             y_flux = flux[g.x_face_count:].reshape(g.ny - 1, g.nx)
-            result.append(np.stack((y_flux[0] - (x_inflow[0] + pairs[0]) / g.x_widths_m,
-                                    y_flux[-1] + (x_inflow[-1] + pairs[-1]) / g.x_widths_m)))
+            contact = np.stack((y_flux[0] - (x_inflow[0] + pairs[0]) / g.x_widths_m,
+                                y_flux[-1] + (x_inflow[-1] + pairs[-1]) / g.x_widths_m))
+            for side_index, (side, nodes) in enumerate(zip(("left", "right"), g.contact_nodes.reshape(2, g.nx))):
+                channel = d.column.channel(carrier, side)
+                if channel.kind != "fixed_reservoir":
+                    contact[side_index], _ = self._contact_exchange(np.asarray(u, dtype=float), channel, nodes)
+            result.append(contact)
         return result[0], result[1]
 
     def terminal_current_A_m(self, u: ArrayLike) -> Vector:

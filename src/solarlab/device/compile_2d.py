@@ -27,6 +27,7 @@ from solarlab.physics.generation.beer_lambert import BeerLambertBinding
 from solarlab.units import normalize_quantity
 
 CLASSICAL_2D_DC_V1 = "classical_mb_fixed_reservoir_neumann_2d_dc_v1"
+CLASSICAL_2D_CONTACTS_V1 = "classical_mb_carrier_exchange_neumann_2d_dc_v1"
 _GEOMETRY_FIELDS = frozenset({"kind", "lateral_length", "Nx", "Ny_per_layer", "lateral_bc", "microstructure"})
 
 
@@ -74,8 +75,6 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
             "coefficient_prepared_sha256": column_prepared.content_sha256,
             "removed_declaration": "grain_boundaries", "used_as_2d_result": False}, sort_keys=True).encode()
     column = compile_device_1d(column_prepared, intervals_per_layer=(spatial.Ny_per_layer,) * len(prepared.layers))
-    if any(channel.kind != "fixed_reservoir" for channel in column.channels):
-        raise CapabilityError("unsupported_classical_2d_dc: only fixed-reservoir contacts are bound")
     if column.recombination.explicit_defects is not None:
         raise CapabilityError("unsupported_classical_2d_dc: explicit defect populations are not bound")
     length = normalize_quantity(spatial.lateral_length, "m")
@@ -88,7 +87,9 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
     generation = BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
     grains = bind_grain_regions_2d(prepared, spatial, geometry)
     declaration = spatial.model_dump_json().encode()
-    identity = hashlib.sha256(json.dumps((CLASSICAL_2D_DC_V1, prepared.content_sha256, column.identity,
+    contact_model = (CLASSICAL_2D_DC_V1 if all(channel.kind == "fixed_reservoir" for channel in column.channels)
+                     else CLASSICAL_2D_CONTACTS_V1)
+    identity = hashlib.sha256(json.dumps((contact_model, prepared.content_sha256, column.identity,
                                          geometry.sha256, generation.binding_sha256, declaration.decode()),
                                         separators=(",", ":")).encode()).hexdigest()
     if grains is not None:
