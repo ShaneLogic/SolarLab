@@ -161,6 +161,30 @@ class ModelInputs:
         return {kind: [_choice_document(choice) for choice in choices] for kind, choices in self.defaults}
 
 
+def _uniform_2d_geometry(source: SourceDocument | None, prepared: PreparedDevice) -> dict[str, Any]:
+    """Validate an explicit no-grain geometry declaration without a compiler."""
+    schema = "solarlab.uniform-no-grain-2d-geometry.v1"
+    if type(source) is not SourceDocument or source.id != schema:
+        raise ValueError("dimension2 identity requires an explicit uniform lateral geometry SourceDocument")
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        if len({key for key, _ in items}) != len(items):
+            raise ValueError("duplicate 2D geometry identity field")
+        return dict(items)
+    data = json.loads(source.content, object_pairs_hook=pairs)
+    fields = {"schema", "lateral_length_m", "Nx", "Ny_per_layer", "lateral_bc",
+              "geometry_policy", "electrical_layer_ids"}
+    if not isinstance(data, dict) or set(data) != fields or data["schema"] != schema:
+        raise ValueError("unaccounted uniform2D geometry identity fields")
+    if (type(data["lateral_length_m"]) not in (int, float) or not math.isfinite(data["lateral_length_m"])
+            or data["lateral_length_m"] <= 0
+            or any(type(data[key]) is not int or not 2 <= data[key] <= 4096 for key in ("Nx", "Ny_per_layer"))
+            or data["lateral_bc"] != "neumann"
+            or data["geometry_policy"] != "rectangular_half_endpoint_neumann_2d_v1"
+            or data["electrical_layer_ids"] != [layer.id for layer in prepared.layers if layer.role != "substrate"]):
+        raise ValueError("invalid uniform2D lateral geometry, interval counts or layer ownership")
+    return {**data, "lateral_length_m": float(data["lateral_length_m"])}
+
+
 @dataclass(frozen=True, slots=True)
 class IdentityInputs:
     """Bind real prepared/selected data to the original selector inputs.
@@ -180,6 +204,7 @@ class IdentityInputs:
     model_inputs: ModelInputs
     projections: tuple[SemanticProjection, ...]
     effective_behavior: BehaviorContext | R1ExecutionContext | None = None
+    spatial_geometry: SourceDocument | None = None
     _input_document: bytes = field(init=False, repr=False)
     _physical_document: bytes = field(init=False, repr=False)
     _execution_binding: bytes = field(init=False, repr=False)
@@ -228,8 +253,16 @@ class IdentityInputs:
         data = prepared.to_mapping()
         if data["schema"] != "solarlab.resolved-device-preparation.v1" or set(data) - _RESOLVED_OPTIONAL != _RESOLVED_KEYS:
             raise ValueError("unaccounted resolved-device schema/fields require a new identity projection")
-        if self.selection.context.dimension != 1 or data["grain_boundaries"]:
+        dimension = self.selection.context.dimension
+        if data["grain_boundaries"] or dimension not in (1, 2):
             raise ValueError("full lateral geometry identity is not available in the 1D prepared-device domain")
+        geometry = None
+        if dimension == 2:
+            geometry = _uniform_2d_geometry(self.spatial_geometry, prepared)
+            if self.effective_behavior is not None:
+                raise ValueError("uniform2D identity does not admit a historical1D effective-behavior context")
+        elif self.spatial_geometry is not None:
+            raise ValueError("dimension1 identity cannot carry a lateral geometry document")
         behavior = self.effective_behavior
         if behavior is not None:
             _match_behavior(behavior, prepared, self.selection)
@@ -269,6 +302,15 @@ class IdentityInputs:
             "metastable_preparation": [{"layer_id": layer.id, "preparation": (
                 layer.to_mapping().get("metastable_preparation"))} for layer in prepared.layers],
         }
+        if geometry is not None:
+            # Resolution/interval counts belong to input and execution; the
+            # physical projection retains the actual domain and boundary law.
+            supplied["spatial_geometry"] = geometry
+            physical["spatial_geometry"] = {key: value for key, value in geometry.items()
+                                            if key not in {"Nx", "Ny_per_layer"}}
+            assert self.spatial_geometry is not None
+            binding["spatial_geometry"] = {**_source(self.spatial_geometry),
+                                           "content_hex": self.spatial_geometry.content.hex(), "declaration": geometry}
         if behavior is not None:
             document = behavior.export()
             if isinstance(behavior, BehaviorContext):
