@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import shutil
 
 import numpy as np
 import pytest
@@ -35,6 +36,28 @@ def pool(store, work, bindings=None):
         poll_seconds=.01, soft_grace_seconds=.1, terminate_grace_seconds=.1)
 
 
+def unexpected_outcome(receipt, work):
+    """Retain the actual child reason before pytest abbreviates a large receipt."""
+    worker = receipt.get("worker_result") or {}
+    curve = worker.get("ionic_jv_result") or {}
+    diagnostic = {key: receipt.get(key) for key in (
+        "run_id", "attempt_id", "store_state", "proposed_state", "exitcode",
+        "process_joined", "process_exit_observed", "commit_error", "publication_error", "resources", "signals")}
+    diagnostic["worker_reason"] = worker.get("reason")
+    diagnostic["curve"] = {key: curve.get(key) for key in (
+        "outcome", "reason", "accepted_count", "attempt_count", "first_failure", "computation_counts")}
+    text = json.dumps(diagnostic, indent=2, sort_keys=True)
+    if target := os.environ.get("SOLARLAB_IONIC_JV_DIAGNOSTICS"):
+        destination = Path(target) / receipt["attempt_id"]
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "outcome.json").write_text(text + "\n")
+        for directory in Path(work).glob("*-" + receipt["attempt_id"]):
+            for name in ("receipt.json", "terminal.json"):
+                if (directory / name).is_file():
+                    shutil.copyfile(directory / name, destination / name)
+    return text
+
+
 @pytest.fixture(scope="module")
 def implementation():
     commit = os.environ.get("SOLARLAB_IONIC_JV_COMMIT") or subprocess.check_output(
@@ -60,7 +83,7 @@ def saved(tmp_path_factory, implementation):
             job = example_job(implementation, failure=failure, initial_bytes=initial_bytes, initial_sha256=initial_sha)
             handle = job.submit(supervisor, name, limits())
             receipt = supervisor.wait(handle, 40).data
-            assert receipt["store_state"] == ("failed" if failure else "succeeded"), receipt
+            assert receipt["store_state"] == ("failed" if failure else "succeeded"), unexpected_outcome(receipt, root / "work")
             assert receipt["process_joined"] and receipt["process_exit_observed"]
             if not failure:
                 initial_bytes = read_ionic_jv_job(store, name)["initial_bytes"]
