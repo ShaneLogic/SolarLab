@@ -59,6 +59,7 @@ saved operating state. A complete illuminated ionic J–V command reports sample
 photovoltaic metrics, and two separated blocking ion domains share one electronic
 steady/transient system. Explicit neutral bulk defects support unequal physical
 DOS, and smooth CT velocity saturation is bound into DC and small-signal response.
+Explicit coherent spectral optics also supplies control-volume generation and photon budgets.
 These are bounded working cases; mesh/time/voltage-grid
 scientific acceptance and the remaining refactor are in progress. The broader application features
 described below include the existing `perovskite_sim` engine and do not imply

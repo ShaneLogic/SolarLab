@@ -6,7 +6,8 @@ semiconductor work-function contacts, local lifetime or explicit neutral
 single-level SRH with literal above-valence-band energies and physical DOS
 with radiative/Auger,
 smooth Caughey-Thomas face transport without Poole-Frenkel enhancement,
-and monochromatic Beer-Lambert or a node-aligned fixed generation resource.
+and monochromatic Beer-Lambert, supplied coherent spectral TMM optics,
+or a node-aligned fixed generation resource.
 Historical mode labels do not select a legacy engine or enable its tier ceiling.
 Unsupported active mechanisms fail before any nonlinear solve.
 """
@@ -23,6 +24,7 @@ import numpy as np
 
 from solarlab.device.resolved import PreparedDevice, PreparedLayer
 from solarlab.device.neutral_defects import LITERAL_ABOVE_VB_DOS_REFERENCE_V1, bind_neutral_defects
+from solarlab.device.optical_generation import bind_optical_generation_1d
 from solarlab.equations.dc_1d import (
     CapabilityError,
     CompiledDevice1D,
@@ -118,12 +120,13 @@ def _unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[P
     if channels is not None:
         missing.extend("tunnelling_channels." + name for name, channel in channels.items() if channel.get("enabled"))
     declaration = data["declaration"]
-    if declaration.get("spectrum") is not None:
-        missing.append("spectrum: spectral/TMM generation is not bound")
+    spectral = declaration.get("spectrum") is not None
+    if spectral and declaration.get("fixed_generation") is not None:
+        missing.append("spectrum and fixed_generation are mutually exclusive")
     for layer in prepared.layers:
         if layer.role == "substrate":
             parameters = dict(layer.parameters)
-            if parameters["alpha"] != 0.0 or layer.optical is not None or parameters["n_optical"] is not None:
+            if not spectral and (parameters["alpha"] != 0.0 or layer.optical is not None or parameters["n_optical"] is not None):
                 missing.append("layers." + layer.id + ": absorbing/optical substrate generation is not bound")
     for layer in layers:
         parameters = dict(layer.parameters)
@@ -145,8 +148,10 @@ def _unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[P
             missing.append(prefix + "metastable_document")
         if any(parameters[name] is not None for name in ("trap_N_t_interface", "trap_N_t_bulk", "trap_decay_length")):
             missing.append(prefix + "trap_profile")
-        if layer.optical is not None or parameters["n_optical"] is not None or layer.cigs_graded_optics_json is not None:
-            missing.append(prefix + "optical_material: TMM/graded optics is not bound")
+        if layer.cigs_graded_optics_json is not None or (
+            not spectral and (layer.optical is not None or parameters["n_optical"] is not None)
+        ):
+            missing.append(prefix + "optical_material: requires an explicit spectrum; graded optics is not bound")
     for interface in prepared.interfaces:
         entry = interface.to_mapping()
         if interface.electrical and (
@@ -281,6 +286,8 @@ def compile_device_1d(
         if table.array.shape != (nodes.size, 2) or not np.array_equal(table.array[:, 0], nodes):
             raise CapabilityError("fixed_generation: resource coordinates must exactly match the compiled nodes; interpolation is not bound")
         generation = FixedGenerationProfile(table.array[:, 1], nodes.size).generation_profile(geometry)
+    elif data["declaration"].get("spectrum") is not None:
+        generation = bind_optical_generation_1d(prepared, geometry).profile
     else:
         generation = BeerLambertBinding(nodes, paint("alpha"), settings["Phi"]).generation_profile(geometry)
 

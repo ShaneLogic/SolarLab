@@ -8,8 +8,9 @@ Auger recombination and the compiler's bound generation profiles. Unsupported
 configured physics is rejected; no legacy engine or fallback is used.
 
 This is a research workflow, not final scientific or release qualification.
-Full spectral/TMM optics, interface and broader defect extensions, hysteresis
-and 2D remain outside these new-core examples. Mesh and voltage-grid convergence
+Interface and broader defect extensions, hysteresis and 2D remain outside these
+new-core examples. Coherent spectral/TMM optics has the bounded example below;
+graded and incoherent optical extensions remain unsupported. Mesh and voltage-grid convergence
 and the full registry release remain unqualified. Separate sections below describe bounded transient,
 ionic and neutral-defect examples and their limits. DC voltage continuation is not a
 time-dependent voltage scan. Every parameter point is resolved and compiled
@@ -1093,6 +1094,36 @@ initials must be separately accepted on their actual CT device; an accepted
 constant-diffusivity state is not an accepted CT state. Positive-only and
 independent-site branches have targeted algebra checks but no separate native
 CT witness here. Mesh and final scientific qualification remain pending.
+
+## Supplied spectral optics
+
+An explicit photon spectrum and optical-index resources can drive the new
+compiler through the existing coherent transfer-matrix kernels:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.optical_generation \
+  --output outputs/optical_generation.json
+.venv/bin/python -B -m examples.research_1d.optical_generation \
+  --read outputs/optical_generation.json
+```
+
+The example supplies seven wavelengths from 400 to 700 nm and a constant n-k
+table for the absorber. These are illustrative data, not AM1.5 illumination or
+calibrated material measurements. The declared spectrum is absolute photon flux
+per metre of wavelength; scalar `Phi` does not rescale it. Each optical layer
+requires an explicit n-k resource or constant `n_optical` with its absorption
+coefficient. The first binding uses coherent front normal incidence and
+unit-index surrounding media; it rejects graded/incoherent layers and combined
+spectral/fixed-generation declarations.
+
+Generation uses absorbed photons in each physical electrical control volume.
+The output records the complete supplied resources, reflected/transmitted and
+electrically/parasitically absorbed photons, generation profile, physical fields
+and solver checks. The 37-node illuminated 2 mV witness passed the original
+numerical gates, and photon accounting closes under its reviewed roundoff check.
+Spectral/mesh convergence, calibrated optical data and final scientific
+qualification remain unestablished. The reader displays the saved outcome
+without another optical or electrical solve.
 
 ## Adding a local model
 
