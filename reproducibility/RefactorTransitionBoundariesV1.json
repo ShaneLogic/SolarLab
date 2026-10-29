@@ -20,11 +20,57 @@
   "execution_facade": {
     "id": "legacy-engine",
     "owner": "WS4",
-    "status": "planned_for_M1_not_implemented_by_WS2",
+    "status": "implemented_W03",
     "module": "solarlab_server.legacy_engine",
     "path": "src/solarlab_server/legacy_engine/__init__.py",
-    "symbol": "run",
-    "signature": "run(request: WorkerRequest, context: WorkerContext) -> WorkerResult",
+    "symbol": "prepare_legacy_job",
+    "signature": "prepare_legacy_job(invocation: LegacyExecutionContext, inputs: IdentityInputs, execution: ExecutionDescription, *, engine: ExecutionEngine, manifest: ExecutionManifest, expected_sha256: str) -> LegacyJob",
+    "submission": {
+      "symbol": "LegacyJob.submit",
+      "signature": "submit(self, supervisor: ProcessSupervisor, run_id: str, limits: ResourceLimits) -> JobHandle"
+    },
+    "worker": {
+      "factory": "legacy_worker_binding",
+      "id": "legacy",
+      "symbol": "_run_legacy",
+      "signature": "_run_legacy(request: WorkerRequest, worker: WorkerContext) -> WorkerResult",
+      "registry": {
+        "id": "solarlab.legacy-facade-registry.v1",
+        "document": {
+          "drivers": [
+            "ion_hysteresis",
+            "scaps_steady_state",
+            "scaps_transient"
+          ],
+          "engine": "legacy",
+          "fallback": "forbidden"
+        },
+        "sha256": "13785ea9f62cbc9f333e31b5b709548ed0ccccec22d6587ac85f16e154390953"
+      },
+      "request_schema": {
+        "id": "solarlab.legacy-facade-request.v1",
+        "document": {
+          "fields": [
+            "engine",
+            "driver",
+            "input_id",
+            "input_base64",
+            "context_sha256"
+          ],
+          "version": 1
+        },
+        "sha256": "9343d90e4f2ad88835952c461ef9b98a85da3a1550d3060f8dc4242a39cbf332"
+      }
+    },
+    "historical_planning": {
+      "source_commit": "a5b772e4fb9bee4bfd7417b9df0aeee267af3f59",
+      "source_path": "reproducibility/RefactorTransitionBoundariesV1.json",
+      "sha256": "e48bc39f8925f845a3195519b2e886421d981b554e6001f9c28ee180b6506284",
+      "scope": "historical_planning_bytes_at_source_commit; not the current registration",
+      "status": "planned_for_M1_not_implemented_by_WS2",
+      "symbol": "run",
+      "signature": "run(request: WorkerRequest, context: WorkerContext) -> WorkerResult"
+    },
     "dispatch": "solarlab.experiments.worker.WorkerBinding.from_function",
     "executor": "solarlab.experiments.execution.ProcessSupervisor.submit",
     "activation_task": "P06-06",
