@@ -10,18 +10,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
-from solarlab.io.run_store import RunStore
+if TYPE_CHECKING:
+    from solarlab.contracts.persistence import PersistenceReader
 
 MAX_SEQUENCE = 2**63 - 1
 TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled"})
 
 
-def attempt_record(store: RunStore, run_id: str, attempt_id: str) -> dict[str, Any]:
+def attempt_record(store: PersistenceReader, run_id: str, attempt_id: str) -> dict[str, Any]:
     """Read an existing attempt, including its unaltered result/terminal data."""
     for record in store.attempts(run_id):
         if record["attempt_id"] == attempt_id:
@@ -30,7 +31,7 @@ def attempt_record(store: RunStore, run_id: str, attempt_id: str) -> dict[str, A
 
 
 def replay_cursor(
-    store: RunStore, run_id: str, attempt_id: str, after: int, last_event_id: str | None,
+    store: PersistenceReader, run_id: str, attempt_id: str, after: int, last_event_id: str | None,
 ) -> tuple[int, bool]:
     """A supplied Last-Event-ID overrides ``after`` and must belong here.
 
@@ -56,7 +57,7 @@ def replay_cursor(
 
 
 async def event_stream(
-    request: Request, store: RunStore, run_id: str, attempt_id: str, *,
+    request: Request, store: PersistenceReader, run_id: str, attempt_id: str, *,
     after: int, page_size: int, poll_interval: float, keepalive_interval: float,
 ) -> AsyncIterator[str]:
     """Poll bounded pages without consuming another subscriber's events.

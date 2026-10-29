@@ -103,6 +103,10 @@
     "solarlab.config.yaml": [
       "load_yaml_mapping"
     ],
+    "solarlab.contracts.persistence": [
+      "PersistenceReader",
+      "PersistencePort"
+    ],
     "solarlab.device": [],
     "solarlab.device.defaults": [
       "DefaultCatalog"
@@ -639,6 +643,9 @@
     ],
     "solarlab.config.yaml": [
       "load_yaml_mapping"
+    ],
+    "solarlab.contracts.persistence": [
+      "PersistenceReader"
     ],
     "solarlab.device": [],
     "solarlab.device.defaults": [

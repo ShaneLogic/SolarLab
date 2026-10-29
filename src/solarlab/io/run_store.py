@@ -26,7 +26,7 @@ import re
 import sqlite3
 import threading
 import time
-from typing import Any, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Iterator, Sequence
 import uuid
 
 from solarlab.io.artifacts import (
@@ -34,6 +34,9 @@ from solarlab.io.artifacts import (
     _load_npy, _parse_document,
 )
 from solarlab.io.storage import require_local_storage
+
+if TYPE_CHECKING:
+    from solarlab.contracts.persistence import PersistencePort
 
 __all__ = ["RunStore", "AttemptToken", "StateConflict", "StaleAttempt"]
 
@@ -659,3 +662,9 @@ sidecars; its owner must keep that historical database closed to future writers.
         from solarlab.io.run_bundle import archive_run
 
         return archive_run(self, run_id, Path(destination), max_bytes=max_bytes)
+
+
+if TYPE_CHECKING:
+    # Check structural conformance without importing the numerical contracts
+    # package initializer on the solver-free storage/readback path.
+    _persistence_implementation: type[PersistencePort[AttemptToken, ArtifactPayload]] = RunStore
