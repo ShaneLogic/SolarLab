@@ -1075,6 +1075,33 @@ Cancellation targets the displayed attempt and is confirmed from its terminal
 state. This entry retains the same ion-free and scientific-qualification limits
 as the transient HTTP adapter.
 
+## Resume the recorded fine-mesh Voc case
+
+The specialized recovery example accepts the original `Refinement384.json`
+record and `Refinement384States.npz` state bundle, checks their exact digests,
+and re-admits the saved 1153-node state under the current source and original
+physical gates:
+
+```sh
+.venv/bin/python -B -m examples.research_1d.voc_resume \
+  --input-record /path/to/Refinement384.json \
+  --input-states /path/to/Refinement384States.npz \
+  --output outputs/voc_resume.json
+.venv/bin/python -B -m examples.research_1d.voc_resume \
+  --read outputs/voc_resume.json
+```
+
+These are external recorded research inputs, not bundled example fixtures.
+This entry is specific to that recorded device and requires matching compiled
+identity; it is not a general importer for other saved states. It resumes at
+1.125 V using 12.5 mV steps, then performs actual midpoint solves to the existing
+1 µV voltage-width target. Failed candidates are never used as seeds, and the
+original prefix and failure are preserved. The completed recovery used 23
+accepted calls and produced a strict sign bracket of
+1.2159446716308593–1.2159454345703125 V. The coarse interpolated estimate is
+recorded separately. A resolved discrete root does not establish continuum
+error, mesh convergence or final scientific qualification.
+
 ## Explicit neutral bulk defects
 
 Use the existing validated defect declaration to replace lifetime SRH with one

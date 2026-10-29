@@ -213,6 +213,7 @@ jobs:
           tests/integration/test_field_transport_ac_1d.py
           tests/integration/test_optical_generation_1d.py
           tests/integration/test_dc_2d.py
+          tests/integration/test_steady_2d.py
           tests/runtime/test_ionic_transient_worker.py
           tests/runtime/test_ionic_jv_worker.py
           tests/runtime/test_ionic_jv_job_service.py
