@@ -27,7 +27,8 @@ from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, classical_dc_1d
 from solarlab.equations.dc_1d import CapabilityError, CompiledDevice1D, DC1DProblem, State1D
 from solarlab.solvers.nonlinear.steady_1d import solve_equilibrium, solve_steady_state
-from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, inventory_m2
+from solarlab.physics.contacts.exchange import CarrierExchangeChannel
+from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, inventory_m2, step_accounting
 
 Vector: TypeAlias = NDArray[np.float64]
 BLOCKS = ("potential", "electron", "hole")
@@ -225,6 +226,7 @@ def test_backward_euler_step_in_storage_difference_form(research: CompiledDevice
     old = solve_steady_state(research, voltage_V=0.5, generation_scale=1.0)
     system = classical_dc_1d(research)
     old_problem = AssembledDC1DProblem(research, 0.5, 1.0, system)
+    rows = system.layout.constraint_mask()
     for voltage, dt in ((0.5, 1.0e-9), (0.55, 1.0e-7), (0.45, 1.0e-6)):
         step = BackwardEuler1DStep(DC1DProblem(research, voltage, 1.0), old.state, dt)
         problem = old_problem.at(voltage, 1.0)
@@ -234,19 +236,33 @@ def test_backward_euler_step_in_storage_difference_form(research: CompiledDevice
                                             research.sha256, voltage), 40 + seed, 1.0e-3)
             increment = problem.storage_increment(u, old_problem, old.state.u)
             rate = step.inventory_rate_m2_s(u)
-            # BackwardEuler1DStep never writes its masked rows; they carry +0 here.
-            assert_bits(np.r_[np.zeros(research.node_count), np.where(storage_mask(research), rate, 0.0).ravel()],
+            # Masked rows are x * 0, as the original storage adapters' ``*= storage_mask``.
+            assert_bits(np.r_[np.zeros(research.node_count), (rate * storage_mask(research)).ravel()],
                         increment / dt)
-            assert_bits(step.residual(u), problem.residual(u) - increment / dt)
+            # The original step never writes its algebraic rows: R = F there.
+            residual = problem.residual(u)
+            assert_bits(step.residual(u), np.where(rows, residual, residual - increment / dt))
             assert_same_matrix(step.jacobian(u), csc_matrix(problem.jacobian(u) - problem.storage_tangent(u) / dt))
 
 
 def test_udot_form_is_refused(research: CompiledDevice1D) -> None:
     problem = AssembledDC1DProblem(research, 0.0, 0.0)
+    reference = DC1DProblem(research, 0.0, 0.0)
     u = solve_equilibrium(research).state.u
-    np.testing.assert_array_equal(problem.residual(u, np.zeros_like(u)), problem.residual(u))
+    assert_bits(problem.residual(u), problem.residual(u, np.zeros_like(u)))
+    assert_same_matrix(problem.jacobian(u), problem.jacobian(u, np.zeros_like(u)))
     with pytest.raises(CapabilityError):
         problem.residual(u, np.ones_like(u))
+    with pytest.raises(CapabilityError):
+        problem.jacobian(u, np.ones_like(u))
+    # R02: shape and finiteness are admitted exactly as DC1DProblem admits them.
+    for bad in (0.0, np.zeros(1), np.zeros(u.size + 1), np.full(u.size, np.nan)):
+        with pytest.raises(ValueError):
+            reference.residual(u, bad)
+        with pytest.raises(ValueError):
+            problem.residual(u, bad)
+        with pytest.raises(ValueError):
+            problem.jacobian(u, bad)
 
 
 def test_problem_rejects_invalid_drive(research: CompiledDevice1D) -> None:
@@ -257,3 +273,102 @@ def test_problem_rejects_invalid_drive(research: CompiledDevice1D) -> None:
     other = compile_device_1d(load_device(), intervals_per_layer=6)
     with pytest.raises(ValueError):
         AssembledDC1DProblem(research, 0.0, 0.0, classical_dc_1d(other))
+
+
+class _LegacyNamedEndpoint(AssembledDC1DProblem):
+    """Test-only alias of the private name the unchanged BE accounting calls."""
+
+    def _contact_exchange(self, u: Vector, channel: CarrierExchangeChannel, node: int) -> tuple[float, float]:
+        return self.contact_exchange(u, channel, node)
+
+
+def observation_states(device: CompiledDevice1D) -> list[tuple[Vector, float, float]]:
+    dark = solve_equilibrium(device)
+    light = solve_steady_state(device, voltage_V=0.4, generation_scale=1.0)
+    return [(dark.state.u, 0.0, 0.0), (light.state.u, 0.4, 1.0),
+            (perturbed(device, dark.state, 5), 0.0, 0.0), (perturbed(device, light.state, 6), 0.4, 1.0)]
+
+
+@pytest.mark.parametrize("kind", ["fixed", "robin", "selective", "ct", "injected"])
+def test_observation_kernels_equal_dc1d(kind: str) -> None:
+    """``recombination_rate`` and ``contact_exchange`` return the DC1DProblem words."""
+    if kind == "ct":
+        device = compile_device_1d(field_transport_case(), intervals_per_layer=(4, 4, 4))
+    elif kind in ("robin", "selective"):
+        device = finite_contacts(kind)
+    elif kind == "injected":
+        base = compile_device_1d(load_device(), intervals_per_layer=12)
+        device = compile_device_1d(load_device(), intervals_per_layer=12, additional_recombination=saturating(base))
+    else:
+        device = compile_device_1d(load_device())
+    exchanged = 0
+    for u, voltage, light in observation_states(device):
+        reference = DC1DProblem(device, voltage, light)
+        candidate = AssembledDC1DProblem(device, voltage, light)
+        _, n, p = device.fields(u, voltage_V=voltage)
+        for derivatives in (True, False):
+            old = reference.recombination_rate(n, p, derivatives=derivatives)
+            new = candidate.recombination_rate(n, p, derivatives=derivatives)
+            assert new.has_derivatives == old.has_derivatives == derivatives
+            for name in ("rate", "d_rate_dn", "d_rate_dp"):
+                if derivatives:
+                    assert_bits(getattr(old, name), getattr(new, name))
+        for channel in device.channels:
+            node = 0 if channel.side == "left" else device.node_count - 1
+            if channel.kind == "fixed_reservoir":
+                with pytest.raises(ValueError, match="no bound exchange"):
+                    candidate.contact_exchange(u, channel, node)
+                continue
+            exchanged += 1
+            assert_bits(reference._contact_exchange(u, channel, node), candidate.contact_exchange(u, channel, node))
+            with pytest.raises(ValueError, match="no bound exchange"):
+                candidate.contact_exchange(u, channel, device.node_count - 1 - node)
+        with pytest.raises(ValueError, match="coordinate vector"):
+            candidate.contact_exchange(u[:-1], device.channels[0], 0)
+    assert (exchanged > 0) == (kind in ("robin", "selective"))
+
+
+@pytest.mark.parametrize("kind", ["fixed", "robin", "selective"])
+def test_backward_euler_accounting_on_the_assembled_endpoint(kind: str) -> None:
+    """The unchanged BE step accounting reads only the public observation surface."""
+    device = finite_contacts(kind) if kind != "fixed" else compile_device_1d(load_device())
+    old = solve_steady_state(device, voltage_V=0.4, generation_scale=1.0)
+    system = classical_dc_1d(device)
+    for voltage, dt in ((0.4, 1.0e-9), (0.45, 1.0e-7)):
+        legacy = BackwardEuler1DStep(DC1DProblem(device, voltage, 1.0), old.state, dt)
+        assembled = BackwardEuler1DStep(_LegacyNamedEndpoint(device, voltage, 1.0, system), old.state, dt)
+        u = perturbed(device, State1D(legacy.initial_coordinates(), old.state.potential_V,
+                                      old.state.electron_density_m3, old.state.hole_density_m3,
+                                      device.sha256, voltage), 70, 1.0e-3)
+        reference, candidate = step_accounting(legacy, u), step_accounting(assembled, u)
+        assert reference.keys() == candidate.keys()
+        for name, value in reference.items():
+            if isinstance(value, (np.ndarray, float)):
+                assert_bits(value, candidate[name])
+            else:
+                assert value == candidate[name], name
+
+
+def test_masked_storage_increment_keeps_the_original_signed_zeros(research: CompiledDevice1D) -> None:
+    """Constraint rows of the increment are ``x * 0``, byte for byte as ``*= storage_mask``.
+
+    A falling boundary inventory gives a negative zero there; a positive zero
+    would be value-equal but not byte-identical to the original storage path.
+    """
+    old = solve_steady_state(research, voltage_V=0.5, generation_scale=1.0)
+    system = classical_dc_1d(research)
+    old_problem = AssembledDC1DProblem(research, 0.5, 1.0, system)
+    rows = system.layout.constraint_mask()
+    negative = 0
+    for voltage in (0.45, 0.5, 0.55):
+        step = BackwardEuler1DStep(DC1DProblem(research, voltage, 1.0), old.state, 1.0)
+        for seed in range(3):
+            u = perturbed(research, State1D(step.initial_coordinates(), old.state.potential_V,
+                                            old.state.electron_density_m3, old.state.hole_density_m3,
+                                            research.sha256, voltage), 80 + seed, 1.0e-3)
+            change = np.r_[np.zeros(research.node_count), step.inventory_rate_m2_s(u).ravel()]
+            change[research.node_count:] *= storage_mask(research).ravel()
+            increment = old_problem.at(voltage, 1.0).storage_increment(u, old_problem, old.state.u)
+            assert_bits(change, increment)
+            negative += int(np.count_nonzero(np.signbit(increment[rows])))
+    assert negative > 0

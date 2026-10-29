@@ -29,12 +29,21 @@ from typing import Mapping
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from solarlab.contracts.arrays import integer_indices
 from solarlab.contracts.errors import ContractError
 from solarlab.contracts.units import Unit
 
-__all__ = ["Block", "ConstraintRows", "NodeSet", "SystemLayout"]
+__all__ = ["Block", "ConstraintRows", "NodeSet", "SystemLayout", "node_indices"]
 
 LAYOUT_SCHEMA = "solarlab.system_layout.v1"
+
+
+def node_indices(values: ArrayLike) -> tuple[int, ...]:
+    """Nonnegative integral node indices (the contracts integer-index rule)."""
+    indices = integer_indices(values)
+    if indices.ndim != 1 or np.any(indices < 0):
+        raise ContractError("invalid_index")
+    return tuple(int(i) for i in indices)
 
 
 @dataclass(frozen=True)
@@ -52,8 +61,8 @@ class NodeSet:
         if (self.parent is None) != (self.parent_indices is None):
             raise ContractError("embedding_needs_parent_and_indices")
         if self.parent_indices is not None:
-            indices = tuple(int(i) for i in self.parent_indices)
-            if (len(indices) != self.size or any(i < 0 for i in indices)
+            indices = node_indices(self.parent_indices)
+            if (len(indices) != self.size
                     or any(b <= a for a, b in zip(indices, indices[1:]))):
                 raise ContractError("embedding_indices_must_increase")
             object.__setattr__(self, "parent_indices", indices)
@@ -87,8 +96,8 @@ class ConstraintRows:
     unit: Unit
 
     def __post_init__(self) -> None:
-        nodes = tuple(int(i) for i in self.nodes)
-        if (not self.block or not self.owner or not nodes or any(i < 0 for i in nodes)
+        nodes = node_indices(self.nodes)
+        if (not self.block or not self.owner or not nodes
                 or any(b <= a for a, b in zip(nodes, nodes[1:]))):
             raise ContractError("invalid_constraint_rows")
         object.__setattr__(self, "nodes", nodes)

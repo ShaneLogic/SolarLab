@@ -10,8 +10,8 @@ conservation, constraint ownership and the declared-contract rejections.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from typing import Callable, Mapping, TypeAlias, cast
+from dataclasses import dataclass, field, fields as fields_of, replace
+from typing import Any, Callable, Mapping, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -28,6 +28,7 @@ from solarlab.equations.assembly import (
     OperatingInputs, Port, SupportGeometry, SystemLayout,
 )
 from solarlab.equations.assembly.terms import Contribution, TermValue
+from solarlab.equations.assembly.weighted import Weighted
 from solarlab.mesh.geometry import half_endpoint_geometry, integer_endpoint_geometry
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 
@@ -457,3 +458,87 @@ class _NoIncrement:
 
     def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:
         return {"c": LocalValue(state.field("c"))}
+
+
+def test_slot_parts_keep_their_declaration_order() -> None:
+    """R03: plain runs and weighted parts are added in Term order, not regrouped.
+
+    ``1e16, -1e16*w, 1`` gives ``w``; summing the plain parts first would give
+    ``(1e16 + 1)*w - 1e16*w = 0``.
+    """
+    toy = toy_1d()
+    fixed = next(term for term in toy.assembler.terms if term.kind == CONSTRAINT)
+
+    def part(value: object) -> Callable[[EvaluationState, bool], Mapping[str, TermValue]]:
+        return lambda state, derivatives: {"c": LocalValue(value if isinstance(value, Weighted)
+                                                           else np.full(toy.count, value))}
+
+    terms = [ToyTerm(f"c.part{index}", CELL_SOURCE, "nodes", ("c",), ("c",), SOURCE, part(value))
+             for index, value in enumerate((1.0e16, -1.0e16 * MEASURE, 1.0))]
+    assembler = Assembler(toy.assembler.layout, toy.assembler.mesh, toy.assembler.fields, [*terms, fixed])
+    F = assembler.evaluate(state_vector(toy, 2), OperatingInputs(), derivatives=False).F
+    volumes = toy.assembler.mesh.support("nodes").geometry.volumes
+    assert F[assembler.layout.offsets["c"]].tobytes() == volumes.tobytes()
+
+
+def test_divergence_and_constraint_measure_options_are_validated() -> None:
+    toy = toy_1d()
+    terms = [cast(ToyTerm, term) for term in toy.assembler.terms]
+    by_id = {term.id: term for term in terms}
+    others = [term for term in terms if term.id not in ("c.diffusion", "phi.dirichlet")]
+
+    @dataclass(frozen=True)
+    class Optioned(ToyTerm):
+        divergence: str = "scatter"
+        measure: str | None = None
+
+    def with_options(term: ToyTerm, **options: str) -> Optioned:
+        values: dict[str, Any] = {item.name: getattr(term, item.name) for item in fields_of(ToyTerm)}
+        return Optioned(**{**values, **options})
+
+    def build(*changed: ToyTerm) -> Assembler:
+        return Assembler(toy.assembler.layout, toy.assembler.mesh, toy.assembler.fields, [*others, *changed])
+
+    diffusion, dirichlet = by_id["c.diffusion"], by_id["phi.dirichlet"]
+    build(with_options(diffusion, divergence="chain"), dirichlet)
+    with pytest.raises(ContractError, match="unknown_divergence"):
+        build(with_options(diffusion, divergence="upwind"), dirichlet)
+    with pytest.raises(ContractError, match="divergence_option_on_non_face_term"):
+        build(diffusion, with_options(dirichlet, divergence="chain"))
+    with pytest.raises(ContractError, match="chain_face_term_must_be_the_only_face_term"):
+        build(with_options(diffusion, divergence="chain"), replace(diffusion, id="c.second"), dirichlet)
+    with pytest.raises(ContractError, match="unknown_constraint_measure"):
+        build(diffusion, with_options(dirichlet, measure="face"))
+    with pytest.raises(ContractError, match="measure_option_on_non_constraint_term"):
+        build(with_options(diffusion, measure="cell"), dirichlet)
+    with pytest.raises(ContractError, match="unit_mismatch"):
+        build(diffusion, with_options(dirichlet, measure="cell"))
+
+
+def test_storage_only_evaluation_and_replaced_row_finiteness() -> None:
+    toy = toy_1d()
+    u = state_vector(toy, 4)
+    full = toy.assembler.evaluate(u, OperatingInputs(), storage=True)
+    S, S_u = toy.assembler.storage(u, OperatingInputs())
+    assert full.S is not None and full.S_u is not None and S_u is not None
+    assert S.tobytes() == full.S.tobytes()
+    assert (S_u != full.S_u).nnz == 0
+    assert full.replaced_nonfinite_rows is not None and not np.any(full.replaced_nonfinite_rows)
+    terms = [cast(ToyTerm, term) for term in toy.assembler.terms]
+
+    def poisoned(state: EvaluationState, derivatives: bool) -> Mapping[str, TermValue]:
+        phi = state.field("phi")
+        tangent = np.zeros(toy.count - 1)
+        tangent[-1] = np.nan  # on the last face: reaches the constrained last phi row only via its left node
+        flux = -(phi[1:] - phi[:-1])
+        return {"phi": FaceValue(flux, {"phi": np.ones(toy.count - 1)}, {"phi": tangent})}
+
+    changed = [replace(term, value=poisoned) if term.id == "phi.potential" else term for term in terms]
+    system = Assembler(toy.assembler.layout, toy.assembler.mesh, toy.assembler.fields, changed).evaluate(
+        u, OperatingInputs())
+    assert system.J is not None and system.replaced_nonfinite_rows is not None
+    expected: NDArray[np.bool_] = np.zeros(system.layout.size, dtype=bool)
+    expected[system.layout.rows("phi", [toy.count - 1])] = True
+    np.testing.assert_array_equal(system.replaced_nonfinite_rows, expected)
+    # The second-to-last row keeps its own (unreplaced) NaN entry.
+    assert not np.all(np.isfinite(system.J.data))

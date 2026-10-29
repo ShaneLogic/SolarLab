@@ -47,15 +47,25 @@ def assembled(monkeypatch: pytest.MonkeyPatch, device: CompiledDevice1D) -> Iter
         yield
 
 
+def bits(value: float) -> bytes:
+    """The binary64 word of one scalar (distinguishes +0 from -0)."""
+    return np.float64(value).tobytes()
+
+
+def newton_words(result: NewtonResult) -> tuple[object, ...]:
+    """Every Newton record field, with each float as its binary64 word."""
+    iterations = tuple((record.iteration, bits(record.scaled_residual), bits(record.step_inf),
+                        bits(record.damping), record.backtracks, record.fresh_jacobian)
+                       for record in result.iterations)
+    gates = tuple((gate.name, gate.passed, bits(gate.value), bits(gate.limit), gate.message)
+                  for gate in result.gates)
+    return (result.state.tobytes(), result.accepted, result.termination, bits(result.scaled_residual),
+            iterations, gates, result.residual_evaluations, result.jacobian_evaluations,
+            result.start_digest, result.message)
+
+
 def assert_same_newton(reference: NewtonResult, candidate: NewtonResult) -> None:
-    assert candidate.state.tobytes() == reference.state.tobytes()
-    assert candidate.termination == reference.termination and candidate.accepted == reference.accepted
-    assert candidate.iterations == reference.iterations
-    assert candidate.gates == reference.gates
-    assert candidate.scaled_residual == reference.scaled_residual
-    assert (candidate.residual_evaluations, candidate.jacobian_evaluations) == (
-        reference.residual_evaluations, reference.jacobian_evaluations)
-    assert candidate.start_digest == reference.start_digest
+    assert newton_words(candidate) == newton_words(reference)
 
 
 def assert_same_point(reference: SteadyState1D, candidate: SteadyState1D) -> None:

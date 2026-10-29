@@ -12,7 +12,9 @@ the existing :class:`~solarlab.equations.dc_1d.DC1DProblem` arrays bit for bit
 :class:`AssembledDC1DProblem` presents the assembled system with the surface
 the steady driver uses (``residual``, ``jacobian``, ``fluxes``, the current
 observations), plus ``storage``, ``storage_tangent`` and ``storage_increment``
-for storage-difference time steps. It is steady-only in the ``udot`` form.
+for storage-difference time steps, and the public observation kernels
+``recombination_rate`` and ``contact_exchange`` that step accounting reads.
+It is steady-only in the ``udot`` form.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 import math
-from typing import Callable, Mapping, TypeAlias
+from typing import Callable, Mapping, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -374,19 +376,29 @@ class CarrierExchange:
     def identity(self) -> str:
         return _identity(self.id, self.device.identity, ELECTRODE_QUASI_FERMI_1D_V1)
 
-    def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:
-        sign = 1.0 if self.block == ELECTRON else -1.0
+    def exchange(self, potential: float, coordinate: float, voltage_V: float) -> tuple[float, float]:
+        """``(n_out S (c - c_eq), n_out S)`` at the port node, from its own coordinates.
+
+        The density excess is ``c_eq expm1(log(c/c_eq))``, never a difference
+        of rounded densities.
+        """
         thermal = self.device.thermal_voltage_V
-        node = self.node
-        reference = _reference(self.device, self.block, state.inputs.voltage_V)
-        shift = (state.block(POTENTIAL)[node] - reference[node]) / thermal
-        z = state.block(self.block)[node]
-        exponent = shift + z if self.block == ELECTRON else -shift - z
+        reference = _reference(self.device, self.block, voltage_V)
+        shift = (potential - reference[self.node]) / thermal
+        exponent = shift + coordinate if self.block == ELECTRON else -shift - coordinate
         channel = self.channel
         # The kernel supplies n_out * S, including exactly zero for blocking.
         slope = boundary_particle_flux(channel, channel.reservoir_density_m3).density_derivative
         excess = channel.reservoir_density_m3 * np.expm1(exponent)
-        value = np.array([slope * excess])
+        return slope * excess, slope
+
+    def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:
+        sign = 1.0 if self.block == ELECTRON else -1.0
+        thermal = self.device.thermal_voltage_V
+        node = self.node
+        flux, slope = self.exchange(state.block(POTENTIAL)[node], state.block(self.block)[node],
+                                    state.inputs.voltage_V)
+        value = np.array([flux])
         tangents: dict[str, Contribution] = {}
         if derivatives:
             density = _density(state, self.block)[node]
@@ -473,15 +485,17 @@ class ClassicalDC1D:
     device: CompiledDevice1D
     assembler: Assembler = field(init=False, repr=False)
     transport: CarrierTransport = field(init=False, repr=False)
+    recombination: BulkRecombination = field(init=False, repr=False)
     exchanges: Mapping[tuple[str, str], CarrierExchange] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         device = self.device
         layout = _layout(device)
         transport = CarrierTransport(device)
+        recombination = BulkRecombination(device)
         terms: list[Term] = [
             GaussDisplacement(device), SpaceCharge(device), PotentialContacts(device),
-            transport, CarrierGeneration(device), BulkRecombination(device), CarrierStorage(device),
+            transport, CarrierGeneration(device), recombination, CarrierStorage(device),
         ]
         exchanges: dict[tuple[str, str], CarrierExchange] = {}
         for block, carrier, _ in CARRIERS:
@@ -498,6 +512,7 @@ class ClassicalDC1D:
         object.__setattr__(self, "assembler", Assembler(
             layout, _mesh(device), ElectrodeQuasiFermiFields(device), terms))
         object.__setattr__(self, "transport", transport)
+        object.__setattr__(self, "recombination", recombination)
         object.__setattr__(self, "exchanges", exchanges)
 
     @property
@@ -563,9 +578,14 @@ class AssembledDC1DProblem:
         """Same bound system at another operating point (no rebinding)."""
         return AssembledDC1DProblem(self.device, voltage_V, generation_scale, self.system)
 
-    @staticmethod
-    def _steady_only(udot: ArrayLike | None) -> None:
-        if udot is not None and np.any(np.asarray(udot, dtype=float) != 0.0):
+    def _steady_only(self, udot: ArrayLike | None) -> None:
+        """Admit udot exactly as DC1DProblem does, then refuse any nonzero rate."""
+        if udot is None:
+            return
+        derivative = np.asarray(udot, dtype=float)
+        if derivative.shape != (3 * self.device.node_count,) or not np.all(np.isfinite(derivative)):
+            raise ValueError("udot must be finite and match the coordinate vector")
+        if np.any(derivative != 0.0):
             raise CapabilityError("the assembled system is time-stepped in storage-difference form, not by udot")
 
     def assemble(self, u: ArrayLike, *, derivatives: bool = True, storage: bool = False) -> AssembledSystem:
@@ -577,31 +597,25 @@ class AssembledDC1DProblem:
 
     def jacobian(self, u: ArrayLike, udot: ArrayLike | None = None, *, alpha: float = 0.0) -> csc_matrix:
         self._steady_only(udot)
-        system = self.assemble(u, storage=alpha != 0.0)
+        system = self.assemble(u)
         assert system.J is not None
         if alpha == 0.0:
             return system.J
         if not math.isfinite(alpha):
             raise ValueError("alpha must be finite")
-        mass = system.M
-        assert mass is not None
-        return csc_matrix(system.J + alpha * mass)
+        return csc_matrix(system.J + alpha * self.storage_jacobian(u))
 
     def storage(self, u: ArrayLike) -> Vector:
-        system = self.assemble(u, derivatives=False, storage=True)
-        assert system.S is not None
-        return np.array(system.S, copy=True)
+        return np.array(self.binding.assembler.storage(u, self.inputs, derivatives=False)[0], copy=True)
 
     def storage_tangent(self, u: ArrayLike) -> csc_matrix:
-        system = self.assemble(u, storage=True)
-        assert system.S_u is not None
-        return system.S_u
+        tangent = self.binding.assembler.storage(u, self.inputs)[1]
+        assert tangent is not None
+        return tangent
 
     def storage_jacobian(self, u: ArrayLike) -> csc_matrix:
         """Signed ``M = dR/dudot = -S_u`` (the historical name)."""
-        mass = self.assemble(u, storage=True).M
-        assert mass is not None
-        return mass
+        return cast(csc_matrix, -self.storage_tangent(u))
 
     def storage_increment(self, u: ArrayLike, old_problem: AssembledDC1DProblem, old_u: ArrayLike) -> Vector:
         if old_problem.device.identity != self.device.identity:
@@ -613,6 +627,27 @@ class AssembledDC1DProblem:
         if state is None:
             raise FloatingPointError("state outside the field map's admissible domain")
         return self.binding.transport.fluxes(state)
+
+    def recombination_rate(self, n: Vector, p: Vector, *, derivatives: bool = True) -> RecombinationRate:
+        """Net bulk recombination (bound reaction plus injected law) of the bound Term."""
+        return self.binding.recombination.rate(n, p, derivatives=derivatives)
+
+    def contact_exchange(self, u: ArrayLike, channel: CarrierExchangeChannel, node: int) -> tuple[float, float]:
+        """Exchange flux ``n_out S (c - c_eq)`` and slope ``n_out S`` of one bound port channel.
+
+        Defined for the finite-rate and blocking channels the binding owns; a
+        fixed-reservoir channel is a constraint row, not an exchange.
+        """
+        values = np.asarray(u, dtype=float)
+        count = self.device.node_count
+        if values.shape != (3 * count,):
+            raise ValueError("u must match the coordinate vector")
+        block = ELECTRON if channel.carrier == "n" else HOLE
+        exchange = self.binding.exchanges.get((block, channel.side))
+        if exchange is None or exchange.channel != channel or exchange.node != node:
+            raise ValueError("no bound exchange channel at this port node")
+        offset = count if block == ELECTRON else 2 * count
+        return exchange.exchange(values[node], values[offset + node], self.voltage_V)
 
     def current_density(self, u: ArrayLike) -> Vector:
         fluxes = self.fluxes(u)

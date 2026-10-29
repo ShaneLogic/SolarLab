@@ -94,3 +94,21 @@ def test_measure_expressions_keep_the_written_product_order() -> None:
     with pytest.raises(ContractError, match="measure_in_denominator"):
         _ = n / MEASURE
     assert measure_count(MEASURE * MEASURE * n) == 2
+
+
+def test_negative_and_fractional_node_indices_are_refused() -> None:
+    """R01: a port, constraint or embedding never wraps to the last node."""
+    from solarlab.equations.assembly import Port
+
+    with pytest.raises(ContractError, match="invalid_index"):
+        Port("left", (-1,), -1, np.array([1.0]), ONE)
+    with pytest.raises(ContractError, match="invalid_index"):
+        Port("left", (0.5,), -1, np.array([1.0]), ONE)  # type: ignore[arg-type]
+    with pytest.raises(ContractError, match="invalid_index"):
+        ConstraintRows("potential", (-1,), "a", VOLT)
+    with pytest.raises(ContractError, match="invalid_index"):
+        ConstraintRows("potential", (1.5,), "a", VOLT)  # type: ignore[arg-type]
+    with pytest.raises(ContractError, match="invalid_index"):
+        NodeSet("ions", 2, "nodes", (-1, 0))
+    assert Port("left", (np.int64(0),), -1, np.array([1.0]), ONE).nodes == (0,)  # type: ignore[arg-type]
+    assert ConstraintRows("potential", (0.0, 4.0), "a", VOLT).nodes == (0, 4)  # type: ignore[arg-type]
