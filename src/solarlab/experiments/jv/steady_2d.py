@@ -115,6 +115,8 @@ class SteadyJV2DResult:
 
 def _scope(device: CompiledDevice2D) -> None:
     _steady_scope(device)
+    if device.field_transport is not None:
+        raise ValueError("unsupported_field_transport_2d_jv: CT source binding is not admitted for 2D J-V")
     grain = getattr(device, "grain_recombination", None)
     if grain is not None and (not isinstance(grain, GrainRecombination2D) or not grain.regions
             or grain.geometry_sha256 != device.geometry.sha256

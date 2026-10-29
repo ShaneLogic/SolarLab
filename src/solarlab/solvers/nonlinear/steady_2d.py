@@ -47,7 +47,7 @@ def _scope(device: CompiledDevice2D) -> None:
         raise ValueError("an actual fully compiled classical 2D device is required")
     if device.geometry.name != RECTANGULAR_HALF_ENDPOINT_2D_V1:
         raise ValueError("2D steady requires physical half-endpoint Neumann geometry")
-    if (device.column.field_transport is not None or device.column.recombination.explicit_defects is not None
+    if ((device.column.field_transport is not None and device.field_transport is None) or device.column.recombination.explicit_defects is not None
             or device.column.additional_recombination is not None):
         raise ValueError("2D steady supports constant mobility and lifetime SRH")
     if all(channel.kind == "blocking" for channel in device.column.channels):
@@ -93,11 +93,14 @@ def _settings(device: CompiledDevice2D, options: Steady2DOptions, gate: Any) -> 
     return settings, norm
 
 
-def _sources() -> dict[str, str]:
-    names = (__name__, "solarlab.equations.dc_2d", "solarlab.equations.dc_1d", "solarlab.mesh.geometry_2d",
+def _sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
+    names: tuple[str, ...] = (__name__, "solarlab.equations.dc_2d", "solarlab.equations.dc_1d", "solarlab.mesh.geometry_2d",
         "solarlab.physics.transport.electrochemical_flux", "solarlab.physics.recombination.reaction",
         "solarlab.contracts.terms", "solarlab.solvers.nonlinear.newton", "solarlab.solvers.nonlinear.problem",
         "solarlab.physics.contacts.boundary_flux", "solarlab.physics.contacts.exchange")
+    if device is not None and device.field_transport is not None:
+        names += ("solarlab.equations.field_transport_2d", "solarlab.physics.transport.field_mobility",
+                  "solarlab.physics.transport.field_mobility_tangents")
     result = {}
     for name in names:
         module = sys.modules.get(name)
@@ -241,7 +244,7 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
         provenance = {"kind": "provided full2D numerical guess"}
     provenance.update({} if initial_provenance is None else initial_provenance)
     provenance["state_sha256"] = state_digest(u)
-    pins = _sources()
+    pins = _sources(device)
     deadline = started + controls.wall_s
     candidate = u.copy()
     counts = {"residual": 0, "jacobian": 0, "diagnostics": 0}
@@ -249,7 +252,7 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
     def checkpoint() -> None:
         if time.monotonic() >= deadline:
             raise TimeoutError("2D steady owned wall budget exhausted; no retry")
-        if _sources() != pins:
+        if _sources(device) != pins:
             raise RuntimeError("2D steady physical source changed during the solve")
     def evaluate(kind: str, values: np.ndarray) -> Any:
         nonlocal candidate

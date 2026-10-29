@@ -24,6 +24,7 @@ from solarlab.contracts import (
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M
 from solarlab.equations.dc_1d import CompiledDevice1D, _quasi_fermi_potential_tangents
+from solarlab.equations.field_transport_2d import FieldTransport2D
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
 from solarlab.physics.contacts.exchange import CarrierExchangeChannel
@@ -89,6 +90,7 @@ class CompiledDevice2D:
     spatial_declaration_json: bytes
     grain_recombination: GrainRecombinationModel2D | None = None
     column_projection_json: bytes | None = None
+    field_transport: FieldTransport2D | None = None
     band_structure: BandStructure = field(init=False)
     recombination: BulkRecombinationReaction = field(init=False)
     generation_source_m3_s: Vector = field(init=False)
@@ -103,8 +105,10 @@ class CompiledDevice2D:
             raise ValueError("grain recombination must be bound to this exact 2D geometry")
         if not self.sha256 or not np.array_equal(column.nodes_m, geometry.y_geometry.nodes_m):
             raise ValueError("column coefficients must match the 2D stack grid and identity")
-        if column.field_transport is not None or column.recombination.explicit_defects is not None:
-            raise ValueError("2D DC currently requires constant mobility and lifetime SRH")
+        if column.field_transport is not None and self.field_transport is None:
+            raise ValueError("active CT requires its full2D normal-face binding")
+        if column.recombination.explicit_defects is not None:
+            raise ValueError("2D DC requires lifetime SRH")
         if column.additional_recombination is not None:
             raise ValueError("2D DC requires the bound bulk reaction")
         if all(c.kind == "blocking" for c in column.channels):
@@ -132,6 +136,12 @@ class CompiledDevice2D:
             if np.any(values <= 0.0):
                 raise ValueError("2D DC requires positive finite carrier diffusivities")
             object.__setattr__(self, carrier + "_diffusivity_faces_m2_s", frozen_array(values))
+        if self.field_transport is not None:
+            model = self.field_transport
+            if (model.geometry.sha256 != geometry.sha256 or model.thermal_voltage_V != self.thermal_voltage_V
+                    or not np.array_equal(model.base_electron_diffusivity_m2_s, self.electron_diffusivity_faces_m2_s)
+                    or not np.array_equal(model.base_hole_diffusivity_m2_s, self.hole_diffusivity_faces_m2_s)):
+                raise ValueError("field transport must match the exact2D grid, temperature and baseD")
         horizontal_capacitance = (VACUUM_PERMITTIVITY_F_M * eps[:, None] / np.diff(geometry.x_m)[None, :]).ravel()
         object.__setattr__(self, "face_capacitance_F_m2", frozen_array(np.r_[
             horizontal_capacitance, np.repeat(column.poisson.face_capacitance_F_m2, geometry.nx)]))
@@ -231,6 +241,10 @@ class DC2DProblem:
         phi, n, p = d.fields(values, voltage_V=self.voltage_V)
         left, right = d.geometry.contract_geometry.pairs.T
         potentials = d.band_structure.transport_potentials(phi)
+        if d.field_transport is not None:
+            return d.field_transport.fluxes(phi, n, p, potentials[0], potentials[1],
+                electron_electrochemical_step=values[d.node_count + right] - values[d.node_count + left],
+                hole_electrochemical_step=-(values[2 * d.node_count + right] - values[2 * d.node_count + left]))
         fluxes = []
         for density, potential, diffusivity, offset, sign in (
             (n, potentials[0], d.electron_diffusivity_faces_m2_s, d.node_count, 1.0),
@@ -334,6 +348,15 @@ class DC2DProblem:
             drive = sign * (values[offset + right] - values[offset + left])
             # Reuse the accepted cancellation-safe quasi-Fermi chain, without altering its source.
             phi_left, phi_right = _quasi_fermi_potential_tangents(flux, drive, sign, thermal)
+            if d.field_transport is not None:
+                evaluated_transport = d.field_transport.evaluate(values[:count])
+                diffusivity = (evaluated_transport.electron_diffusivity_m2_s if offset == count
+                               else evaluated_transport.hole_diffusivity_m2_s)
+                diffusivity_slope = (evaluated_transport.electron_d_diffusivity_d_field if offset == count
+                         else evaluated_transport.hole_d_diffusivity_d_field)
+                field_chain = (flux.flux / diffusivity) * diffusivity_slope / d.geometry.face_spacing_m
+                phi_left = phi_left + field_chain
+                phi_right = phi_right - field_chain
             z_left = sign * flux.left_density_derivative * density[left]
             z_right = sign * flux.right_density_derivative * density[right]
             for face, (a, b) in enumerate(geometry.pairs):

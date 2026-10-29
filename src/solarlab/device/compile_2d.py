@@ -20,6 +20,7 @@ from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.dc_2d import CompiledDevice2D
+from solarlab.equations.field_transport_2d import bind_field_transport_2d
 from solarlab.experiments.two_dimensional.inputs import JV2DInput
 from solarlab.mesh.geometry import half_endpoint_geometry
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
@@ -61,7 +62,7 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
             raise CapabilityError("unsupported_classical_2d_dc: layers." + layer.id + ".incoherent optics is not bound")
         if layer.role == "substrate" or layer.optical is not None or p["n_optical"] is not None:
             raise CapabilityError("unsupported_classical_2d_dc: optical-only/index layers are not bound")
-        if any(p[name] != 0.0 for name in ("v_sat_n", "v_sat_p", "pf_gamma_n", "pf_gamma_p")):
+        if any(p[name] != 0.0 for name in ("pf_gamma_n", "pf_gamma_p")):
             raise CapabilityError("unsupported_classical_2d_dc: field-dependent carrier mobility is not bound")
     grain_declarations(prepared, spatial)  # Refuse invalid bands before coefficient compilation.
     column_prepared, projection = prepared, None
@@ -86,6 +87,20 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
         alpha[mask], eps[mask] = values["alpha"], values["eps_r"]
     generation = BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
     grains = bind_grain_regions_2d(prepared, spatial, geometry)
+    faceD = []
+    for carrier in ("electron", "hole"):
+        faceD.append(np.r_[np.repeat(getattr(column.parameters, carrier + "_diffusivity_m2_s"), geometry.nx - 1),
+                           np.repeat(getattr(column, carrier + "_diffusivity_faces_m2_s"), geometry.nx)])
+    empirical: dict[str, np.ndarray] = {}
+    for name in ("v_sat_n", "v_sat_p", "ct_beta_n", "ct_beta_p", "pf_gamma_n", "pf_gamma_p"):
+        painted = np.empty(column.node_count)
+        for layer, mask in zip(prepared.layers, column.parameters.layer_masks):
+            painted[mask] = dict(layer.parameters)[name]
+        empirical[name] = np.repeat(painted, geometry.nx)
+    transport = bind_field_transport_2d(geometry, faceD[0], faceD[1], column.thermal_voltage_V,
+        v_sat_n=empirical["v_sat_n"], v_sat_p=empirical["v_sat_p"],
+        ct_beta_n=empirical["ct_beta_n"], ct_beta_p=empirical["ct_beta_p"],
+        pf_gamma_n=empirical["pf_gamma_n"], pf_gamma_p=empirical["pf_gamma_p"])
     declaration = spatial.model_dump_json().encode()
     contact_model = (CLASSICAL_2D_DC_V1 if all(channel.kind == "fixed_reservoir" for channel in column.channels)
                      else CLASSICAL_2D_CONTACTS_V1)
@@ -94,5 +109,7 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
                                         separators=(",", ":")).encode()).hexdigest()
     if grains is not None:
         identity = hashlib.sha256(json.dumps((identity, grains.model_id), separators=(",", ":")).encode()).hexdigest()
+    if transport is not None:
+        identity = hashlib.sha256(json.dumps((identity, transport.identity_sha256), separators=(",", ":")).encode()).hexdigest()
     return CompiledDevice2D(identity, column, geometry, generation, eps, declaration,
-                            grain_recombination=grains, column_projection_json=projection)
+                            grain_recombination=grains, column_projection_json=projection, field_transport=transport)
