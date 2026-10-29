@@ -30,7 +30,7 @@ from solarlab.solvers.nonlinear.production import (
     production_convergence_norm, production_coordinates, production_residual_scaling,
 )
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D
-from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, _storage_mask, inventory_m2, step_accounting
+from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, storage_mask, inventory_m2, step_accounting
 from solarlab.solvers.time.ionic_backward_euler import (
     IonicBackwardEuler1DStep, step_accounting as ionic_accounting,
 )
@@ -105,7 +105,7 @@ class ElectronicStorage1D:
 
     def storage(self, u: Vector) -> Vector:
         result = self.physical_storage(u)
-        result[self.problem.device.node_count:] *= _storage_mask(self.problem.device).ravel()
+        result[self.problem.device.node_count:] *= storage_mask(self.problem.device).ravel()
         return result
 
     def storage_tangent(self, u: Vector) -> Matrix:
@@ -120,7 +120,7 @@ class ElectronicStorage1D:
         if not isinstance(old_problem, ElectronicStorage1D):
             raise ValueError("electronic BDF history must keep its original reference problem")
         change = self.physical_increment(u, old_problem, old_u)
-        change[self.problem.device.node_count:] *= _storage_mask(self.problem.device).ravel()
+        change[self.problem.device.node_count:] *= storage_mask(self.problem.device).ravel()
         return change
 
 
@@ -167,7 +167,7 @@ class IonicStorage1D:
             raise ValueError("ionic BDF history must keep its original physical reference")
         change = self.physical_increment(u, old_problem, old_u)
         count = self.problem.device.node_count
-        change[count:3 * count] *= _storage_mask(self.problem.device.electronic_component).ravel()
+        change[count:3 * count] *= storage_mask(self.problem.device.electronic_component).ravel()
         return change
 
 
@@ -306,7 +306,7 @@ def bdf_accounting(step: BDFStep, u: Vector) -> dict[str, Any]:
     rounded_gauss_rate = rounded_displacement_rate[:-1] - rounded_displacement_rate[1:] + rounded_charge_rate
     jump = current[:-1] - current[1:]
     residual = step.residual(u)
-    mask = _storage_mask(device)
+    mask = storage_mask(device)
     continuity = Q * float(np.sum(abs(residual[count:3 * count].reshape(2, count)[mask])))
     if ionic:
         continuity += Q * math.fsum(abs(residual[3 * count:]).tolist())

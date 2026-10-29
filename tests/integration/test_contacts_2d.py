@@ -245,7 +245,7 @@ def test_physical_terminal_and_full_row_balances_keep_failed_finite_contacts(mix
         field[-g.nx:] -= g.x_widths_m * terminal[1]
     residual = problem.residual(u)[d.node_count:].reshape(2, d.node_count)
     np.testing.assert_allclose(expected[~d.fixed_carrier_mask], residual[~d.fixed_carrier_mask], rtol=2e-14, atol=1.0)
-    data = solver._diagnostics(problem, u, solver.Steady2DOptions())
+    data = solver.diagnostics(problem, u, solver.Steady2DOptions())
     np.testing.assert_array_equal(data["physical_carrier_balance_per_depth_m_s"], expected)
     physical_sum = np.sum(expected, axis=1)
     np.testing.assert_allclose(physical_sum, data["source_terminal_particle_balance_per_depth_m_s"], rtol=2e-13, atol=1.0)
@@ -255,7 +255,7 @@ def test_physical_terminal_and_full_row_balances_keep_failed_finite_contacts(mix
     contact_rows = np.zeros_like(rows, dtype=bool)
     contact_rows[:, g.contact_nodes] = True
     assert np.any(expected[contact_rows & ~d.fixed_carrier_mask] != 0.0)
-    assert not all(check.passed for check in solver._checks(data, solver.Steady2DOptions()))
+    assert not all(check.passed for check in solver.checks(data, solver.Steady2DOptions()))
     expected_current = np.sum((-Q * contacts[0] + Q * contacts[1]) * g.x_widths_m, axis=1)
     np.testing.assert_array_equal(problem.terminal_current_A_m(u), expected_current)
     np.testing.assert_array_equal(problem.terminal_current_density_A_m2(u), expected_current / g.lateral_length_m)
@@ -275,7 +275,7 @@ def test_only_real_fixed_rows_get_log_scaling_and_gate_exclusion(prepared, polic
     np.testing.assert_array_equal(weights[mask], 1.0 / options.electronic.contact_log_tolerance)
     assert settings.budget == SteadyOptions().budget()
     u = example.algebra_coordinates(d)
-    data = solver._diagnostics(DC2DProblem(d, .002, 1.0), u, options)
+    data = solver.diagnostics(DC2DProblem(d, .002, 1.0), u, options)
     if not np.any(mask):
         assert data["contact_log_max"] == 0.0
     assert data["contact_log_max"] == np.max(abs(DC2DProblem(d, .002, 1.0).residual(u)[d.node_count:].reshape(mask.shape)[mask]), initial=0.0)
@@ -331,7 +331,7 @@ def fixed_snapshot(d: CompiledDevice2D, voltage: float, generation: float, later
         "flux_p": problem.fluxes(u).hole.flux, "displacement": problem.displacement(u),
         "terminal_particles": np.stack(problem.contact_particle_fluxes(u)), "terminal_A_m": problem.terminal_current_A_m(u),
         "current_A_m2": problem.current_density(u), "sections_A_m": problem.cross_section_current_A_m(u),
-        "weights": settings.scaling.row_weights, "diagnostics": solver._diagnostics(problem, u, options)}
+        "weights": settings.scaling.row_weights, "diagnostics": solver.diagnostics(problem, u, options)}
 
 
 def test_exact_default_against_pinned_committed_source(monkeypatch):

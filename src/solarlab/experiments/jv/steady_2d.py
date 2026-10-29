@@ -29,8 +29,8 @@ from solarlab.experiments.worker import _atomic_json
 from solarlab.io.artifacts import bytes_artifact
 from solarlab.solvers.nonlinear.problem import GateOutcome, state_digest
 from solarlab.solvers.nonlinear.steady_2d import (
-    Steady2DOptions, Steady2DResult, _checks, _diagnostics, _scope as _steady_scope,
-    _sources as _steady_sources, solve_steady_state_2d,
+    Steady2DOptions, Steady2DResult, checks as steady_checks, diagnostics as steady_diagnostics, scope as steady_scope,
+    sources as steady_sources, solve_steady_state_2d,
 )
 
 __all__ = ["SteadyJV2DOptions", "SteadyJV2DInitial", "SteadyJV2DAttempt", "SteadyJV2DResult",
@@ -114,7 +114,7 @@ class SteadyJV2DResult:
 
 
 def _scope(device: CompiledDevice2D) -> None:
-    _steady_scope(device)
+    steady_scope(device)
     if device.field_transport is not None:
         raise ValueError("unsupported_field_transport_2d_jv: CT source binding is not admitted for 2D J-V")
     grain = getattr(device, "grain_recombination", None)
@@ -201,7 +201,7 @@ def _admit(device: CompiledDevice2D, text: str, sha256: str,
                     or document["error"] is not None or document["full_2d_newton_calls"] != 1):
                 raise ValueError("initial artifact requires actual accepted neutral grain2D Newton evidence")
             binding = document["grain_binding"]
-            if (document["result_2d"]["source_sha256"] != _steady_sources()
+            if (document["result_2d"]["source_sha256"] != steady_sources()
                     or any(document["source_sha256"].get(name) != pin for name, pin in model["source_sha256"].items())):
                 raise ValueError("grain initial physical source binding differs from current source")
             for name in ("model_id", "geometry_sha256", "effective_origin"):
@@ -233,7 +233,7 @@ def _admit(device: CompiledDevice2D, text: str, sha256: str,
                 or any(not np.array_equal(saved[name], getattr(state, name))
                        for name in ("potential_V", "electron_density_m3", "hole_density_m3"))):
             raise ValueError("initial accepted2D fields/coordinates are inconsistent")
-        checks = _checks(_diagnostics(DC2DProblem(device, voltage, generation), state.u, options), options)
+        checks = steady_checks(steady_diagnostics(DC2DProblem(device, voltage, generation), state.u, options), options)
         if ({item.name: item.limit for item in checks} != {item["name"]: item["limit"] for item in result["checks"]}
                 or not all(item.passed for item in checks)):
             raise ValueError("initial2D state fails current full original-gate admission")
@@ -412,7 +412,7 @@ def admit_steady_jv_2d_checkpoint(device: CompiledDevice2D, directory: str | Pat
         if any(not np.array_equal(point["state"][name], getattr(state, name))
                for name in ("potential_V", "electron_density_m3", "hole_density_m3")):
             raise ValueError("checkpoint physical fields changed")
-        if not all(item.passed for item in _checks(_diagnostics(DC2DProblem(device, state.voltage_V, generation), state.u,
+        if not all(item.passed for item in steady_checks(steady_diagnostics(DC2DProblem(device, state.voltage_V, generation), state.u,
                                                              controls.steady), controls.steady)):
             raise ValueError("checkpoint failed current original2D physical gate admission")
     return state, checkpoint["next_index"]
@@ -472,13 +472,13 @@ def _admit_wall_prefix(device: CompiledDevice2D, path: str | Path, sha256: str,
     for attempt in points:
         point = attempt["solution"]
         if (point["solver_controls"]["numerical"]["electronic"] != asdict(controls.steady.electronic)
-                or point["source_sha256"] != _steady_sources()):
+                or point["source_sha256"] != steady_sources()):
             raise ValueError("wall-prefix2D point physical source or controls changed")
         state = device.state(point["state"]["u"], voltage_V=attempt["voltage_V"])
         if any(not np.array_equal(point["state"][name], getattr(state, name))
                for name in ("potential_V", "electron_density_m3", "hole_density_m3")):
             raise ValueError("wall-prefix2D accepted physical fields changed")
-        admission = _checks(_diagnostics(DC2DProblem(device, state.voltage_V, generation), state.u,
+        admission = steady_checks(steady_diagnostics(DC2DProblem(device, state.voltage_V, generation), state.u,
                                           controls.steady), controls.steady)
         if not all(item.passed for item in admission):
             raise ValueError("wall-prefix2D accepted state fails original physical gates")
@@ -595,7 +595,7 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
             if accepted:
                 if solution.state is None or solution.diagnostics is None:
                     raise ValueError("accepted2D point must retain its original state and current ledger")
-                checks = _checks(_diagnostics(DC2DProblem(device, voltage, generation), solution.state.u, effective), effective)
+                checks = steady_checks(steady_diagnostics(DC2DProblem(device, voltage, generation), solution.state.u, effective), effective)
                 if not all(item.passed for item in checks):
                     raise ValueError("accepted2D point fails original physical gates on readback")
                 previous = _state(device, solution.state)
@@ -641,7 +641,7 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
         initial_provenance["continuation_prefix"] = {"path": initial.source_path, "sha256": initial.source_sha256}
     elif grain_model is not None:
         original = _decode(json.loads(initial.evidence_json))["result_2d"]["source_sha256"]
-        current = _steady_sources()
+        current = steady_sources()
         initial_provenance["grain_source_admission"] = {"saved_result_source_sha256": original,
             "current_result_source_sha256": current, "exact_source_match": original == current,
             "current_original_gate_revalidation": True, "original_saved_acceptance_preserved": True}

@@ -24,7 +24,7 @@ from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, I
 from solarlab.equations.ionic_closure import immobile_profile_binding
 from solarlab.experiments.transient import TransientOptions, TransientProtocol
 from solarlab.solvers.nonlinear.ionic_1d import (
-    ConstrainedIonic1DProblem, IonicSteadyOptions, _checks, _diagnostics, ionic_steady_control_record,
+    ConstrainedIonic1DProblem, IonicSteadyOptions, checks as ionic_checks, diagnostics as ionic_diagnostics, ionic_steady_control_record,
 )
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import (
@@ -122,7 +122,7 @@ def _admit_evidence(
         raise ValueError("incomplete or malformed initial steady artifact") from exc
     # Initial admission only. The time loop below never constructs this problem.
     steady = ConstrainedIonic1DProblem(Ionic1DProblem(compiled, voltage, generation), controls.inventory_row_node)
-    checks = _checks(_diagnostics(steady, state.u), controls)
+    checks = ionic_checks(ionic_diagnostics(steady, state.u), controls)
     saved_limits = {check.name: check.limit for check in saved_checks}
     if len(saved_limits) != len(saved_checks) or saved_limits != {check.name: check.limit for check in checks}:
         raise ValueError("initial recorded checks do not match the declared steady controls")

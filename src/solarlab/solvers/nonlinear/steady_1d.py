@@ -32,6 +32,7 @@ from solarlab.solvers.nonlinear.production import (
 __all__ = [
     "SteadyOptions", "SteadyState1D", "SteadyStateError",
     "solve_equilibrium", "solve_steady_state",
+    "physical_gates", "density_basin_seed",
 ]
 
 Q = ELEMENTARY_CHARGE_C
@@ -152,7 +153,7 @@ def _continuity_current_bound(problem: DC1DProblem, u: np.ndarray) -> float:
     return Q * total
 
 
-def _physical_gates(
+def physical_gates(
     problem: DC1DProblem, options: SteadyOptions, *, equilibrium: bool
 ) -> tuple[PhysicalGate, ...]:
     device = problem.device
@@ -237,7 +238,7 @@ def _solve_point(
             device, potential_step_V=options.potential_step_V,
             quasi_fermi_step=options.quasi_fermi_step,
         ),
-        options.budget(), _physical_gates(problem, options, equilibrium=equilibrium), False,
+        options.budget(), physical_gates(problem, options, equilibrium=equilibrium), False,
     )
     result = solve_newton(
         problem, np.asarray(u, dtype=float), settings,
@@ -259,7 +260,7 @@ def _point_result(
     )
 
 
-def _density_basin_seed(problem: DC1DProblem, u: np.ndarray) -> np.ndarray:
+def density_basin_seed(problem: DC1DProblem, u: np.ndarray) -> np.ndarray:
     """One physical density linearization at frozen phi, used only as a seed.
 
     The full production Jacobian supplies SG, contact, and recombination
@@ -373,7 +374,7 @@ def solve_steady_state(
         # orders of magnitude. Prepare in physical density coordinates from
         # the previous accepted point, then certify with coupled Newton.
         if index < len(light_steps) and light > 0.0:
-            u = _density_basin_seed(DC1DProblem(device, voltage, light), u)
+            u = density_basin_seed(DC1DProblem(device, voltage, light), u)
             density_stages.append((voltage, light))
         problem, result = _solve_point(device, u, voltage, light, controls)
         u = result.state

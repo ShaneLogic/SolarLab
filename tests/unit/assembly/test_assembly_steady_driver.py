@@ -22,7 +22,7 @@ from examples.research_1d.steady import load_device
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, assembled_problem_factory
 from solarlab.equations.assembly.quasi_fermi import quasi_fermi_potential_tangents
-from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, _quasi_fermi_potential_tangents
+from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, quasi_fermi_potential_tangents as reference_quasi_fermi_potential_tangents
 from solarlab.solvers.nonlinear import steady_1d
 from solarlab.solvers.nonlinear.newton import NewtonResult
 from solarlab.solvers.nonlinear.steady_1d import SteadyState1D, solve_equilibrium, solve_steady_state
@@ -171,6 +171,6 @@ def test_public_quasi_fermi_chain_equals_the_private_one(device: CompiledDevice1
         for flux, offset, sign in ((fluxes.electron, count, 1.0), (fluxes.hole, 2 * count, -1.0)):
             drive = sign * np.diff(u[offset:offset + count])
             public = quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
-            private = _quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
+            private = reference_quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
             for left, right in zip(public, private):
                 assert left.tobytes() == right.tobytes()

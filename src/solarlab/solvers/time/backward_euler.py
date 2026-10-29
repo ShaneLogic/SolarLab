@@ -19,7 +19,7 @@ from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, State1D
 from solarlab.physics.electrostatics import contact_displacement
 from solarlab.solvers.nonlinear.production import poisson_row_weights
 
-__all__ = ["BackwardEuler1DStep", "inventory_m2", "step_accounting"]
+__all__ = ["BackwardEuler1DStep", "inventory_m2", "step_accounting", "storage_mask"]
 
 
 def inventory_m2(device: CompiledDevice1D, state: State1D) -> np.ndarray:
@@ -29,7 +29,7 @@ def inventory_m2(device: CompiledDevice1D, state: State1D) -> np.ndarray:
     return np.stack((state.electron_density_m3, state.hole_density_m3)) * device.geometry.cell_measures_m
 
 
-def _storage_mask(device: CompiledDevice1D) -> np.ndarray:
+def storage_mask(device: CompiledDevice1D) -> np.ndarray:
     mask: np.ndarray = np.ones((2, device.node_count), dtype=bool)
     for species, carrier in enumerate(("n", "p")):
         for side, node in (("left", 0), ("right", device.node_count - 1)):
@@ -80,7 +80,7 @@ class BackwardEuler1DStep:
         count = self.endpoint.device.node_count
         rate = self.inventory_rate_m2_s(u)
         rows = result[count:].reshape(2, count)
-        mask = _storage_mask(self.endpoint.device)
+        mask = storage_mask(self.endpoint.device)
         rows[mask] -= rate[mask]
         return result
 
@@ -123,7 +123,7 @@ class BackwardEuler1DStep:
         if predictor != "generation_inventory":
             raise ValueError("unknown explicit Newton predictor")
         increment = self.dt_s * self.endpoint.generation_scale * device.generation.source_m3_s
-        mask = _storage_mask(device)
+        mask = storage_mask(device)
         count = device.node_count
         for species, (density, offset, sign) in enumerate((
             (self.previous.electron_density_m3, count, 1.0),
@@ -191,7 +191,7 @@ inventory rates, not the overwritten algebraic continuity rows.
     predicted_jump = charge_defect + gauss_rate + charge_subtraction_roundoff
     actual_jump = maxwell[:-1] - maxwell[1:]
     dc_residual, be_residual = problem.residual(u), step.residual(u)
-    mask = _storage_mask(device)
+    mask = storage_mask(device)
     return {
         "physical_certificate_status": "not_evaluated",
         "inventory_m2": inventory_m2(device, new),

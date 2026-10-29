@@ -24,7 +24,7 @@ from solarlab.solvers.nonlinear.steady_1d import (
     SteadyOptions,
     SteadyState1D,
     SteadyStateError,
-    _physical_gates,
+    physical_gates,
     solve_steady_state,
 )
 
@@ -178,7 +178,7 @@ def _verify_point(
         raise VocBracketError("saved point fails the production residual controls")
     if np.ptp(np.r_[current, contact]) > controls.current_spread_tolerance_A_m2:
         raise VocBracketError("saved point fails the all-face current gate")
-    if any(not gate(point.state.u).passed for gate in _physical_gates(
+    if any(not gate(point.state.u).passed for gate in physical_gates(
         problem, controls, equilibrium=point.voltage_V == 0.0 and generation_scale == 0.0,
     )):
         raise VocBracketError("saved point fails a recomputed production physical gate")

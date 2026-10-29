@@ -24,7 +24,7 @@ from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
 from solarlab.device.inputs import DeviceInput
-from solarlab.equations.dc_1d import DC1DProblem, _quasi_fermi_potential_tangents
+from solarlab.equations.dc_1d import DC1DProblem, quasi_fermi_potential_tangents
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.equations.ionic_small_signal import build_ionic_small_signal
 from solarlab.experiments.impedance import (
@@ -73,7 +73,7 @@ def unchanged_sg_particle_tangent(problem, u, x, voltage):
         (N, n, fluxes.electron, 1.0, after[0] - before[0]),
         (2 * N, p, fluxes.hole, -1.0, after[1] - before[1]),
     ):
-        left, _ = _quasi_fermi_potential_tangents(flux, sign * np.diff(u[offset:offset + N]), sign, device.thermal_voltage_V)
+        left, _ = quasi_fermi_potential_tangents(flux, sign * np.diff(u[offset:offset + N]), sign, device.thermal_voltage_V)
         left_z = sign * flux.left_density_derivative * density[:-1]
         result.append(left * (x[:N - 1] - x[1:N])
             + left_z * (x[offset:offset + N - 1] - x[offset + 1:offset + N])

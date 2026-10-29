@@ -23,7 +23,7 @@ def ct_device(request: pytest.FixtureRequest) -> CompiledDevice2D:
     spatial = grain_spatial_input() if request.param else spatial_input()
     device = compile_device_2d(prepare_case(), spatial)
     assert device.field_transport is not None
-    solver._scope(device)  # The reviewed single-point steady scope admits CT.
+    solver.scope(device)  # The reviewed single-point steady scope admits CT.
     return device
 
 
@@ -34,7 +34,7 @@ def test_active_field_transport_is_refused_before_jv_work(
     def forbidden(*args: object, **kwargs: object) -> NoReturn:
         raise AssertionError("CT J-V reached source capture, diagnostics or a solver")
 
-    for name in ("solve_steady_state_2d", "_sources", "_steady_sources", "_diagnostics"):
+    for name in ("solve_steady_state_2d", "_sources", "steady_sources", "steady_diagnostics"):
         monkeypatch.setattr(driver, name, forbidden)
     monkeypatch.setattr(solver, "solve_newton", forbidden)
     _, u = coordinates(ct_device, lateral=False)

@@ -45,7 +45,7 @@ from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem
 from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, solve_ionic_steady_state
-from solarlab.solvers.time.backward_euler import _storage_mask
+from solarlab.solvers.time.backward_euler import storage_mask
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep
 from solarlab.solvers.time.multiple_ionic_backward_euler import MultipleIonicBackwardEuler1DStep
 from solarlab.solvers.nonlinear.multiple_ionic_1d import (
@@ -589,7 +589,7 @@ def test_masked_storage_increment_keeps_the_original_signed_zeros(name: str) -> 
             carrier, local = step.inventory_rates_m2_s(state.u)
             ions = list(local)
         change = np.r_[np.zeros(count), carrier.ravel(), *ions]
-        change[count:3 * count] *= _storage_mask(device.electronic_component).ravel()
+        change[count:3 * count] *= storage_mask(device.electronic_component).ravel()
         assert increment.tobytes() == change.tobytes()
         negative += int(np.count_nonzero(np.signbit(increment[problem.binding.layout.constraint_mask()])))
     assert negative > 0

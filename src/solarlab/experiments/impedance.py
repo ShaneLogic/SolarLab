@@ -21,7 +21,7 @@ from scipy.sparse import csc_matrix, eye
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.equations.dc_1d import (
-    CompiledDevice1D, DC1DProblem, _quasi_fermi_potential_tangents,
+    CompiledDevice1D, DC1DProblem, quasi_fermi_potential_tangents,
 )
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
@@ -152,7 +152,7 @@ def _particle_perturbations(
         (2 * count, p, fluxes.hole, -1.0, references[1]),
     ):
         drive = sign * np.diff(u[offset:offset + count])
-        left_phi, _right_phi = _quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
+        left_phi, _right_phi = quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
         if transport is not None:
             diffusivity = (transport.electron_diffusivity_m2_s if offset == count
                            else transport.hole_diffusivity_m2_s)

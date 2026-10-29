@@ -41,7 +41,7 @@ from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, 
 from solarlab.equations.multiple_ionic_small_signal import MultipleIonicSmallSignal1D
 from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem
 from solarlab.solvers.nonlinear.multiple_ionic_1d import ConstrainedMultipleIonic1DProblem
-from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, _storage_mask, inventory_m2 as carrier_inventory
+from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, storage_mask, inventory_m2 as carrier_inventory
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep, inventory_m2 as ion_inventory
 from solarlab.solvers.time.multiple_ionic_backward_euler import MultipleIonicBackwardEuler1DStep
 from .assembly_parity import Block, Extraction
@@ -215,7 +215,7 @@ def _physical_storage(problem: Any, u: np.ndarray) -> np.ndarray:
         ions = [ion_inventory(device, state, species=name)[1] for name in device.ion_species_names]
     else:
         carrier, component, ions = carrier_inventory(device, state), device, []
-    carrier = np.where(_storage_mask(component), carrier, 0.0)
+    carrier = np.where(storage_mask(component), carrier, 0.0)
     return np.concatenate((np.zeros(n), carrier.ravel(), *ions))
 
 

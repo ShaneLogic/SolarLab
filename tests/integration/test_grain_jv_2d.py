@@ -45,7 +45,7 @@ def initial_path():
 def source_matched_fixture(device, initial_path):
     """Synthetic current labels; retained physical314 fields, no new solve."""
     record = _decode(json.loads(initial_path.read_bytes()))
-    record["result_2d"]["source_sha256"] = driver._steady_sources()
+    record["result_2d"]["source_sha256"] = driver.steady_sources()
     record["source_sha256"].update(driver._grain_model(device)["source_sha256"])
     # Example source paths participate in identity. Rebind this in-memory test
     # fixture after relocation; never change the original numerical artifact.

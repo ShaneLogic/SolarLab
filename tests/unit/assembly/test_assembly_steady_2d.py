@@ -100,8 +100,8 @@ def test_actual_195_row_steady_histories_are_bitwise(
     controls = steady_2d.Steady2DOptions()
     assert asdict(controls.electronic) == seed["original_controls"]["electronic"]
     original = DC2DProblem(device, voltage, light)
-    admitted = steady_2d._diagnostics(original, u, controls)
-    assert all(gate.passed for gate in steady_2d._checks(admitted, controls))
+    admitted = steady_2d.diagnostics(original, u, controls)
+    assert all(gate.passed for gate in steady_2d.checks(admitted, controls))
     assert admitted["original_rows"] == tuple(range(195))
     g, count = device.geometry, device.node_count
     y = (device.column.nodes_m - device.column.nodes_m[0]) / np.ptp(device.column.nodes_m)
@@ -113,7 +113,7 @@ def test_actual_195_row_steady_histories_are_bitwise(
     u[2 * count:] += (-.0015 * envelope[:, None] * np.cos(2 * np.pi * x)[None, :]).ravel()
     initial = device.state(u, voltage_V=voltage)
     assert np.max(abs(original.fluxes(u).electron.flux[:g.x_face_count])) > 0.0
-    assert not all(gate.passed for gate in steady_2d._checks(steady_2d._diagnostics(original, u, controls), controls))
+    assert not all(gate.passed for gate in steady_2d.checks(steady_2d.diagnostics(original, u, controls), controls))
     provenance = {"kind": "current-gate-admitted archived fields with an explicit lateral test perturbation",
                   "seed_artifact_sha256": seed["artifact_sha256"], "seed_state_sha256": seed["u_sha256"],
                   "seed_compiled_identity": seed["compiled_identity"], "current_compiled_identity": device.identity,

@@ -63,8 +63,8 @@ def test_accepted_only_continuation_retains_failed_and_unattempted_prefix(case, 
     device, initial_state = case
     initial = driver.SteadyJV2DInitial(initial_state, 1.0, "synthetic", hashlib.sha256(b"synthetic").hexdigest(), "synthetic")
     monkeypatch.setattr(driver, "_admit", lambda *args: (initial_state, 1.0, (GateOutcome("synthetic", True, 0.0, 1.0),)))
-    monkeypatch.setattr(driver, "_diagnostics", lambda *args: {})
-    monkeypatch.setattr(driver, "_checks", lambda *args: (GateOutcome("synthetic", True, 0.0, 1.0),))
+    monkeypatch.setattr(driver, "steady_diagnostics", lambda *args: {})
+    monkeypatch.setattr(driver, "steady_checks", lambda *args: (GateOutcome("synthetic", True, 0.0, 1.0),))
     calls, accepted_states = [], []
     def solve(device, *, voltage_V, generation_scale, options, initial_state, initial_provenance):
         calls.append(initial_state)
@@ -112,8 +112,8 @@ def test_durable_interrupted_point_and_exact_resume_admission(case, monkeypatch,
     device, initial_state = case
     initial = driver.SteadyJV2DInitial(initial_state, 1.0, "synthetic", hashlib.sha256(b"synthetic").hexdigest(), "synthetic")
     monkeypatch.setattr(driver, "_admit", lambda *a: (initial_state, 1.0, ()))
-    monkeypatch.setattr(driver, "_diagnostics", lambda *a: {})
-    monkeypatch.setattr(driver, "_checks", lambda *a: (GateOutcome("synthetic", True, 0.0, 1.0),))
+    monkeypatch.setattr(driver, "steady_diagnostics", lambda *a: {})
+    monkeypatch.setattr(driver, "steady_checks", lambda *a: (GateOutcome("synthetic", True, 0.0, 1.0),))
     calls = []
     def solve(device, *, voltage_V, generation_scale, options, initial_state, initial_provenance):
         calls.append(initial_state)
@@ -264,8 +264,8 @@ def wall_prefix(case, monkeypatch, tmp_path):
         hashlib.sha256(initial_path.read_bytes()).hexdigest(), "synthetic")
     check = GateOutcome("synthetic", True, 0.0, 1.0)
     monkeypatch.setattr(driver, "_admit", lambda *a: (state, 1.0, (check,)))
-    monkeypatch.setattr(driver, "_checks", lambda *a: (check,))
-    monkeypatch.setattr(driver, "_diagnostics", lambda *a: {})
+    monkeypatch.setattr(driver, "steady_checks", lambda *a: (check,))
+    monkeypatch.setattr(driver, "steady_diagnostics", lambda *a: {})
     calls = []
     def solve(device, *, voltage_V, generation_scale, options, initial_state, initial_provenance):
         calls.append(initial_state)
@@ -282,7 +282,7 @@ def wall_prefix(case, monkeypatch, tmp_path):
             "converged" if accepted else "wall_budget_exhausted", newton, initial_state.u, candidate,
             initial_provenance, data, data if accepted else None, (check,) if accepted else (), device.identity,
             voltage_V, generation_scale, {"numerical": asdict(options), "hidden_seed_or_fallback_calls": 0},
-            driver._steady_sources(), {"residual": 1, "jacobian": 1}, 0.0,
+            driver.steady_sources(), {"residual": 1, "jacobian": 1}, 0.0,
             None if accepted else "synthetic wall stop")
     monkeypatch.setattr(driver, "solve_steady_state_2d", solve)
     result = driver.run_steady_jv_2d(device, initial, np.array([0.0, .025, .05, .075, .1]))

@@ -128,12 +128,12 @@ class SteadyJVProtocol:
 
 def validate_steady_jv_scope(prepared: PreparedDevice) -> None:
     """Refuse unsupported configured physics before numerical preparation."""
-    from solarlab.device.compile_1d import _unsupported
+    from solarlab.device.compile_1d import unsupported
 
     if type(prepared) is not PreparedDevice:
         raise ValueError("an actual explicit PreparedDevice is required")
     # Reuse the compiler's static check, before geometry/operators or a solve.
-    _unsupported(prepared, prepared.to_mapping(), tuple(p for p in prepared.layers if p.role != "substrate"))
+    unsupported(prepared, prepared.to_mapping(), tuple(p for p in prepared.layers if p.role != "substrate"))
 
 
 def steady_jv_identity_inputs(prepared: PreparedDevice, implementation: BuildSource) -> IdentityInputs:

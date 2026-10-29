@@ -64,6 +64,7 @@ __all__ = [
     "DC1DProblem",
     "LocalRecombinationModel",
     "State1D",
+    "quasi_fermi_potential_tangents",
 ]
 
 Vector: TypeAlias = NDArray[np.float64]
@@ -292,7 +293,7 @@ class CompiledDevice1D:
         )
 
 
-def _quasi_fermi_potential_tangents(
+def quasi_fermi_potential_tangents(
     flux: CarrierFaceFlux, drive: Vector, carrier_sign: float, thermal: float
 ) -> tuple[Vector, Vector]:
     """Chain the SG kernel through density(phi, z) without equilibrium cancellation."""
@@ -475,7 +476,7 @@ class DC1DProblem:
             ("p", 2 * count, p, fluxes.hole, -1.0),
         ):
             drive = sign * np.diff(values[offset:offset + count])
-            left_phi, right_phi = _quasi_fermi_potential_tangents(flux, drive, sign, thermal)
+            left_phi, right_phi = quasi_fermi_potential_tangents(flux, drive, sign, thermal)
             if transport is not None:
                 diffusivity = (transport.electron_diffusivity_m2_s if carrier == "n"
                                else transport.hole_diffusivity_m2_s)

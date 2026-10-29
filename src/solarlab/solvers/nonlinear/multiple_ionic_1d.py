@@ -21,7 +21,7 @@ from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, Ionic
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, ResidualScaling, StepControl
 from solarlab.solvers.nonlinear.production import poisson_row_weights, production_coordinates, production_residual_scaling
-from solarlab.solvers.nonlinear.steady_1d import _physical_gates
+from solarlab.solvers.nonlinear.steady_1d import physical_gates
 
 __all__ = ["ConstrainedMultipleIonic1DProblem", "MultipleIonicSteadyResult",
            "multiple_ionic_diagnostics", "multiple_ionic_checks", "solve_multiple_ionic_steady_state"]
@@ -232,7 +232,7 @@ def multiple_ionic_checks(
         residual=lambda u: original.residual(full(u))[:size],
         current_density=lambda u: electronic.current_density(u) + original.ion_current_density_A_m2(full(u)),
         contact_current_density=electronic.contact_current_density, fluxes=electronic.fluxes)
-    gates = _physical_gates(cast(DC1DProblem, gate_view), options.electronic,
+    gates = physical_gates(cast(DC1DProblem, gate_view), options.electronic,
                             equilibrium=original.voltage_V == 0.0 and original.generation_scale == 0.0)
     outcomes = [gate(y[:size]) for gate in gates]
     data = multiple_ionic_diagnostics(problem, y)

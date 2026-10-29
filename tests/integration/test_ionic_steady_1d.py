@@ -17,7 +17,7 @@ from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
 from solarlab.device.inputs import DeviceInput
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.physics.ions import WHOLE_FLUX_STERIC_V1
-from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, _diagnostics, solve_ionic_steady_state
+from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, diagnostics as ionic_diagnostics, solve_ionic_steady_state
 from solarlab.solvers.nonlinear.problem import SolveBudget
 from solarlab.solvers.nonlinear.production import (
     POISSON_CONTACT_BALANCE_V1, production_coordinates, production_residual_scaling,
@@ -298,7 +298,7 @@ def test_multilayer_diagnostics_map_charge_and_current_without_endpoint_heuristi
     count = device.node_count
     y = multilayer_trial(multilayer_case)
     density = device.fields(y, voltage_V=0.002)[3]
-    diagnostics = _diagnostics(problem, y)
+    diagnostics = ionic_diagnostics(problem, y)
     physical_domain = Q * device.ion_geometry.cell_measures_m * (density - device.positive_ion_reference_m3)
     physical = np.zeros(count)
     physical[device.ion_node_indices] = physical_domain

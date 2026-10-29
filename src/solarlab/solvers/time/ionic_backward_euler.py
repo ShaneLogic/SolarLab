@@ -19,7 +19,7 @@ from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, I
 from solarlab.physics.electrostatics import contact_displacement
 from solarlab.physics.ions.shared_site import shared_site_secant_m3
 from solarlab.solvers.time.backward_euler import (
-    BackwardEuler1DStep, _storage_mask, inventory_m2 as electronic_inventory_m2,
+    BackwardEuler1DStep, storage_mask, inventory_m2 as electronic_inventory_m2,
     step_accounting as electronic_step_accounting,
 )
 
@@ -135,7 +135,7 @@ class IonicBackwardEuler1DStep:
         N = self.endpoint.device.node_count
         carrier, ions = self.inventory_rates_m2_s(y)
         rows = result[N:3 * N].reshape(2, N)
-        mask = _storage_mask(self.endpoint.device.electronic_component)
+        mask = storage_mask(self.endpoint.device.electronic_component)
         rows[mask] -= carrier[mask]
         for block, ion in zip(self.endpoint.device.ion_species_slices, ions):
             result[block] -= ion
@@ -225,7 +225,7 @@ def step_accounting(step: IonicBackwardEuler1DStep, y: np.ndarray) -> dict[str, 
     rounded_carrier_rate = (new_carrier_inventory - old_carrier_inventory) / dt
     rounded_ion_rate = (new_ion_inventory - old_ion_inventory) / dt
     residual = step.residual(y)
-    mask = _storage_mask(device.electronic_component)
+    mask = storage_mask(device.electronic_component)
     continuity_bound = Q * (float(np.sum(abs(residual[N:3 * N].reshape(2, N)[mask])))
                             + math.fsum(abs(residual[3 * N:]).tolist()))
     result = {

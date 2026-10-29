@@ -128,7 +128,7 @@ def ionic_jv_identity_inputs(prepared: PreparedDevice, implementation: BuildSour
 
 def _validate(prepared: PreparedDevice, protocol: IonicJVProtocol, intervals: tuple[int, ...], domain: str,
               endpoints: tuple[str, str], options: IonicSteadyJVOptions, initial: IonicJVInitial) -> None:
-    from solarlab.device.compile_1d import _unsupported
+    from solarlab.device.compile_1d import unsupported
     from solarlab.experiments.jv.ionic_steady import IonicSteadyJVOptions
 
     if type(prepared) is not PreparedDevice or type(protocol) is not IonicJVProtocol or type(initial) is not IonicJVInitial:
@@ -160,7 +160,7 @@ def _validate(prepared: PreparedDevice, protocol: IonicJVProtocol, intervals: tu
         raise ValueError("shared sites require two unsaturated populations and one diffusion-only capacity")
     screen = {**data, "settings": {**data["settings"], "ion_steric_shared_site": False, "ion_steric_diffusion_only": False}}
     screened = tuple(replace(layer, parameters=tuple((k, 0.0 if k in populations else v) for k, v in layer.parameters)) for layer in layers)
-    _unsupported(prepared, screen, screened)
+    unsupported(prepared, screen, screened)
 
 
 def _roles(prepared: PreparedDevice, body: dict[str, Any], implementation: BuildSource) -> dict[str, SourceDocument]:

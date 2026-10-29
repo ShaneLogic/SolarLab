@@ -188,10 +188,10 @@ def coupled_device(prepared):
 
 def test_isolated_original195_rows_jacobian_and_contact_half_cell_photons(prepared):
     from solarlab.equations.dc_2d import DC2DProblem
-    from solarlab.solvers.nonlinear.steady_2d import _scope
+    from solarlab.solvers.nonlinear.steady_2d import scope
     prepared = absorbing_contacts(prepared)
     device = coupled_device(prepared)
-    _scope(device)
+    scope(device)
     assert device.node_count == 65 and device.generation_y.method == "transfer_matrix"
     bound = bind_optical_generation_2d(prepared, device.geometry)
     np.testing.assert_array_equal(device.generation_source_m3_s, bound.source_m3_s)
@@ -219,18 +219,18 @@ def test_isolated_original195_rows_jacobian_and_contact_half_cell_photons(prepar
 def test_isolated_active_optical_sources_are_captured_and_off_stays_old(prepared, monkeypatch):
     import sys
     from examples.research_1d.steady import load_device
-    from solarlab.solvers.nonlinear.steady_2d import _sources
+    from solarlab.solvers.nonlinear.steady_2d import sources
     active, off = coupled_device(prepared), coupled_device(load_device())
-    capture = _sources(active)
+    capture = sources(active)
     names = ("solarlab.device.optical_generation_2d", "solarlab.device.optical_generation",
              "solarlab.physics.generation.optical_binding", "solarlab.physics.generation.transfer_matrix")
     for name in names:
         assert capture[name] == hashlib.sha256(Path(sys.modules[name].__file__).read_bytes()).hexdigest()
-        assert name not in _sources(off)
-    assert _sources(off) == _sources()
+        assert name not in sources(off)
+    assert sources(off) == sources()
     old = capture[names[0]]
     monkeypatch.setattr(sys.modules[names[0]], "__file__", sys.modules[names[1]].__file__)
-    assert _sources(active)[names[0]] != old
+    assert sources(active)[names[0]] != old
 
 
 def test_optical_prefix_is_source_only_until_electrical_compiler_admission(prepared):

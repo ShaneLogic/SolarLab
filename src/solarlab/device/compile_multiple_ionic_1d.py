@@ -8,7 +8,7 @@ import hashlib
 import json
 
 from solarlab.config.resolve_device import resolve_device
-from solarlab.device.compile_ionic_1d import _ION_INPUTS, compile_ionic_device_1d
+from solarlab.device.compile_ionic_1d import ION_INPUTS, compile_ionic_device_1d
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_1d import CapabilityError
@@ -52,7 +52,7 @@ def compile_multiple_ionic_device_1d(
     left, right = (layer_ids.index(name) for name in names)
     if right - left < 2:
         raise CapabilityError("domains must be left-to-right and separated by a configured inactive layer; touching domains are unsupported")
-    originals = [{"layer": layer.id, **{key: dict(layer.parameters)[key] for key in _ION_INPUTS}}
+    originals = [{"layer": layer.id, **{key: dict(layer.parameters)[key] for key in ION_INPUTS}}
                  for layer in prepared.layers]
     for entry in originals:
         if entry["layer"] not in names and any(entry[key] != 0.0 for key in ("P0", "P0_neg", "D_ion", "D_ion_neg")):

@@ -52,12 +52,12 @@ def test_full195_row_scaling_units_and_original_step_budget(case):
         interior = np.setdiff1d(np.arange(65), contacts)
         expected = 130 * Q / (device.geometry.lateral_length_m * 1e-8)
         np.testing.assert_array_equal(settings.scaling.row_weights[offset + interior], expected)
-    data = solver._diagnostics(problem, u, options)
+    data = solver.diagnostics(problem, u, options)
     residual = problem.residual(u)[65:].reshape(2, 65).copy()
     residual[:, contacts] = 0.0
     assert data["carrier_balance_bound_A_m2"] == Q * np.sum(abs(residual)) / device.geometry.lateral_length_m
     assert data["original_rows"] == tuple(range(195))
-    assert not all(check.passed for check in solver._checks(data, options))
+    assert not all(check.passed for check in solver.checks(data, options))
 
 
 def test_gauss_scale_uses_area_and_both_axis_face_lengths(case):
@@ -87,7 +87,7 @@ def test_terminal_source_and_per_cell_physical_balances_are_conservative(case):
     u = u.copy()
     u[1] += .001
     u[device.node_count + 1] += .02
-    data = solver._diagnostics(problem, u, options)
+    data = solver.diagnostics(problem, u, options)
     contacts = device.geometry.contact_nodes
     interior = np.setdiff1d(np.arange(device.node_count), contacts)
     physical = data["physical_carrier_balance_per_depth_m_s"]
@@ -107,8 +107,8 @@ def test_width_normalizes_real2d_carrier_and_current_bounds(case):
     wide = compile_device_2d(load_device(), JV2DInput(kind="jv_2d", lateral_length="2 um", Nx=4,
                                                     Ny_per_layer=4, lateral_bc="neumann"))
     column, u = dc_assembly.coordinates(device, lateral=False)
-    a = solver._diagnostics(DC2DProblem(device, .002, 1.0), u, options)
-    b = solver._diagnostics(DC2DProblem(wide, .002, 1.0), wide.extrude_coordinates(column), options)
+    a = solver.diagnostics(DC2DProblem(device, .002, 1.0), u, options)
+    b = solver.diagnostics(DC2DProblem(wide, .002, 1.0), wide.extrude_coordinates(column), options)
     for key in ("carrier_balance_bound_A_m2", "source_terminal_current_bound_A_m2", "cross_section_terminal_spread_A_m2"):
         np.testing.assert_allclose(a[key], b[key], rtol=2e-13, atol=1e-12)
     np.testing.assert_allclose(b["terminal_current_per_depth_A_m"], 2 * a["terminal_current_per_depth_A_m"], rtol=2e-14)
@@ -181,7 +181,7 @@ def test_illumination_completion_uses_cold_seed_without_replaying_dark(case, mon
          "error": "synthetic warm-seed failure"}]}
     monkeypatch.setattr(example, "compile_device_2d", lambda *args: device)
     monkeypatch.setattr(example, "read_result", lambda *args: fake_prior)
-    monkeypatch.setattr(example, "_checks", lambda *args: (GateOutcome("synthetic_branch_check", True, 0.0, 1.0),))
+    monkeypatch.setattr(example, "steady_checks", lambda *args: (GateOutcome("synthetic_branch_check", True, 0.0, 1.0),))
     calls = []
     def seed_probe(*args, **kwargs):
         calls.append(kwargs)

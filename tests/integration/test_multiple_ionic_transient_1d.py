@@ -23,7 +23,7 @@ from solarlab.device.compile_multiple_ionic_1d import CompiledMultipleIonicDevic
 from solarlab.equations.multiple_ionic_1d import MultipleIonic1DProblem
 from solarlab.experiments.multiple_ionic_transient import load_multiple_ionic_steady_initial, read_multiple_ionic_transient
 from solarlab.experiments.transient_results import _decode, _encode
-from solarlab.solvers.time.backward_euler import _storage_mask
+from solarlab.solvers.time.backward_euler import storage_mask
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.solvers.time.multiple_ionic_backward_euler import MultipleIonicBackwardEuler1DStep, multiple_ionic_step_accounting
@@ -95,7 +95,7 @@ def test_every_native_domain_time_row_matches_existing_physical_secant(kind: str
         local = IonicBackwardEuler1DStep(Ionic1DProblem(domain, 0.003, 0.0), previous, step.dt_s)
         expected = local.residual(device.local_coordinates(y, domain.domain_layer_id))
         np.testing.assert_array_equal(actual[device.domain_slices[domain.domain_layer_id]], expected[3 * device.node_count:])
-    mask = _storage_mask(device.electronic_component)
+    mask = storage_mask(device.electronic_component)
     carrier = step.electronic_step.residual(y[:3 * device.node_count])[device.node_count:].reshape(2, device.node_count)
     np.testing.assert_array_equal(actual[device.node_count:3 * device.node_count].reshape(2, device.node_count), carrier)
     assert np.count_nonzero(~mask) == 4

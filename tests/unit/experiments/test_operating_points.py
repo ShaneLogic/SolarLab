@@ -288,7 +288,7 @@ def test_changing_policy_never_resigns_a_failed_saved_point(actual_bracket, poli
 def test_saved_points_recompute_gates_independently_of_stored_passes(actual_bracket, monkeypatch, policy):
     compiled, bracket, controls = actual_bracket
     point = bracket.solutions[0]
-    genuine = points._physical_gates
+    genuine = points.physical_gates
     calls = []
 
     def guarded(problem, options, *, equilibrium):
@@ -301,7 +301,7 @@ def test_saved_points_recompute_gates_independently_of_stored_passes(actual_brac
 
         return (rejected, *gates[1:])
 
-    monkeypatch.setattr(points, "_physical_gates", guarded)
+    monkeypatch.setattr(points, 'physical_gates', guarded)
     assert all(gate.passed for gate in point.physical_gates)
     with pytest.raises(points.VocBracketError, match="recomputed production physical gate"):
         points._verify_point(

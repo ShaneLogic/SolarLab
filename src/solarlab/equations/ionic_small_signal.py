@@ -23,15 +23,15 @@ from numpy.typing import ArrayLike
 from scipy.sparse import csc_matrix
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
-from solarlab.equations.dc_1d import CapabilityError, _quasi_fermi_potential_tangents
+from solarlab.equations.dc_1d import CapabilityError, quasi_fermi_potential_tangents
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
 from solarlab.equations.ionic_closure import declared_immobile_profiles, immobile_profile_binding
 from solarlab.physics.ions import ion_face_flux_jacobian
 
-__all__ = ["IonicACSystem", "IonicSmallSignal1D", "build_ionic_small_signal"]
+__all__ = ["IonicACSystem", "IonicSmallSignal1D", "build_ionic_small_signal", "frequency_voltage"]
 
 
-def _frequency_voltage(frequency_Hz: float, voltage_phasor_V: complex, ion_mode: str) -> tuple[float, complex]:
+def frequency_voltage(frequency_Hz: float, voltage_phasor_V: complex, ion_mode: str) -> tuple[float, complex]:
     frequency, voltage = float(frequency_Hz), complex(voltage_phasor_V)
     if not math.isfinite(frequency) or frequency < 0.0:
         raise ValueError("frequency must be finite nonnegative Hz")
@@ -176,7 +176,7 @@ class IonicSmallSignal1D:
 
     def system(self, frequency_Hz: float, *, voltage_phasor_V: complex = 1.0, ion_response: str = "mobile", ion_mode: str | None = None) -> IonicACSystem:
         ion_mode = ion_response if ion_mode is None else ion_mode
-        frequency, voltage = _frequency_voltage(frequency_Hz, voltage_phasor_V, ion_mode)
+        frequency, voltage = frequency_voltage(frequency_Hz, voltage_phasor_V, ion_mode)
         device, N = self.device, self.device.node_count
         J, K = self.jacobian.copy().tolil(), self.storage_jacobian.copy().tolil()
         rhs: np.ndarray = np.zeros(device.state_size, dtype=complex)
@@ -229,7 +229,7 @@ class IonicSmallSignal1D:
                              self.coordinate_form, self.coordinate_lift_per_V, profile_rows)
 
     def original_residual(self, fixed_perturbation: ArrayLike, frequency_Hz: float, *, voltage_phasor_V: complex = 1.0) -> np.ndarray:
-        frequency, voltage = _frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
+        frequency, voltage = frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
         x = np.asarray(fixed_perturbation, dtype=complex)
         if x.shape != (self.device.state_size,) or not np.all(np.isfinite(x)):
             raise ValueError("ionic AC perturbation must be finite and complete")
@@ -249,7 +249,7 @@ class IonicSmallSignal1D:
         for offset, density, flux, sign, reference in ((N, state.electron_density_m3, fluxes.electron, 1.0, after[0] - before[0]),
                                                       (2 * N, state.hole_density_m3, fluxes.hole, -1.0, after[1] - before[1])):
             drive = sign * np.diff(u[offset:offset + N])
-            left_phi, _ = _quasi_fermi_potential_tangents(flux, drive, sign, component.thermal_voltage_V)
+            left_phi, _ = quasi_fermi_potential_tangents(flux, drive, sign, component.thermal_voltage_V)
             if transport is not None:
                 diffusivity = (transport.electron_diffusivity_m2_s if offset == N
                                else transport.hole_diffusivity_m2_s)
@@ -305,7 +305,7 @@ class IonicSmallSignal1D:
             descriptor = fixed_perturbation
             fixed_perturbation, frequency_Hz, ion_mode = frequency_Hz, descriptor.frequency_Hz, descriptor.ion_mode
             coordinate_form = descriptor.coordinate_form
-        frequency, voltage = _frequency_voltage(frequency_Hz, voltage_phasor_V, ion_mode)
+        frequency, voltage = frequency_voltage(frequency_Hz, voltage_phasor_V, ion_mode)
         device, N = self.device, self.device.node_count
         x = np.asarray(fixed_perturbation, dtype=complex)
         form = self.coordinate_form if coordinate_form is None else coordinate_form

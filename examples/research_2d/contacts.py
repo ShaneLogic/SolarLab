@@ -35,7 +35,7 @@ from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem, State2D
 from solarlab.solvers.nonlinear.newton import _Factor
 from solarlab.solvers.nonlinear.problem import GateOutcome, state_digest
-from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, _checks, _diagnostics, _settings, solve_steady_state_2d
+from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, checks as steady_checks, diagnostics as steady_diagnostics, _settings, solve_steady_state_2d
 
 SCHEMA = "solarlab.carrier_contacts_2d.algebra.v1"
 PREPARATION_SCHEMA = "solarlab.carrier_contacts_2d.preparation.v1"
@@ -69,7 +69,7 @@ def prepare_seed(path: Path, sha256: str) -> tuple[CompiledDevice2D, State2D, di
     """One five-node density correction; all other free changes are explicit contact kinetics.
 
     This is numerical preparation, using the same physical-density chain as
-    steady_1d._density_basin_seed on only the blocking n-left block. It is
+    steady_1d.density_basin_seed on only the blocking n-left block. It is
     never an accepted 2D state or an alternative equation/solver.
     """
     prior = read_fixed_result(path, sha256)
@@ -140,7 +140,7 @@ def prepare_seed(path: Path, sha256: str) -> tuple[CompiledDevice2D, State2D, di
     settings, _ = _settings(d, Steady2DOptions(), lambda values: GateOutcome("unused", True, 0.0, 1.0))
     step = _Factor(problem.jacobian(u)).solve(-after)
     fraction = settings.step_control.step_fraction(u, step)
-    data = _diagnostics(problem, u, Steady2DOptions())
+    data = steady_diagnostics(problem, u, Steady2DOptions())
     info = {"schema": PREPARATION_SCHEMA, "seed_path": str(path), "seed_sha256": sha256,
         "original_compiled_identity": prior["compiled_identity"], "compiled_identity": d.identity,
         "original_source_sha256": old["source_sha256"], "original_acceptance_checks": old["checks"],
@@ -153,7 +153,7 @@ def prepare_seed(path: Path, sha256: str) -> tuple[CompiledDevice2D, State2D, di
         "full_residual_before": before, "full_residual_after": after, "full_newton_direction": step,
         "full_step_inf": float(np.max(abs(step))), "full_step_fraction": fraction,
         "full_step_can_progress": bool(np.all(np.isfinite(step)) and fraction > 0.0 and 1.0 - fraction != 1.0),
-        "initial_diagnostics": data, "initial_checks": [asdict(c) for c in _checks(data, Steady2DOptions())],
+        "initial_diagnostics": data, "initial_checks": [asdict(c) for c in steady_checks(data, Steady2DOptions())],
         "contact_density_linear_solves": 1, "full_direction_linear_solves": 1, "nonlinear_solves": 0,
         "accepted_for_contact_model": False, "qualification": False}
     return d, d.state(u, voltage_V=VOLTAGE_V), info
@@ -202,7 +202,7 @@ def assemble() -> dict[str, Any]:
                  + 8 * derivative.residual(u + h * direction) - derivative.residual(u + 2 * h * direction)) / (12 * h)
     scale = np.maximum(abs(matrix) @ abs(direction), 1e-20)
     options = Steady2DOptions()
-    diagnostics = _diagnostics(problem, u, options)
+    diagnostics = steady_diagnostics(problem, u, options)
     summary = {"prepared_identity": prepared.content_sha256, "compiled_identity": d.identity,
         "shape_Ny_Nx": d.geometry.shape, "unknowns": 3 * d.node_count, "jacobian_nnz": matrix.nnz,
         "contact_channels": [dict(asdict(channel), kind=channel.kind) for channel in d.column.channels],

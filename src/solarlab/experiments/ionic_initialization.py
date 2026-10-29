@@ -30,7 +30,7 @@ from solarlab.solvers.nonlinear.ionic_1d import IonicSteadyOptions, IonicSteadyR
 from solarlab.solvers.nonlinear.newton import NewtonResult
 from solarlab.solvers.nonlinear.problem import state_digest
 from solarlab.solvers.nonlinear.steady_1d import (
-    SteadyState1D, SteadyStateError, _density_basin_seed, solve_steady_state,
+    SteadyState1D, SteadyStateError, density_basin_seed, solve_steady_state,
 )
 
 __all__ = ["IonicInitializationOptions", "IonicInitializationResult", "IonicDensitySeedArtifact",
@@ -267,7 +267,7 @@ def initialize_ionic_steady_state(
         stage_started = time.monotonic()
         counts["density_preparation_calls"] += 1
         try:
-            seeded_u = _density_basin_seed(ObservedDensityProblem(component, voltage, generation), electronic_u)
+            seeded_u = density_basin_seed(ObservedDensityProblem(component, voltage, generation), electronic_u)
             density_seed = component.state(seeded_u, voltage_V=voltage)
             if (not np.array_equal(density_seed.potential_V, electronic_initial.potential_V)
                     or any(not np.all(np.isfinite(a)) or np.any(a <= 0)

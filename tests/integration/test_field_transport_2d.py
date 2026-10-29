@@ -190,9 +190,9 @@ def integrated_case(*, grain=False, contact=False, active=True):
 def test_composed_full195_rows_and_grain_contact_preservation(grain, contact, potential_only):
     from examples.research_2d.dc_assembly import coordinates
     from solarlab.equations.dc_2d import DC2DProblem
-    from solarlab.solvers.nonlinear.steady_2d import _scope
+    from solarlab.solvers.nonlinear.steady_2d import scope
     d = integrated_case(grain=grain, contact=contact)
-    _scope(d)
+    scope(d)
     assert d.field_transport is not None and d.node_count == 65
     _, u = coordinates(d, lateral=True)
     u[:65] += np.tile(np.linspace(0.0, .06, 5), 13)
@@ -231,19 +231,19 @@ def test_composed_full195_rows_and_grain_contact_preservation(grain, contact, po
 def test_composed_active_source_guard_has_actual_law_hashes_and_off_stays_old(monkeypatch):
     import hashlib
     import sys
-    from solarlab.solvers.nonlinear.steady_2d import _sources
+    from solarlab.solvers.nonlinear.steady_2d import sources
     active, off = integrated_case(), integrated_case(active=False)
     names = ("solarlab.equations.field_transport_2d", "solarlab.physics.transport.field_mobility",
              "solarlab.physics.transport.field_mobility_tangents")
-    capture = _sources(active)
+    capture = sources(active)
     for name in names:
         assert capture[name] == hashlib.sha256(Path(sys.modules[name].__file__).read_bytes()).hexdigest()
-        assert name not in _sources(off)
-    assert _sources(off) == _sources()
+        assert name not in sources(off)
+    assert sources(off) == sources()
     old = capture[names[0]]
     module = sys.modules[names[0]]
     monkeypatch.setattr(module, "__file__", sys.modules[names[1]].__file__)
-    assert _sources(active)[names[0]] != old
+    assert sources(active)[names[0]] != old
 
 
 def test_example_configuration_is_explicit_and_preparation_performs_no_solve(tmp_path, monkeypatch):

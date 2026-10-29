@@ -289,7 +289,7 @@ def test_failed_light_stage_preserves_failure_and_never_advances(prepared, light
         termination=Termination.LINE_SEARCH_FAILED, message="injected failed light stage",
     )
     original_point = steady_solver._solve_point
-    original_seed = steady_solver._density_basin_seed
+    original_seed = steady_solver.density_basin_seed
     seed_inputs = []
     accepted = []
 
@@ -304,7 +304,7 @@ def test_failed_light_stage_preserves_failure_and_never_advances(prepared, light
         accepted.append(result)
         return problem, result
 
-    monkeypatch.setattr(steady_solver, "_density_basin_seed", record_seed)
+    monkeypatch.setattr(steady_solver, 'density_basin_seed', record_seed)
     monkeypatch.setattr(steady_solver, "_solve_point", stop_second_light)
     with pytest.raises(SteadyStateError) as failure:
         solve_steady_state(compiled)

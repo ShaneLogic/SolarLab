@@ -75,7 +75,7 @@ def ionic_transient_identity_inputs(prepared: PreparedDevice, implementation: Bu
 
 def _validate(prepared: PreparedDevice, protocol: TransientProtocol, intervals: tuple[int, ...], domain: str,
               endpoints: tuple[str, str], options: IonicTransientOptions, initial: IonicSteadyOptions) -> None:
-    from solarlab.device.compile_1d import _unsupported
+    from solarlab.device.compile_1d import unsupported
     from solarlab.experiments.ionic_transient import IonicTransientOptions
     from solarlab.experiments.transient import TransientProtocol
     from solarlab.solvers.nonlinear.ionic_1d import IonicSteadyOptions
@@ -115,7 +115,7 @@ def _validate(prepared: PreparedDevice, protocol: TransientProtocol, intervals: 
     screen = {**data, "settings": {**data["settings"], "ion_steric_shared_site": False, "ion_steric_diffusion_only": False}}
     screened_layers = tuple(replace(layer, parameters=tuple((key, 0.0 if key in populations else value)
                              for key, value in layer.parameters)) for layer in layers)
-    _unsupported(prepared, screen, screened_layers)
+    unsupported(prepared, screen, screened_layers)
 
 
 def _body(prepared: PreparedDevice, protocol: TransientProtocol, intervals: tuple[int, ...], domain: str,

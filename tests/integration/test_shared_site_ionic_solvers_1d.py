@@ -16,7 +16,7 @@ from examples.research_1d.shared_site_ionic import compile_case, run_wave
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.experiments import ionic_transient as driver
-from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, _diagnostics
+from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, diagnostics as ionic_diagnostics
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep, step_accounting
 
 
@@ -80,7 +80,7 @@ def test_each_constraint_uses_full_coupled_storage_gradient_and_preserves_other_
 
 def test_original_dropped_rows_and_each_signed_charge_deposition_remain_visible(case):
     device, original, constrained, y = case
-    info = _diagnostics(constrained, y)
+    info = ionic_diagnostics(constrained, y)
     for species, block in zip(device.ion_species_names, device.ion_species_slices):
         one = info["ion_species"][species]
         np.testing.assert_array_equal(one["ion_balance_m2_s"], original.residual(y)[block])

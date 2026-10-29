@@ -12,7 +12,7 @@ from solarlab.device.inputs import DeviceInput
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.dc_1d import DC1DProblem
 from solarlab.solvers.time.assembled_storage import AssembledStorage1D
-from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, _storage_mask
+from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, storage_mask
 from solarlab.solvers.time.bdf import BDFStep, HistoryPoint
 from solarlab.solvers.time.bdf_1d import ElectronicStorage1D
 
@@ -94,7 +94,7 @@ def test_stable_secant_resolves_motion_below_rounded_inventory_precision(device)
     change = assembled.storage_increment(new_u, assembled, u)
     rounded = assembled.storage(new_u) - assembled.storage(u)
     assert change[count + 1] != 0.0 and rounded[count + 1] == 0.0
-    mask = _storage_mask(device).ravel()
+    mask = storage_mask(device).ravel()
     assert not np.any(change[count:][~mask])
 
 

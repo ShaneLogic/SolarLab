@@ -23,7 +23,7 @@ from solarlab.contracts import (
 )
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M
-from solarlab.equations.dc_1d import CompiledDevice1D, _quasi_fermi_potential_tangents
+from solarlab.equations.dc_1d import CompiledDevice1D, quasi_fermi_potential_tangents
 from solarlab.equations.field_transport_2d import FieldTransport2D
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
@@ -347,7 +347,7 @@ class DC2DProblem:
         for offset, sign, density, flux in ((count, 1.0, n, fluxes.electron), (2 * count, -1.0, p, fluxes.hole)):
             drive = sign * (values[offset + right] - values[offset + left])
             # Reuse the accepted cancellation-safe quasi-Fermi chain, without altering its source.
-            phi_left, phi_right = _quasi_fermi_potential_tangents(flux, drive, sign, thermal)
+            phi_left, phi_right = quasi_fermi_potential_tangents(flux, drive, sign, thermal)
             if d.field_transport is not None:
                 evaluated_transport = d.field_transport.evaluate(values[:count])
                 diffusivity = (evaluated_transport.electron_diffusivity_m2_s if offset == count

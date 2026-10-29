@@ -20,7 +20,7 @@ from solarlab.equations.ionic_closure import (
     declared_immobile_profiles, immobile_profile_binding, ion_mobility_partition,
     ionic_closure_residual, ionic_closure_jacobian,
 )
-from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, ionic_steady_control_record, _checks, _diagnostics
+from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, ionic_steady_control_record, checks as ionic_checks, diagnostics as ionic_diagnostics
 from solarlab.equations.ionic_small_signal import build_ionic_small_signal
 from examples.research_1d.ionic_steady import controls
 
@@ -98,7 +98,7 @@ def test_wired_steady_profile_metadata_checks_and_AC_full_local_rows(case):
     options = controls(device.ion_node_count)
     record = ionic_steady_control_record(device, options)
     assert record["ion_closure"] == immobile_profile_binding(device)
-    checked = _checks(_diagnostics(steady, y), options)
+    checked = ionic_checks(ionic_diagnostics(steady, y), options)
     for species in steady.immobile_species:
         item = next(item for item in checked if item.name == species + "_immobile_profile_relative_error")
         assert not item.passed and item.limit == options.inventory_relative_tolerance

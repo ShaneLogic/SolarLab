@@ -67,7 +67,7 @@ def test_first_density_failure_stops_before_either_newton(compiled, routing_inpu
     def forbidden(*args, **kwargs):
         pytest.fail("later solver called after a failed preparation")
 
-    monkeypatch.setattr(driver, "_density_basin_seed", fail_density)
+    monkeypatch.setattr(driver, 'density_basin_seed', fail_density)
     monkeypatch.setattr(driver, "solve_steady_state", forbidden)
     monkeypatch.setattr(driver, "solve_ionic_steady_state", forbidden)
     result = driver.initialize_ionic_steady_state(compiled, initial=initial,
@@ -82,7 +82,7 @@ def test_first_density_failure_stops_before_either_newton(compiled, routing_inpu
 
 def test_component_failure_is_retained_and_cannot_seed_coupled(compiled, routing_input, monkeypatch):
     initial, options = routing_input
-    monkeypatch.setattr(driver, "_density_basin_seed", lambda problem, u: u.copy())
+    monkeypatch.setattr(driver, 'density_basin_seed', lambda problem, u: u.copy())
     failed = NewtonResult(initial.state.electronic_state.u, False, Termination.BUDGET_EXHAUSTED,
         100.0, (), (), 1, 0, state_digest(initial.state.electronic_state.u), "test-double budget")
 
@@ -115,7 +115,7 @@ def test_source_hash_refusal_happens_without_any_solver(compiled, monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("a solver was called for an unbound input")
 
-    monkeypatch.setattr(driver, "_density_basin_seed", forbidden)
+    monkeypatch.setattr(driver, 'density_basin_seed', forbidden)
     monkeypatch.setattr(driver, "solve_steady_state", forbidden)
     monkeypatch.setattr(driver, "solve_ionic_steady_state", forbidden)
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
@@ -166,7 +166,7 @@ def test_lossless_solver_free_read_and_republication(author_record, tmp_path, mo
         pytest.fail("saved reading or republication invoked a solver")
 
     for name in ("initialize_ionic_steady_state", "solve_steady_state", "solve_ionic_steady_state",
-                 "_density_basin_seed", "_admit_evidence"):
+                 "density_basin_seed", "_admit_evidence"):
         monkeypatch.setattr(driver, name, forbidden)
     reread = driver.read_ionic_initialization(path, digest)
     out = tmp_path / "Readback.json"
@@ -223,7 +223,7 @@ def test_bad_supplied_direct_seed_cannot_fall_back_to_fresh(compiled, routing_in
     def forbidden(*args, **kwargs):
         pytest.fail("invalid saved input triggered fresh preparation or a solver")
 
-    monkeypatch.setattr(driver, "_density_basin_seed", forbidden)
+    monkeypatch.setattr(driver, 'density_basin_seed', forbidden)
     monkeypatch.setattr(driver, "solve_steady_state", forbidden)
     monkeypatch.setattr(driver, "solve_ionic_steady_state", forbidden)
     with pytest.raises(ValueError, match="density seed artifact SHA-256"):
@@ -241,7 +241,7 @@ def test_fresh_direct_failure_is_an_explicit_recorded_stage(compiled, routing_in
     def forbidden(*args, **kwargs):
         pytest.fail("fresh preparation failure started a later solver")
 
-    monkeypatch.setattr(driver, "_density_basin_seed", failure)
+    monkeypatch.setattr(driver, 'density_basin_seed', failure)
     monkeypatch.setattr(driver, "solve_steady_state", forbidden)
     monkeypatch.setattr(driver, "solve_ionic_steady_state", forbidden)
     result = driver.initialize_ionic_steady_state(compiled, initial=initial, voltage_V=0.002,
@@ -377,7 +377,7 @@ def test_fresh_accepted_read_is_solver_free_and_rejects_relabel(fresh_native, tm
         pytest.fail("a read operation invoked numerical work")
 
     for name in ("initialize_ionic_steady_state", "solve_steady_state", "solve_ionic_steady_state",
-                 "_density_basin_seed", "_admit_evidence"):
+                 "density_basin_seed", "_admit_evidence"):
         monkeypatch.setattr(driver, name, forbidden)
     read = driver.read_ionic_initialization(path, digest)
     assert _encode(read) == _encode(record)

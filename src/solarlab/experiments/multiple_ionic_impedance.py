@@ -109,8 +109,8 @@ def solve_multiple_ionic_impedance(device: CompiledMultipleIonicDevice1D, initia
                                   ion_mode: str = "mobile", options: IonicImpedanceOptions | None = None) -> MultipleIonicImpedanceResult:
     """No DC solve or retry; preserve all requested/accepted/first-failed frequencies."""
     started = time.monotonic()
-    from solarlab.equations.multiple_ionic_small_signal import _scope, build_multiple_ionic_small_signal
-    _scope(device, ion_mode)
+    from solarlab.equations.multiple_ionic_small_signal import scope, build_multiple_ionic_small_signal
+    scope(device, ion_mode)
     controls = IonicImpedanceOptions() if options is None else options
     if not isinstance(controls, IonicImpedanceOptions) or not isinstance(initial, MultipleIonicTransientInitial):
         raise ValueError("explicit reviewed controls and pinned accepted multiple-domain DC evidence are required")

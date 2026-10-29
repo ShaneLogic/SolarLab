@@ -26,7 +26,7 @@ from solarlab.device.compile_2d import compile_device_2d
 from solarlab.equations.dc_2d import CompiledDevice2D, State2D
 from solarlab.experiments.transient_results import _decode, _encode
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyStateError, solve_steady_state
-from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, _checks, _diagnostics, solve_steady_state_2d
+from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, checks as steady_checks, diagnostics as steady_diagnostics, solve_steady_state_2d
 from solarlab.equations.dc_2d import DC2DProblem
 
 SCHEMA = "solarlab.classical_2d_steady.research.v1"
@@ -109,7 +109,7 @@ def run_case(output: Path, *, illumination_only: bool = False,
         if any(not np.array_equal(saved[name], getattr(dark_state, name))
                for name in ("potential_V", "electron_density_m3", "hole_density_m3")):
             raise ValueError("prior dark fields disagree with their exact coordinates")
-        checks = _checks(_diagnostics(DC2DProblem(device, .002, 0.0), dark_state.u, controls), controls)
+        checks = steady_checks(steady_diagnostics(DC2DProblem(device, .002, 0.0), dark_state.u, controls), controls)
         if not all(check.passed for check in checks):
             raise ValueError("preserved dark2D point fails current original physical revalidation")
     targets = [{"voltage_V": .002, "generation_scale": scale}

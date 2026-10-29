@@ -33,7 +33,7 @@ from solarlab.solvers.nonlinear.production import (
 )
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
 
-__all__ = ["ConstrainedIonic1DProblem", "IonicSteadyOptions", "IonicSteadyResult", "solve_ionic_steady_state", "ionic_steady_control_record"]
+__all__ = ["ConstrainedIonic1DProblem", "IonicSteadyOptions", "IonicSteadyResult", "solve_ionic_steady_state", "ionic_steady_control_record", "checks", "diagnostics"]
 
 
 @dataclass(frozen=True)
@@ -202,7 +202,7 @@ def ionic_steady_control_record(device: CompiledIonicDevice1D, options: IonicSte
     return recorded
 
 
-def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str, object]:
+def diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str, object]:
     """Keep historical positive aliases; dual evidence also names each species."""
     original, device = problem.original, problem.original.device
     count = device.node_count
@@ -320,7 +320,7 @@ def _diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str,
     return result
 
 
-def _checks(diagnostics: dict[str, object], options: IonicSteadyOptions) -> tuple[GateOutcome, ...]:
+def checks(diagnostics: dict[str, object], options: IonicSteadyOptions) -> tuple[GateOutcome, ...]:
     limits = {
         "inventory_relative_error": options.inventory_relative_tolerance,
         "ion_balance_l1_m2_s": options.ion_balance_tolerance_m2_s,
@@ -421,25 +421,25 @@ def solve_ionic_steady_state(
 
     def gate(y: np.ndarray) -> GateOutcome:
         checkpoint()
-        outcomes = _checks(_diagnostics(problem, y), options)
+        outcomes = checks(diagnostics(problem, y), options)
         checkpoint()
         ratio = max(item.value / item.limit for item in outcomes)
         return GateOutcome("original_ionic_inventory_flux_current_checks", all(item.passed for item in outcomes),
                            ratio, 1.0, "; ".join(item.name for item in outcomes if not item.passed))
 
     settings = NewtonSettings(ResidualScaling(weights), 1.0, StepControl(steps), options.budget, (gate,), False)
-    newton, error, state, diagnostics = None, None, None, None
-    checks: tuple[GateOutcome, ...] = ()
+    newton, error, state, diagnostic_values = None, None, None, None
+    check_outcomes: tuple[GateOutcome, ...] = ()
     try:
         newton = solve_newton(CallableProblem(lambda y: evaluate("residual", problem.residual, y),
                                              lambda y: evaluate("jacobian", problem.jacobian, y)), last, settings)
         last = newton.state
         checkpoint()
         state = device.state(last, voltage_V=voltage_V)
-        diagnostics = _diagnostics(problem, last)
-        checks = _checks(diagnostics, options)
+        diagnostic_values = diagnostics(problem, last)
+        check_outcomes = checks(diagnostic_values, options)
         checkpoint()
-        accepted = newton.accepted and all(item.passed for item in checks)
+        accepted = newton.accepted and all(item.passed for item in check_outcomes)
         termination = newton.termination.value
     except Exception as exc:
         accepted = False
@@ -447,6 +447,6 @@ def solve_ionic_steady_state(
         error = f"{type(exc).__name__}: {str(exc)[:400]}"
     candidate = np.array(last, copy=True)
     candidate.setflags(write=False)
-    return IonicSteadyResult(state, accepted, termination, newton, initial, candidate, diagnostics, checks,
+    return IonicSteadyResult(state, accepted, termination, newton, initial, candidate, diagnostic_values, check_outcomes,
                              ionic_steady_control_record(device, options), device.identity, device.original_prepared_sha256,
                              device.binding_manifest, counts, time.monotonic() - started, error)

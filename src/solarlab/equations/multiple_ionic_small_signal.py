@@ -23,15 +23,15 @@ from scipy.sparse import csc_matrix
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.ionic_1d import Ionic1DProblem
-from solarlab.equations.ionic_small_signal import IonicSmallSignal1D, _frequency_voltage
+from solarlab.equations.ionic_small_signal import IonicSmallSignal1D, frequency_voltage
 from solarlab.equations.multiple_ionic_1d import (
     CompiledMultipleIonicDevice1D, MultipleIonic1DProblem, MultipleIonicState1D,
 )
 
-__all__ = ["MultipleIonicACSystem", "MultipleIonicSmallSignal1D", "build_multiple_ionic_small_signal"]
+__all__ = ["MultipleIonicACSystem", "MultipleIonicSmallSignal1D", "build_multiple_ionic_small_signal", "scope"]
 
 
-def _scope(device: CompiledMultipleIonicDevice1D, ion_mode: str = "mobile") -> None:
+def scope(device: CompiledMultipleIonicDevice1D, ion_mode: str = "mobile") -> None:
     if not isinstance(device, CompiledMultipleIonicDevice1D):
         raise ValueError("an actual complete multiple-domain ionic device is required")
     if ion_mode != "mobile":
@@ -106,7 +106,7 @@ class MultipleIonicSmallSignal1D:
         if not isinstance(self.problem, MultipleIonic1DProblem):
             raise ValueError("the full production multiple-domain problem is required")
         device, state = self.problem.device, self.operating_state
-        _scope(device)
+        scope(device)
         if self.coordinate_form not in {"moving_boundary_lift_v1", "fixed_reference_v1"}:
             raise ValueError("an explicit supported AC coordinate representation is required")
         device.validate_state(state)
@@ -151,8 +151,8 @@ class MultipleIonicSmallSignal1D:
 
     def system(self, frequency_Hz: float, *, voltage_phasor_V: complex = 1.0,
                ion_mode: str = "mobile") -> MultipleIonicACSystem:
-        _scope(self.device, ion_mode)
-        frequency, voltage = _frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
+        scope(self.device, ion_mode)
+        frequency, voltage = frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
         device, N = self.device, self.device.node_count
         J, K = self.jacobian.copy().tolil(), self.storage_jacobian.copy().tolil()
         rhs: np.ndarray = np.zeros(device.state_size, dtype=complex)
@@ -184,7 +184,7 @@ class MultipleIonicSmallSignal1D:
 
     def original_residual(self, fixed_perturbation: ArrayLike, frequency_Hz: float,
                           *, voltage_phasor_V: complex = 1.0) -> np.ndarray:
-        frequency, voltage = _frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
+        frequency, voltage = frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
         x = np.asarray(fixed_perturbation, dtype=complex)
         if x.shape != (self.device.state_size,) or not np.all(np.isfinite(x)):
             raise ValueError("a finite complete two-domain perturbation is required")
@@ -194,8 +194,8 @@ class MultipleIonicSmallSignal1D:
 
     def observe(self, perturbation: ArrayLike, frequency_Hz: float, *, voltage_phasor_V: complex = 1.0,
                 ion_mode: str = "mobile", coordinate_form: str | None = None) -> dict[str, Any]:
-        _scope(self.device, ion_mode)
-        frequency, voltage = _frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
+        scope(self.device, ion_mode)
+        frequency, voltage = frequency_voltage(frequency_Hz, voltage_phasor_V, "mobile")
         device, N = self.device, self.device.node_count
         form = self.coordinate_form if coordinate_form is None else coordinate_form
         x = np.asarray(perturbation, dtype=complex)
@@ -307,7 +307,7 @@ class MultipleIonicSmallSignal1D:
 def build_multiple_ionic_small_signal(compiled: CompiledMultipleIonicDevice1D, state: MultipleIonicState1D,
                                      *, generation_scale: float = 0.0,
                                      coordinate_form: str = "moving_boundary_lift_v1") -> MultipleIonicSmallSignal1D:
-    _scope(compiled)
+    scope(compiled)
     if not isinstance(state, MultipleIonicState1D):
         raise ValueError("a complete bound multiple-domain operating state is required")
     return MultipleIonicSmallSignal1D(MultipleIonic1DProblem(compiled, state.voltage_V, generation_scale),

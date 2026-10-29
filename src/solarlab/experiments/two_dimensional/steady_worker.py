@@ -132,7 +132,7 @@ class Steady2DProtocol:
 
 
 def _validate(prepared: PreparedDevice, spatial: JV2DInput, options: Steady2DOptions) -> None:
-    from solarlab.device.compile_1d import _unsupported
+    from solarlab.device.compile_1d import unsupported
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
     from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions
     from solarlab.units import normalize_quantity
@@ -153,7 +153,7 @@ def _validate(prepared: PreparedDevice, spatial: JV2DInput, options: Steady2DOpt
         if (layer.role == "substrate" or layer.optical is not None or p["n_optical"] is not None or p["incoherent"]
                 or any(p[k] != 0 for k in ("v_sat_n", "v_sat_p", "pf_gamma_n", "pf_gamma_p"))):
             raise ValueError("2D process requires constant-mobility electrical layers without optical-only layers")
-    _unsupported(prepared, data, prepared.layers)
+    unsupported(prepared, data, prepared.layers)
     expected, supplied = asdict(SteadyOptions()), asdict(options.electronic)
     for key in ("max_iterations", "max_residual_evaluations", "max_jacobian_evaluations"):
         value = supplied.pop(key)

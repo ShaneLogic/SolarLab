@@ -32,7 +32,7 @@ from solarlab.device.compile_1d import compile_device_1d
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, State1D
 from solarlab.solvers.nonlinear.problem import state_digest
 from solarlab.solvers.nonlinear.production import production_convergence_norm, production_residual_scaling
-from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D, SteadyStateError, _physical_gates, solve_steady_state
+from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D, SteadyStateError, physical_gates, solve_steady_state
 
 SCHEMA = "solarlab.fine_mesh_voc_resume.v1"
 RECORD_SHA256 = "9823ea99e7178039210f40be5314a733710431ad0d50e8ba7631dee39e0a2ee8"
@@ -98,7 +98,7 @@ def physical_evidence(device: CompiledDevice1D, state: State1D, controls: Steady
     norm = production_convergence_norm(device, convergence_policy=controls.convergence_policy)
     assert norm is not None
     value = norm(scaling.scaled(residual))
-    gates = [asdict(gate(state.u.copy())) for gate in _physical_gates(problem, controls, equilibrium=False)]
+    gates = [asdict(gate(state.u.copy())) for gate in physical_gates(problem, controls, equilibrium=False)]
     contacts = problem.contact_current_density(state.u)
     current = np.r_[contacts[:1], problem.current_density(state.u), contacts[1:]]
     output = -device.voltage_polarity * current

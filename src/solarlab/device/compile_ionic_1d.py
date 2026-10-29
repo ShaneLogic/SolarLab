@@ -28,8 +28,8 @@ from solarlab.physics.ions import (
     HISTORICAL_STERIC_FLOOR, WHOLE_FLUX_STERIC_V1,
 )
 
-__all__ = ["CompiledIonicDevice1D", "compile_ionic_device_1d"]
-_ION_INPUTS = ("P0", "P0_neg", "D_ion", "D_ion_neg", "P_lim", "P_lim_neg", "E_a_ion")
+__all__ = ["CompiledIonicDevice1D", "compile_ionic_device_1d", "ION_INPUTS"]
+ION_INPUTS = ("P0", "P0_neg", "D_ion", "D_ion_neg", "P_lim", "P_lim_neg", "E_a_ion")
 
 
 def compile_ionic_device_1d(
@@ -67,7 +67,7 @@ def compile_ionic_device_1d(
     shared = bool(data["settings"]["ion_steric_shared_site"])
     if shared and not data["settings"]["ion_steric_diffusion_only"]:
         raise CapabilityError("shared-site ions require the original diffusion-only crowding law")
-    declarations = [{"layer": layer.id, **{name: dict(layer.parameters)[name] for name in _ION_INPUTS}}
+    declarations = [{"layer": layer.id, **{name: dict(layer.parameters)[name] for name in ION_INPUTS}}
                     for layer in prepared.layers]
     for layer in prepared.layers:
         parameters = dict(layer.parameters)

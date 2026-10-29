@@ -18,7 +18,7 @@ from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.experiments import ionic_transient as driver
 from solarlab.solvers.nonlinear.ionic_1d import (
-    ConstrainedIonic1DProblem, _checks, _diagnostics, solve_ionic_steady_state,
+    ConstrainedIonic1DProblem, checks as ionic_checks, diagnostics as ionic_diagnostics, solve_ionic_steady_state,
 )
 from solarlab.solvers.time.ionic_backward_euler import (
     IonicBackwardEuler1DStep, finite_site_secant_m3, inventory_m2, step_accounting,
@@ -88,7 +88,7 @@ def test_constrained_directional_J_includes_both_inventory_rows(case):
 
 def test_steady_diagnostics_keep_both_dropped_rows_and_signed_deposition(case):
     device, original, constrained, y = case
-    info = _diagnostics(constrained, y)
+    info = ionic_diagnostics(constrained, y)
     for species, block in zip(device.ion_species_names, device.ion_species_slices):
         one = info["ion_species"][species]
         np.testing.assert_array_equal(one["ion_balance_m2_s"], original.residual(y)[block])
@@ -99,7 +99,7 @@ def test_steady_diagnostics_keep_both_dropped_rows_and_signed_deposition(case):
     np.testing.assert_array_equal(info["ionic_current_density_A_m2"],
         np.r_[0.0, Q * (original.ion_fluxes_on_electronic_faces(y)
                         - original.ion_fluxes_on_electronic_faces(y, species="negative")), 0.0])
-    checks = {check.name: check for check in _checks(info, steady_controls(device.ion_node_count))}
+    checks = {check.name: check for check in ionic_checks(info, steady_controls(device.ion_node_count))}
     assert checks["negative_ion_balance_l1_m2_s"].value == info["ion_species"]["negative"]["ion_balance_l1_m2_s"]
     assert checks["negative_inventory_relative_error"].limit == 1e-12
 

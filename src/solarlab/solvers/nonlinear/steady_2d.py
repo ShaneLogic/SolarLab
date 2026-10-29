@@ -27,7 +27,7 @@ from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, Res
 from solarlab.solvers.nonlinear.production import HISTORICAL_MAX_ROW_V1, POISSON_CONTACT_BALANCE_V1
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
 
-__all__ = ["Steady2DOptions", "Steady2DResult", "solve_steady_state_2d"]
+__all__ = ["Steady2DOptions", "Steady2DResult", "solve_steady_state_2d", "checks", "diagnostics", "scope", "sources"]
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class Steady2DOptions:
             raise ValueError("2D owned wall budget must be finite and positive")
 
 
-def _scope(device: CompiledDevice2D) -> None:
+def scope(device: CompiledDevice2D) -> None:
     if not isinstance(device, CompiledDevice2D):
         raise ValueError("an actual fully compiled classical 2D device is required")
     if device.geometry.name != RECTANGULAR_HALF_ENDPOINT_2D_V1:
@@ -93,7 +93,7 @@ def _settings(device: CompiledDevice2D, options: Steady2DOptions, gate: Any) -> 
     return settings, norm
 
 
-def _sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
+def sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
     names: tuple[str, ...] = (__name__, "solarlab.equations.dc_2d", "solarlab.equations.dc_1d", "solarlab.mesh.geometry_2d",
         "solarlab.physics.transport.electrochemical_flux", "solarlab.physics.recombination.reaction",
         "solarlab.contracts.terms", "solarlab.solvers.nonlinear.newton", "solarlab.solvers.nonlinear.problem",
@@ -116,7 +116,7 @@ def _sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
     return result
 
 
-def _diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) -> dict[str, Any]:
+def diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) -> dict[str, Any]:
     d, g, N = problem.device, problem.device.geometry, problem.device.node_count
     residual = problem.residual(u)
     phi, n, p = d.fields(u, voltage_V=problem.voltage_V)
@@ -179,7 +179,7 @@ def _diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) 
     return result
 
 
-def _checks(values: dict[str, Any], options: Steady2DOptions) -> tuple[GateOutcome, ...]:
+def checks(values: dict[str, Any], options: Steady2DOptions) -> tuple[GateOutcome, ...]:
     c = options.electronic
     limits = {"convergence_norm": 1.0, "poisson_normalized_max": c.poisson_tolerance,
         "contact_log_max": c.contact_log_tolerance, "carrier_balance_bound_A_m2": c.continuity_tolerance_A_m2,
@@ -224,7 +224,7 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
                           initial_provenance: dict[str, Any] | None = None) -> Steady2DResult:
     """One full2D Newton, preserving its first failure and every original row."""
     started = time.monotonic()
-    _scope(device)
+    scope(device)
     controls = Steady2DOptions() if options is None else options
     if not isinstance(controls, Steady2DOptions):
         raise ValueError("Steady2DOptions are required")
@@ -249,7 +249,7 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
         provenance = {"kind": "provided full2D numerical guess"}
     provenance.update({} if initial_provenance is None else initial_provenance)
     provenance["state_sha256"] = state_digest(u)
-    pins = _sources(device)
+    pins = sources(device)
     deadline = started + controls.wall_s
     candidate = u.copy()
     counts = {"residual": 0, "jacobian": 0, "diagnostics": 0}
@@ -257,7 +257,7 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
     def checkpoint() -> None:
         if time.monotonic() >= deadline:
             raise TimeoutError("2D steady owned wall budget exhausted; no retry")
-        if _sources(device) != pins:
+        if sources(device) != pins:
             raise RuntimeError("2D steady physical source changed during the solve")
     def evaluate(kind: str, values: np.ndarray) -> Any:
         nonlocal candidate
@@ -270,17 +270,17 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
     def gate(values: np.ndarray) -> GateOutcome:
         checkpoint()
         counts["diagnostics"] += 1
-        checks = _checks(_diagnostics(problem, values, controls), controls)
+        check_outcomes = checks(diagnostics(problem, values, controls), controls)
         checkpoint()
-        return GateOutcome("all_original_2d_physical_checks", all(check.passed for check in checks),
-            max(check.value / check.limit if check.limit > 0.0 else check.value for check in checks), 1.0)
+        return GateOutcome("all_original_2d_physical_checks", all(check.passed for check in check_outcomes),
+            max(check.value / check.limit if check.limit > 0.0 else check.value for check in check_outcomes), 1.0)
     settings, norm = _settings(device, controls, gate)
-    state, newton, diagnostics, initial_data, error = None, None, None, None, None
-    checks: tuple[GateOutcome, ...] = ()
+    state, newton, diagnostic_values, initial_data, error = None, None, None, None, None
+    check_outcomes: tuple[GateOutcome, ...] = ()
     try:
         checkpoint()
         counts["diagnostics"] += 1
-        initial_data = _diagnostics(problem, u, controls)
+        initial_data = diagnostics(problem, u, controls)
         checkpoint()
         newton_calls += 1
         newton = solve_newton(CallableProblem(lambda values: evaluate("residual", values),
@@ -288,11 +288,11 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
         candidate = newton.state
         checkpoint()
         counts["diagnostics"] += 1
-        diagnostics = _diagnostics(problem, candidate, controls)
-        checks = _checks(diagnostics, controls)
+        diagnostic_values = diagnostics(problem, candidate, controls)
+        check_outcomes = checks(diagnostic_values, controls)
         state = device.state(candidate, voltage_V=voltage_V)
         checkpoint()
-        accepted = newton.accepted and all(check.passed for check in checks)
+        accepted = newton.accepted and all(check.passed for check in check_outcomes)
         termination = newton.termination.value if accepted or not newton.accepted else "physical_checks_rejected"
     except Exception as exc:
         accepted = False
@@ -308,5 +308,5 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
         recorded["row_units"]["contact_carrier"] = "fixed: dimensionless log; finite/blocking: particles/(m depth*s)"
         recorded["carrier_contact_channels"] = [dict(asdict(channel), kind=channel.kind) for channel in device.column.channels]
     return Steady2DResult(state, accepted, termination, newton, u, candidate, provenance, initial_data,
-        diagnostics, checks, device.identity, voltage_V, generation_scale, recorded, pins, counts,
+        diagnostic_values, check_outcomes, device.identity, voltage_V, generation_scale, recorded, pins, counts,
         time.monotonic() - started, error)

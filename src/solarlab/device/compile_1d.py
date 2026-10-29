@@ -57,7 +57,7 @@ from solarlab.physics.recombination.reaction import (
 from solarlab.physics.transport import legacy_face_diffusivity
 from solarlab.physics.transport.field_mobility_tangents import FieldMobilityCapabilityError
 
-__all__ = ["CapabilityError", "CompiledDevice1D", "compile_device_1d"]
+__all__ = ["CapabilityError", "CompiledDevice1D", "compile_device_1d", "unsupported"]
 
 
 class _LayerScalars(TypedDict):
@@ -93,7 +93,7 @@ class _LayerScalars(TypedDict):
     grading_char_length: float | None
 
 
-def _unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[PreparedLayer, ...]) -> None:
+def unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[PreparedLayer, ...]) -> None:
     settings = data["settings"]
     missing = []
     if settings["built_in_potential_mode"] != "semiconductor_work_function":
@@ -213,7 +213,7 @@ def compile_device_1d(
     data = prepared.to_mapping()
     settings = data["settings"]
     layers = tuple(layer for layer in prepared.layers if layer.role != "substrate")
-    _unsupported(prepared, data, layers)
+    unsupported(prepared, data, layers)
     grid = {entry["layer"]: entry for entry in data["electrical_grid"]}
     if isinstance(intervals_per_layer, bool):
         raise ValueError("intervals_per_layer must be an integer or integer sequence")

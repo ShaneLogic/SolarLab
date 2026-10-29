@@ -14,7 +14,7 @@ from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.equations.multiple_ionic_1d import MultipleIonic1DProblem, MultipleIonicState1D
 from solarlab.physics.electrostatics import contact_displacement
-from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, _storage_mask, step_accounting as electronic_accounting
+from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, storage_mask, step_accounting as electronic_accounting
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep
 
 __all__ = ["MultipleIonicBackwardEuler1DStep", "multiple_ionic_step_accounting"]
@@ -57,7 +57,7 @@ class MultipleIonicBackwardEuler1DStep:
         result = self.endpoint.residual(y)
         carrier, ionic = self.inventory_rates_m2_s(y)
         rows = result[count:3 * count].reshape(2, count)
-        mask = _storage_mask(device.electronic_component)
+        mask = storage_mask(device.electronic_component)
         rows[mask] -= carrier[mask]
         for name, species_rates in ionic.items():
             for species, rate in species_rates.items():
@@ -149,7 +149,7 @@ def multiple_ionic_step_accounting(step: MultipleIonicBackwardEuler1DStep, y: np
     jump = maxwell[:-1] - maxwell[1:]
     predicted = charge_defect + stable_gauss_rate
     rounded_predicted = charge_defect + rounded_gauss_rate + charge_readback_error + (d_error[:-1] - d_error[1:]) / dt
-    mask = _storage_mask(device.electronic_component)
+    mask = storage_mask(device.electronic_component)
     return {
         "domains": domains, "backward_euler_residual": residual, "dc_residual": problem.residual(y),
         "carrier_inventory_rate_m2_s": carrier_rate, "carrier_balance_m2_s": carrier_balance,
