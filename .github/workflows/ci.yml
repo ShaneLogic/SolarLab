@@ -205,6 +205,7 @@ jobs:
           tests/integration/test_multiple_ionic_domains_1d.py
           tests/integration/test_multiple_ionic_steady_1d.py
           tests/integration/test_multiple_ionic_transient_1d.py
+          tests/integration/test_multiple_ionic_small_signal_1d.py
           tests/integration/test_neutral_defects_1d.py
           tests/integration/test_neutral_defect_energy_reference_1d.py
           tests/integration/test_field_transport_1d.py

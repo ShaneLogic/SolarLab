@@ -918,6 +918,33 @@ frequencies unattempted. Result reading validates the saved bytes and does not
 solve. These checks do not establish mesh convergence, general contact/domain
 support, or final scientific qualification.
 
+## AC response with two blocking ion domains
+
+Use the accepted positive-domain steady result from **Multiple blocking ion
+domains** as the operating state. The AC command checks its digest and physical
+admission, then solves the coupled complex system without a new DC solve:
+
+```sh
+MULTI_SHA=$(shasum -a 256 outputs/multiple_ionic_steady.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_impedance solve \
+  --initial-result outputs/multiple_ionic_steady.json --initial-sha256 "$MULTI_SHA" \
+  --frequencies 0 .01 1 1000 --output outputs/multiple_ionic_ac.json
+MULTI_AC_SHA=$(shasum -a 256 outputs/multiple_ionic_ac.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.multiple_ionic_impedance read \
+  --result outputs/multiple_ionic_ac.json --sha256 "$MULTI_AC_SHA"
+```
+
+The bounded example has 13 electrical nodes and four ion nodes in each of two
+separated domains. Each domain preserves its own positive-species inventory;
+shared electronic equations appear once. All 47 original rows and all 14 faces
+are checked, including conduction and displacement current through ion-free
+gaps. Phasors use `exp(+i omega t)`, with admittance density in S/m² and impedance
+area product in Ω m². Fixed carrier reservoirs, constant carrier mobility and
+connected positive ion diffusivity are required. Other contact, ion and field
+transport variants are explicitly refused. The four-frequency example passed
+the existing internal gates and independent saved-result review; mesh and final
+scientific qualification remain pending.
+
 ## Ionic transient process jobs
 
 From a committed checkout, run the shared-site example through the same process
