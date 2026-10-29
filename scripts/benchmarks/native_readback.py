@@ -1820,8 +1820,21 @@ class SegmentFrameCheck:
             _require("mapped_input_profile" not in history and "mapped_input_words" not in history,
                      "frame_input_unbound_history_profile")
         t = _hex(history["time_hex"])
-        q = self.parent(self.active, t, _hex_vector(history["raw_solver_z_hex"], self.size))
-        v = self.parent(self.active, t, _hex_vector(history["raw_solver_zdot_hex"], self.size), rate=True)
+        parent = self.parent
+        if getattr(parent, "__func__", None) is SegmentFrameCheck.parent:
+            # Reuse only within this sample. Keep raw-state, Q0, V0, time,
+            # then raw-rate validation in the same order as the two calls.
+            raw = _hex_vector(history["raw_solver_z_hex"], self.size)
+            q0 = _frame_word_values(self.active["q0_words_hex"], self.size)
+            v0 = _frame_word_values(self.active["v0_words_hex"], self.size)
+            dt = Fraction(t)-Fraction(_hex(self.active["t0_hex"]))
+            q = tuple(q+dt*v+Fraction(u) for q, v, u in zip(q0, v0, raw))
+            raw_rate = _hex_vector(history["raw_solver_zdot_hex"], self.size)
+            v = tuple(v+Fraction(u) for v, u in zip(v0, raw_rate))
+        else:
+            # Preserve existing instance/subclass overrides of the public path.
+            q = parent(self.active, t, _hex_vector(history["raw_solver_z_hex"], self.size))
+            v = self.parent(self.active, t, _hex_vector(history["raw_solver_zdot_hex"], self.size), rate=True)
         _require(_frame_word_values(history["physical_cumulative_words_hex"], self.size, count=self.input_words) ==
                  self.physical(q, _hex_vector(history["inputs_hex"], 2))
                  and _frame_word_values(history["physical_rate_words_hex"], self.size, count=self.input_words) ==
