@@ -355,4 +355,3 @@ def test_saved_native_ct_ac_reads_without_model_or_solver(kind, monkeypatch):
             normalized = total / voltage
             spread, scale = np.max(abs(normalized - normalized[0])), np.max(abs(normalized))
             assert spread <= 1e-8 + 1e-10 * scale
-
