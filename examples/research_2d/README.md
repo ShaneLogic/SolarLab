@@ -175,6 +175,30 @@ original process attempts under their original identities. An actual HTTP
 success and saved historical failure have passed independent readback checks;
 HTTP completion does not establish mesh or final scientific accuracy.
 
+## Use the browser
+
+Keep the HTTP service above running on port 8000. In another terminal, start
+the frontend with its locked dependencies:
+
+```sh
+cd web
+npm ci --no-audit --no-fund
+npm run dev -- --host 127.0.0.1
+```
+
+Open `http://127.0.0.1:5173/?view=steady-2d` and select an installed device and
+dark, illuminated, or both targets. **Run 2D steady** explicitly submits a new
+job. The five plots show accepted potential, carrier densities, directed-face
+current density and integrated terminal/cross-section currents. Selecting a
+saved target, reopening its link and reconnecting read the recorded attempt
+without another solve. Failed and unattempted targets remain distinct.
+
+The browser has been exercised with one actual two-target submission and
+independently checked against its saved arrays, original historical failure,
+and exact-attempt reload. Stop the frontend and HTTP service with Ctrl-C when
+finished. Grain J–V and contact experiments use their separate Python entries;
+this browser entry exposes the fixed no-grain steady protocol.
+
 ## Neutral grain-region recombination
 
 ```sh
