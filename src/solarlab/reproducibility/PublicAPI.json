@@ -237,7 +237,8 @@
     "solarlab.device.compile_1d": [
       "CapabilityError",
       "CompiledDevice1D",
-      "compile_device_1d"
+      "compile_device_1d",
+      "unsupported"
     ],
     "solarlab.equations": [
       "CapabilityError",
@@ -251,14 +252,17 @@
       "CompiledDevice1D",
       "DC1DProblem",
       "LocalRecombinationModel",
-      "State1D"
+      "State1D",
+      "quasi_fermi_potential_tangents"
     ],
     "solarlab.solvers.nonlinear.steady_1d": [
       "SteadyOptions",
       "SteadyState1D",
       "SteadyStateError",
       "solve_equilibrium",
-      "solve_steady_state"
+      "solve_steady_state",
+      "physical_gates",
+      "density_basin_seed"
     ],
     "solarlab.solvers.nonlinear.production": [
       "HISTORICAL_MAX_ROW_V1",
@@ -350,7 +354,8 @@
     "solarlab.solvers.time.backward_euler": [
       "BackwardEuler1DStep",
       "inventory_m2",
-      "step_accounting"
+      "step_accounting",
+      "storage_mask"
     ],
     "solarlab.experiments.transient": [
       "TransientProtocol",
@@ -361,7 +366,8 @@
     ],
     "solarlab.device.compile_ionic_1d": [
       "CompiledIonicDevice1D",
-      "compile_ionic_device_1d"
+      "compile_ionic_device_1d",
+      "ION_INPUTS"
     ],
     "solarlab.equations.ionic_1d": [
       "CompiledIonicDevice1D",
@@ -373,7 +379,9 @@
       "IonicSteadyOptions",
       "IonicSteadyResult",
       "solve_ionic_steady_state",
-      "ionic_steady_control_record"
+      "ionic_steady_control_record",
+      "checks",
+      "diagnostics"
     ],
     "solarlab.experiments.transient_results": [
       "CapturedTransientRun",
@@ -420,7 +428,8 @@
     "solarlab.equations.ionic_small_signal": [
       "IonicACSystem",
       "IonicSmallSignal1D",
-      "build_ionic_small_signal"
+      "build_ionic_small_signal",
+      "frequency_voltage"
     ],
     "solarlab.experiments.ionic_impedance": [
       "IonicImpedanceOptions",
@@ -524,7 +533,11 @@
     "solarlab.solvers.nonlinear.steady_2d": [
       "Steady2DOptions",
       "Steady2DResult",
-      "solve_steady_state_2d"
+      "solve_steady_state_2d",
+      "checks",
+      "diagnostics",
+      "scope",
+      "sources"
     ]
   },
   "public_imports": {
