@@ -27,7 +27,7 @@
     "tests/unit/solvers/time/test_assembled_ionic_steps.py::test_all_32_probes_match_frozen_step_and_storage_arrays": "Only the stored BE step/storage digests require the shared require_capture_environment guard. The separate test_all_32_probes_match_live_step_and_storage_arrays has no capture fixture or skip and compares all 32 live probes on every platform."
   },
   "markers": {
-    "slow": "Excluded from the default fast command; run root slow tests explicitly with -m slow. The optional CI slow job retains its existing legacy regression scope.",
+    "slow": "Excluded from the default fast command. scheduled-suite.yml inventories and partitions every slow node in both root and legacy suites; the older optional ci.yml smoke job retains its bounded legacy regression scope.",
     "frontend": "Collected from tests/refactor and tests/runtime by frontend CI after npm ci; other jobs exclude this marker.",
     "requires_clean_core": "Skipped only when bound src/solarlab Python files are changed or Git provenance is unavailable; clean CI runs the test.",
     "platform_bound": "Explicit captured-fixture consumer inventory; does not skip tests. Only locally regenerated floating outputs compared with historical words require a capture-environment guard; portable metadata and live parity remain unconditional."

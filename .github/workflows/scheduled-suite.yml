@@ -1,0 +1,213 @@
+name: Scheduled suite coverage
+
+# The landing push registers this workflow for later --ref devel dispatches.
+# GitHub enables cron only after this file reaches the default branch.
+on:
+  push:
+    branches: [devel]
+    paths: [".github/workflows/scheduled-suite.yml", "scripts/ci/scheduled_suite.py"]
+  schedule:
+    - cron: "17 19 * * *"
+  workflow_dispatch:
+    inputs:
+      run_slow:
+        description: Run the complete slow selection
+        type: boolean
+        default: true
+      slow_shards:
+        description: all or comma-separated slow shard IDs from the plan artifact
+        type: string
+        default: all
+      run_coverage:
+        description: Report coverage of both complete default Python suites
+        type: boolean
+        default: true
+      coverage_shards:
+        description: all or comma-separated coverage shard IDs from the plan artifact
+        type: string
+        default: all
+
+permissions:
+  contents: read
+  actions: read
+
+# Separate workflow and run identity: a nightly/manual result cannot cancel or
+# become a dependency of the existing Refactor checks push/PR workflow.
+concurrency:
+  group: scheduled-suite-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-refactor
+  PYTHONDONTWRITEBYTECODE: "1"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  VECLIB_MAXIMUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  BLIS_NUM_THREADS: "1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      commit: ${{ steps.plan.outputs.commit }}
+      slow_enabled: ${{ steps.plan.outputs.slow_enabled }}
+      slow_matrix: ${{ steps.plan.outputs.slow_matrix }}
+      coverage_enabled: ${{ steps.plan.outputs.coverage_enabled }}
+      coverage_matrix: ${{ steps.plan.outputs.coverage_matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --all-extras --no-editable
+      - name: Inventory actual test nodes and prove complete, disjoint shards
+        id: plan
+        env:
+          RUN_SLOW: ${{ github.event_name != 'workflow_dispatch' || inputs.run_slow }}
+          RUN_COVERAGE: ${{ github.event_name != 'workflow_dispatch' || inputs.run_coverage }}
+          SLOW_SHARDS: ${{ inputs.slow_shards || 'all' }}
+          COVERAGE_SHARDS: ${{ inputs.coverage_shards || 'all' }}
+        run: |
+          uv run --frozen --no-sync python scripts/ci/scheduled_suite.py plan \
+            --out "$RUNNER_TEMP/suite-plan" \
+            --run-slow "$RUN_SLOW" --slow-shards "$SLOW_SHARDS" \
+            --run-coverage "$RUN_COVERAGE" --coverage-shards "$COVERAGE_SHARDS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: suite-plan
+          path: ${{ runner.temp }}/suite-plan/
+          retention-days: 14
+          if-no-files-found: error
+
+  slow:
+    needs: plan
+    if: needs.plan.outputs.slow_enabled == 'true'
+    name: Slow (${{ matrix.id }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.slow_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          # Historical producer tests require real old commits.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --all-extras --no-editable
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: suite-plan
+          path: ${{ runner.temp }}/suite-plan
+      - name: Run every planned slow node with unchanged gates
+        timeout-minutes: 110
+        env:
+          SHARD_ID: ${{ matrix.id }}
+        run: |
+          uv run --frozen --no-sync python scripts/ci/scheduled_suite.py run \
+            --plan "$RUNNER_TEMP/suite-plan/plan.json" --kind slow \
+            --shard "$SHARD_ID" --out "$RUNNER_TEMP/slow-result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: results-${{ matrix.id }}
+          path: ${{ runner.temp }}/slow-result/
+          retention-days: 14
+          if-no-files-found: error
+
+  coverage:
+    needs: plan
+    if: needs.plan.outputs.coverage_enabled == 'true'
+    name: Coverage (${{ matrix.id }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.coverage_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: startsWith(matrix.id, 'coverage-root-frontend')
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend contract prerequisites
+        if: startsWith(matrix.id, 'coverage-root-frontend')
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --all-extras --no-editable
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: suite-plan
+          path: ${{ runner.temp }}/suite-plan
+      - name: Measure default tests without a coverage percentage gate
+        timeout-minutes: 110
+        env:
+          SHARD_ID: ${{ matrix.id }}
+        run: |
+          uv run --frozen --no-sync python scripts/ci/scheduled_suite.py run \
+            --plan "$RUNNER_TEMP/suite-plan/plan.json" --kind coverage \
+            --shard "$SHARD_ID" --out "$RUNNER_TEMP/coverage-result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: coverage-data-${{ matrix.id }}
+          path: ${{ runner.temp }}/coverage-result/
+          retention-days: 14
+          if-no-files-found: error
+
+  coverage-report:
+    needs: [plan, coverage]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.coverage_enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --extra dev --no-editable
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: suite-plan
+          path: ${{ runner.temp }}/suite-plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: coverage-data-*
+          path: ${{ runner.temp }}/coverage-shards
+      - name: Combine source-mapped coverage and disclose incomplete shards
+        run: |
+          uv run --frozen --no-sync python scripts/ci/scheduled_suite.py combine \
+            --plan "$RUNNER_TEMP/suite-plan/plan.json" \
+            --data "$RUNNER_TEMP/coverage-shards" --out "$RUNNER_TEMP/coverage-report"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: whole-default-suite-coverage
+          path: ${{ runner.temp }}/coverage-report/
+          retention-days: 14
+          if-no-files-found: error
