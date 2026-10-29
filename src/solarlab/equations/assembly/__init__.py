@@ -7,7 +7,9 @@ blocks (:mod:`~solarlab.equations.assembly.layout`) and bound Terms
 analyses. Bindings live in their own modules:
 :mod:`~solarlab.equations.assembly.classical_1d` (electronic 1D) and
 :mod:`~solarlab.equations.assembly.ionic_1d` (finite-site ions, single and
-per-domain, with their steady closures).
+per-domain, with their steady closures). Analyses on an assembled system
+live beside them, for example the small-signal operators and their declared
+row operations in :mod:`~solarlab.equations.assembly.small_signal`.
 """
 
 from solarlab.equations.assembly.assembler import (

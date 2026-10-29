@@ -49,7 +49,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.sparse import coo_matrix, csc_matrix
 
-from solarlab.contracts.arrays import frozen_array
+from solarlab.contracts.arrays import frozen_array, integer_indices
 from solarlab.contracts.errors import ContractError
 from solarlab.contracts.terms import Geometry
 from solarlab.contracts.units import SECOND, Unit
@@ -287,6 +287,15 @@ def _sum(pieces: Sequence[Vector]) -> Vector:
     return total
 
 
+def _face_indices(values: ArrayLike, face_count: int) -> Index:
+    """A one-dimensional stencil of face indices within ``[0, face_count)``."""
+    raw = np.asarray(values)
+    indices = np.empty(0, dtype=np.intp) if raw.size == 0 else integer_indices(raw)
+    if indices.ndim != 1 or np.any(indices < 0) or np.any(indices >= face_count):
+        raise ContractError("invalid_face_stencil")
+    return indices
+
+
 def _divergence(term: Term) -> str:
     return str(getattr(term, "divergence", SCATTER_DIVERGENCE))
 
@@ -421,10 +430,11 @@ class Assembler:
     def embedding_ratio(self, node_set: str) -> Vector:
         return self._ratios[node_set]
 
-    def _evaluate(self, state: EvaluationState, derivatives: bool, kinds: tuple[str, ...]) -> Evaluated:
+    def _evaluate(self, state: EvaluationState, derivatives: bool, kinds: tuple[str, ...],
+                  block_id: str | None = None) -> Evaluated:
         results = []
         for term in self.terms:
-            if term.kind not in kinds:
+            if term.kind not in kinds or (block_id is not None and block_id not in term.equations):
                 continue
             values = term.evaluate(state, derivatives=derivatives)
             if set(values) != set(term.equations):
@@ -670,3 +680,89 @@ class Assembler:
             defect = defect - np.asarray(storage_rate, dtype=float)[rows]
         result: Vector = defect / (port.outward_normal * port.measures)
         return result
+
+    def reaction_flux_ordered(self, u: ArrayLike, inputs: OperatingInputs, block_id: str, port_id: str, *,
+                              normal_faces: Index, transverse_faces: Index) -> Vector:
+        """Constrained-port flux along the support axis, in the historical readout grouping.
+
+        With ``f`` the block's plain face parts summed in Term order and ``c``
+        its plain cell parts summed in Term order, times the cell measure::
+
+            t = scatter(-f*w_f to tails, then +f*w_f to heads) over transverse_faces
+            q = (t[port] + c[port]) / port_measure
+            flux = f[normal_faces] - q   (outward normal -1),   f[normal_faces] + q   (+1)
+
+        This keeps the raw normal flux outside the quotient, which the full
+        ``balance`` of :meth:`reaction_flux` has already rounded together with
+        the transverse/source group. Each measure is still applied once, here.
+        The stencils are validated (:meth:`reaction_flux_ordered_identity`
+        records them); weighted parts, chain divergences, port exchanges on
+        the port nodes and unconstrained port rows are refused. DC only.
+        """
+        port, nodes, normal, transverse = self._ordered_stencil(block_id, port_id, normal_faces, transverse_faces)
+        state = self.state(u, inputs)
+        if state is None:
+            raise FloatingPointError("state outside the field map's admissible domain")
+        results = self._evaluate(state, False, (FACE_FLUX, CELL_SOURCE), block_id)
+        if any(_divergence(term) != SCATTER_DIVERGENCE for term, _ in results if term.kind == FACE_FLUX):
+            raise ContractError("ordered_readout_needs_scatter_face_terms")
+        faces = [cast(FaceValue, value).flux for value in self._parts(results, FACE_FLUX, block_id)]
+        cells = [cast(LocalValue, value).value for value in self._parts(results, CELL_SOURCE, block_id)]
+        if not faces:
+            raise ContractError("ordered_readout_needs_a_face_flux")
+        if any(isinstance(part, Weighted) for part in (*faces, *cells)):
+            raise ContractError("ordered_readout_needs_plain_contributions")
+        g = self.mesh.support(self.layout.block(block_id).node_set).geometry
+        # The same plain-run folds as F: parts summed in Term order, weighted once.
+        raw = np.broadcast_to(_sum([np.asarray(part, dtype=float) for part in faces]), g.face_measures.shape)
+        weighted = raw[transverse] * g.face_measures[transverse]
+        inflow = np.zeros(g.volumes.size)
+        np.add.at(inflow, g.pairs[transverse, 0], -weighted)
+        np.add.at(inflow, g.pairs[transverse, 1], weighted)
+        source = (np.broadcast_to(_sum([np.asarray(part, dtype=float) for part in cells]), g.volumes.shape)
+                  * g.volumes if cells else np.zeros(g.volumes.size))
+        quotient = (inflow[nodes] + source[nodes]) / port.measures
+        flux = raw[normal]
+        result: Vector = flux - quotient if port.outward_normal < 0 else flux + quotient
+        return result
+
+    def reaction_flux_ordered_identity(self, block_id: str, port_id: str, *,
+                                       normal_faces: Index, transverse_faces: Index) -> str:
+        """Content identity of one ordered readout: operation, both stencils and this binding."""
+        _, _, normal, transverse = self._ordered_stencil(block_id, port_id, normal_faces, transverse_faces)
+        record = ["solarlab.reaction_flux_ordered.v1", self.identity, block_id, port_id,
+                  normal.tolist(), transverse.tolist()]
+        return sha256(json.dumps(record, separators=(",", ":")).encode()).hexdigest()
+
+    def _ordered_stencil(self, block_id: str, port_id: str, normal_faces: ArrayLike,
+                         transverse_faces: ArrayLike) -> tuple[Port, Index, Index, Index]:
+        """Validated port, port nodes and face stencils of an ordered readout."""
+        block = self.layout.block(block_id)
+        support = self.mesh.support(block.node_set)
+        port = support.port(port_id)
+        g = support.geometry
+        nodes: Index = np.asarray(port.nodes, dtype=np.intp)
+        if not np.all(self._constraint_mask[self.layout.rows(block_id, nodes)]):
+            raise ContractError("reaction_flux_requires_constraint_rows")
+        if port.measure_unit != g.face_unit:
+            raise ContractError("ordered_readout_needs_face_unit_port_measures")
+        normal, transverse = (_face_indices(faces, g.face_measures.size)
+                              for faces in (normal_faces, transverse_faces))
+        if normal.size != nodes.size or np.unique(normal).size != normal.size:
+            raise ContractError("normal_faces_need_one_face_per_port_node")
+        own, other = ((g.pairs[normal, 0], g.pairs[normal, 1]) if port.outward_normal < 0
+                      else (g.pairs[normal, 1], g.pairs[normal, 0]))
+        if not np.array_equal(own, nodes) or np.any(np.isin(other, nodes)):
+            raise ContractError("normal_faces_must_leave_the_port_nodes_in_port_order")
+        if np.any(np.diff(transverse) <= 0):
+            raise ContractError("transverse_faces_must_keep_the_face_order")
+        if np.any(np.isin(transverse, normal)):
+            raise ContractError("transverse_faces_overlap_normal_faces")
+        incident = np.flatnonzero(np.isin(g.pairs, nodes).any(axis=1))
+        if np.setdiff1d(incident, np.union1d(normal, transverse)).size:
+            raise ContractError("transverse_faces_miss_an_incident_face")
+        for term in self.terms:
+            if term.kind == PORT_FLUX and block_id in term.equations and term.port is not None:
+                if np.any(np.isin(support.port(term.port).nodes, nodes)):
+                    raise ContractError("ordered_readout_port_has_an_exchange_term")
+        return port, nodes, normal, transverse

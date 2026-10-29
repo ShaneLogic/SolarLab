@@ -5,8 +5,8 @@ captured from the original implementation and from the assembled bindings
 at all four probes, then compared in every binary64 word, signed zeros
 included: F, J, S, S_u, M, the backward-Euler step residual/Jacobian (here
 in storage-difference form, ``F - dS/dt`` and ``J + M/dt``), every AC
-operator of the unchanged small-signal classes, and the boundary/constraint
-row masks. The sparse matrices must also share their canonical CSC
+operator (from the assembled small-signal analysis), and the boundary and
+constraint row masks; the assembled captures also match Main's frozen digests. The sparse matrices must also share their canonical CSC
 structure, so a sparse LU sees the same pattern and ordering. The udot form
 (R/J_implicit) is compared at zero rate and is refused otherwise (Q2).
 The masked storage increment keeps the original storage adapters' ``x * 0``
@@ -19,11 +19,9 @@ measure-scaling checks show that the Assembler applies each measure once.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import ExitStack
 from dataclasses import replace
 import math
 from typing import Any, TypeAlias
-from unittest import mock
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,8 +30,6 @@ from scipy.sparse import csc_matrix, issparse
 from threadpoolctl import threadpool_limits
 
 from examples.research_1d.ionic_steady import controls as ionic_steady_controls
-import solarlab.equations.ionic_small_signal as ionic_ac
-import solarlab.equations.multiple_ionic_small_signal as multiple_ac
 from solarlab.contracts.errors import ContractError
 from solarlab.equations.assembly.assembler import Assembler, Mesh
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
@@ -41,12 +37,13 @@ from solarlab.equations.assembly.ionic_1d import (
     AssembledConstrainedIonic1DProblem, AssembledConstrainedMultipleIonic1DProblem, AssembledIonic1DProblem,
     AssembledMultipleIonic1DProblem, IonicSystem, ionic_system, multiple_ionic_system,
 )
+from solarlab.equations.assembly.small_signal import (
+    AssembledIonicSmallSignal1D, AssembledMultipleIonicSmallSignal1D,
+)
 from solarlab.equations.assembly.terms import OperatingInputs
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.ionic_1d import Ionic1DProblem
-from solarlab.equations.ionic_small_signal import IonicSmallSignal1D
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem
-from solarlab.equations.multiple_ionic_small_signal import MultipleIonicSmallSignal1D
 from solarlab.solvers.nonlinear.ionic_1d import ConstrainedIonic1DProblem, solve_ionic_steady_state
 from solarlab.solvers.time.backward_euler import _storage_mask
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep
@@ -90,15 +87,6 @@ def constrained(problem: Problem, node: int) -> AssembledConstrainedIonic1DProbl
     return AssembledConstrainedIonic1DProblem(problem, node)
 
 
-def substituted_ac() -> ExitStack:
-    """Test-only: the unchanged AC classes accept (and build) the assembled problems."""
-    stack = ExitStack()
-    stack.enter_context(mock.patch.object(ionic_ac, "Ionic1DProblem", AssembledIonic1DProblem))
-    stack.enter_context(mock.patch.object(multiple_ac, "Ionic1DProblem", AssembledIonic1DProblem))
-    stack.enter_context(mock.patch.object(multiple_ac, "MultipleIonic1DProblem", AssembledMultipleIonic1DProblem))
-    return stack
-
-
 def owned(system: IonicSystem, suffix: str) -> NDArray[np.bool_]:
     """Global rows of the constraint Terms whose id ends with ``suffix``."""
     layout = system.layout
@@ -140,27 +128,28 @@ def candidate(case: ReferenceCase, state: Probe) -> Extraction:
         algebraic = system.layout.constraint_mask()
         extra.update(R_step=np.where(algebraic, F, F - increment / state.dt_s), J_step=J + M / state.dt_s)
     if case.family.endswith("_ac"):
-        with substituted_ac():
-            operator_class: Any = MultipleIonicSmallSignal1D if case.family == "multiple_ac" else IonicSmallSignal1D
-            operator = operator_class(problem, device.state(state.u, voltage_V=state.voltage_V), state.coordinate_form)
-            mode = "frozen" if case.family == "ionic_ac" and state.name == SEEDED else "mobile"
-            ac = operator.system(state.frequency_Hz, voltage_phasor_V=complex(.01, .002), ion_mode=mode)
-            omega = 2 * np.pi * state.frequency_Hz
-            matrix = ac.jacobian + 1j * omega * ac.storage_jacobian
-            known = np.zeros(state.u.size, dtype=complex)
-            for name in ("ac_fixed", "ac_original_enforced", "ac_inventory_constraint", "ac_immobile_constraint"):
-                masks[name] = np.zeros(state.u.size, dtype=bool)
-            for row, value in ac.fixed_coordinates.items():
-                known[row], masks["ac_fixed"][row] = value, True
-            masks["ac_original_enforced"][list(ac.original_rows_enforced)] = True
-            _mark_rows(ac.constraint_rows, masks["ac_inventory_constraint"])
-            _mark_rows(getattr(ac, "immobile_constraint_rows", {}), masks["ac_immobile_constraint"])
-            extra.update(J_ac=ac.jacobian, M_ac=ac.storage_jacobian, A_ac=matrix,
-                         R_ac=matrix @ state.ac_perturbation - (ac.rhs + 1j * omega * ac.rhs_rate),
-                         rhs_ac=ac.rhs, rhs_rate_ac=ac.rhs_rate, fixed_ac=known, lift_ac=ac.coordinate_lift_per_V,
-                         original_R_ac=operator.original_residual(state.ac_perturbation, state.frequency_Hz,
-                                                                  voltage_phasor_V=complex(.01, .002)))
-            J, M, S_u = operator.jacobian, operator.storage_jacobian, -operator.storage_jacobian
+        operating = device.state(state.u, voltage_V=state.voltage_V)
+        operator: Any = (AssembledMultipleIonicSmallSignal1D(problem, operating, state.coordinate_form)
+                         if isinstance(problem, AssembledMultipleIonic1DProblem)
+                         else AssembledIonicSmallSignal1D(problem, operating, state.coordinate_form))
+        mode = "frozen" if case.family == "ionic_ac" and state.name == SEEDED else "mobile"
+        ac = operator.system(state.frequency_Hz, voltage_phasor_V=complex(.01, .002), ion_mode=mode)
+        omega = 2 * np.pi * state.frequency_Hz
+        matrix = ac.jacobian + 1j * omega * ac.storage_jacobian
+        known = np.zeros(state.u.size, dtype=complex)
+        for name in ("ac_fixed", "ac_original_enforced", "ac_inventory_constraint", "ac_immobile_constraint"):
+            masks[name] = np.zeros(state.u.size, dtype=bool)
+        for row, value in ac.fixed_coordinates.items():
+            known[row], masks["ac_fixed"][row] = value, True
+        masks["ac_original_enforced"][list(ac.original_rows_enforced)] = True
+        _mark_rows(ac.constraint_rows, masks["ac_inventory_constraint"])
+        _mark_rows(ac.immobile_constraint_rows, masks["ac_immobile_constraint"])
+        extra.update(J_ac=ac.jacobian, M_ac=ac.storage_jacobian, A_ac=matrix,
+                     R_ac=matrix @ state.ac_perturbation - (ac.rhs + 1j * omega * ac.rhs_rate),
+                     rhs_ac=ac.rhs, rhs_rate_ac=ac.rhs_rate, fixed_ac=known, lift_ac=ac.coordinate_lift_per_V,
+                     original_R_ac=operator.original_residual(state.ac_perturbation, state.frequency_Hz,
+                                                              voltage_phasor_V=complex(.01, .002)))
+        J, M, S_u = operator.jacobian, operator.storage_jacobian, -operator.storage_jacobian
     return Extraction(F, J, case.blocks, S, S_u, M, extra, masks, {"candidate": type(problem).__name__})
 
 
@@ -198,6 +187,18 @@ def test_every_quantity_is_bitwise_equal(name: str, request: pytest.FixtureReque
         words += sum(int(np.prod(np.shape(value))) for value in left.quantities().values())
     request.node.user_properties.append(("ionic_parity", {"factory": name, "block_pairs": blocks,
                                                           "words": words, "changed_words": 0}))
+
+
+@pytest.mark.parametrize("name", IONIC)
+def test_assembled_captures_match_the_frozen_digests(name: str, frozen_digests: tuple[Any, dict[str, Any]]) -> None:
+    """Main's frozen digests of the original captures (cd4b4d28) also hold the assembled ones."""
+    case = REFERENCE_FACTORIES[name]()
+    digest, factories = frozen_digests
+    for state in case.states:
+        expected = factories[name]["states"][state.name]["quantities"]
+        if state.name == SEEDED:
+            expected = {key: value for key, value in expected.items() if key not in ("R_implicit", "J_implicit")}
+        assert digest(candidate(case, state)) == expected, name + "/" + state.name
 
 
 def test_nonzero_rate_udot_form_is_refused() -> None:
