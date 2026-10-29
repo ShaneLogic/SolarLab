@@ -57,9 +57,13 @@ and coupled positive, independent dual-ion and shared-site steady/time examples.
 Ionic small-signal examples distinguish mobile and frozen responses about the same
 saved operating state. A complete illuminated ionic J–V command reports sampled
 photovoltaic metrics, and two separated blocking ion domains share one electronic
-steady/transient system. Explicit neutral bulk defects support unequal physical
+steady/transient/AC system. Explicit neutral bulk defects support unequal physical
 DOS, and smooth CT velocity saturation is bound into DC and small-signal response.
 Explicit coherent spectral optics also supplies control-volume generation and photon budgets.
+The [2D research workflow](examples/research_2d/README.md) now assembles a connected
+lateral/stack grid and solves the full coupled dark and illuminated steady system,
+with explicit geometry, physical balances and saved-result reading. Its bounded
+examples use fixed carrier reservoirs and zero-flux lateral boundaries.
 These are bounded working cases; mesh/time/voltage-grid
 scientific acceptance and the remaining refactor are in progress. The broader application features
 described below include the existing `perovskite_sim` engine and do not imply

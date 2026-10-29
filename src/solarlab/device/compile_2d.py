@@ -1,6 +1,6 @@
 """Bind an explicit rectangular geometry to classical ion-free 2D DC.
 
-Only the geometry fields of the existing typed JV2DInput are admitted here;
+Geometry and neutral grain bands of the existing typed JV2DInput are admitted;
 this is an equation compiler, not a 2D J-V/time-protocol executor. The existing
 1D compiler supplies physical coefficients and reservoirs without running a
 solver. All residuals and tangents are assembled on the connected 2D graph.
@@ -13,7 +13,10 @@ import json
 
 import numpy as np
 
+from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_1d import compile_device_1d
+from solarlab.device.grain_2d import bind_grain_regions_2d, grain_declarations
+from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.dc_2d import CompiledDevice2D
@@ -24,7 +27,7 @@ from solarlab.physics.generation.beer_lambert import BeerLambertBinding
 from solarlab.units import normalize_quantity
 
 CLASSICAL_2D_DC_V1 = "classical_mb_fixed_reservoir_neumann_2d_dc_v1"
-_GEOMETRY_FIELDS = frozenset({"kind", "lateral_length", "Nx", "Ny_per_layer", "lateral_bc"})
+_GEOMETRY_FIELDS = frozenset({"kind", "lateral_length", "Nx", "Ny_per_layer", "lateral_bc", "microstructure"})
 
 
 def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledDevice2D:
@@ -39,7 +42,7 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
         raise TypeError("compile_device_2d requires PreparedDevice and typed JV2DInput geometry")
     for name in spatial.model_fields_set - _GEOMETRY_FIELDS:
         if getattr(spatial, name) is not None:
-            raise CapabilityError("unsupported_classical_2d_dc: execution/microstructure field " + name)
+            raise CapabilityError("unsupported_classical_2d_dc: execution field " + name)
     if spatial.lateral_length is None or spatial.Nx is None or spatial.Ny_per_layer is None:
         raise CapabilityError("2D DC requires explicit lateral_length, Nx and Ny_per_layer")
     if spatial.lateral_bc != "neumann":
@@ -59,7 +62,18 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
             raise CapabilityError("unsupported_classical_2d_dc: optical-only/index layers are not bound")
         if any(p[name] != 0.0 for name in ("v_sat_n", "v_sat_p", "pf_gamma_n", "pf_gamma_p")):
             raise CapabilityError("unsupported_classical_2d_dc: field-dependent carrier mobility is not bound")
-    column = compile_device_1d(prepared, intervals_per_layer=(spatial.Ny_per_layer,) * len(prepared.layers))
+    grain_declarations(prepared, spatial)  # Refuse invalid bands before coefficient compilation.
+    column_prepared, projection = prepared, None
+    if prepared.to_input().grain_boundaries:
+        declaration_without_grains = prepared.to_input().editing_data()
+        declaration_without_grains["grain_boundaries"] = []
+        column_prepared = resolve_device(DeviceInput.model_validate(declaration_without_grains),
+            prepared.defaults, prepared.resources, sources=prepared.sources)
+        projection = json.dumps({"kind": "grain_free_coefficients_and_auxiliary_seed",
+            "source_prepared_sha256": prepared.content_sha256,
+            "coefficient_prepared_sha256": column_prepared.content_sha256,
+            "removed_declaration": "grain_boundaries", "used_as_2d_result": False}, sort_keys=True).encode()
+    column = compile_device_1d(column_prepared, intervals_per_layer=(spatial.Ny_per_layer,) * len(prepared.layers))
     if any(channel.kind != "fixed_reservoir" for channel in column.channels):
         raise CapabilityError("unsupported_classical_2d_dc: only fixed-reservoir contacts are bound")
     if column.recombination.explicit_defects is not None:
@@ -72,8 +86,12 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
         values = dict(layer.parameters)
         alpha[mask], eps[mask] = values["alpha"], values["eps_r"]
     generation = BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
+    grains = bind_grain_regions_2d(prepared, spatial, geometry)
     declaration = spatial.model_dump_json().encode()
     identity = hashlib.sha256(json.dumps((CLASSICAL_2D_DC_V1, prepared.content_sha256, column.identity,
                                          geometry.sha256, generation.binding_sha256, declaration.decode()),
                                         separators=(",", ":")).encode()).hexdigest()
-    return CompiledDevice2D(identity, column, geometry, generation, eps, declaration)
+    if grains is not None:
+        identity = hashlib.sha256(json.dumps((identity, grains.model_id), separators=(",", ":")).encode()).hexdigest()
+    return CompiledDevice2D(identity, column, geometry, generation, eps, declaration,
+                            grain_recombination=grains, column_projection_json=projection)

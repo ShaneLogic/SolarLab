@@ -36,6 +36,34 @@ For an existing failed two-target record whose dark point was accepted,
 revalidates that dark result without solving it again, then requests only the
 illuminated point. The original failure remains linked in the new output.
 
+## Neutral grain-region recombination
+
+```sh
+.venv/bin/python -B -m examples.research_2d.grains \
+  --output outputs/2d_grains.json
+GRAIN_2D_SHA=$(shasum -a 256 outputs/2d_grains.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_2d.grains \
+  --read outputs/2d_grains.json --sha256 "$GRAIN_2D_SHA"
+```
+
+The illustrative absorber region is centered at 0.4 µm, has width 0.3 µm,
+and declares electron/hole SRH lifetimes of 0.5/0.25 µs. The compiler uses the
+exact overlap with each lateral control cell. It blends the grain and bulk SRH
+rates and their density derivatives by that fraction, while retaining bulk
+radiative and Auger recombination. This neutral model adds no charge or state
+variable. The solved example has nonzero transverse current and passes the
+original full-row and physical current-balance checks.
+
+`--algebra <output.json>` exports the binding and arbitrary-state equations
+without solving. `--config <device.json>` changes the layered device; the
+example's spatial grain declaration stays explicit in `spatial_input()`.
+Custom spatial declarations use the existing `JV2DInput.microstructure` field.
+The output records layer ownership, fractions, represented widths/areas,
+lifetimes and the numerical seed separately from the actual 2D result. The
+historical grain-role partition owns interfaces on the left, while physical
+material coefficients keep right-layer ownership; both are explicit in the
+saved binding. Thin-region resolution and mesh qualification remain unverified.
+
 ## Inspect the equations
 
 From the repository root, using the locked environment described in the
@@ -78,8 +106,9 @@ integer-endpoint convention without the documented weight conversion.
 
 The initial scope uses fixed carrier reservoirs at the stack ends, zero normal
 particle and displacement flux at the lateral boundaries, constant carrier
-mobility and the supported Beer–Lambert generation binding. Ions, explicit
-defects, grain boundaries, field-dependent transport, periodic boundaries and
+mobility and the supported Beer–Lambert generation binding. The grain example
+adds the declared neutral volumetric SRH regions above. Ions, charged or
+distributed defects, field-dependent transport, periodic boundaries and
 spectral/coherent/incoherent optical declarations are outside this entry.
 The algebra checks do not establish a steady solution, mesh convergence or
 final scientific qualification.

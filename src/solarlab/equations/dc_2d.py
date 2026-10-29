@@ -22,6 +22,7 @@ from solarlab.contracts import (
 )
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M
+from solarlab.device.grain_2d import GrainRecombination2D
 from solarlab.equations.dc_1d import CompiledDevice1D, _quasi_fermi_potential_tangents
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.electrostatics.charge import ChargeEntry, ChargeLedger
@@ -72,6 +73,8 @@ class CompiledDevice2D:
     generation_y: GenerationProfile
     relative_permittivity_y: Vector
     spatial_declaration_json: bytes
+    grain_recombination: GrainRecombination2D | None = None
+    column_projection_json: bytes | None = None
     band_structure: BandStructure = field(init=False)
     recombination: BulkRecombinationReaction = field(init=False)
     generation_source_m3_s: Vector = field(init=False)
@@ -82,6 +85,8 @@ class CompiledDevice2D:
 
     def __post_init__(self) -> None:
         column, geometry = self.column, self.geometry
+        if self.grain_recombination is not None and self.grain_recombination.geometry_sha256 != geometry.sha256:
+            raise ValueError("grain recombination must be bound to this exact 2D geometry")
         if not self.sha256 or not np.array_equal(column.nodes_m, geometry.y_geometry.nodes_m):
             raise ValueError("column coefficients must match the 2D stack grid and identity")
         if column.field_transport is not None or column.recombination.explicit_defects is not None:
@@ -215,6 +220,8 @@ class DC2DProblem:
     def recombination_rate(self, n: Vector, p: Vector, *, derivatives: bool = True) -> RecombinationRate:
         evaluation = self.device.recombination.evaluate(n, p, derivatives=derivatives)
         evaluation.require_domain()
+        if self.device.grain_recombination is not None:
+            return self.device.grain_recombination.evaluate(evaluation, self.device.recombination.coefficients)
         return evaluation.total
 
     def displacement(self, u: ArrayLike) -> Vector:
