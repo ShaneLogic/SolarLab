@@ -11,10 +11,57 @@ import pytest
 import yaml
 
 from suite_support import changed_bound_core_sources, clean_core_skip_reason
-from .policy import Selection, audit, audit_files, matches, workflow_selections
+from .policy import Selection, audit, audit_files, audit_platform_fixtures, matches, workflow_selections
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_every_platform_bound_fixture_consumer_is_classified():
+    policy = json.loads(Path(__file__).with_name("exclusions.json").read_text())
+    fixtures = policy["platform_bound_fixtures"]
+    assert fixtures and all(reason.strip() for reason in fixtures.values())
+    assert all(name.startswith("env:") or (ROOT / name).is_file() for name in fixtures)
+    # A newly captured numerical stack cannot silently evade the fixture inventory.
+    for path in (ROOT / "tests").rglob("*.json"):
+        document = json.loads(path.read_bytes())
+        capture = document.get("capture") if isinstance(document, dict) else None
+        if isinstance(capture, dict) and {"system", "machine", "numpy", "scipy"} <= capture.keys():
+            assert path.relative_to(ROOT).as_posix() in fixtures, f"unclassified captured fixture: {path}"
+    sources = {path.relative_to(ROOT).as_posix(): path.read_text()
+               for path in (ROOT / "tests").rglob("*.py")}
+    consumers = audit_platform_fixtures(sources, fixtures, policy["platform_bound"])
+    print(json.dumps({"platform_fixture_consumers": consumers, "unclassified": []}))
+
+
+@pytest.mark.parametrize("access", ["direct", "constant", "helper", "fixture", "usefixtures", "imported", "dynamic"])
+def test_platform_fixture_guard_follows_direct_and_indirect_consumers(access):
+    fixture = "tests/data/captured.json"
+    name = "tests/unit/test_consumer.py"
+    sources = {"tests/support/reader.py":
+        f"FIXTURE = Path({fixture!r})\ndef load():\n    return FIXTURE.read_bytes()\n",
+        "tests/unit/conftest.py":
+        f"@pytest.fixture\ndef captured():\n    return Path({fixture!r}).read_bytes()\n"}
+    sources[name] = {
+        "direct": f"def test_read():\n    Path({fixture!r}).read_bytes()\n",
+        "constant": "CAPTURE = Path('tests/data') / 'captured.json'\ndef test_read():\n    CAPTURE.read_text()\n",
+        "helper": f"def load():\n    return Path({fixture!r}).read_bytes()\ndef test_read():\n    load()\n",
+        "fixture": "def test_read(captured):\n    assert captured\n",
+        "usefixtures": "@pytest.mark.usefixtures('captured')\ndef test_read():\n    pass\n",
+        "imported": "from support.reader import load as saved\ndef test_read():\n    saved()\n",
+        "dynamic": "ORACLE = Path('tests/support/reader.py')\nmodule = load_module(ORACLE)\ndef test_read():\n    module.FIXTURE.read_bytes()\n",
+    }[access] + "\ndef test_live():\n    compare_live_operators()\n"
+    with pytest.raises(ValueError, match="unclassified platform-bound fixture consumers"):
+        audit_platform_fixtures(sources, {fixture: "captured numerical words"}, [])
+    consumers = audit_platform_fixtures(sources, {fixture: "captured numerical words"}, [name + "::test_read"])
+    assert consumers == {name + "::test_read": [fixture]}
+
+
+def test_dynamic_fixture_lookup_does_not_classify_an_unrelated_same_named_constant():
+    sources = {"tests/support/protected.py": "FIXTURE = Path('captured.json')\n",
+        "tests/support/unrelated.py": "FIXTURE = Path('portable.json')\n",
+        "tests/test_live.py": "SOURCE = Path('tests/support/unrelated.py')\nmodule = load_module(SOURCE)\ndef test_read():\n    module.FIXTURE.read_bytes()\n"}
+    assert audit_platform_fixtures(sources, {"tests/data/captured.json": "captured words"}, []) == {}
 
 
 def test_every_root_test_file_has_an_ordinary_ci_job_or_reasoned_exclusion():

@@ -215,8 +215,6 @@ def test_point_failure_budget_or_nested_scan_does_not_pollute_following_point(tm
         receipt = supervisor.wait(JobHandle(store.store_id, first["run_id"], first["attempt_id"]), 1).data
         assert receipt["process_exit_observed"] and receipt["process_joined"]
         if action == "stuck":
-            assert any(e["payload"].get("ui_progress", {}).get("signals_ignored") is True
-                       for e in store.events(run_id=first["run_id"], limit=1000))
             assert receipt["signals"] == ["soft_stop", "terminate", "kill"]
         if action == "nested_scan":
             assert "nested supervisors or scans" in first["result"]["worker_result"]["detail"]

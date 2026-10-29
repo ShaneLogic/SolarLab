@@ -12,7 +12,18 @@
     "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_exact_archived_requests_distinguish_D0_and_c0": "Archive-dependent original request bytes; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
     "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_nominal_saved_request_is_bound": "Archive-dependent nominal request bytes; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
     "tests/refactor/test_hysteresis_reference.py::TestPrebiasFirstStepPolicy::test_default_plan_omits_policy_and_request_stays_exact": "Archive-dependent prebias policy input; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
-    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_factory": "Bitwise words and CSR patterns require the recorded platform system/machine, Python/NumPy/SciPy versions and each library BLAS/LAPACK vendor; mismatches skip with named fields. The live old-vs-new assembly/parity tests remain collected and run on every platform."
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_factory": "Bitwise words and CSR patterns require the recorded platform system/machine, Python/NumPy/SciPy versions and each library BLAS/LAPACK vendor; mismatches skip with named fields. The live old-vs-new assembly/parity tests remain collected and run on every platform.",
+    "tests/independent/p04/test_p04_legacy_golden.py::test_fixture_identity_and_sources": "Portable metadata or quoted-value check of the existing platform-bound golden; no cross-platform bitwise output equivalence is inferred.",
+    "tests/independent/p04/test_p04_legacy_golden.py::test_quoted_existing_values_are_reproduced": "Portable metadata or quoted-value check of the existing platform-bound golden; no cross-platform bitwise output equivalence is inferred.",
+    "tests/unit/assembly/test_assembly_ionic_1d.py::test_assembled_captures_match_the_frozen_digests": "Captured floating words/patterns require frozen_digests, which reuses the existing require_capture_environment guard; separate live old-vs-new comparisons remain unconditional on every platform.",
+    "tests/unit/assembly/test_assembly_small_signal.py::test_harness_ac_captures_match_the_frozen_digests": "Captured floating words/patterns require frozen_digests, which reuses the existing require_capture_environment guard; separate live old-vs-new comparisons remain unconditional on every platform.",
+    "tests/unit/assembly/test_assembly_steady_2d.py::test_actual_195_row_steady_histories_are_bitwise": "Reads exact archived input coordinates with portable byte-integrity checks; current physical gates and live old-vs-new Newton histories remain unconditional on every platform. Platform-dependent decoded field digests are checked in the separate capture-guarded test.",
+    "tests/unit/assembly/test_assembly_steady_2d.py::test_archived_seed_fields_match_frozen_digests": "Captured floating words/patterns require frozen_digests, which reuses the existing require_capture_environment guard; separate live old-vs-new comparisons remain unconditional on every platform.",
+    "tests/unit/assembly/test_assembly_two_dimensional.py::test_all_twenty_states_match_frozen_original_arrays": "Captured floating words/patterns require frozen_digests, which reuses the existing require_capture_environment guard; separate live old-vs-new comparisons remain unconditional on every platform.",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_foreign_environment_skips_before_factory_evaluation": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_inventory": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_matching_environment_keeps_a_frozen_word_failure_visible": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform."
   },
   "markers": {
     "slow": "Excluded from the default fast command; run root slow tests explicitly with -m slow. The optional CI slow job retains its existing legacy regression scope.",
@@ -49,6 +60,25 @@
     }
   },
   "platform_bound": [
-    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_factory"
-  ]
+    "tests/independent/p04/test_p04_legacy_golden.py::test_candidate_against_golden",
+    "tests/independent/p04/test_p04_legacy_golden.py::test_fixture_identity_and_sources",
+    "tests/independent/p04/test_p04_legacy_golden.py::test_legacy_reproduces_golden_bitwise",
+    "tests/independent/p04/test_p04_legacy_golden.py::test_quoted_existing_values_are_reproduced",
+    "tests/unit/assembly/test_assembly_ionic_1d.py::test_assembled_captures_match_the_frozen_digests",
+    "tests/unit/assembly/test_assembly_small_signal.py::test_harness_ac_captures_match_the_frozen_digests",
+    "tests/unit/assembly/test_assembly_steady_2d.py::test_actual_195_row_steady_histories_are_bitwise",
+    "tests/unit/assembly/test_assembly_steady_2d.py::test_archived_seed_fields_match_frozen_digests",
+    "tests/unit/assembly/test_assembly_two_dimensional.py::test_all_twenty_states_match_frozen_original_arrays",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_foreign_environment_skips_before_factory_evaluation",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_factory",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_inventory",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_matching_environment_keeps_a_frozen_word_failure_visible",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip"
+  ],
+  "platform_bound_fixtures": {
+    "tests/support/assembly_baselines.json": "Raw float/complex words and sparse patterns captured on the recorded Darwin arm64 Python/NumPy/SciPy and Accelerate stack.",
+    "tests/unit/assembly/fixtures/dc2d_steady_seeds_v1.json": "Exact historical input-coordinate bytes are portable; decoded physical-field word digests require the supported capture stack. Live original-vs-assembled solves use the unchanged input words and current gates on every platform.",
+    "env:SOLARLAB_ASSEMBLY_2D_BASELINE": "Optional pinned DC2D gate NPZ contains original captured float arrays and sparse patterns; compare only on the capture stack.",
+    "tests/independent/p04/fixtures/P04LegacyGoldenV1.json": "Existing macOS/Accelerate golden: floating comparisons retain their current platform prerequisites; metadata and quoted-value checks remain portable."
+  }
 }

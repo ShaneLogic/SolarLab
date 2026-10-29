@@ -184,7 +184,18 @@ def reference(case: ReferenceCase, state: Probe) -> Extraction:
 
 
 @pytest.mark.parametrize("name", AC)
-def test_harness_ac_captures_are_bitwise_equal_and_match_the_frozen_digests(
+def test_harness_ac_captures_are_bitwise_equal(name: str) -> None:
+    case = REFERENCE_FACTORIES[name]()
+    for state in case.states:
+        with originals_forbidden():
+            assembled = candidate(case, state)
+        comparison = compare(reference(case, state), assembled)
+        comparison.assert_equal()
+        assert all(item.bitwise_equal for item in comparison.differences)
+
+
+@pytest.mark.parametrize("name", AC)
+def test_harness_ac_captures_match_the_frozen_digests(
         name: str, frozen_digests: tuple[Any, dict[str, Any]]) -> None:
     case = REFERENCE_FACTORIES[name]()
     digest, factories = frozen_digests
@@ -192,9 +203,6 @@ def test_harness_ac_captures_are_bitwise_equal_and_match_the_frozen_digests(
     for state in case.states:
         with originals_forbidden():
             assembled = candidate(case, state)
-        comparison = compare(reference(case, state), assembled)
-        comparison.assert_equal()
-        assert all(item.bitwise_equal for item in comparison.differences)
         digests = digest(assembled)
         expected = frozen["states"][state.name]["quantities"]
         if state.name == SEEDED:

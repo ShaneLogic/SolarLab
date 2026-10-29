@@ -3,7 +3,8 @@
 The twenty harness states are algebra probes, not accepted steady results.
 Set SOLARLAB_ASSEMBLY_2D_BASELINE to the pinned gate NPZ to additionally
 compare the raw arrays captured at 4c7fb353; the repository's frozen digest
-oracle is always checked. No baseline is rewritten and no solver is called.
+oracle is checked on its capture environment. Live old-vs-new comparisons
+run on every platform. No baseline is rewritten and no solver is called.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ def cases() -> dict[str, ReferenceCase]:
 
 
 @pytest.fixture(scope="module")
-def gate_baseline() -> Iterator[Any]:
+def gate_baseline(frozen_digests: tuple[Callable[[Any], dict[str, Any]], dict[str, Any]]) -> Iterator[Any]:
     filename = os.environ.get("SOLARLAB_ASSEMBLY_2D_BASELINE")
     if filename is None:
         yield None
@@ -88,6 +89,22 @@ def assembled_capture(case: ReferenceCase, state: Probe) -> Extraction:
 
 
 @pytest.mark.parametrize("name", FACTORIES)
+def test_all_twenty_states_are_live_bitwise_equal(
+    name: str, cases: dict[str, ReferenceCase], request: pytest.FixtureRequest,
+) -> None:
+    case = cases[name]
+    for state in case.states:
+        candidate = assembled_capture(case, state)
+        assert candidate.S is None and candidate.S_u is None and candidate.M is None
+        original = case.extract(state)
+        assert_bits(original.F, candidate.F)
+        assert_matrix(original.J, candidate.J)
+    request.node.user_properties.append(("parity", {"factory": name, "states": len(case.states),
+        "F_changed_words": 0, "J_changed_words": 0,
+        "S_Su_M": "absent in both original and candidate"}))
+
+
+@pytest.mark.parametrize("name", FACTORIES)
 def test_all_twenty_states_match_frozen_original_arrays(
     name: str, cases: dict[str, ReferenceCase], gate_baseline: Any,
     frozen_digests: tuple[Callable[[Any], dict[str, Any]], dict[str, Any]],
@@ -95,14 +112,10 @@ def test_all_twenty_states_match_frozen_original_arrays(
 ) -> None:
     case = cases[name]
     digest, expected = frozen_digests
-    changed_words = 0
     for state in case.states:
         candidate = assembled_capture(case, state)
         assert candidate.S is None and candidate.S_u is None and candidate.M is None
         assert digest(candidate) == expected[name]["states"][state.name]["quantities"]
-        original = case.extract(state)
-        assert_bits(original.F, candidate.F)
-        assert_matrix(original.J, candidate.J)
         if gate_baseline is not None:
             prefix = f"{name}__{state.name}"
             assert_bits(gate_baseline[prefix + "_u"], state.u)
@@ -110,9 +123,8 @@ def test_all_twenty_states_match_frozen_original_arrays(
             assert_bits(gate_baseline[prefix + "_J_data"], candidate.J.data)
             assert np.array_equal(gate_baseline[prefix + "_J_indices"], candidate.J.indices)
             assert np.array_equal(gate_baseline[prefix + "_J_indptr"], candidate.J.indptr)
-    request.node.user_properties.append(("parity", {"factory": name, "states": len(case.states),
-        "F_changed_words": changed_words, "J_changed_words": changed_words,
-        "S_Su_M": "absent in both original and candidate", "gate_NPZ": gate_baseline is not None}))
+    request.node.user_properties.append(("frozen_parity", {"factory": name, "states": len(case.states),
+        "F_changed_words": 0, "J_changed_words": 0, "gate_NPZ": gate_baseline is not None}))
 
 
 @pytest.mark.parametrize("name", FACTORIES)

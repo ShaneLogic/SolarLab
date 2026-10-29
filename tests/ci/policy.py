@@ -116,6 +116,126 @@ def source_test_nodes(source: str) -> set[str]:
     return result
 
 
+def platform_fixture_consumers(sources: dict[str, str], fixtures: dict[str, str]) -> dict[str, list[str]]:
+    """Conservatively follow fixture references, helpers, imports and pytest fixtures.
+
+    Classification is separate from skipping: input-byte and metadata checks
+    stay portable, while comparisons to captured floating outputs need the
+    capture-environment guard. Literal paths, basenames and named external
+    fixture environment variables are all inventoried by the policy.
+    """
+    symbols: dict[tuple[str, str], ast.AST] = {}
+    imported: dict[tuple[str, str], tuple[str, str]] = {}
+    modules: dict[tuple[str, str], str] = {}
+    tests = set()
+
+    def module_file(module: str) -> str | None:
+        path = module.replace(".", "/") + ".py"
+        for candidate in (path, "tests/" + path):
+            if candidate in sources:
+                return candidate
+        candidates = [name for name in sources if PurePosixPath(name).name == path]
+        return candidates[0] if len(candidates) == 1 else None
+
+    for path, source in sources.items():
+        tree = ast.parse(source)
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                symbols[path, node.name] = node
+            elif isinstance(node, ast.ClassDef):
+                for method in node.body:
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        symbols[path, node.name + "::" + method.name] = method
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and node.value is not None:
+                        symbols[path, target.id] = node.value
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                target = module_file(node.module)
+                if target is not None:
+                    for alias in node.names:
+                        imported[path, alias.asname or alias.name] = (target, alias.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    target = module_file(alias.name)
+                    if target is not None:
+                        modules[path, alias.asname or alias.name] = target
+        tests.update((path, name) for name in source_test_nodes(source)
+                     if PurePosixPath(path).name.startswith("test_"))
+
+    def resolve(path: str, name: str) -> tuple[str, str] | None:
+        if (path, name) in symbols:
+            return path, name
+        if (path, name) in imported:
+            return imported[path, name]
+        for parent in PurePosixPath(path).parents:
+            key = (str(parent / "conftest.py"), name)
+            if key in symbols:
+                return key
+        return None
+
+    direct: dict[tuple[str, str], set[str]] = {}
+    edges: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    origins: dict[tuple[str, str], set[str]] = {}
+    attributes: list[tuple[tuple[str, str], str]] = []
+    for key, node in symbols.items():
+        path, _ = key
+        direct[key], edges[key], origins[key] = set(), set(), set()
+        for part in ast.walk(node):
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                for fixture in fixtures:
+                    label = fixture.removeprefix("env:")
+                    if part.value == label or part.value.endswith("/" + label) or part.value == PurePosixPath(label).name:
+                        direct[key].add(fixture)
+                target = module_file(part.value.removesuffix(".py")) if part.value.endswith(".py") else None
+                if target is not None:
+                    origins[key].add(target)
+            if isinstance(part, (ast.Name, ast.arg)):
+                dependency = resolve(path, part.id if isinstance(part, ast.Name) else part.arg)
+                if dependency is not None:
+                    edges[key].add(dependency)
+            if isinstance(part, ast.Attribute):
+                if isinstance(part.value, ast.Name) and (path, part.value.id) in modules:
+                    edges[key].add((modules[path, part.value.id], part.attr))
+                else:
+                    attributes.append((key, part.attr))
+            if isinstance(part, ast.Call) and isinstance(part.func, ast.Attribute) and part.func.attr in {
+                    "usefixtures", "getfixturevalue"}:
+                for argument in part.args:
+                    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                        dependency = resolve(path, argument.value)
+                        if dependency is not None:
+                            edges[key].add(dependency)
+    def propagate(values: dict[tuple[str, str], set[str]]) -> None:
+        changed = True
+        while changed:
+            changed = False
+            for key, dependencies in edges.items():
+                before = len(values[key])
+                for dependency in dependencies:
+                    values[key].update(values.get(dependency, ()))
+                changed |= len(values[key]) != before
+
+    # Resolve dynamically loaded oracle attributes through their actual file,
+    # not every unrelated module that happens to export a constant named FIXTURE.
+    propagate(origins)
+    for key, attribute in attributes:
+        edges[key].update((path, attribute) for path in origins[key])
+    propagate(direct)
+    return {path + "::" + name: sorted(direct[path, name])
+            for path, name in sorted(tests) if direct[path, name]}
+
+
+def audit_platform_fixtures(sources: dict[str, str], fixtures: dict[str, str],
+                            classified: list[str]) -> dict[str, list[str]]:
+    consumers = platform_fixture_consumers(sources, fixtures)
+    missing = sorted(set(consumers) - set(classified))
+    if missing:
+        raise ValueError(f"unclassified platform-bound fixture consumers: {missing}")
+    return consumers
+
+
 def audit_files(files: dict[str, str], selections: tuple[Selection, ...],
                 exclusions: dict[str, Any]) -> dict[str, Any]:
     """Audit a source mapping, also usable with synthetic in-memory files."""

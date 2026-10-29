@@ -65,24 +65,36 @@ def matrix_words(matrix: csc_matrix) -> Any:
     return (matrix.shape, words(matrix.data), matrix.indices.tobytes(), matrix.indptr.tobytes())
 
 
-@pytest.mark.parametrize("name", ("dark", "light"))
-def test_actual_195_row_steady_histories_are_bitwise(
-    name: str, device: CompiledDevice2D, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
-) -> None:
+def saved_seed(name: str) -> tuple[dict[str, Any], np.ndarray]:
+    """Portable input words; decoding derived fields is checked separately."""
     document = json.loads(SEEDS.read_bytes())
     assert document["schema"] == "solarlab.assembly_2d.saved_numerical_seeds.v1"
     assert document["qualification"] is False
     seed = document["points"][name]
+    u = np.frombuffer(bytes.fromhex(seed["u_words_le_hex"]), dtype="<f8").copy()
+    assert hashlib.sha256(np.ascontiguousarray(u, dtype="<f8").tobytes()).hexdigest() == seed["u_sha256"]
+    return seed, u
+
+
+@pytest.mark.parametrize("name", ("dark", "light"))
+@pytest.mark.usefixtures("frozen_digests")
+def test_archived_seed_fields_match_frozen_digests(name: str, device: CompiledDevice2D) -> None:
+    seed, u = saved_seed(name)
+    state = device.state(u, voltage_V=seed["voltage_V"])
+    for field, digest in seed["field_sha256"].items():
+        assert hashlib.sha256(np.ascontiguousarray(getattr(state, field), dtype="<f8").tobytes()).hexdigest() == digest
+
+
+@pytest.mark.parametrize("name", ("dark", "light"))
+def test_actual_195_row_steady_histories_are_bitwise(
+    name: str, device: CompiledDevice2D, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
+) -> None:
+    seed, u = saved_seed(name)
     # Compiled identity changed with the contact/source migration. The
     # saved acceptance remains attached to the historical identity; these
     # are numerical coordinates until the current original gates admit them.
     assert seed["compiled_identity"]
     voltage, light = seed["voltage_V"], seed["generation_scale"]
-    u = np.frombuffer(bytes.fromhex(seed["u_words_le_hex"]), dtype="<f8").copy()
-    assert hashlib.sha256(u.tobytes()).hexdigest() == seed["u_sha256"]
-    state = device.state(u, voltage_V=voltage)
-    for field, digest in seed["field_sha256"].items():
-        assert hashlib.sha256(np.ascontiguousarray(getattr(state, field), dtype="<f8").tobytes()).hexdigest() == digest
     controls = steady_2d.Steady2DOptions()
     assert asdict(controls.electronic) == seed["original_controls"]["electronic"]
     original = DC2DProblem(device, voltage, light)
