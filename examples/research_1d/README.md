@@ -1070,9 +1070,29 @@ The saved-result reader performs no new solve.
 This slice uses the full electrostatic face field, requires `ct_beta_n` or
 `ct_beta_p` greater than one on each active carrier face, and keeps Poole–Frenkel
 enhancement off. CT-off devices retain the original constant-diffusivity path.
-Both AC entry points explicitly reject active CT until their complete drive
-and current tangents are implemented. The bounded DC example passed its
-original numerical gates; mesh and final scientific qualification remain pending.
+Both AC entry points include the field dependence in the current and voltage
+drive tangents. Reuse the accepted DC result for an actual small-signal sweep:
+
+```sh
+CT_INITIAL_SHA=$(shasum -a 256 outputs/field_transport.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.field_transport_ac solve \
+  --kind ion-free --initial-result outputs/field_transport.json \
+  --initial-sha256 "$CT_INITIAL_SHA" --frequencies 0 1 1000 \
+  --output outputs/field_transport_ac.json
+CT_AC_SHA=$(shasum -a 256 outputs/field_transport_ac.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_1d.field_transport_ac read \
+  --result outputs/field_transport_ac.json --sha256 "$CT_AC_SHA"
+```
+
+The AC command validates the same-device initial state and performs no new DC
+solve. The reader checks and decodes the saved response without recomputation.
+Admittance density is in S/m² and current response is normalized per volt.
+Independent native witnesses cover this ion-free case and a shared-site ionic
+device with fixed-reservoir carrier contacts at 0, 0.01, 1 and 1000 Hz. Ionic
+initials must be separately accepted on their actual CT device; an accepted
+constant-diffusivity state is not an accepted CT state. Positive-only and
+independent-site branches have targeted algebra checks but no separate native
+CT witness here. Mesh and final scientific qualification remain pending.
 
 ## Adding a local model
 

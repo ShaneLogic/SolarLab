@@ -57,8 +57,8 @@ and coupled positive, independent dual-ion and shared-site steady/time examples.
 Ionic small-signal examples distinguish mobile and frozen responses about the same
 saved operating state. A complete illuminated ionic J–V command reports sampled
 photovoltaic metrics, and two separated blocking ion domains share one electronic
-steady/transient system. Explicit neutral bulk defects and smooth CT velocity
-saturation are bound into DC; active CT is currently rejected by AC entry points.
+steady/transient system. Explicit neutral bulk defects support unequal physical
+DOS, and smooth CT velocity saturation is bound into DC and small-signal response.
 These are bounded working cases; mesh/time/voltage-grid
 scientific acceptance and the remaining refactor are in progress. The broader application features
 described below include the existing `perovskite_sim` engine and do not imply

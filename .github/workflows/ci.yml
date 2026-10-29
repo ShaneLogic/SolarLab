@@ -209,6 +209,7 @@ jobs:
           tests/integration/test_neutral_defect_energy_reference_1d.py
           tests/integration/test_field_transport_1d.py
           tests/integration/test_field_transport_ac_guards.py
+          tests/integration/test_field_transport_ac_1d.py
           tests/runtime/test_ionic_transient_worker.py
           tests/runtime/test_ionic_jv_worker.py
           tests/runtime/test_ionic_jv_job_service.py

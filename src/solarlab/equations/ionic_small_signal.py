@@ -42,11 +42,15 @@ def _frequency_voltage(frequency_Hz: float, voltage_phasor_V: complex, ion_mode:
     return frequency, voltage
 
 
-def _source_pins() -> dict[str, str]:
-    names = (__name__, "solarlab.equations.ionic_1d", "solarlab.equations.dc_1d",
+def _source_pins(*, field_transport: bool = False) -> dict[str, str]:
+    names: tuple[str, ...] = (__name__, "solarlab.equations.ionic_1d", "solarlab.equations.dc_1d",
              "solarlab.physics.ions.migration", "solarlab.physics.ions.finite_site",
              "solarlab.physics.ions.shared_site", "solarlab.physics.transport.electrochemical_flux",
              "solarlab.physics.electrostatics.poisson", "solarlab.equations.ionic_closure")
+    if field_transport:
+        names += ("solarlab.equations.field_transport_1d",
+                  "solarlab.physics.transport.field_mobility",
+                  "solarlab.physics.transport.field_mobility_tangents")
     result = {}
     for name in names:
         path = sys.modules[name].__file__
@@ -120,8 +124,6 @@ class IonicSmallSignal1D:
         if self.coordinate_form not in {"moving_boundary_lift_v1", "fixed_reference_v1"}:
             raise ValueError("ionic AC requires an explicit supported coordinate representation")
         device, state = self.problem.device, self.operating_state
-        if device.electronic_component.field_transport is not None:
-            raise CapabilityError("CT AC current tangents are not bound; field-dependent carrier transport is DC-only")
         if state.device_sha256 != device.identity or state.voltage_V != self.problem.voltage_V:
             raise ValueError("ionic AC state must have the same complete device and operating voltage")
         if any(channel.kind != "fixed_reservoir" for channel in device.electronic_component.channels):
@@ -162,7 +164,7 @@ class IonicSmallSignal1D:
         object.__setattr__(self, "working_state_identity", hashlib.sha256(json.dumps((
             device.identity, float(state.voltage_V).hex(), float(self.problem.generation_scale).hex(), digest,
         )).encode()).hexdigest())
-        object.__setattr__(self, "source_sha256", _source_pins())
+        object.__setattr__(self, "source_sha256", _source_pins(field_transport=device.electronic_component.field_transport is not None))
 
     @property
     def device(self) -> CompiledIonicDevice1D:
@@ -240,6 +242,7 @@ class IonicSmallSignal1D:
         component, N = self.device.electronic_component, self.device.node_count
         u = self.operating_state.u[:3 * N]
         fluxes = self.problem.electronic_problem.fluxes(u)
+        transport = None if component.field_transport is None else component.field_transport.evaluate(u[:N])
         state = self.operating_state.electronic_state
         before, after = component.carrier_reference_energies(0.0), component.carrier_reference_energies(1.0)
         values = []
@@ -247,6 +250,14 @@ class IonicSmallSignal1D:
                                                       (2 * N, state.hole_density_m3, fluxes.hole, -1.0, after[1] - before[1])):
             drive = sign * np.diff(u[offset:offset + N])
             left_phi, _ = _quasi_fermi_potential_tangents(flux, drive, sign, component.thermal_voltage_V)
+            if transport is not None:
+                diffusivity = (transport.electron_diffusivity_m2_s if offset == N
+                               else transport.hole_diffusivity_m2_s)
+                d_diffusivity = (transport.electron_d_diffusivity_d_field if offset == N
+                                 else transport.hole_d_diffusivity_d_field)
+                # Same antisymmetric CT chain as production Fy. A moving
+                # carrier energy reference alone has no electric-field drive.
+                left_phi = left_phi + (flux.flux / diffusivity) * d_diffusivity / np.diff(component.nodes_m)
             left_z = sign * flux.left_density_derivative * density[:-1]
             values.append(left_phi * (x[:N - 1] - x[1:N])
                           + left_z * (x[offset:offset + N - 1] - x[offset + 1:offset + N])
@@ -402,7 +413,7 @@ class IonicSmallSignal1D:
         input_current = component.voltage_polarity * total[positive_electrode]
         bound = (Q * (float(np.sum(abs(carrier_balance))) + sum(float(np.sum(abs(v))) for v in ion_balance.values()))
                  + omega * float(np.sum(abs(gauss)))) / abs(voltage)
-        if _source_pins() != self.source_sha256:
+        if _source_pins(field_transport=component.field_transport is not None) != self.source_sha256:
             raise RuntimeError("ionic AC physical source changed during observation")
         result: dict[str, object] = {
             "frequency_Hz": frequency, "voltage_phasor_V": voltage, "ion_mode": ion_mode,

@@ -21,7 +21,7 @@ from scipy.sparse import csc_matrix, eye
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.equations.dc_1d import (
-    CapabilityError, CompiledDevice1D, DC1DProblem, _quasi_fermi_potential_tangents,
+    CompiledDevice1D, DC1DProblem, _quasi_fermi_potential_tangents,
 )
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
@@ -46,8 +46,8 @@ def voltage_reference_direction(device: CompiledDevice1D) -> np.ndarray:
     return result
 
 
-def _sources() -> dict[str, str]:
-    names = (
+def _sources(*, field_transport: bool = False) -> dict[str, str]:
+    names: tuple[str, ...] = (
         __name__, "solarlab.equations.dc_1d",
         "solarlab.physics.transport.electrochemical_flux",
         "solarlab.discretization.stable_bernoulli",
@@ -58,6 +58,10 @@ def _sources() -> dict[str, str]:
         "solarlab.solvers.nonlinear.production", "solarlab.solvers.nonlinear.steady_1d",
         "solarlab.experiments.jv.operating_points",
     )
+    if field_transport:
+        names += ("solarlab.equations.field_transport_1d",
+                  "solarlab.physics.transport.field_mobility",
+                  "solarlab.physics.transport.field_mobility_tangents")
     result = {}
     for name in names:
         path = sys.modules[name].__file__
@@ -135,6 +139,7 @@ def _particle_perturbations(
     device = problem.device
     count = device.node_count
     fluxes = problem.fluxes(u)
+    transport = None if device.field_transport is None else device.field_transport.evaluate(u[:count])
     _, n, p = device.fields(u, voltage_V=problem.voltage_V)
     references = tuple(
         after - before for before, after in zip(
@@ -148,6 +153,14 @@ def _particle_perturbations(
     ):
         drive = sign * np.diff(u[offset:offset + count])
         left_phi, _right_phi = _quasi_fermi_potential_tangents(flux, drive, sign, device.thermal_voltage_V)
+        if transport is not None:
+            diffusivity = (transport.electron_diffusivity_m2_s if offset == count
+                           else transport.hole_diffusivity_m2_s)
+            d_diffusivity = (transport.electron_d_diffusivity_d_field if offset == count
+                             else transport.hole_d_diffusivity_d_field)
+            # The CT chain is antisymmetric in phi_L/phi_R. SG is linear in D;
+            # its carrier sign is already in Gamma, never applied a second time.
+            left_phi = left_phi + (flux.flux / diffusivity) * d_diffusivity / np.diff(device.nodes_m)
         left_z = sign * flux.left_density_derivative * density[:-1]
         # A uniform Fermi or potential shift scales the particle flux. Group
         # that exact homogeneity mode before multiplying the large SG slopes.
@@ -313,8 +326,6 @@ def solve_impedance(
     """
     if not isinstance(compiled, CompiledDevice1D):
         raise ValueError("an actual CompiledDevice1D is required")
-    if compiled.field_transport is not None:
-        raise CapabilityError("CT AC current tangents are not bound; field-dependent carrier transport is DC-only")
     if not isinstance(operating_point, SteadyState1D):
         raise ValueError("an accepted same-device SteadyState1D is required")
     if not {"ion_free", "classical_1d_dc", "maxwell_boltzmann"} <= set(compiled.capabilities):
@@ -347,7 +358,7 @@ def solve_impedance(
         for carrier in ("n", "p"):
             if all(compiled.channel(carrier, side).kind == "blocking" for side in ("left", "right")):
                 raise ValueError(f"zero-frequency {carrier} blocked at both ends is not validated by this small-signal slice")
-    source_pins = _sources()
+    source_pins = _sources(field_transport=compiled.field_transport is not None)
     problem = DC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale)
     u = operating_point.state.u
     J, K = problem.jacobian(u), problem.storage_jacobian(u)
@@ -462,7 +473,7 @@ def solve_impedance(
         raise ArithmeticError(f"small-signal Maxwell-current closure failed: {float(np.max(spread)):g} A/m^2/V")
     positive_electrode = 0 if compiled.voltage_polarity > 0.0 else 1
     input_current = compiled.voltage_polarity * terminal_total[:, positive_electrode]
-    if _sources() != source_pins:
+    if _sources(field_transport=compiled.field_transport is not None) != source_pins:
         raise RuntimeError("small-signal source changed during the solve")
     digest = state_digest(u)
     identity = hashlib.sha256(json.dumps((

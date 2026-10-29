@@ -1,4 +1,4 @@
-"""CT stays outside AC until the port tangent is bound; no AC solves here."""
+"""CT AC admission retains genuine state/contact refusals; no AC solves here."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def forbidden(*args: Any, **kwargs: Any) -> Any:
 
 
 @pytest.mark.parametrize("carrier", ["n", "p"])
-def test_ion_free_ac_refuses_ct_before_point_validation_or_linear_solve(
+def test_ct_ion_free_refuses_missing_point_before_validation_or_linear_solve(
     monkeypatch: pytest.MonkeyPatch, carrier: str,
 ) -> None:
     device = compile_device_1d(with_ct(load_device(), carrier), intervals_per_layer=(12, 12, 12))
@@ -47,13 +47,12 @@ def test_ion_free_ac_refuses_ct_before_point_validation_or_linear_solve(
     monkeypatch.setattr(impedance, "solve_frequency_systems", forbidden)
     monkeypatch.setattr(DC1DProblem, "jacobian", forbidden)
     monkeypatch.setattr(DC1DProblem, "storage_jacobian", forbidden)
-    # Admission must refuse CT before asking for a solved operating point.
-    with pytest.raises(CapabilityError, match="CT AC current tangents are not bound"):
+    with pytest.raises(ValueError, match="accepted same-device SteadyState1D"):
         impedance.solve_impedance(device, cast(SteadyState1D, None), [0.0, 1.0])
 
 
 @pytest.mark.parametrize("carrier", ["n", "p"])
-def test_ionic_ac_refuses_ct_before_assembling_any_operator(
+def test_ct_ionic_assembles_actual_operator_without_a_solver(
     monkeypatch: pytest.MonkeyPatch, carrier: str,
 ) -> None:
     device = compile_ionic_device_1d(with_ct(prepare_confined_shared_site_ion_device(), carrier),
@@ -61,11 +60,31 @@ def test_ionic_ac_refuses_ct_before_assembling_any_operator(
         ion_domain_endpoints=("blocking", "blocking"))
     assert device.electronic_component.field_transport is not None
     state = device.initial_state()  # A physical reference, never a claimed steady result.
+    monkeypatch.setattr(impedance, "solve_frequency_systems", forbidden)
+    operator = build_ionic_small_signal(device, state)
+    original = Ionic1DProblem(device)
+    assert operator.jacobian.shape == (device.state_size, device.state_size)
+    assert operator.storage_jacobian.shape == operator.jacobian.shape
+    assert (operator.jacobian != original.jacobian(state.u)).nnz == 0
+    assert (operator.storage_jacobian != original.storage_jacobian(state.u)).nnz == 0
+
+
+@pytest.mark.parametrize("carrier", ["n", "p"])
+def test_ct_ionic_refuses_nonfixed_carrier_contacts_before_operator(
+    monkeypatch: pytest.MonkeyPatch, carrier: str,
+) -> None:
+    base = with_ct(prepare_confined_shared_site_ion_device(), carrier)
+    document = base.to_input().editing_data()
+    document["settings"]["flat_band_contacts"] = True
+    prepared = resolve_device(DeviceInput.model_validate(document), base.defaults,
+                              base.resources, sources=base.sources)
+    device = compile_ionic_device_1d(prepared, intervals_per_layer=(12, 12, 12),
+        ion_domain_layer="absorber", ion_domain_endpoints=("blocking", "blocking"))
+    state = device.initial_state()
+    assert any(channel.kind != "fixed_reservoir" for channel in device.electronic_component.channels)
     monkeypatch.setattr(Ionic1DProblem, "jacobian", forbidden)
     monkeypatch.setattr(Ionic1DProblem, "storage_jacobian", forbidden)
-    monkeypatch.setattr(DC1DProblem, "jacobian", forbidden)
-    monkeypatch.setattr(impedance, "solve_frequency_systems", forbidden)
-    with pytest.raises(CapabilityError, match="CT AC current tangents are not bound"):
+    with pytest.raises(CapabilityError, match="all fixed-reservoir carrier contacts"):
         build_ionic_small_signal(device, state)
 
 
