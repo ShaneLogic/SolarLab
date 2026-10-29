@@ -32,6 +32,7 @@ from solarlab_server.ionic_jv_preparation import (
 )
 from solarlab_server.job_service import JobService, JobSubmission, canonical
 from test_ionic_transient_job_service import _hold
+from test_ionic_jv_worker import extract_saved_ionic_jv_fixture
 from test_transient_job_service import pool, port_closed, ready, terminal_events
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -314,22 +315,75 @@ def test_existing_exact_queue_cancellation_has_no_ionic_curve(tmp_path, catalog)
             save("QueuedCancellation.json", {"receipt": receipt, "hold_receipt": closed, "new_numerical_jobs": 0})
 
 
-def test_actual_http_success_and_historical_failure_truth(actual):
+def test_actual_fixed51_http_outcome_and_historical_failure_truth(actual):
+    """A fixed25s wave may preserve a budget prefix on a slower CI host."""
     assert actual["new_numerical_submissions"] == 1 and actual["service_exit_code"] == 0 and actual["port_closed"]
     assert actual["closure"] == {"service_closed": True, "read_handle_closed": True, "process_owner_closed": True}
-    failed, success = actual["cases"]
+    failed, current = actual["cases"]
     assert failed["run_id"] == FAILED_RUN and failed["attempt_id"] == FAILED_ATTEMPT
     assert failed["result"]["state"] == "failed" and len(failed["accepted_voltage_V"]) == 9
     assert failed["first_failure"]["voltage_V"] == .225 and not failed["registered_http"]
     assert failed["result"]["result"]["worker_result"].get("execution_catalog_sha256") is None
-    assert success["result"]["state"] == "succeeded" and len(success["accepted_voltage_V"]) == 51
-    worker = success["result"]["result"]["worker_result"]
+    worker = current["result"]["result"]["worker_result"]
     assert worker["execution_catalog_sha256"] == actual["submission_headers"]["x-solarlab-registry"]
-    assert worker["ionic_jv_result"]["computation_counts"]["total_solver_calls"] == 53
+    with RunStore(Path(actual["store"]), read_only=True) as store:
+        loaded = read_registered_ionic_jv_job(store, current["run_id"], attempt_id=current["attempt_id"])
+    summary, raw = loaded["document"], loaded["diagnostics"]
+    requested = [tick / 40. for tick in range(51)]
+    count = summary["accepted_count"]
+    assert loaded["arrays"]["requested_voltage_V"].tolist() == requested
+    assert loaded["arrays"]["voltage_V"].tolist() == requested[:count] == current["accepted_voltage_V"]
+    assert raw["controls"]["wall_s"] == 25. and raw["controls"]["max_points"] == 51
+    assert raw["initial_recipe"]["policy"] == "dark_direct_density_seed_v1"
+    attempts = raw["curve"]["attempts"]
+    assert all(point["index"] == i and point["voltage_V"] == requested[i]
+               and point["accepted"] == (i < count) for i, point in enumerate(attempts))
+    counts = summary["computation_counts"]
+    assert counts["cold_steady"]["solver_calls"] == counts["illumination"]["coupled_solver_calls"] == 1
+    assert counts["illumination"]["component_solver_calls"] == 0 and counts["illumination"]["density_preparation_calls"] == 1
+    if current["result"]["state"] == "succeeded":
+        assert count == len(attempts) == 51 and summary["outcome"] == "completed"
+        assert summary["first_failure"] is None and counts["curve"]["solver_calls"] == 51
+    else:
+        # Only this diagnosed computation limit is an admissible partial result.
+        # Numerical errors, initialization failures and unknown causes still fail.
+        assert current["result"]["state"] == "failed" and summary["outcome"] == "partial"
+        assert worker["reason"] == summary["reason"] == "wall_budget_exhausted", summary
+        assert 0 < count < 51 and len(attempts) == count + 1
+        first = summary["first_failure"]
+        assert first["index"] == count and first["voltage_V"] == requested[count]
+        assert first["termination"] == "wall_budget_exhausted" and attempts[-1]["termination"] == "wall_budget_exhausted"
+        assert first["solver_called"] in (True, False)
+        assert counts["curve"]["solver_calls"] == count + int(first["solver_called"])
+        assert len(requested[len(attempts):]) == 51 - count - 1
+    assert counts["total_solver_calls"] == counts["curve"]["solver_calls"] + 2
     assert worker["ionic_jv_result"]["physical_certificate_status"] == "not_evaluated"
     assert worker["ionic_jv_result"]["metrics"]["efficiency"] is None
-    assert success["attempt_id"] == actual["reopened_attempt_id"]
+    assert worker["scientific_qualification"] is False
+    assert current["attempt_id"] == actual["reopened_attempt_id"]
+    receipt = current["receipt"]
+    assert receipt["proposed_state"] == receipt["store_state"] == current["result"]["state"]
+    assert receipt["commit_error"] is None and receipt["publication_error"] is None
+    assert receipt["resources"]["observed_limit_violations"] == [] and receipt["resources"]["owned_wall_seconds"] <= 30
     assert all(c["terminal_count"] == 1 and len(c["payloads"]) == 15 and len(c["logical_arrays"]) == 23 for c in actual["cases"])
+
+
+def test_saved_full51_http_success_remains_readable(tmp_path_factory):
+    """A genuine complete HTTP result stays covered independent of host speed."""
+    folder, proof = extract_saved_ionic_jv_fixture(tmp_path_factory)
+    original, = [case for case in proof["cases"] if case["registered_http"]]
+    root = folder / "Store"
+    with TestClient(create_app(root)) as client:
+        observed = observe_http_case(client, root, original["run_id"], original["attempt_id"], registered=True)
+    assert observed["result"]["state"] == original["state"] == "succeeded"
+    assert len(observed["accepted_voltage_V"]) == original["accepted_count"] == 51 and observed["first_failure"] is None
+    worker = observed["result"]["result"]["worker_result"]
+    assert worker["capture"]["result_sha256"] == original["result_sha256"]
+    assert worker["manifest_sha256"] == original["manifest_sha256"]
+    assert worker["ionic_jv_result"]["computation_counts"]["total_solver_calls"] == 53
+    assert worker["scientific_qualification"] is False and worker["ionic_jv_result"]["metrics"]["efficiency"] is None
+    for name, actual_array in observed["logical_arrays"].items():
+        assert all(actual_array[key] == original["logical_arrays"][name][key] for key in ("sha256", "shape", "unit"))
 
 
 def test_registered_and_historical_http_readers_forbid_numerical_imports(actual, tmp_path):

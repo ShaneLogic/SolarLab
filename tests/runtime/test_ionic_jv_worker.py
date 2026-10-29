@@ -1,4 +1,4 @@
-"""One real illuminated pair; reuse its saved bytes for all read/tamper tests."""
+"""Pinned full curves for readback; one small fresh process for lifecycle checks."""
 from dataclasses import replace
 import hashlib
 import json
@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import shutil
+import tarfile
 
 import numpy as np
 import pytest
@@ -24,6 +25,7 @@ from solarlab.materials.source import SourceDocument
 
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = ("ionic-jv-completed-v2", "ionic-jv-failed-prefix")
+SAVED_FIXTURE_SHA256 = "a6943873f88889bf29b63e5a863031ce178b97f953df60bfd33e4007759d91ed"
 
 
 def limits():
@@ -71,28 +73,79 @@ def job(implementation):
     return example_job(implementation)
 
 
+def extract_saved_ionic_jv_fixture(tmp_path_factory):
+    """Extract original process/HTTP results without starting a worker."""
+    archive = Path(__file__).parent / "fixtures/ionic_jv_saved_results.tar.gz"
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == SAVED_FIXTURE_SHA256
+    folder = tmp_path_factory.mktemp("ionic-jv-saved").resolve()
+    with tarfile.open(archive) as bundle:
+        assert sum(item.size for item in bundle.getmembers()) < 64 * 1024**2
+        bundle.extractall(folder, filter="data")
+    proof = json.loads((folder / "Fixture.json").read_text())
+    assert proof["derived_sqlite_subset"] and not proof["whole_original_store_byte_identity"]
+    assert proof["new_solver_calls"] == 0
+    for name, digest in proof["files"].items():
+        assert hashlib.sha256((folder / name).read_bytes()).hexdigest() == digest
+    assert (folder / "Store/partial").is_dir() and (folder / "Store/.writer.lock").is_file()
+    return folder, proof
+
+
 @pytest.fixture(scope="module")
-def saved(tmp_path_factory, implementation):
+def saved(tmp_path_factory):
     if path := os.environ.get("SOLARLAB_IONIC_JV_STORE"):
         root = Path(path).resolve()
         return root, Path(os.environ.get("SOLARLAB_IONIC_JV_WORK", str(root.parent / "work")))
-    root = tmp_path_factory.mktemp("ionic-jv")
-    with RunStore(root / "store") as store, pool(store, root / "work") as supervisor:
-        initial_bytes = initial_sha = None
-        for name, failure in zip(NAMES, (False, True), strict=True):
-            job = example_job(implementation, failure=failure, initial_bytes=initial_bytes, initial_sha256=initial_sha)
-            handle = job.submit(supervisor, name, limits())
+    root, proof = extract_saved_ionic_jv_fixture(tmp_path_factory)
+    assert [(case["run_id"], case["attempt_id"]) for case in proof["cases"][:2]] == [
+        (NAMES[0], "a4819e294bc14674bbe9638a823179ec"),
+        (NAMES[1], "08b9019bf98a4978b72ed612279742bd"),
+    ]
+    return root / "Store", root / "Work"
+
+
+def test_small_actual_process_lifecycle(tmp_path, implementation):
+    """Three explicit voltages exercise execution, not full51 host performance."""
+    from examples.research_1d.ionic_steady import controls
+    from examples.research_1d.shared_site_ionic_fixture import prepare_confined_shared_site_ion_device
+    from solarlab.config.identity import ExecutionEngine
+    from solarlab.experiments.jv.ionic_steady import IonicSteadyJVOptions
+    from solarlab.experiments.jv.ionic_worker import prepare_ionic_jv_job
+
+    requested = (0., .025, .05)
+    job = prepare_ionic_jv_job(prepare_confined_shared_site_ion_device(), IonicJVProtocol(requested, 1., None),
+        intervals_per_layer=(12, 12, 12), ion_domain_layer="absorber", ion_domain_endpoints=("blocking", "blocking"),
+        options=IonicSteadyJVOptions(controls(13), max_points=51, wall_s=25.),
+        initial=IonicJVInitial("dark_direct_density_seed_v1", .002, 25.), implementation=implementation,
+        current_repository_head=implementation.build_source_commit, engine=ExecutionEngine("solarlab"))
+    with RunStore(tmp_path / "store") as store:
+        with pool(store, tmp_path / "work") as supervisor:
+            handle = job.submit(supervisor, "ionic-jv-three-point-lifecycle", limits())
             receipt = supervisor.wait(handle, 40).data
-            assert receipt["store_state"] == ("failed" if failure else "succeeded"), unexpected_outcome(receipt, root / "work")
-            assert receipt["process_joined"] and receipt["process_exit_observed"]
-            if not failure:
-                initial_bytes = read_ionic_jv_job(store, name)["initial_bytes"]
-                initial_sha = hashlib.sha256(initial_bytes).hexdigest()
-    return root / "store", root / "work"
+            assert receipt["store_state"] == "succeeded", unexpected_outcome(receipt, tmp_path / "work")
+        assert receipt["process_started"] and receipt["process_joined"] and receipt["process_exit_observed"]
+        assert receipt["exitcode"] == 0 and receipt["signals"] == [] and receipt["terminal_committed"]
+        assert receipt["commit_error"] is None and receipt["publication_error"] is None
+        assert receipt["resources"]["owned_wall_seconds"] <= 30 and receipt["resources"]["observed_limit_violations"] == []
+        with pytest.raises(ChildProcessError):
+            os.waitpid(receipt["pid"], os.WNOHANG)
+        loaded = read_ionic_jv_job(store, handle.run_id, attempt_id=handle.attempt_id)
+        assert loaded["arrays"]["requested_voltage_V"].tolist() == list(requested)
+        assert loaded["arrays"]["voltage_V"].tolist() == list(requested)
+        assert loaded["document"]["accepted_count"] == 3 and loaded["document"]["first_failure"] is None
+        counts = loaded["document"]["computation_counts"]
+        assert counts["cold_steady"]["solver_calls"] == counts["illumination"]["coupled_solver_calls"] == 1
+        assert counts["illumination"]["component_solver_calls"] == 0 and counts["illumination"]["density_preparation_calls"] == 1
+        assert counts["curve"]["solver_calls"] == 3 and counts["total_solver_calls"] == 5
+        assert loaded["worker_result"]["scientific_qualification"] is False
+        assert loaded["document"]["physical_certificate_status"] == "not_evaluated"
+        assert len(loaded["arrays"]) == 23 and len(loaded["stored_arrays"]) == 12
+        attempt, = store.attempts(handle.run_id)
+        assert len(attempt["terminal"]["artifacts"]) == 15
+        assert len([event for event in store.events(run_id=handle.run_id, limit=1000) if event["kind"] == "terminal"]) == 1
 
 
 @pytest.mark.parametrize("name,state", [(NAMES[0], "succeeded"), (NAMES[1], "failed")])
-def test_real_curve_exact_arrays_metrics_initial_calls_and_single_terminal(saved, name, state):
+def test_saved_full_curve_exact_arrays_metrics_initial_calls_and_single_terminal(saved, name, state):
     root, work = saved
     with RunStore(root, read_only=True) as store:
         loaded = read_ionic_jv_job(store, name)
@@ -102,8 +155,8 @@ def test_real_curve_exact_arrays_metrics_initial_calls_and_single_terminal(saved
         assert loaded["run_state"] == receipt["store_state"] == state and receipt["exitcode"] == 0
         assert receipt["process_joined"] and receipt["process_exit_observed"] and receipt["terminal_committed"]
         assert receipt["resources"]["owned_wall_seconds"] <= 30 and receipt["signals"] == []
-        with pytest.raises(ChildProcessError):
-            os.waitpid(receipt["pid"], os.WNOHANG)
+        # Historical receipts describe the original process; their PIDs are not
+        # evidence about processes running on the current test host.
         assert len([e for e in store.events(run_id=name, limit=1000) if e["kind"] == "terminal"]) == 1
         assert len(attempt["terminal"]["artifacts"]) == 15
         assert len(loaded["stored_arrays"]) == 12 and len(loaded["arrays"]) == 23
