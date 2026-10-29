@@ -251,6 +251,25 @@ def steady_2d_worker_binding() -> WorkerBinding:
                                       registry_sha256=REGISTRY.sha256, schema_sha256=REQUEST_SCHEMA.sha256)
 
 
+def _request_contract(request: WorkerRequest, worker_source_sha256: str | None) -> bool:
+    """Admit original process requests or the explicitly installed HTTP route."""
+    if request.registry == REGISTRY and request.schema == REQUEST_SCHEMA:
+        return True
+    catalog = json.loads(request.registry.content)
+    if not isinstance(catalog, dict):
+        return False
+    entries = [entry for entry in catalog.get("bindings", ())
+               if isinstance(entry, dict) and entry.get("driver") == WORKER_ID]
+    return bool(request.registry.id == "solarlab.execution-catalog.v1"
+        and request.schema.id == "solarlab.job-submission.schema.v1"
+        and catalog.get("schema") == "solarlab.execution-catalog.v1"
+        and catalog.get("job_schema_sha256") == request.schema.sha256 and len(entries) == 1
+        and entries[0].get("experiment_id") == WORKER_ID and entries[0].get("version") == 1
+        and entries[0].get("engine") == "solarlab" and entries[0].get("result_schema") == RESULT_SCHEMA
+        and entries[0].get("scope") == "uniform_no_grain_classical_2d_steady"
+        and worker_source_sha256 is not None and entries[0].get("worker_source_sha256") == worker_source_sha256)
+
+
 def _lateral_initial(device: CompiledDevice2D, column_u: np.ndarray, *, voltage_V: float) -> State2D:
     """The accepted research_2d.steady lateral seed recipe, unchanged."""
     import numpy as np
@@ -284,7 +303,8 @@ def run_steady_2d_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
     prepared = binding.inputs.prepared
     _validate(prepared, spatial, options)
     expected = _identity_inputs(prepared, spatial, binding.execution.implementation)
-    if (body != _body(prepared, spatial, protocol, options) or request.registry != REGISTRY or request.schema != REQUEST_SCHEMA
+    if (body != _body(prepared, spatial, protocol, options)
+            or not _request_contract(request, steady_2d_worker_binding().source_sha256)
             or input_identity(expected).sha256 != request.H_input or physics_identity(expected).sha256 != request.H_physics
             or any(getattr(binding.execution, name) != value for name, value in
                    _roles(prepared, body, binding.execution.implementation).items())):

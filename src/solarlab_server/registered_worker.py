@@ -174,3 +174,9 @@ def run_ionic_jv(request: WorkerRequest, context: WorkerContext) -> WorkerResult
     """Dispatch the source-checked ionic J-V installation to its existing worker."""
     from solarlab_server.ionic_jv_preparation import execute_registered_ionic_jv
     return execute_registered_ionic_jv(request, context)
+
+
+def run_steady_2d(request: WorkerRequest, context: WorkerContext) -> WorkerResult:
+    """Run the installed full2D worker with its actual catalog and core body."""
+    from solarlab_server.steady_2d_preparation import execute_registered_steady_2d
+    return execute_registered_steady_2d(request, context)

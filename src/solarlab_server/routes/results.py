@@ -29,8 +29,18 @@ def result_payload(store: RunStore, run_id: str, attempt_id: str, maximum_bytes:
                 or record["generation"] != attempt["generation"] or record["manifest_sha256"] != reference["manifest_sha256"]):
             raise StateConflict("terminal artifact belongs to a different attempt/generation")
         artifacts.append({**record, "content_url": f"/artifacts/{record['artifact_id']}/content"})
-    return {"run_id": run_id, "attempt_id": attempt_id, "state": attempt["state"],
-            "result": attempt["result"], "artifacts": artifacts}
+    result = {"run_id": run_id, "attempt_id": attempt_id, "state": attempt["state"],
+              "result": attempt["result"], "artifacts": artifacts}
+    worker = (attempt["result"] or {}).get("worker_result", {})
+    if worker.get("schema") == "solarlab.steady-2d.worker-result.v1":
+        from solarlab.experiments.two_dimensional.steady_results import read_steady_2d_job
+        from solarlab_server.steady_2d_preparation import read_registered_steady_2d_job
+        registered = "experiment_id" in worker
+        reader = read_registered_steady_2d_job if registered else read_steady_2d_job
+        loaded = reader(store, run_id, attempt_id=attempt_id)
+        result["steady_2d"] = {"document": loaded["document"], "array_fingerprints": loaded["array_fingerprints"],
+                               "origin": "registered_http" if registered else "original_process"}
+    return result
 
 
 def install_results(app: FastAPI, get_store: Callable[[Request], RunStore], *, event_page_size: int,

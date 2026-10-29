@@ -249,7 +249,7 @@ def steady_2d_payload(device: CompiledDevice2D, prepared: PreparedDevice, body: 
 
 
 def read_steady_2d_job(store: RunStore, run_id: str, *, attempt_id: str | None = None) -> dict[str, Any]:
-    from solarlab.experiments.two_dimensional.steady_worker import REGISTRY, REQUEST_SCHEMA, RESULT_SCHEMA
+    from solarlab.experiments.two_dimensional.steady_worker import REGISTRY, REQUEST_SCHEMA, RESULT_SCHEMA, _request_contract
     run = store.get_run(run_id)
     selected = run["current_attempt_id"] if attempt_id is None else attempt_id
     attempt = next((a for a in store.attempts(run_id) if a["attempt_id"] == selected), None)
@@ -305,7 +305,12 @@ def read_steady_2d_job(store: RunStore, run_id: str, *, attempt_id: str | None =
     transport = WorkerRequest.from_bytes(_json_document(run["request"]["input_metadata"]["transport"]).encode())
     body = json.loads(transport.request.content)
     roles = {name: json.loads(bytes.fromhex(v["content_hex"])) for name, v in document["content_roles"].items()}
-    if (transport.registry != REGISTRY or transport.schema != REQUEST_SCHEMA
+    private_request = transport.registry == REGISTRY and transport.schema == REQUEST_SCHEMA
+    request_contract = _request_contract(transport,
+        worker["capture"]["source_sha256"].get("solarlab/experiments/two_dimensional/steady_worker.py"))
+    if (not request_contract or not private_request and (
+                worker.get("execution_catalog_sha256") != transport.registry.sha256
+                or worker.get("experiment_id") != "steady_2d" or worker.get("experiment_version") != 1)
             or transport.execution_identity.sha256 != identity["H_execution"]
             or transport.H_input != identity["H_input"] or transport.H_physics != identity["H_physics"]
             or body != raw["request"] or body["schema"] != REQUEST_SCHEMA.id or body["engine"] != "solarlab"
