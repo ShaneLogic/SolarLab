@@ -63,7 +63,10 @@ Explicit coherent spectral optics also supplies control-volume generation and ph
 The [2D research workflow](examples/research_2d/README.md) now assembles a connected
 lateral/stack grid and solves the full coupled dark and illuminated steady system,
 with explicit geometry, physical balances and saved-result reading. Its bounded
-examples use fixed carrier reservoirs and zero-flux lateral boundaries.
+examples use fixed carrier reservoirs and zero-flux lateral boundaries. Neutral
+grain regions mix SRH rates by their exact control-volume overlap. The uniform
+steady workflow also runs in an owned child process, preserving complete results
+and genuine failed attempts for solver-free reading from a local RunStore.
 These are bounded working cases; mesh/time/voltage-grid
 scientific acceptance and the remaining refactor are in progress. The broader application features
 described below include the existing `perovskite_sim` engine and do not imply

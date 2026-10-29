@@ -36,6 +36,53 @@ For an existing failed two-target record whose dark point was accepted,
 revalidates that dark result without solving it again, then requests only the
 illuminated point. The original failure remains linked in the new output.
 
+## Run in a separate process
+
+From a clean committed checkout, the process example binds the source archive
+to the same revision as the running code. Use the locked environment from the
+[one-dimensional guide](../research_1d/README.md) and a local, unsynchronized
+directory for the active database and work files:
+
+```sh
+SOLARLAB_2D_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/solarlab-2d.XXXXXX")
+SOLARLAB_2D_REV=$(git rev-parse HEAD)
+git archive --format=tar --output "$SOLARLAB_2D_ROOT/source.tar" "$SOLARLAB_2D_REV"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 BLIS_NUM_THREADS=1
+.venv/bin/python -B -m examples.research_2d.process_steady run \
+  --store "$SOLARLAB_2D_ROOT/Store" --work "$SOLARLAB_2D_ROOT/Work" \
+  --run-id steady2d \
+  --build-source-commit "$SOLARLAB_2D_REV" \
+  --source-archive "$SOLARLAB_2D_ROOT/source.tar" \
+  --current-repository-head "$SOLARLAB_2D_REV" \
+  --receipt-json "$SOLARLAB_2D_ROOT/Receipt.json"
+SOLARLAB_2D_ATTEMPT=$(.venv/bin/python -c \
+  'import json,sys; print(json.load(open(sys.argv[1]))["attempt_id"])' \
+  "$SOLARLAB_2D_ROOT/Receipt.json")
+.venv/bin/python -B -m examples.research_2d.process_steady read \
+  --store "$SOLARLAB_2D_ROOT/Store" --run-id steady2d \
+  --attempt-id "$SOLARLAB_2D_ATTEMPT"
+```
+
+The default requests the same no-grain dark and illuminated 2 mV points on
+the 13-by-5 grid. `--targets dark` or `--targets illuminated` selects one target;
+`--prepare-only` validates the request without starting a process or solving.
+The process uses a 30-second limit and retains 22 logical arrays in 12 NPY
+groups, the lossless diagnostic payload and execution manifest. Reads do not
+run a solver. Existing run IDs are preserved; use a new ID for a new computation.
+
+For a deliberate failure example, add `--insufficient-budget` with a new run
+ID and receipt path. This changes only the full-2D Newton count budget, retains
+the failed candidate and leaves later targets unattempted. Both the run and
+reader exit 2 for a failed attempt. Copy the closed Store and Work directories
+with their contents and empty directories when archiving; open archived stores
+only after copying them into a local directory. Thread settings above are
+requests recorded with the run, not proof of an observed native thread count.
+
+This process entry has verified successful and failed examples. It does not
+provide grain, J–V, HTTP or browser execution; those are separate entry points
+with their own implementation and validation status.
+
 ## Neutral grain-region recombination
 
 ```sh
