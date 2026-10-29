@@ -26,6 +26,7 @@ from examples.research_1d.steady import load_device
 from examples.research_2d.dc_assembly import coordinates, spatial_input as uniform_spatial_input
 from examples.research_2d.steady import lateral_initial
 from solarlab.device.compile_2d import compile_device_2d
+from solarlab.device.grain_2d import GrainRecombination2D
 from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem
 from solarlab.experiments.transient_results import _decode, _encode
@@ -59,7 +60,7 @@ def source_pins() -> dict[str, str]:
 
 def binding_record(d: CompiledDevice2D, prepared: PreparedDevice) -> dict[str, Any]:
     binding = d.grain_recombination
-    if binding is None:
+    if not isinstance(binding, GrainRecombination2D):
         raise ValueError("this example requires its explicit neutral grain inventory")
     g = d.geometry
     return {"model_id": binding.model_id, "geometry_sha256": binding.geometry_sha256,

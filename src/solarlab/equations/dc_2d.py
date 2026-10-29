@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from typing import TypeAlias
+from typing import Protocol, TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -22,18 +22,29 @@ from solarlab.contracts import (
 )
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M
-from solarlab.device.grain_2d import GrainRecombination2D
 from solarlab.equations.dc_1d import CompiledDevice1D, _quasi_fermi_potential_tangents
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.electrostatics.charge import ChargeEntry, ChargeLedger
 from solarlab.physics.generation.profile import GenerationProfile
 from solarlab.physics.recombination.bulk import RecombinationRate
-from solarlab.physics.recombination.reaction import BulkRecombinationCoefficients, BulkRecombinationReaction
+from solarlab.physics.recombination.reaction import (
+    BulkRecombinationCoefficients, BulkRecombinationEvaluation, BulkRecombinationReaction,
+)
 from solarlab.physics.statistics.band_potentials import BandStructure
 from solarlab.physics.transport.electrochemical_flux import CarrierFaceFlux, CarrierFaceFluxes, stable_sg_particle_flux
 
 Vector: TypeAlias = NDArray[np.float64]
 Q = ELEMENTARY_CHARGE_C
+
+
+class GrainRecombinationModel2D(Protocol):
+    """A geometry-bound rate correction supplied by device assembly."""
+
+    @property
+    def geometry_sha256(self) -> str: ...
+
+    def evaluate(self, evaluation: BulkRecombinationEvaluation,
+                 coefficients: BulkRecombinationCoefficients) -> RecombinationRate: ...
 
 
 @dataclass(frozen=True)
@@ -73,7 +84,7 @@ class CompiledDevice2D:
     generation_y: GenerationProfile
     relative_permittivity_y: Vector
     spatial_declaration_json: bytes
-    grain_recombination: GrainRecombination2D | None = None
+    grain_recombination: GrainRecombinationModel2D | None = None
     column_projection_json: bytes | None = None
     band_structure: BandStructure = field(init=False)
     recombination: BulkRecombinationReaction = field(init=False)
