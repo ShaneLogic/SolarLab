@@ -1,4 +1,4 @@
-"""Accepted-only steady voltage continuation of the connected no-grain2D model.
+"""Accepted-only steady voltage continuation of connected classical2D models.
 
 Every voltage invokes the existing full2D Newton once. Seeds are rebased
 accepted2D states; failed states, independent-column solves and retries are
@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from solarlab.device.grain_2d import GRAIN_SRH_2D_V1, GrainRecombination2D
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem, State2D
 from solarlab.experiments.jv.steady import SteadyJVMetrics, steady_jv_metrics
 from solarlab.experiments.transient_results import _decode, _encode
@@ -114,8 +115,58 @@ class SteadyJV2DResult:
 
 def _scope(device: CompiledDevice2D) -> None:
     _steady_scope(device)
-    if getattr(device, "grain_recombination", None) is not None:
-        raise ValueError("this steady2D J-V slice requires the explicit no-grain model")
+    grain = getattr(device, "grain_recombination", None)
+    if grain is not None and (not isinstance(grain, GrainRecombination2D) or not grain.regions
+            or grain.geometry_sha256 != device.geometry.sha256
+            or not grain.model_id.startswith(GRAIN_SRH_2D_V1 + ":")):
+        raise ValueError("steady2D J-V requires the declared neutral grain-region model")
+
+
+def _grain_model(device: CompiledDevice2D) -> dict[str, Any] | None:
+    """Record the existing exact compiled binding; introduce no grain law."""
+    grain = getattr(device, "grain_recombination", None)
+    if grain is None:
+        return None
+    _scope(device)
+    names = ("solarlab.device.grain_2d", "solarlab.device.compile_2d", "solarlab.equations.dc_2d",
+             "solarlab.physics.recombination.bulk", "solarlab.mesh.grid")
+    sources = {}
+    for name in names:
+        filename = sys.modules[name].__file__
+        if filename is None:
+            raise ValueError("grain2D J-V requires the actual binding source files")
+        sources[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+    return {"model_id": grain.model_id, "geometry_sha256": grain.geometry_sha256,
+        "effective_origin": grain.effective_origin,
+        "regions": [{"declaration": r.declaration.normalized_data(), "x_overlap_fraction": r.x_overlap_fraction,
+            "y_mask": r.y_mask, "fractions": r.fractions.reshape(device.geometry.shape),
+            "represented_width_m": r.represented_width_m, "represented_height_m": r.represented_height_m,
+            "represented_area_m2": r.represented_area_m2} for r in grain.regions],
+        "rule": "R_total += f * (R_grain_SRH - R_bulk_SRH); exact density partials use the same f",
+        "no_grain_charge_or_extra_state": True,
+        "source_sha256": sources}
+
+
+def _read_grain_model(geometry: dict[str, Any]) -> None:
+    """Verify the saved exact binding, without compiling or solving."""
+    model = geometry.get("grain_model")
+    if model is None:
+        return
+    if (model["geometry_sha256"] != geometry["identity"] or not model["regions"]
+            or model["no_grain_charge_or_extra_state"] is not True):
+        raise ValueError("saved neutral grain2D model/geometry identity changed")
+    digest = hashlib.sha256(json.dumps((GRAIN_SRH_2D_V1, model["geometry_sha256"], model["effective_origin"],
+        [r["declaration"] for r in model["regions"]]), sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
+    for region in model["regions"]:
+        f = np.asarray(region["fractions"])
+        expected = np.asarray(region["y_mask"])[:, None] * np.asarray(region["x_overlap_fraction"])[None, :]
+        if (f.shape != tuple(geometry["shape_Ny_Nx"]) or not np.array_equal(f, expected)
+                or not np.all(np.isfinite(f)) or np.any(f < 0) or np.any(f > 1)
+                or float(f.ravel() @ np.asarray(geometry["cell_areas_m2"]).ravel()) != region["represented_area_m2"]):
+            raise ValueError("saved neutral grain2D physical fraction/area changed")
+        digest.update(f.ravel().astype("<f8").tobytes())
+    if model["model_id"] != GRAIN_SRH_2D_V1 + ":" + digest.hexdigest():
+        raise ValueError("saved neutral grain2D declaration/model hash changed")
 
 
 def _state(device: CompiledDevice2D, state: State2D) -> State2D:
@@ -135,10 +186,34 @@ def _admit(device: CompiledDevice2D, text: str, sha256: str,
         raise ValueError("accepted initial artifact SHA-256 mismatch")
     try:
         document = _decode(json.loads(text))
-        if document["schema"] != "solarlab.classical_2d_steady.research.v1" or document["completed"] is not True:
+        if document["completed"] is not True:
             raise ValueError("an actually completed accepted2D steady artifact is required")
-        attempt = document["attempts"][-1]
-        result = attempt["result_2d"]
+        if document["schema"] == "solarlab.classical_2d_steady.research.v1":
+            if getattr(device, "grain_recombination", None) is not None:
+                raise ValueError("a declared grain model requires its explicit grain initial artifact")
+            attempt = document["attempts"][-1]
+            result = attempt["result_2d"]
+        elif document["schema"] == "solarlab.neutral_grain_2d.research.v1":
+            model = _grain_model(device)
+            if (model is None or document["mode"] != "steady" or document["accepted"] is not True
+                    or document["error"] is not None or document["full_2d_newton_calls"] != 1):
+                raise ValueError("initial artifact requires actual accepted neutral grain2D Newton evidence")
+            binding = document["grain_binding"]
+            if (document["result_2d"]["source_sha256"] != _steady_sources()
+                    or any(document["source_sha256"].get(name) != pin for name, pin in model["source_sha256"].items())):
+                raise ValueError("grain initial physical source binding differs from current source")
+            for name in ("model_id", "geometry_sha256", "effective_origin"):
+                if binding[name] != model[name]:
+                    raise ValueError("initial physical grain declaration/model differs from the compiled device")
+            if len(binding["regions"]) != len(model["regions"]):
+                raise ValueError("initial physical grain region inventory differs")
+            for saved_region, expected_region in zip(binding["regions"], model["regions"]):
+                for name, expected in expected_region.items():
+                    if not np.array_equal(saved_region[name], expected):
+                        raise ValueError("initial physical grain declaration/fraction differs: " + name)
+            attempt, result = {"accepted": document["accepted"]}, document["result_2d"]
+        else:
+            raise ValueError("an actually completed accepted2D steady artifact is required")
         if (attempt["accepted"] is not True or result["accepted"] is not True
                 or result["newton"]["accepted"] is not True or result["termination"] != "converged"
                 or result["compiled_identity"] != device.identity or document["compiled_identity"] != device.identity
@@ -196,7 +271,7 @@ def _voltages(value: ArrayLike, maximum: int) -> np.ndarray:
     return result.copy()
 
 
-def _sources() -> dict[str, str]:
+def _sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
     names = (__name__, "solarlab.solvers.nonlinear.steady_2d", "solarlab.solvers.nonlinear.newton",
         "solarlab.equations.dc_2d", "solarlab.equations.dc_1d", "solarlab.mesh.geometry_2d",
         "solarlab.experiments.jv.steady", "solarlab.experiments.transient_results",
@@ -208,6 +283,10 @@ def _sources() -> dict[str, str]:
         if filename is None:
             raise ValueError("steady2D J-V requires actual source-file bindings")
         result[name] = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+    if device is not None:
+        model = _grain_model(device)
+        if model is not None:
+            result.update(model["source_sha256"])
     return result
 
 
@@ -314,7 +393,7 @@ def admit_steady_jv_2d_checkpoint(device: CompiledDevice2D, directory: str | Pat
     if "continuation_prefix" in request:
         raise ValueError("a wall-tail checkpoint requires the explicit continuation entry; no automatic retry")
     if (request["compiled_identity"] != device.identity or request["controls"] != asdict(controls)
-            or request["source_sha256"] != _sources()):
+            or request["source_sha256"] != _sources(device)):
         raise ValueError("2D checkpoint model/control binding changed")
     text = (Path(directory) / request["initial_evidence_artifact"]["path"]).read_text()
     state, generation, _ = _admit(device, text, request["initial_source_sha256"], controls.steady)
@@ -378,7 +457,7 @@ def _admit_wall_prefix(device: CompiledDevice2D, path: str | Path, sha256: str,
                     "source_sha256": linked["original_initial_artifact"]["sha256"]}
     if result["compiled_identity"] != device.identity or result["solver_controls"] != asdict(controls):
         raise ValueError("wall-prefix2D model or controls changed")
-    current = _sources()
+    current = _sources(device)
     if {k: v for k, v in current.items() if k != __name__} != {
             k: v for k, v in result["source_sha256"].items() if k != __name__}:
         raise ValueError("wall-prefix2D physical source changed")
@@ -442,7 +521,7 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
     requested = _voltages(voltage_V, controls.max_points)
     if incident_power_W_m2 is not None and (not math.isfinite(incident_power_W_m2) or incident_power_W_m2 <= 0.0):
         raise ValueError("efficiency requires explicitly supplied finite positive irradiance W/m2")
-    pins = _sources()
+    pins = _sources(device)
     if wall_prefix_admission is None:
         previous, generation, admission = _admit(device, initial.evidence_json, initial.source_sha256, controls.steady)
     else:
@@ -468,6 +547,9 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
             "initial_evidence_artifact": {"path": "Initial.json", "sha256": initial_digest, "nbytes": len(raw_initial)},
             "controls": asdict(controls), "source_sha256": pins, "incident_power_W_m2": incident_power_W_m2,
             "absolute_compute_deadline_s": deadline}
+        grain_model = _grain_model(device)
+        if grain_model is not None:
+            request["grain_model"] = grain_model
         if wall_prefix_admission is not None:
             request["continuation_prefix"] = {"path": initial.source_path, "sha256": initial.source_sha256}
         digest = _checkpoint_write(journal / "Request.json", request, exclusive=True)
@@ -486,7 +568,7 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
         try:
             if time.monotonic() >= deadline:
                 raise TimeoutError("2D J-V wave wall budget exhausted before next point")
-            if _sources() != pins:
+            if _sources(device) != pins:
                 raise RuntimeError("2D J-V source changed during the wave")
             seed = _rebase(device, previous, voltage)
             provenance["rebased_state_sha256"] = state_digest(seed.u)
@@ -547,11 +629,20 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
     geometry = {"identity": g.sha256, "shape_Ny_Nx": g.shape, "x_m": g.x_m, "y_m": device.column.nodes_m,
         "cell_areas_m2": g.contract_geometry.volumes, "face_lengths_m": g.contract_geometry.face_measures,
         "face_pairs": g.contract_geometry.pairs, "lateral_width_m": g.lateral_length_m}
+    grain_model = _grain_model(device)
+    if grain_model is not None:
+        geometry["grain_model"] = grain_model
     initial_provenance = {"source_path": initial.source_path, "source_sha256": initial.source_sha256,
         "state_sha256": state_digest(initial.state.u), "operating_voltage_V": initial.state.voltage_V,
         "admission_checks": admission, "no_new_cold_or_1d_seed": True}
     if wall_prefix_admission is not None:
         initial_provenance["continuation_prefix"] = {"path": initial.source_path, "sha256": initial.source_sha256}
+    elif grain_model is not None:
+        original = _decode(json.loads(initial.evidence_json))["result_2d"]["source_sha256"]
+        current = _steady_sources()
+        initial_provenance["grain_source_admission"] = {"saved_result_source_sha256": original,
+            "current_result_source_sha256": current, "exact_source_match": original == current,
+            "current_original_gate_revalidation": True, "original_saved_acceptance_preserved": True}
     return SteadyJV2DResult(requested, accepted_v, accepted_j, np.asarray(terminals, dtype=float).reshape(-1, 2),
         tuple(attempts), _metrics(accepted_v, accepted_j, incident_power_W_m2), generation, incident_power_W_m2,
         device.column.voltage_polarity, g.lateral_length_m, initial_provenance, device.identity, geometry,
@@ -636,6 +727,7 @@ def read_steady_jv_2d(path: str | Path, sha256: str) -> dict[str, Any]:
         if document["schema"] != SCHEMA or document["qualification"] is not False:
             raise ValueError("unsupported steady2D J-V result schema")
         result = document["result"]
+        _read_grain_model(result["geometry"])
         requested = _voltages(result["requested_voltage_V"], result["solver_controls"]["max_points"])
         attempts = result["attempts"]
         count = int(np.prod(result["geometry"]["shape_Ny_Nx"]))

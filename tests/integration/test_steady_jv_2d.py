@@ -197,7 +197,7 @@ def test_initial_admission_rejects_failure_without_solver(case, monkeypatch):
         driver._admit(device, text, hashlib.sha256(text.encode()).hexdigest(), driver.SteadyJV2DOptions().steady)
 
 
-def test_actual_compiled_grain_rejected_before_any_solver(monkeypatch):
+def test_actual_compiled_grain_requires_explicit_matching_initial_before_any_solver(monkeypatch):
     if "grain_recombination" not in CompiledDevice2D.__dataclass_fields__:
         pytest.skip("actual grain binding has not yet been integrated; no-grain base remains admitted")
     data = dc_assembly.spatial_input().editing_data()
@@ -206,8 +206,10 @@ def test_actual_compiled_grain_rejected_before_any_solver(monkeypatch):
     device = compile_device_2d(load_device(), JV2DInput.model_validate(data))
     assert device.grain_recombination is not None
     monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("grain scope reached solver"))
-    with pytest.raises(ValueError, match="no-grain"):
-        driver._scope(device)
+    driver._scope(device)
+    text = json.dumps({"schema": "solarlab.classical_2d_steady.research.v1", "completed": True})
+    with pytest.raises(ValueError, match="explicit grain initial"):
+        driver._admit(device, text, hashlib.sha256(text.encode()).hexdigest(), driver.SteadyJV2DOptions().steady)
 
 
 def test_source_bound_accepted_illuminated_initial_admits_without_solver(case, monkeypatch):

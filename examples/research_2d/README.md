@@ -203,6 +203,33 @@ historical grain-role partition owns interfaces on the left, while physical
 material coefficients keep right-layer ownership; both are explicit in the
 saved binding. Thin-region resolution and mesh qualification remain unverified.
 
+For the same grain declaration, the shared steady J–V driver also supports a
+complete illuminated curve:
+
+```sh
+.venv/bin/python -B -m examples.research_2d.grain_jv solve \
+  --output outputs/2d_grain_jv.json
+GRAIN_JV_SHA=$(shasum -a 256 outputs/2d_grain_jv.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_2d.grain_jv read \
+  --result outputs/2d_grain_jv.json --sha256 "$GRAIN_JV_SHA"
+```
+
+The default creates and separately records an illuminated numerical preparation
+and an actual grain 2D initial solve, then requests 51 points from 0 to 1.25 V.
+It grants 80 seconds to the curve. The independently reviewed run additionally
+used an enclosing 80-second computation deadline including startup and a
+90-second command limit; it completed in 56.186 seconds. These operating limits
+do not change solver tolerances or scientific acceptance standards.
+
+An existing initial result can be supplied with `--initial-result` and
+`--initial-sha256`; its exact physical source, grain binding, accepted fields
+and original gates must match. Older source-mismatched results are refused.
+Optional `--baseline-result` and `--baseline-sha256` compare the saved no-grain
+curve without solving it again. The comparison retains the common accepted
+voltage grid and source identities. It reports sampled Jsc/Voc/Pmax/FF, leaves
+PCE unavailable without specified irradiance, and makes no mesh-convergence or
+causal claim from the illustrative grain parameters.
+
 ## Inspect the equations
 
 From the repository root, using the locked environment described in the
