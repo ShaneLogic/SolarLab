@@ -121,6 +121,60 @@ This process entry has verified successful and failed examples. It does not
 provide grain, J–V, HTTP or browser execution; those are separate entry points
 with their own implementation and validation status.
 
+## Submit and read through HTTP
+
+The HTTP example installs the same fixed no-grain steady experiment in the
+shared job service. From a clean committed checkout, create local paths and
+start the service in one terminal:
+
+```sh
+SOLARLAB_2D_HTTP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/solarlab-2d-http.XXXXXX")
+SOLARLAB_2D_HTTP_REV=$(git rev-parse HEAD)
+git archive --format=tar --output "$SOLARLAB_2D_HTTP_ROOT/source.tar" "$SOLARLAB_2D_HTTP_REV"
+.venv/bin/python -B -m examples.research_2d.http_steady \
+  --store "$SOLARLAB_2D_HTTP_ROOT/Store" --work "$SOLARLAB_2D_HTTP_ROOT/Work" \
+  --build-source-commit "$SOLARLAB_2D_HTTP_REV" \
+  --source-archive "$SOLARLAB_2D_HTTP_ROOT/source.tar" \
+  --current-repository-head "$SOLARLAB_2D_HTTP_REV" --port 8000
+```
+
+Starting the service does not solve a device. Add `--prepare-only` to validate
+the complete request without opening a server. Choose an unused loopback port;
+stop the service with Ctrl-C after its jobs finish.
+
+In a second terminal at the repository root, this client explicitly submits
+one dark/illuminated job, waits for its terminal event and reads that exact
+attempt. Use a new run ID for each computation:
+
+```sh
+.venv/bin/python -B - <<'PY'
+import httpx
+from examples.research_2d.http_steady import example_submission
+
+with httpx.Client(base_url="http://127.0.0.1:8000", timeout=45) as client:
+    catalog = client.get("/experiments")
+    catalog.raise_for_status()
+    headers = {name: catalog.headers[name] for name in
+               ("x-solarlab-registry", "x-solarlab-job-schema")}
+    submitted = client.post("/jobs", json=example_submission("research-2d-001"), headers=headers)
+    submitted.raise_for_status()
+    job = submitted.json()
+    target = f"{job['run_id']}/attempts/{job['attempt_id']}"
+    events = client.get(f"/runs/{target}/events")
+    events.raise_for_status()
+    result = client.get(f"/results/{target}")
+    result.raise_for_status()
+    print(result.json())
+PY
+```
+
+The result includes accepted-target counts, original failure details, geometry,
+array fingerprints and artifact download URLs. Each attempt retains the same
+22 logical arrays and 14 artifacts as the process entry. The server also reads
+original process attempts under their original identities. An actual HTTP
+success and saved historical failure have passed independent readback checks;
+HTTP completion does not establish mesh or final scientific accuracy.
+
 ## Neutral grain-region recombination
 
 ```sh
