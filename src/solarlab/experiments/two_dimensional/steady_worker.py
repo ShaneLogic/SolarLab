@@ -39,7 +39,8 @@ if TYPE_CHECKING:
     from solarlab.io.run_store import RunStore
     from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions
 
-__all__ = ["Steady2DProtocol", "Steady2DJob", "prepare_steady_2d_job", "steady_2d_worker_binding",
+__all__ = ["INITIAL_POLICY", "REQUEST_SCHEMA", "RESULT_SCHEMA",
+           "Steady2DProtocol", "Steady2DJob", "prepare_steady_2d_job", "steady_2d_worker_binding",
            "run_steady_2d_worker", "read_steady_2d_job"]
 WORKER_ID = "steady_2d"
 RESULT_SCHEMA = "solarlab.steady-2d.worker-result.v1"

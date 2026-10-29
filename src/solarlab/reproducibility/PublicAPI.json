@@ -2,7 +2,7 @@
   "schema": "solarlab.public-api-policy.v1",
   "version": 1,
   "core_root_exports": [],
-  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, plus bounded positive, independent dual-ion and shared-site assembly, steady/time solving and mobile/frozen small signal; listing is API permission, not full scientific qualification.",
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, plus bounded positive, independent dual-ion and shared-site assembly, steady/time solving and mobile/frozen small signal, and bounded fixed-reservoir 2D steady process/HTTP execution; listing is API permission, not full scientific qualification.",
   "declared_exports": {
     "solarlab": [],
     "solarlab.config": [],
@@ -505,6 +505,26 @@
       "run_ionic_jv_worker",
       "read_ionic_jv_job",
       "ionic_jv_identity_inputs"
+    ],
+    "solarlab.experiments.two_dimensional.steady_worker": [
+      "INITIAL_POLICY",
+      "REQUEST_SCHEMA",
+      "RESULT_SCHEMA",
+      "Steady2DProtocol",
+      "Steady2DJob",
+      "prepare_steady_2d_job",
+      "steady_2d_worker_binding",
+      "run_steady_2d_worker",
+      "read_steady_2d_job"
+    ],
+    "solarlab.experiments.two_dimensional.steady_results": [
+      "steady_2d_payload",
+      "read_steady_2d_job"
+    ],
+    "solarlab.solvers.nonlinear.steady_2d": [
+      "Steady2DOptions",
+      "Steady2DResult",
+      "solve_steady_state_2d"
     ]
   },
   "public_imports": {
@@ -646,7 +666,8 @@
       "ExperimentRegistry"
     ],
     "solarlab.experiments.two_dimensional.inputs": [
-      "SpatialExperimentInput"
+      "SpatialExperimentInput",
+      "JV2DInput"
     ],
     "solarlab.experiments.two_dimensional.preparation": [
       "PreparedSpatialExperiment",
@@ -1074,6 +1095,26 @@
     ],
     "solarlab.experiments.jv.ionic_results": [
       "ionic_jv_payload"
+    ],
+    "solarlab.experiments.two_dimensional.steady_worker": [
+      "INITIAL_POLICY",
+      "REQUEST_SCHEMA",
+      "RESULT_SCHEMA",
+      "Steady2DProtocol",
+      "Steady2DJob",
+      "prepare_steady_2d_job",
+      "steady_2d_worker_binding",
+      "run_steady_2d_worker",
+      "read_steady_2d_job"
+    ],
+    "solarlab.experiments.two_dimensional.steady_results": [
+      "steady_2d_payload",
+      "read_steady_2d_job"
+    ],
+    "solarlab.solvers.nonlinear.steady_2d": [
+      "Steady2DOptions",
+      "Steady2DResult",
+      "solve_steady_state_2d"
     ]
   },
   "checked_consumers": [
