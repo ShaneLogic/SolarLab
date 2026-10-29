@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -45,6 +46,33 @@ BASELINE_PATH = ROOT / "tests/support/assembly_baselines.json"
 REFERENCE_COMMIT = "2ec8d1ba017d98174287124790d58770299dbcb0"
 SCHEMA = "solarlab.assembly_baselines.v1"
 MAX_BYTES = 1_000_000
+CAPTURE_FIELDS = ("system", "machine", "python", "numpy", "scipy",
+                  "numpy_blas", "numpy_lapack", "scipy_blas", "scipy_lapack")
+
+
+def capture_environment() -> dict[str, str]:
+    """Observe the numerical stack; Accelerate is not listed by threadpoolctl."""
+    result = {"system": platform.system(), "machine": platform.machine(),
+              "python": platform.python_version(), "numpy": np.__version__, "scipy": scipy.__version__}
+    for name, library in (("numpy", np), ("scipy", scipy)):
+        configuration = library.show_config(mode="dicts")
+        dependencies = configuration.get("Build Dependencies", {}) if isinstance(configuration, Mapping) else {}
+        for role in ("blas", "lapack"):
+            dependency = dependencies.get(role, {})
+            vendor = dependency.get("name") if dependency.get("found") else None
+            result[f"{name}_{role}"] = vendor.casefold() if isinstance(vendor, str) and vendor else "unknown"
+    return result
+
+
+def require_capture_environment(capture: Mapping[str, Any]) -> None:
+    missing = [field for field in CAPTURE_FIELDS if not capture.get(field) or capture[field] == "unknown"]
+    assert not missing, f"frozen capture environment is incomplete: {missing}"
+    current = capture_environment()
+    differences = [f"{field}: captured={capture[field]!r}, current={current[field]!r}"
+                   for field in CAPTURE_FIELDS if current[field] == "unknown" or current[field] != capture[field]]
+    if differences:
+        pytest.skip("platform-bound frozen assembly baseline; " + "; ".join(differences)
+                    + "; live old-vs-new assembly parity remains enabled")
 
 
 def words_digest(value: Any, dtype: str) -> str:
@@ -192,8 +220,57 @@ def test_frozen_inventory(baselines: dict[str, Any]) -> None:
 
 @pytest.mark.parametrize("name", tuple(REFERENCE_FACTORIES))
 def test_frozen_factory(name: str, baselines: dict[str, Any]) -> None:
+    require_capture_environment(baselines["capture"])
     current, _ = factory_digest(name)
     compare_factory(name, current, baselines["factories"][name])
+
+
+@pytest.mark.parametrize("field", CAPTURE_FIELDS)
+def test_foreign_environment_skips_before_factory_evaluation(field, baselines, monkeypatch):
+    current = {key: baselines["capture"][key] for key in CAPTURE_FIELDS}
+    current[field] = "different-" + current[field]
+    monkeypatch.setitem(globals(), "capture_environment", lambda: current)
+
+    def forbidden(name):
+        pytest.fail("a foreign frozen capture must skip before evaluating a factory")
+
+    monkeypatch.setitem(globals(), "factory_digest", forbidden)
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        test_frozen_factory("not-evaluated", baselines)
+    assert f"{field}: captured=" in str(skipped.value)
+    assert repr(current[field]) in str(skipped.value)
+
+
+def test_matching_environment_keeps_a_frozen_word_failure_visible(baselines, monkeypatch):
+    current = {key: baselines["capture"][key] for key in CAPTURE_FIELDS}
+    monkeypatch.setitem(globals(), "capture_environment", lambda: current)
+    name = next(iter(baselines["factories"]))
+    changed = deepcopy(baselines["factories"][name])
+    state = next(iter(changed["states"].values()))
+    quantity = next(iter(state["quantities"].values()))
+    quantity["blocks"][0]["values_sha256"] = "0" * 64
+    monkeypatch.setitem(globals(), "factory_digest", lambda name: (changed, {}))
+    with pytest.raises(AssertionError, match="frozen words or pattern changed"):
+        test_frozen_factory(name, baselines)
+
+
+def test_vendor_detection_distinguishes_numpy_scipy_and_unknown_configuration(monkeypatch):
+    monkeypatch.setattr(np, "show_config", lambda **kwargs: {"Build Dependencies": {
+        "blas": {"found": True, "name": "OpenBLAS"}, "lapack": {"found": True, "name": "OpenBLAS"}}})
+    monkeypatch.setattr(scipy, "show_config", lambda **kwargs: {"Build Dependencies": {
+        "blas": {"found": True, "name": "Accelerate"}}})
+    current = capture_environment()
+    assert current["numpy_blas"] == current["numpy_lapack"] == "openblas"
+    assert current["scipy_blas"] == "accelerate" and current["scipy_lapack"] == "unknown"
+
+
+@pytest.mark.parametrize("field", CAPTURE_FIELDS[-4:])
+def test_unobserved_vendor_is_an_explicit_skip(field, baselines, monkeypatch):
+    current = {key: baselines["capture"][key] for key in CAPTURE_FIELDS}
+    current[field] = "unknown"
+    monkeypatch.setitem(globals(), "capture_environment", lambda: current)
+    with pytest.raises(pytest.skip.Exception, match=field + ": captured="):
+        require_capture_environment(baselines["capture"])
 
 
 def test_digest_detects_one_ulp_signed_zero_and_pattern() -> None:
@@ -243,8 +320,7 @@ def freeze(*, initial: bool, review_reference: str = "") -> dict[str, Any]:
     document = {
         "schema": SCHEMA,
         "capture": {"kind": "initial" if initial else "reviewed_p_class", "source_commit": head,
-                    "review_reference": review_reference, "python": platform.python_version(),
-                    "numpy": np.__version__, "scipy": scipy.__version__},
+                    "review_reference": review_reference, **capture_environment()},
         "encoding": "row-block sorted CSR; int64 indices, float64/complex128 words little-endian; bool uint8; stored zeros retained",
         "source_files": dict(sorted(sources.items())), "sha256": pool, "factories": packed,
     }

@@ -10,6 +10,7 @@ import random
 import struct
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -182,6 +183,19 @@ def test_scan_transport_matches_the_metadata_limit_without_truncation(make_spec)
     assert SCAN_BYTES == limit  # The published bound must match both actual codec entries.
 
 
+def test_stuck_fixture_ignores_sigterm_before_admission_or_progress(monkeypatch):
+    installed = []
+    monkeypatch.setattr(scan_workers.signal, "signal", lambda *args: installed.append(args))
+
+    def stop_at_admission(request, *, engine):
+        assert installed == [(scan_workers.signal.SIGTERM, scan_workers.signal.SIG_IGN)]
+        raise RuntimeError("admission boundary reached with SIGTERM ignored")
+
+    request = SimpleNamespace(request=SimpleNamespace(content=b'{"action":"stuck"}'))
+    with pytest.raises(RuntimeError, match="admission boundary reached"):
+        scan_workers.point(request, SimpleNamespace(consume_manifest=stop_at_admission))
+
+
 @pytest.mark.parametrize("action,reason,caps", [
     ("exception", "worker_exception", {}), ("crash", "child_crash", {}),
     ("stuck", "wall_limit", {"wall_seconds": .8}),
@@ -201,6 +215,8 @@ def test_point_failure_budget_or_nested_scan_does_not_pollute_following_point(tm
         receipt = supervisor.wait(JobHandle(store.store_id, first["run_id"], first["attempt_id"]), 1).data
         assert receipt["process_exit_observed"] and receipt["process_joined"]
         if action == "stuck":
+            assert any(e["payload"].get("ui_progress", {}).get("signals_ignored") is True
+                       for e in store.events(run_id=first["run_id"], limit=1000))
             assert receipt["signals"] == ["soft_stop", "terminate", "kill"]
         if action == "nested_scan":
             assert "nested supervisors or scans" in first["result"]["worker_result"]["detail"]

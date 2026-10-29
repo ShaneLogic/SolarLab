@@ -11,7 +11,8 @@
     "tests/refactor/test_factor_cache.py::TestFactorPolicyWiring::test_plan_default_stays_absent_and_optin_is_identity_bound": "Archive-dependent factor policy input; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
     "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_exact_archived_requests_distinguish_D0_and_c0": "Archive-dependent original request bytes; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
     "tests/refactor/test_hysteresis_reference.py::TestSourcesAndInput::test_nominal_saved_request_is_bound": "Archive-dependent nominal request bytes; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
-    "tests/refactor/test_hysteresis_reference.py::TestPrebiasFirstStepPolicy::test_default_plan_omits_policy_and_request_stays_exact": "Archive-dependent prebias policy input; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent."
+    "tests/refactor/test_hysteresis_reference.py::TestPrebiasFirstStepPolicy::test_default_plan_omits_policy_and_request_stays_exact": "Archive-dependent prebias policy input; collected by packages and skipped only when the source-bound SOLARLAB_ARCHIVE root is absent.",
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_factory": "Bitwise words and CSR patterns require the recorded platform system/machine, Python/NumPy/SciPy versions and each library BLAS/LAPACK vendor; mismatches skip with named fields. The live old-vs-new assembly/parity tests remain collected and run on every platform."
   },
   "markers": {
     "slow": "Excluded from the default fast command; run root slow tests explicitly with -m slow. The optional CI slow job retains its existing legacy regression scope.",
@@ -46,5 +47,8 @@
       ],
       "reason": "The supervised browser client uses the existing bounded pool; broad schema/runtime collection retains unrelated numerical modules in the parent. Run this file once in its own pytest process with unchanged RSS limits."
     }
-  }
+  },
+  "platform_bound": [
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_factory"
+  ]
 }

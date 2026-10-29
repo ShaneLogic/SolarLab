@@ -152,12 +152,14 @@ def audit_files(files: dict[str, str], selections: tuple[Selection, ...],
             if name not in excluded and name not in grouped_files:
                 raise ValueError(f"undocumented CI exclusion: {name}")
     archive_nodes = exclusions.get("archive_dependent_tests", [])
-    for node in archive_nodes:
-        name, _, test = node.partition("::")
-        reason = exclusions.get("conditional_tests", {}).get(node)
-        if (name not in files or test not in source_test_nodes(files[name])
-                or not isinstance(reason, str) or not reason.strip()):
-            raise ValueError(f"stale or unexplained archive-dependent test: {node}")
+    platform_nodes = exclusions.get("platform_bound", [])
+    for nodes, label in ((archive_nodes, "archive-dependent"), (platform_nodes, "platform-bound")):
+        for node in nodes:
+            name, _, test = node.partition("::")
+            reason = exclusions.get("conditional_tests", {}).get(node)
+            if (name not in files or test not in source_test_nodes(files[name])
+                    or not isinstance(reason, str) or not reason.strip()):
+                raise ValueError(f"stale or unexplained {label} test: {node}")
     uncovered, assignments = [], {}
     duplicates, repeated, conflicts = {}, {}, []
     for name, source in sorted(files.items()):
@@ -185,6 +187,7 @@ def audit_files(files: dict[str, str], selections: tuple[Selection, ...],
     return {"test_files": len(files), "uncovered_files": uncovered,
             "duplicate_files": duplicates, "duplicate_invocations": repeated, "conflicting_exclusions": conflicts,
             "isolated_groups": group_report, "archive_dependent_tests": archive_nodes,
+            "platform_bound": platform_nodes,
             "explicit_file_exclusions": excluded, "assignments": assignments}
 
 

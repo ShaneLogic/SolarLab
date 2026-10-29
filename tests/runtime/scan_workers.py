@@ -13,8 +13,12 @@ _LOCAL_MUTATIONS = []
 
 
 def point(request, context):
-    binding = context.consume_manifest(request, engine="solarlab")
     payload = json.loads(request.request.content)
+    action = payload.get("action", "normal")
+    # Arm the uncooperative fixture before admission or progress can block.
+    if action == "stuck":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    binding = context.consume_manifest(request, engine="solarlab")
     if binding.execution.protocol.content != request.request.content:
         raise ValueError("fixture protocol differs from actual request")
     if _LOCAL_MUTATIONS:
@@ -22,15 +26,12 @@ def point(request, context):
     _LOCAL_MUTATIONS.append(payload["point"])
     assert os.environ["OMP_NUM_THREADS"] == os.environ["OPENBLAS_NUM_THREADS"] == "1"
     context.counters(accepted_steps=0, calls=0)
-    context.progress({"stage": "ready", "pid": os.getpid()})
-    action = payload.get("action", "normal")
+    context.progress({"stage": "ready", "pid": os.getpid(), "signals_ignored": action == "stuck"})
     if action == "exception":
         raise ValueError("point-local deliberate failure after state mutation")
     if action == "crash":
         os._exit(17)
     if action in {"stuck", "late", "release"}:
-        if action == "stuck":
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
         deadline = time.monotonic() + 8  # Even an orphaned test worker is bounded.
         while not Path("release").exists() and time.monotonic() < deadline:
             if action == "release":

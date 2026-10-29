@@ -24,7 +24,7 @@ def test_every_root_test_file_has_an_ordinary_ci_job_or_reasoned_exclusion():
     report = audit(ROOT, selections, exclusions)
     print(json.dumps({key: report[key] for key in (
         "test_files", "uncovered_files", "duplicate_files", "duplicate_invocations",
-        "conflicting_exclusions", "isolated_groups", "archive_dependent_tests")}))
+        "conflicting_exclusions", "isolated_groups", "archive_dependent_tests", "platform_bound")}))
     assert report["uncovered_files"] == [], report
     assert report["duplicate_files"] == {}, report
     assert report["duplicate_invocations"] == {}, report
@@ -155,21 +155,26 @@ def test_isolation_guard_rejects_missing_duplicate_misrouted_or_hidden_groups(ch
         audit_files(sources, workflow_selections(workflow), policy)
 
 
-def test_archive_prerequisite_category_requires_a_real_collected_test_and_reason():
+@pytest.mark.parametrize("category,label", [
+    ("archive_dependent_tests", "archive-dependent"), ("platform_bound", "platform-bound"),
+])
+def test_conditional_category_requires_a_real_collected_test_and_reason(category, label):
     name = "tests/test_archive.py::TestArchive::test_saved"
     sources = {"tests/test_archive.py": "class TestArchive:\n    def test_saved(self): pass\n"}
     policy = {"files": {}, "conditional_tests": {name: "Requires the source-bound archive"},
-              "archive_dependent_tests": [name]}
+              category: [name]}
     jobs = (Selection("packages", ("tests",), "not slow"),)
     report = audit_files(sources, jobs, policy)
-    assert report["archive_dependent_tests"] == [name] and report["uncovered_files"] == []
+    assert report[category] == [name] and report["uncovered_files"] == []
+    assert report["assignments"] == {"tests/test_archive.py": ["packages"]}
+    assert audit_files(sources, (), policy)["uncovered_files"] == ["tests/test_archive.py"]
     for change in ("missing_reason", "missing_test"):
         changed = deepcopy(policy)
         if change == "missing_reason":
             changed["conditional_tests"].clear()
         else:
-            changed["archive_dependent_tests"] = [name + "_removed"]
-        with pytest.raises(ValueError, match="archive-dependent"):
+            changed[category] = [name + "_removed"]
+        with pytest.raises(ValueError, match=label):
             audit_files(sources, jobs, changed)
 
 
