@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from suite_support import changed_bound_core_sources, clean_core_skip_reason
-from .policy import Selection, audit, audit_files, audit_platform_fixtures, matches, workflow_selections
+from .policy import Selection, audit, audit_files, audit_fixture_inventory, audit_platform_fixtures, matches, workflow_selections
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,19 +22,16 @@ def test_every_platform_bound_fixture_consumer_is_classified():
     fixtures = policy["platform_bound_fixtures"]
     assert fixtures and all(reason.strip() for reason in fixtures.values())
     assert all(name.startswith("env:") or (ROOT / name).is_file() for name in fixtures)
-    # A newly captured numerical stack cannot silently evade the fixture inventory.
-    for path in (ROOT / "tests").rglob("*.json"):
-        document = json.loads(path.read_bytes())
-        capture = document.get("capture") if isinstance(document, dict) else None
-        if isinstance(capture, dict) and {"system", "machine", "numpy", "scipy"} <= capture.keys():
-            assert path.relative_to(ROOT).as_posix() in fixtures, f"unclassified captured fixture: {path}"
+    # A new binary/array fixture cannot evade review by omitting capture metadata.
+    inventory = audit_fixture_inventory(ROOT, fixtures, policy["portable_fixtures"])
     sources = {path.relative_to(ROOT).as_posix(): path.read_text()
                for path in (ROOT / "tests").rglob("*.py")}
     consumers = audit_platform_fixtures(sources, fixtures, policy["platform_bound"])
-    print(json.dumps({"platform_fixture_consumers": consumers, "unclassified": []}))
+    print(json.dumps({"serialized_fixtures": inventory, "platform_fixture_consumers": consumers, "unclassified": []}))
 
 
-@pytest.mark.parametrize("access", ["direct", "constant", "helper", "fixture", "usefixtures", "imported", "dynamic"])
+@pytest.mark.parametrize("access", ["direct", "constant", "helper", "fixture", "usefixtures", "imported", "dynamic",
+                                   "runpy_fixture", "runpy_get", "getattr"])
 def test_platform_fixture_guard_follows_direct_and_indirect_consumers(access):
     fixture = "tests/data/captured.json"
     name = "tests/unit/test_consumer.py"
@@ -50,18 +47,49 @@ def test_platform_fixture_guard_follows_direct_and_indirect_consumers(access):
         "usefixtures": "@pytest.mark.usefixtures('captured')\ndef test_read():\n    pass\n",
         "imported": "from support.reader import load as saved\ndef test_read():\n    saved()\n",
         "dynamic": "ORACLE = Path('tests/support/reader.py')\nmodule = load_module(ORACLE)\ndef test_read():\n    module.FIXTURE.read_bytes()\n",
+        "runpy_fixture": "@pytest.fixture\ndef frozen():\n    oracle = runpy.run_path('tests/support/reader.py')\n    return oracle['FIXTURE'].read_bytes()\ndef test_read(frozen):\n    assert frozen\n",
+        "runpy_get": "def test_read():\n    oracle = runpy.run_path('tests/support/reader.py')\n    oracle.get('FIXTURE').read_bytes()\n",
+        "getattr": "def test_read():\n    module = load_module('tests/support/reader.py')\n    getattr(module, 'FIXTURE').read_bytes()\n",
     }[access] + "\ndef test_live():\n    compare_live_operators()\n"
     with pytest.raises(ValueError, match="unclassified platform-bound fixture consumers"):
         audit_platform_fixtures(sources, {fixture: "captured numerical words"}, [])
+    with pytest.raises(ValueError, match="lack explicit pytest markers"):
+        audit_platform_fixtures(sources, {fixture: "captured numerical words"}, [name + "::test_read"])
+    sources[name] = sources[name].replace("def test_read(", "@pytest.mark.platform_bound\ndef test_read(")
     consumers = audit_platform_fixtures(sources, {fixture: "captured numerical words"}, [name + "::test_read"])
     assert consumers == {name + "::test_read": [fixture]}
 
 
-def test_dynamic_fixture_lookup_does_not_classify_an_unrelated_same_named_constant():
+@pytest.mark.parametrize("access", ["module.FIXTURE", "module['FIXTURE']", "module.get('FIXTURE')", "getattr(module, 'FIXTURE')"])
+def test_dynamic_fixture_lookup_does_not_classify_an_unrelated_same_named_constant(access):
     sources = {"tests/support/protected.py": "FIXTURE = Path('captured.json')\n",
         "tests/support/unrelated.py": "FIXTURE = Path('portable.json')\n",
-        "tests/test_live.py": "SOURCE = Path('tests/support/unrelated.py')\nmodule = load_module(SOURCE)\ndef test_read():\n    module.FIXTURE.read_bytes()\n"}
+        "tests/test_live.py": f"SOURCE = Path('tests/support/unrelated.py')\nmodule = load_module(SOURCE)\ndef test_read():\n    {access}.read_bytes()\n"}
     assert audit_platform_fixtures(sources, {"tests/data/captured.json": "captured words"}, []) == {}
+
+
+@pytest.mark.parametrize("name,content", [
+    ("words.json", b'{"sha256":["binary64-digest"],"values_sha256":0}'),
+    ("arrays.json", b'{"expected":[[0.1,-0.0],[1.25,2.5]]}'),
+    ("array.npy", b"opaque numeric fixture"), ("arrays.npz", b"opaque numeric fixture"),
+    ("history.jsonl.gz", b"compressed historical words"),
+    ("array.txt", b"0.1 -0.0 1.25 2.5"), ("array.snapshot", b"unfamiliar array encoding"),
+])
+def test_fixture_inventory_cannot_depend_on_capture_metadata_or_basename(tmp_path, name, content):
+    path = tmp_path / "tests/data" / name
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    relative = path.relative_to(tmp_path).as_posix()
+    with pytest.raises(ValueError, match="unclassified serialized fixtures"):
+        audit_fixture_inventory(tmp_path, {}, {})
+    assert audit_fixture_inventory(tmp_path, {relative: "captured outputs"}, {}) == [relative]
+    assert audit_fixture_inventory(tmp_path, {}, {relative: "input or readback bytes only"}) == [relative]
+    with pytest.raises(ValueError, match="both captured and portable"):
+        audit_fixture_inventory(tmp_path, {relative: "capture"}, {relative: "input"})
+    with pytest.raises(ValueError, match="stale or unexplained"):
+        audit_fixture_inventory(tmp_path, {relative: ""}, {})
+    with pytest.raises(ValueError, match="stale or unexplained"):
+        audit_fixture_inventory(tmp_path, {relative + ".missing": "removed fixture"}, {})
 
 
 def test_every_root_test_file_has_an_ordinary_ci_job_or_reasoned_exclusion():

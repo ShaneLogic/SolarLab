@@ -23,12 +23,14 @@
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_foreign_environment_skips_before_factory_evaluation": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_inventory": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_matching_environment_keeps_a_frozen_word_failure_visible": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
-    "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform."
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
+    "tests/unit/solvers/time/test_assembled_ionic_steps.py::test_all_32_probes_match_frozen_step_and_storage_arrays": "Only the stored BE step/storage digests require the shared require_capture_environment guard. The separate test_all_32_probes_match_live_step_and_storage_arrays has no capture fixture or skip and compares all 32 live probes on every platform."
   },
   "markers": {
     "slow": "Excluded from the default fast command; run root slow tests explicitly with -m slow. The optional CI slow job retains its existing legacy regression scope.",
     "frontend": "Collected from tests/refactor and tests/runtime by frontend CI after npm ci; other jobs exclude this marker.",
-    "requires_clean_core": "Skipped only when bound src/solarlab Python files are changed or Git provenance is unavailable; clean CI runs the test."
+    "requires_clean_core": "Skipped only when bound src/solarlab Python files are changed or Git provenance is unavailable; clean CI runs the test.",
+    "platform_bound": "Explicit captured-fixture consumer inventory; does not skip tests. Only locally regenerated floating outputs compared with historical words require a capture-environment guard; portable metadata and live parity remain unconditional."
   },
   "optional_dependencies": {
     "arb": "python-flint==0.8.0 is locked and installed in core CI; local tests requiring it skip explicitly when absent.",
@@ -73,12 +75,34 @@
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_factory",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_inventory",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_matching_environment_keeps_a_frozen_word_failure_visible",
-    "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip"
+    "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip",
+    "tests/unit/solvers/time/test_assembled_ionic_steps.py::test_all_32_probes_match_frozen_step_and_storage_arrays"
   ],
   "platform_bound_fixtures": {
     "tests/support/assembly_baselines.json": "Raw float/complex words and sparse patterns captured on the recorded Darwin arm64 Python/NumPy/SciPy and Accelerate stack.",
     "tests/unit/assembly/fixtures/dc2d_steady_seeds_v1.json": "Exact historical input-coordinate bytes are portable; decoded physical-field word digests require the supported capture stack. Live original-vs-assembled solves use the unchanged input words and current gates on every platform.",
     "env:SOLARLAB_ASSEMBLY_2D_BASELINE": "Optional pinned DC2D gate NPZ contains original captured float arrays and sparse patterns; compare only on the capture stack.",
     "tests/independent/p04/fixtures/P04LegacyGoldenV1.json": "Existing macOS/Accelerate golden: floating comparisons retain their current platform prerequisites; metadata and quoted-value checks remain portable."
+  },
+  "portable_fixtures": {
+    "tests/fixtures/native_history/accepted.jsonl": "Exact historical reader bytes from the incomplete original attempt; no local floating output is regenerated or qualified against them.",
+    "tests/fixtures/native_history/manifest.json": "Byte hashes and provenance for the historical reader fixtures; metadata/integrity checks remain portable.",
+    "tests/fixtures/native_history/prefix.jsonl.gz": "Compressed historical reader input, including deliberate incomplete-tail cases; not a numerical reproduction oracle.",
+    "tests/fixtures/native_history/reader.txt": "Exact historical reader source fragment preserved as fixture text for byte/provenance checks; no computed floating output oracle.",
+    "tests/fixtures/refactor/EmptyStateV4.json": "Original fixed-reference codec input; tests validate decoding and preserved identity, not bitwise reproduction by a solver.",
+    "tests/fixtures/refactor/R1FailureWitnessV1.json": "Original failed-attempt request/state/event bytes for codec, refusal and stable-operator witnesses; historical failure stays a failure.",
+    "tests/integration/fixtures/multiple_ionic_d0_steady.json.gz": "Exact saved initial-state input; admission validates its recorded identity and current tests apply their own physical gates.",
+    "tests/numerical_contracts/AnalyticGatesV1.json": "Declared analytic acceptance contracts and tolerances, not outputs captured from a numerical stack.",
+    "tests/numerical_contracts/fixtures/native_interval_charge.json": "Recorded interval input used to test algebraic charge accounting against the declared analytic gates; no frozen solver-word equivalence claim.",
+    "tests/numerical_contracts/fixtures/qualification_cases.json": "Declared experiment requests and qualification inputs, not frozen numerical output comparisons.",
+    "tests/numerical_contracts/fixtures/qualification_grids.json": "Declared grid inputs used by qualification contracts, not captured numerical outputs.",
+    "tests/numerical_contracts/fixtures/qualification_origins.json": "Historical request definitions and origin metadata used for qualification input binding; not a cross-platform output oracle.",
+    "tests/refactor/fixtures/jv_reference_requests.json": "Serialized JV request inputs and identities, not computed curve references.",
+    "tests/refactor/fixtures/r1_common_state_preparation.json": "Saved common-state input and its preparation identity; consumed or validated as input, not regenerated bitwise.",
+    "tests/refactor/fixtures/r1_execution_policy.json": "Explicit execution controls and declared tolerances; no captured numerical output arrays.",
+    "tests/refactor/fixtures/r1_pair_common_state_preparation.json": "Saved paired-coordinate initial input; high/low words and identity must be preserved when decoded.",
+    "tests/runtime/fixtures/ionic_jv_failed_prefix.tar.gz": "Immutable failed-prefix store for historical reading/refusal checks; no failure is relabelled or replayed as a success.",
+    "tests/runtime/fixtures/ionic_jv_saved_results.tar.gz": "Stored RunStore records and artifacts for reader/identity contracts; existing artifact bytes are compared without recomputation.",
+    "tests/runtime/fixtures/steady_2d_process_saved.tar.gz": "Saved process/HTTP artifacts for historical readback and tamper checks, not a new solve against captured arrays."
   }
 }

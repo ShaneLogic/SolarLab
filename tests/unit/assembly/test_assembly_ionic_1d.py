@@ -189,6 +189,7 @@ def test_every_quantity_is_bitwise_equal(name: str, request: pytest.FixtureReque
                                                           "words": words, "changed_words": 0}))
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("name", IONIC)
 def test_assembled_captures_match_the_frozen_digests(name: str, frozen_digests: tuple[Any, dict[str, Any]]) -> None:
     """Main's frozen digests of the original captures (cd4b4d28) also hold the assembled ones."""

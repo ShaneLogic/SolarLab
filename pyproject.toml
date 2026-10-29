@@ -96,6 +96,7 @@ addopts = "-ra -m 'not slow'"
 markers = [
     "slow: marks tests as slow (run with -m slow)",
     "requires_clean_core: binds the running core to committed source; skips on changed bound Python files",
+    "platform_bound: consumes captured numeric fixtures; only frozen-output comparisons use the capture guard, portable metadata and live parity still run",
     "frontend: Python/TypeScript client contracts executed by the frontend CI job",
     "regression: physical-sanity regression tests (V_oc / J_sc / FF envelopes, parity gates)",
     "validation: physics trend validation against literature windows (V_oc vs Eg, FF vs mobility, etc.)",

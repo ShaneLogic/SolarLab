@@ -198,15 +198,21 @@ def test_stuck_fixture_ignores_sigterm_before_admission_or_progress(monkeypatch)
 
 @pytest.mark.parametrize("action,reason,caps", [
     ("exception", "worker_exception", {}), ("crash", "child_crash", {}),
-    ("stuck", "wall_limit", {"wall_seconds": .8}),
+    # CI 40923590700 needed up to 2.53 s for a two-point failure/normal pair.
+    # The old 0.8 s cap could kill Python/NumPy startup before point() armed
+    # SIG_IGN. Allow >2x that entire-pair bound for this one child, while
+    # staying below the fixture's 8 s escape deadline. Production defaults
+    # and the three-signal ladder are unchanged.
+    ("stuck", "wall_limit", {"wall_seconds": 6.}),
     ("counter", "accepted_steps_limit", {"accepted_steps": 2}),
     ("nested_scan", "worker_exception", {}),
 ])
-def test_point_failure_budget_or_nested_scan_does_not_pollute_following_point(tmp_path, make_spec, action, reason, caps):
+def test_point_failure_budget_or_nested_scan_does_not_pollute_following_point(tmp_path, make_spec, action, reason, caps, request):
     records = [make_spec(0, action=action, **caps), make_spec(1)]
     spec, executions = declaration("isolation", records)
-    with RunStore(tmp_path / "db") as store, pool(store, tmp_path / "work") as supervisor:
-        result = supervisor.scan(spec, executions=executions, max_in_flight=1).wait(12)
+    work = tmp_path / "work"
+    with RunStore(tmp_path / "db") as store, pool(store, work) as supervisor:
+        result = supervisor.scan(spec, executions=executions, max_in_flight=1).wait(16 if action == "stuck" else 12)
         first, second = result["points"]
         assert result["state"] == "failed" and first["reason"] == reason
         assert second["state"] == "succeeded" and second["result"]["worker_result"]["fresh_process_state"]
@@ -215,7 +221,16 @@ def test_point_failure_budget_or_nested_scan_does_not_pollute_following_point(tm
         receipt = supervisor.wait(JobHandle(store.store_id, first["run_id"], first["attempt_id"]), 1).data
         assert receipt["process_exit_observed"] and receipt["process_joined"]
         if action == "stuck":
+            progress = [event["payload"]["ui_progress"] for event in store.events(run_id=first["run_id"])
+                        if event["payload"].get("ui_progress", {}).get("stage") == "ready"]
+            assert progress and progress[-1]["signals_ignored"], "wall budget expired before the stuck fixture was ready"
+            launch = json.loads((work / (store.store_id + "-" + first["attempt_id"]) / "launch.json").read_bytes())
+            startup = progress[-1]["ready_monotonic"] - launch["started_monotonic"]
+            assert 0 <= startup < caps["wall_seconds"]
             assert receipt["signals"] == ["soft_stop", "terminate", "kill"]
+            request.node.user_properties.append(("stuck_startup", {"seconds": startup,
+                "wall_cap_seconds": caps["wall_seconds"], "signals": receipt["signals"],
+                "process_exit_observed": receipt["process_exit_observed"], "process_joined": receipt["process_joined"]}))
         if action == "nested_scan":
             assert "nested supervisors or scans" in first["result"]["worker_result"]["detail"]
 

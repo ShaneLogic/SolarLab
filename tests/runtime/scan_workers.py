@@ -26,7 +26,8 @@ def point(request, context):
     _LOCAL_MUTATIONS.append(payload["point"])
     assert os.environ["OMP_NUM_THREADS"] == os.environ["OPENBLAS_NUM_THREADS"] == "1"
     context.counters(accepted_steps=0, calls=0)
-    context.progress({"stage": "ready", "pid": os.getpid(), "signals_ignored": action == "stuck"})
+    context.progress({"stage": "ready", "pid": os.getpid(), "signals_ignored": action == "stuck",
+                      "ready_monotonic": time.monotonic()})
     if action == "exception":
         raise ValueError("point-local deliberate failure after state mutation")
     if action == "crash":

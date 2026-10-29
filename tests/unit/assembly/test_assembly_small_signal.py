@@ -194,6 +194,7 @@ def test_harness_ac_captures_are_bitwise_equal(name: str) -> None:
         assert all(item.bitwise_equal for item in comparison.differences)
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("name", AC)
 def test_harness_ac_captures_match_the_frozen_digests(
         name: str, frozen_digests: tuple[Any, dict[str, Any]]) -> None:

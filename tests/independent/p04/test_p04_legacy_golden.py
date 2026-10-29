@@ -35,6 +35,7 @@ CAPABILITY = {
 }
 
 
+@pytest.mark.platform_bound
 def test_fixture_identity_and_sources():
     assert DOCUMENT["schema"] == SCHEMA
     assert DOCUMENT["captured_at_commit"].startswith("b1f953c")
@@ -51,6 +52,7 @@ def recaptured():
         return capture_cases()
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("case", CASES)
 @pytest.mark.skipif(sys.platform != "darwin", reason="bitwise golden was captured on macOS/Accelerate; live legacy parity runs on Linux")
 def test_legacy_reproduces_golden_bitwise(case, recaptured):
@@ -61,6 +63,7 @@ def test_legacy_reproduces_golden_bitwise(case, recaptured):
         assert stored[key] == fresh[key], f"{case}/{key} differs from the recorded legacy output"
 
 
+@pytest.mark.platform_bound
 def test_quoted_existing_values_are_reproduced():
     """Values already quoted as evidence in perovskite-sim/CLAUDE.md."""
 
@@ -72,6 +75,7 @@ def test_quoted_existing_values_are_reproduced():
     assert abs(tmm - 225.001) <= 5e-4  # "exact absorbed budget 225.001 A/m^2"
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("case", CASES)
 @pytest.mark.skipif(sys.platform != "darwin", reason="bitwise golden was captured on macOS/Accelerate; independent analytic gates run on Linux")
 def test_candidate_against_golden(case):

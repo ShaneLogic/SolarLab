@@ -104,6 +104,7 @@ def test_all_twenty_states_are_live_bitwise_equal(
         "S_Su_M": "absent in both original and candidate"}))
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("name", FACTORIES)
 def test_all_twenty_states_match_frozen_original_arrays(
     name: str, cases: dict[str, ReferenceCase], gate_baseline: Any,

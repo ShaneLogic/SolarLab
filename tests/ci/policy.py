@@ -75,20 +75,24 @@ def marker_names(nodes: list[ast.AST]) -> set[str]:
     return result
 
 
-def source_test_markers(source: str) -> tuple[set[str], ...]:
+def source_test_node_markers(source: str) -> dict[str, set[str]]:
     tree = ast.parse(source)
     module = marker_names([node.value for node in tree.body if isinstance(node, ast.Assign)
                            and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets)])
-    result = []
+    result = {}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-            result.append(module | marker_names(node.decorator_list))
+            result[node.name] = module | marker_names(node.decorator_list)
         if isinstance(node, ast.ClassDef):
             class_markers = module | marker_names(node.decorator_list)
-            result.extend(class_markers | marker_names(child.decorator_list) for child in node.body
-                          if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                          and child.name.startswith("test_"))
-    return tuple(result)
+            result.update({f"{node.name}::{child.name}": class_markers | marker_names(child.decorator_list)
+                           for child in node.body if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                           and child.name.startswith("test_")})
+    return result
+
+
+def source_test_markers(source: str) -> tuple[set[str], ...]:
+    return tuple(source_test_node_markers(source).values())
 
 
 def matches(expression: str, markers: set[str]) -> bool:
@@ -105,15 +109,33 @@ def matches(expression: str, markers: set[str]) -> bool:
 
 
 def source_test_nodes(source: str) -> set[str]:
-    result = set()
-    for node in ast.parse(source).body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-            result.add(node.name)
-        if isinstance(node, ast.ClassDef):
-            result.update(f"{node.name}::{child.name}" for child in node.body
-                          if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                          and child.name.startswith("test_"))
-    return result
+    return set(source_test_node_markers(source))
+
+
+def audit_fixture_inventory(root: Path, captured: dict[str, str], portable: dict[str, str]) -> list[str]:
+    """Inventory serialized data without relying on a particular capture schema.
+
+    JSON can store interned binary64 digests, hex words or literal arrays;
+    NumPy files and compressed readback bundles need the same explicit review.
+    Portable input/readback/metadata declarations do not authorize comparisons
+    of newly computed floating outputs to historical words.
+    """
+    # Treat every non-source/documentation asset as a candidate, including
+    # unfamiliar suffixes. A new encoding must not bypass the inventory.
+    source_suffixes = {".py", ".pyc", ".pyo", ".md"}
+    files = {path.relative_to(root).as_posix() for path in (root / "tests").rglob("*")
+             if path.is_file() and path.suffix not in source_suffixes
+             and "__pycache__" not in path.parts and path.name != ".DS_Store"}
+    files.discard("tests/ci/exclusions.json")  # This policy is not a numerical fixture.
+    if captured.keys() & portable.keys():
+        raise ValueError("fixture cannot be both captured and portable")
+    for name, reason in {**captured, **portable}.items():
+        if not isinstance(reason, str) or not reason.strip() or (not name.startswith("env:") and name not in files):
+            raise ValueError(f"stale or unexplained fixture classification: {name}")
+    missing = sorted(files - captured.keys() - portable.keys())
+    if missing:
+        raise ValueError(f"unclassified serialized fixtures: {missing}")
+    return sorted(files)
 
 
 def platform_fixture_consumers(sources: dict[str, str], fixtures: dict[str, str]) -> dict[str, list[str]]:
@@ -200,6 +222,18 @@ def platform_fixture_consumers(sources: dict[str, str], fixtures: dict[str, str]
                     edges[key].add((modules[path, part.value.id], part.attr))
                 else:
                     attributes.append((key, part.attr))
+            # runpy.run_path returns an export dictionary, not a module.
+            # Follow the named export through the same actual-file origins.
+            if isinstance(part, ast.Subscript) and isinstance(part.slice, ast.Constant) and isinstance(part.slice.value, str):
+                attributes.append((key, part.slice.value))
+            if isinstance(part, ast.Call):
+                export = None
+                if isinstance(part.func, ast.Attribute) and part.func.attr == "get" and part.args:
+                    export = part.args[0]
+                elif isinstance(part.func, ast.Name) and part.func.id == "getattr" and len(part.args) > 1:
+                    export = part.args[1]
+                if isinstance(export, ast.Constant) and isinstance(export.value, str):
+                    attributes.append((key, export.value))
             if isinstance(part, ast.Call) and isinstance(part.func, ast.Attribute) and part.func.attr in {
                     "usefixtures", "getfixturevalue"}:
                 for argument in part.args:
@@ -230,9 +264,15 @@ def platform_fixture_consumers(sources: dict[str, str], fixtures: dict[str, str]
 def audit_platform_fixtures(sources: dict[str, str], fixtures: dict[str, str],
                             classified: list[str]) -> dict[str, list[str]]:
     consumers = platform_fixture_consumers(sources, fixtures)
-    missing = sorted(set(consumers) - set(classified))
+    marked = {path + "::" + name for path, source in sources.items()
+              if PurePosixPath(path).name.startswith("test_")
+              for name, markers in source_test_node_markers(source).items() if "platform_bound" in markers}
+    missing = sorted((set(consumers) | marked) - set(classified))
     if missing:
         raise ValueError(f"unclassified platform-bound fixture consumers: {missing}")
+    unmarked = sorted(set(consumers) - marked)
+    if unmarked:
+        raise ValueError(f"platform-bound fixture consumers lack explicit pytest markers: {unmarked}")
     return consumers
 
 

@@ -53,6 +53,8 @@ def frozen() -> tuple[Any, dict[str, Any]]:
     import json
     oracle = runpy.run_path(str(ROOT / "tests/unit/assembly_parity/test_frozen_baselines.py"))
     document = json.loads(oracle["BASELINE_PATH"].read_bytes())
+    assert document["schema"] == oracle["SCHEMA"]
+    oracle["require_capture_environment"](document["capture"])
     return oracle["extraction_digest"], oracle["expand_digests"](document["factories"], document["sha256"])
 
 
@@ -103,6 +105,7 @@ def original_accounting(step: Any, u: np.ndarray) -> dict[str, Any]:
     return multiple_ionic_step_accounting(step, u) if isinstance(step, MultipleIonicBackwardEuler1DStep) else step_accounting(step, u)
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("name", FACTORIES)
 def test_all_32_probes_match_frozen_step_and_storage_arrays(
     name: str, cases: dict[str, ReferenceCase], frozen: tuple[Any, dict[str, Any]], request: pytest.FixtureRequest,
@@ -111,13 +114,27 @@ def test_all_32_probes_match_frozen_step_and_storage_arrays(
     digest, expected = frozen
     count = 0
     for state in case.states:
-        original, candidate, storage = steps(case, state)
+        _, candidate, storage = steps(case, state)
         assembled = storage.problem.assemble(state.u, storage=True)
         captured = Extraction(assembled.F, assembled.J, case.blocks, assembled.S, assembled.S_u, assembled.M,
             extra={"R_step": candidate.residual(state.u), "J_step": candidate.jacobian(state.u)})
         actual = digest(captured)
         oracle = expected[name]["states"][state.name]["quantities"]
         assert actual == {key: oracle[key] for key in actual}
+        count += 1
+    request.node.user_properties.append(("frozen_step_parity", {"factory": name, "states": count,
+        "F_J_S_Su_M_Rstep_Jstep_changed_words": 0}))
+
+
+@pytest.mark.parametrize("name", FACTORIES)
+def test_all_32_probes_match_live_step_and_storage_arrays(
+    name: str, cases: dict[str, ReferenceCase], request: pytest.FixtureRequest,
+) -> None:
+    """Live parity must execute even when the stored capture stack differs."""
+    case = cases[name]
+    count = 0
+    for state in case.states:
+        original, candidate, _ = steps(case, state)
         assert words(original.residual(state.u)) == words(candidate.residual(state.u))
         assert_matrix(original.jacobian(state.u), candidate.jacobian(state.u))
         assert words(original.inventory_rates_m2_s(state.u)) == words(candidate.inventory_rates_m2_s(state.u))
@@ -126,7 +143,7 @@ def test_all_32_probes_match_frozen_step_and_storage_arrays(
         assert words(original.initial_coordinates()) == words(candidate.initial_coordinates())
         count += 1
     request.node.user_properties.append(("step_parity", {"factory": name, "states": count,
-        "F_J_S_Su_M_Rstep_Jstep_changed_words": 0, "physical_increment_changed_words": 0,
+        "Rstep_Jstep_changed_words": 0, "physical_increment_changed_words": 0,
         "rate_and_predictor_changed_words": 0}))
 
 

@@ -76,6 +76,7 @@ def saved_seed(name: str) -> tuple[dict[str, Any], np.ndarray]:
     return seed, u
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("name", ("dark", "light"))
 @pytest.mark.usefixtures("frozen_digests")
 def test_archived_seed_fields_match_frozen_digests(name: str, device: CompiledDevice2D) -> None:
@@ -85,6 +86,7 @@ def test_archived_seed_fields_match_frozen_digests(name: str, device: CompiledDe
         assert hashlib.sha256(np.ascontiguousarray(getattr(state, field), dtype="<f8").tobytes()).hexdigest() == digest
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("name", ("dark", "light"))
 def test_actual_195_row_steady_histories_are_bitwise(
     name: str, device: CompiledDevice2D, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,

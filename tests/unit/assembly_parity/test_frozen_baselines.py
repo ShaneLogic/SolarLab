@@ -205,6 +205,7 @@ def baselines() -> dict[str, Any]:
     return document
 
 
+@pytest.mark.platform_bound
 def test_frozen_inventory(baselines: dict[str, Any]) -> None:
     assert set(baselines["factories"]) == set(REFERENCE_FACTORIES)
     assert len(baselines["factories"]) == 40
@@ -218,6 +219,7 @@ def test_frozen_inventory(baselines: dict[str, Any]) -> None:
         assert baselines["capture"]["review_reference"].strip()
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("name", tuple(REFERENCE_FACTORIES))
 def test_frozen_factory(name: str, baselines: dict[str, Any]) -> None:
     require_capture_environment(baselines["capture"])
@@ -225,6 +227,7 @@ def test_frozen_factory(name: str, baselines: dict[str, Any]) -> None:
     compare_factory(name, current, baselines["factories"][name])
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("field", CAPTURE_FIELDS)
 def test_foreign_environment_skips_before_factory_evaluation(field, baselines, monkeypatch):
     current = {key: baselines["capture"][key] for key in CAPTURE_FIELDS}
@@ -241,6 +244,7 @@ def test_foreign_environment_skips_before_factory_evaluation(field, baselines, m
     assert repr(current[field]) in str(skipped.value)
 
 
+@pytest.mark.platform_bound
 def test_matching_environment_keeps_a_frozen_word_failure_visible(baselines, monkeypatch):
     current = {key: baselines["capture"][key] for key in CAPTURE_FIELDS}
     monkeypatch.setitem(globals(), "capture_environment", lambda: current)
@@ -264,6 +268,7 @@ def test_vendor_detection_distinguishes_numpy_scipy_and_unknown_configuration(mo
     assert current["scipy_blas"] == "accelerate" and current["scipy_lapack"] == "unknown"
 
 
+@pytest.mark.platform_bound
 @pytest.mark.parametrize("field", CAPTURE_FIELDS[-4:])
 def test_unobserved_vendor_is_an_explicit_skip(field, baselines, monkeypatch):
     current = {key: baselines["capture"][key] for key in CAPTURE_FIELDS}
