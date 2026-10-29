@@ -79,6 +79,14 @@ class BDFDrive:
         value = self.right_values[index] + fraction * (self.left_values[index + 1] - self.right_values[index])
         return float(value[0]), float(value[1])
 
+    @property
+    def slope_breakpoints_s(self) -> tuple[float, ...]:
+        """Continuous protocol knots with different adjacent segment slopes."""
+        slopes = (self.left_values[1:] - self.right_values[:-1]) / np.diff(self.times_s)[:, None]
+        return tuple(float(self.times_s[index]) for index in range(1, len(self.times_s) - 1)
+            if np.array_equal(self.left_values[index], self.right_values[index])
+            and not np.array_equal(slopes[index - 1], slopes[index]))
+
 
 @dataclass(frozen=True)
 class ElectronicStorage1D:
@@ -375,8 +383,23 @@ def _events(drive: BDFDrive, factory: Any, controls: TransientOptions) -> tuple[
              GateOutcome("restart_frozen_physical_inventory", relative <= controls.contact_log_tolerance,
                          relative, controls.contact_log_tolerance)))
         return right, assessment
-    return tuple(BDFEvent(float(t), restart, "voltage_generation_protocol_jump") for t, a, b in
-                 zip(drive.times_s, drive.left_values, drive.right_values) if not np.array_equal(a, b))
+    events = [BDFEvent(float(t), restart, "voltage_generation_protocol_jump") for t, a, b in
+              zip(drive.times_s, drive.left_values, drive.right_values) if not np.array_equal(a, b)]
+    for t in drive.slope_breakpoints_s:
+        index = int(np.flatnonzero(drive.times_s == t)[0])
+        left_slope = ((drive.left_values[index] - drive.right_values[index - 1])
+                      / (drive.times_s[index] - drive.times_s[index - 1]))
+        right_slope = ((drive.left_values[index + 1] - drive.right_values[index])
+                       / (drive.times_s[index + 1] - drive.times_s[index]))
+        def slope_restart(old: StorageProblem, new: StorageProblem, u: Vector,
+                          before: Vector = left_slope, after: Vector = right_slope) -> tuple[Vector, Assessment]:
+            right, assessed = restart(old, new, u)
+            if right.tobytes() != u.tobytes():
+                raise ValueError("a continuous slope knot must preserve the represented state")
+            return right, Assessment({**assessed.accounting, "left_drive_slope": before,
+                                      "right_drive_slope": after}, assessed.checks)
+        events.append(BDFEvent(t, slope_restart, "drive_slope_discontinuity"))
+    return tuple(sorted(events, key=lambda event: event.time_s))
 
 
 def solve_electronic_bdf(

@@ -32,8 +32,8 @@ from solarlab.solvers.nonlinear.production import (
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
 from solarlab.solvers.time.assembled_storage import AssembledStorage1D
 from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, step_accounting
-from solarlab.solvers.time.bdf import Assessment, BDFOptions, BDFStep, HistoryPoint, solve_bdf
-from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, bdf_accounting
+from solarlab.solvers.time.bdf import Assessment, BDFEvent, BDFOptions, BDFStep, HistoryPoint, solve_bdf
+from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, _events, bdf_accounting
 
 
 INITIALS = {}
@@ -119,12 +119,18 @@ def run_assembled(device, point, requested, drive, options):
         previous = device.state(old.u, voltage_V=old.problem.voltage_V)
         return BackwardEuler1DStep(step.endpoint, previous, step.dt_s).initial_coordinates(
             physical.predictor, voltage_lift=True)
+    events = []
+    for event in _events(drive, lambda t, side: ElectronicStorage1D(factory(t, side)), physical):
+        def restart(old, new, u, callback=event.restart):
+            return callback(ElectronicStorage1D(old), ElectronicStorage1D(new), u)
+        events.append(BDFEvent(event.time_s, restart, event.name))
     return solve_bdf(factory, point.state.u,
         (float(requested.times_s[0]), float(requested.times_s[-1])),
         options=replace(options, wall_s=min(options.wall_s, physical.wall_s),
                         max_steps=min(options.max_steps, physical.max_steps)),
         settings=lambda step: base, convergence_norm=norm, assess=assessment, seed=seed,
         breakpoints_s=tuple(float(t) for t in drive.times_s[1:-1]),
+        events=tuple(events),
         output_times_s=requested.times_s)
 
 
@@ -194,6 +200,13 @@ def assert_bdf(left, right, device, drive):
         assert_bits(a.u, b.u)
         assert_bits(a.storage_value, b.storage_value)
         assert_newton(a.projection, b.projection)
+    assert len(left.restarts) == len(right.restarts)
+    for a, b in zip(left.restarts, right.restarts):
+        assert (a.time_s, a.name, a.accepted) == (b.time_s, b.name, b.accepted)
+        for field in ("left_u", "right_u", "left_storage", "right_storage"):
+            assert_bits(getattr(a, field), getattr(b, field))
+        assert a.assessment.checks == b.assessment.checks
+        assert_accounting(a.assessment.accounting, b.assessment.accounting)
 
 
 def test_original_accounting_uses_assembled_public_observations(device):

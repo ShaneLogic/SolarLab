@@ -125,7 +125,20 @@ class BDFStep:
         return rate
 
     def residual(self, u: Vector) -> Vector:
-        return self.endpoint.residual(u) - self.storage_rate(u)
+        value = self.endpoint.residual(u)
+        rate = self.storage_rate(u)
+        result = value - rate
+        tangent = self.endpoint.storage_tangent(u)
+        if tangent.shape != (u.size, u.size):
+            raise ValueError("physical storage tangent must match the equation rows")
+        row_size = (np.asarray(abs(tangent).sum(axis=1)).ravel() if issparse(tangent)
+                    else np.sum(abs(np.asarray(tangent)), axis=1))
+        algebraic = (row_size == 0.0) & (rate == 0.0)
+        # An algebraic row has no physical storage subtraction. Preserve its
+        # represented value, including -0; nonzero history rates are retained
+        # even when the current storage tangent happens to vanish.
+        result[algebraic] = value[algebraic]
+        return result
 
     def jacobian(self, u: Vector) -> Matrix:
         return self.endpoint.jacobian(u) - self.coefficients[0] * self.endpoint.storage_tangent(u) / self.dt_s
