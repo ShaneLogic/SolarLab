@@ -748,7 +748,7 @@ points and failed at 0.225 V; timing can change the prefix on another machine.
 Saved reuse performs no initialization solve after admission. The initial
 serialization failure remains a separate failed attempt with no curve data.
 PCE stays unavailable without declared irradiance, and scientific qualification
-remains pending. This process entry has no HTTP or browser binding yet.
+remains pending. The HTTP and browser entries below expose this process route.
 
 ## Ionic J–V HTTP jobs
 
@@ -784,6 +784,34 @@ also verified the original failed process prefix. Missing irradiance leaves PCE
 unavailable, and sampled/interpolated PV metrics remain scientifically unqualified.
 Other grids, protocols, ionic domains and CT transport require separate verified
 admission; they are outside this fixed HTTP entry.
+
+## Ionic J–V browser entry
+
+With the ionic J–V HTTP service above running on port 8000, build and preview
+the frontend in a second terminal:
+
+```sh
+cd web
+npm ci --no-audit --no-fund
+npm run build
+node scripts/ionic-jv-browser.mjs --service http://127.0.0.1:8000 --port 5173
+```
+
+Open `http://127.0.0.1:5173/?view=ionic-jv` and select **Run ionic J–V**.
+The installed device and full protocol are shown before submission. One click
+starts one process job; a lost connection does not automatically resubmit it.
+The fixed curve budget is 25 s and the process ceiling is 30 s. Completion on
+another machine is not guaranteed within that budget; any accepted prefix and
+the first failure remain available.
+
+Eight plots display the accepted curve and spatial fields. **Open a stored
+attempt** and the saved readback link retrieve the exact store/run/attempt;
+reconnect and reload only read existing data. Failed curves show accepted,
+failed and unattempted voltage points separately, with unavailable PV metrics
+left empty. The reviewed browser completed the 51-point protocol and reproduced
+all 23 logical arrays and 15 artifacts, including an original nine-point failed
+prefix. Scientific qualification remains pending. Stop the service and preview
+with Ctrl-C when finished; closing the page only closes its reader.
 
 ## Multiple blocking ion domains
 
