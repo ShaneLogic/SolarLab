@@ -101,6 +101,11 @@ def _sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
     if device is not None and device.field_transport is not None:
         names += ("solarlab.equations.field_transport_2d", "solarlab.physics.transport.field_mobility",
                   "solarlab.physics.transport.field_mobility_tangents")
+    if device is not None and device.generation_y.method == "transfer_matrix":
+        names += ("solarlab.device.optical_generation_2d", "solarlab.device.optical_generation",
+                  "solarlab.physics.generation.optical_binding", "solarlab.physics.generation.transfer_matrix",
+                  "solarlab.physics.generation.profile", "solarlab.physics.generation.spectrum",
+                  "solarlab.physics.generation._validation", "solarlab.materials.resources")
     result = {}
     for name in names:
         module = sys.modules.get(name)

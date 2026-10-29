@@ -18,6 +18,7 @@ from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.grain_2d import bind_grain_regions_2d, grain_declarations
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
+from solarlab.device.optical_generation_2d import bind_optical_generation_2d
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.dc_2d import CompiledDevice2D
 from solarlab.equations.field_transport_2d import bind_field_transport_2d
@@ -37,8 +38,9 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
 
     Nx and Ny_per_layer are interval counts; all electrical layers receive
     exactly the requested vertical count and retain their declared grid alpha.
-    This first slice uses monochromatic Beer-Lambert generation and physical
-    half-endpoint volumes; spectral/fixed sources await explicit 2D binding.
+    Monochromatic Beer-Lambert and coherent normal/front spectral sources use
+    physical half-endpoint volumes and uniform lateral extrusion. Fixed
+    sources and optical-only front layers remain outside this compiler slice.
     """
     if not isinstance(prepared, PreparedDevice) or not isinstance(spatial, JV2DInput):
         raise TypeError("compile_device_2d requires PreparedDevice and typed JV2DInput geometry")
@@ -52,7 +54,8 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
     if spatial.Ny_per_layer < 2:
         raise ValueError("Ny_per_layer must be at least two intervals")
     data = prepared.to_mapping()
-    if data["declaration"].get("spectrum") is not None or data["declaration"].get("fixed_generation") is not None:
+    spectral = data["declaration"].get("spectrum") is not None
+    if data["declaration"].get("fixed_generation") is not None:
         raise CapabilityError("unsupported_classical_2d_dc: spectral/fixed optical generation is not bound")
     if data["settings"]["band_grading"]:
         raise CapabilityError("unsupported_classical_2d_dc: graded bands are outside this first slice")
@@ -60,7 +63,7 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
         p = dict(layer.parameters)
         if p["incoherent"]:
             raise CapabilityError("unsupported_classical_2d_dc: layers." + layer.id + ".incoherent optics is not bound")
-        if layer.role == "substrate" or layer.optical is not None or p["n_optical"] is not None:
+        if layer.role == "substrate" or (not spectral and (layer.optical is not None or p["n_optical"] is not None)):
             raise CapabilityError("unsupported_classical_2d_dc: optical-only/index layers are not bound")
         if any(p[name] != 0.0 for name in ("pf_gamma_n", "pf_gamma_p")):
             raise CapabilityError("unsupported_classical_2d_dc: field-dependent carrier mobility is not bound")
@@ -85,7 +88,9 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
     for layer, mask in zip(prepared.layers, column.parameters.layer_masks):
         values = dict(layer.parameters)
         alpha[mask], eps[mask] = values["alpha"], values["eps_r"]
-    generation = BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
+    optical = bind_optical_generation_2d(prepared, geometry) if spectral else None
+    generation = (BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
+                  if optical is None else optical.optical_y.profile)
     grains = bind_grain_regions_2d(prepared, spatial, geometry)
     faceD = []
     for carrier in ("electron", "hole"):
@@ -109,6 +114,8 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
                                         separators=(",", ":")).encode()).hexdigest()
     if grains is not None:
         identity = hashlib.sha256(json.dumps((identity, grains.model_id), separators=(",", ":")).encode()).hexdigest()
+    if optical is not None:
+        identity = hashlib.sha256(json.dumps((identity, optical.identity_sha256), separators=(",", ":")).encode()).hexdigest()
     if transport is not None:
         identity = hashlib.sha256(json.dumps((identity, transport.identity_sha256), separators=(",", ":")).encode()).hexdigest()
     return CompiledDevice2D(identity, column, geometry, generation, eps, declaration,
