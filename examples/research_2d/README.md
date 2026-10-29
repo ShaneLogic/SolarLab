@@ -36,6 +36,44 @@ For an existing failed two-target record whose dark point was accepted,
 revalidates that dark result without solving it again, then requests only the
 illuminated point. The original failure remains linked in the new output.
 
+## Steady J–V and saved continuation
+
+After the successful steady example above, use its accepted illuminated state
+to request 51 steady points from 0 to 1.25 V on the same no-grain geometry:
+
+```sh
+.venv/bin/python -B -m examples.research_2d.jv solve \
+  --initial-result outputs/2d_steady.json --initial-sha256 "$STEADY_2D_SHA" \
+  --output outputs/2d_jv.json
+JV_2D_SHA=$(shasum -a 256 outputs/2d_jv.json | cut -d ' ' -f 1)
+.venv/bin/python -B -m examples.research_2d.jv read \
+  --result outputs/2d_jv.json --sha256 "$JV_2D_SHA"
+```
+
+Each completed attempt is saved separately beside the result. An incomplete
+wave exits 2 and retains accepted states, the first failure and unattempted
+voltages. For a wall-budget stop with an accepted prefix, explicit continuation
+uses only the last accepted state and the exact remaining voltage slice:
+
+```sh
+.venv/bin/python -B -m examples.research_2d.jv continue \
+  --prefix-result outputs/2d_jv.json --prefix-sha256 "$JV_2D_SHA" \
+  --output outputs/2d_jv_tail.json
+```
+
+If that tail stops with only its final endpoint remaining, the same command
+accepts the tail file and its digest to finish that one point in a new output.
+Other numerical failures, changed models/controls and further continuation
+chains are refused. Keep earlier result files at their recorded locations:
+linked reads verify those original bytes and preserve their stopped outcomes.
+
+All 51 points have been exercised through a first wave, a tail and a final
+endpoint without replaying accepted points. Jsc, Voc, maximum power and FF use
+the accepted sampled/interpolated curve; this is not a time scan or hysteresis
+calculation. PCE remains unavailable unless `--incident-power-W-m2` is explicitly
+supplied. These examples do not establish voltage-grid, mesh or final scientific
+accuracy.
+
 ## Run in a separate process
 
 From a clean committed checkout, the process example binds the source archive
