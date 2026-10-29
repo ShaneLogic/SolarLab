@@ -201,6 +201,46 @@ def test_prepared_request_routes_to_existing_worker_without_changing_body(catalo
     assert entry["scientific_qualification"] is False
 
 
+def test_fixed_policy_accepts_equal_json_numbers_without_replacing_input(catalog):
+    original = example_submission()["input"]
+
+    def javascript_numbers(value):
+        if isinstance(value, dict):
+            return {key: javascript_numbers(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [javascript_numbers(item) for item in value]
+        return int(value) if type(value) is float and value.is_integer() else value
+
+    supplied = javascript_numbers(original)
+    assert canonical(supplied["controls"]) != canonical(original["controls"])
+    parsed = IonicJVJobInput.model_validate(supplied)
+    assert canonical(parsed.controls) == canonical(supplied["controls"])
+    assert type(parsed.controls["steady"]["ion_logit_step"]) is int
+    context = catalog.registrations[0].context
+    before = prepare_ionic_jv_input(IonicJVJobInput.model_validate(original), context)
+    after = prepare_ionic_jv_input(parsed, context)
+    assert before.request.request == after.request.request
+    assert before.request.H_input == after.request.H_input and before.request.H_physics == after.request.H_physics
+
+
+@pytest.mark.parametrize("change", ["boolean", "numeric_value", "nonfinite", "missing_key", "extra_key"])
+def test_fixed_policy_rejects_changed_values_or_structure(change):
+    body = example_submission()["input"]
+    steady = body["controls"]["steady"]
+    if change == "boolean":
+        steady["ion_logit_step"] = True  # True == 1.0 in Python, but is not a JSON number.
+    elif change == "numeric_value":
+        steady["ion_logit_step"] = 1.0000000000000002
+    elif change == "nonfinite":
+        steady["ion_logit_step"] = float("nan")
+    elif change == "missing_key":
+        del steady["ion_logit_step"]
+    else:
+        steady["unexpected_control"] = 1
+    with pytest.raises(ValueError):
+        IonicJVJobInput.model_validate(body)
+
+
 def test_request_rejections_happen_before_enqueue(tmp_path, catalog):
     with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", catalog) as owner:
         with TestClient(create_app(store.root, job_service=JobService(catalog, owner))) as client:

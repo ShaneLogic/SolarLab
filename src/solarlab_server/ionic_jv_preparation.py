@@ -49,6 +49,20 @@ def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
+def _same_fixed_policy(value: Any, expected: Any) -> bool:
+    """JSON numeric values are equal across int/float spelling, never booleans."""
+    if type(expected) in (int, float):
+        return bool(type(value) in (int, float) and (type(value) is int or math.isfinite(value))
+                    and value == expected)
+    if type(value) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return bool(value.keys() == expected.keys() and all(_same_fixed_policy(value[k], v) for k, v in expected.items()))
+    if isinstance(expected, list):
+        return len(value) == len(expected) and all(_same_fixed_policy(a, b) for a, b in zip(value, expected))
+    return bool(value == expected)
+
+
 def _options() -> IonicSteadyJVOptions:
     from solarlab.experiments.jv.ionic_steady import IonicSteadyJVOptions
     from solarlab.solvers.nonlinear.ionic_1d import IonicSteadyOptions
@@ -95,8 +109,8 @@ class IonicJVJobInput(BaseModel):
     @model_validator(mode="after")
     def fixed_verified_protocol(self) -> IonicJVJobInput:
         declared = _policy()
-        if (tuple(self.voltage_V) != VOLTAGES_V or _canonical(self.controls) != _canonical(declared["controls"])
-                or _canonical(self.initial.model_dump()) != _canonical(declared["initial"])):
+        if (tuple(self.voltage_V) != VOLTAGES_V or not _same_fixed_policy(self.controls, declared["controls"])
+                or not _same_fixed_policy(self.initial.model_dump(), declared["initial"])):
             raise ValueError("ionic J-V v1 requires the exact installed51-point protocol and unchanged full controls/initial recipe")
         return self
 
