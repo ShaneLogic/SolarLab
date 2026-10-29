@@ -15,6 +15,7 @@ import json
 import math
 from pathlib import Path
 import time
+from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
@@ -34,6 +35,10 @@ from solarlab.solvers.nonlinear.production import (
     production_coordinates, production_residual_scaling,
 )
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep, step_accounting
+
+if TYPE_CHECKING:
+    from solarlab.solvers.time.bdf import BDFOptions, BDFResult
+    from solarlab.solvers.time.bdf_1d import BDFDrive
 
 __all__ = [
     "IonicTransientInitial", "IonicTransientOptions", "IonicTransientAttempt",
@@ -254,10 +259,24 @@ def _newton_settings(
     return settings, convergence_norm
 
 
+@overload
+def solve_ionic_transient(compiled: CompiledIonicDevice1D, initial: IonicTransientInitial,
+    protocol: TransientProtocol, *, options: IonicTransientOptions,
+    method: Literal["backward_euler"] = "backward_euler", bdf_options: BDFOptions | None = None,
+    bdf_drive: BDFDrive | None = None) -> IonicTransientResult: ...
+
+
+@overload
+def solve_ionic_transient(compiled: CompiledIonicDevice1D, initial: IonicTransientInitial,
+    protocol: TransientProtocol, *, options: IonicTransientOptions, method: Literal["bdf"],
+    bdf_options: BDFOptions, bdf_drive: BDFDrive | None = None) -> BDFResult: ...
+
+
 def solve_ionic_transient(
     compiled: CompiledIonicDevice1D, initial: IonicTransientInitial, protocol: TransientProtocol,
-    *, options: IonicTransientOptions,
-) -> IonicTransientResult:
+    *, options: IonicTransientOptions, method: str = "backward_euler",
+    bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None,
+) -> IonicTransientResult | BDFResult:
     """Run requested physical BE steps once, preserving the first partial outcome.
 
 The one history wall budget includes initial admission and all attempted steps.
@@ -266,6 +285,14 @@ accounting is called at most once per attempt and counted separately. Individual
 NumPy/SciPy calls are not preempted. Initial-only steady checks never gate the
 time steps, and all dynamic ion continuity rows remain in residual and J.
 """
+    if method == "bdf":
+        from solarlab.solvers.time.bdf_1d import solve_ionic_bdf
+        if bdf_options is None:
+            raise ValueError("BDF selection requires explicit BDFOptions")
+        return solve_ionic_bdf(compiled, initial, protocol, options=options,
+                              bdf_options=bdf_options, drive=bdf_drive)
+    if method != "backward_euler":
+        raise ValueError("unknown time integrator")
     started = time.monotonic()
     if not isinstance(compiled, CompiledIonicDevice1D) or not isinstance(initial, IonicTransientInitial):
         raise ValueError("an actual compiled ionic device and pinned steady initial are required")

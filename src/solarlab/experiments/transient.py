@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 import math
 import time
+from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
@@ -26,6 +27,10 @@ from solarlab.solvers.nonlinear.production import (
 )
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D
 from solarlab.solvers.time import BackwardEuler1DStep, step_accounting
+
+if TYPE_CHECKING:
+    from solarlab.solvers.time.bdf import BDFOptions, BDFResult
+    from solarlab.solvers.time.bdf_1d import BDFDrive
 
 __all__ = ["TransientProtocol", "TransientOptions", "TransientAttempt", "TransientResult1D", "solve_transient"]
 
@@ -141,6 +146,18 @@ class _WallBudgetExceeded(RuntimeError):
     pass
 
 
+@overload
+def solve_transient(compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
+    options: TransientOptions, initial_options: SteadyOptions, method: Literal["backward_euler"] = "backward_euler",
+    bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None) -> TransientResult1D: ...
+
+
+@overload
+def solve_transient(compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
+    options: TransientOptions, initial_options: SteadyOptions, method: Literal["bdf"],
+    bdf_options: BDFOptions, bdf_drive: BDFDrive | None = None) -> BDFResult: ...
+
+
 def solve_transient(
     compiled: CompiledDevice1D,
     initial: SteadyState1D,
@@ -148,7 +165,10 @@ def solve_transient(
     *,
     options: TransientOptions,
     initial_options: SteadyOptions,
-) -> TransientResult1D:
+    method: str = "backward_euler",
+    bdf_options: BDFOptions | None = None,
+    bdf_drive: BDFDrive | None = None,
+) -> TransientResult1D | BDFResult:
     """Run exactly the requested BE steps; stop and retain the first failure.
 
 The wall budget is monotonic and checked around each residual/Jacobian and
@@ -160,6 +180,14 @@ lifted to the new electrode potentials while preserving old carrier densities.
 The full physical secant already includes reference-voltage changes, so no
 additional voltage-rate storage term is added.
 """
+    if method == "bdf":
+        from solarlab.solvers.time.bdf_1d import solve_electronic_bdf
+        if bdf_options is None:
+            raise ValueError("BDF selection requires explicit BDFOptions")
+        return solve_electronic_bdf(compiled, initial, protocol, options=options,
+            initial_options=initial_options, bdf_options=bdf_options, drive=bdf_drive)
+    if method != "backward_euler":
+        raise ValueError("unknown time integrator")
     started = time.monotonic()
     if not isinstance(compiled, CompiledDevice1D) or not isinstance(initial, SteadyState1D):
         raise ValueError("an actual compiled device and accepted same-device DC initial state are required")
