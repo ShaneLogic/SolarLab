@@ -31,6 +31,10 @@ class StorageProblem(Protocol):
     def storage_tangent(self, u: Vector) -> Matrix: ...
 
 
+class _StartupNewtonRejected(ArithmeticError):
+    """A returned auxiliary Newton failure rejects a trial, not the history."""
+
+
 @dataclass(frozen=True)
 class BDFOptions:
     initial_step_s: float
@@ -384,13 +388,13 @@ def solve_bdf(
                                 a = perform(half)
                                 auxiliary.append(a)
                                 if not a.accepted:
-                                    raise ArithmeticError("startup error-estimate half step failed")
+                                    raise _StartupNewtonRejected("startup error-estimate half step failed")
                                 mid = point(middle, a.state, half.endpoint)
                                 half2 = BDFStep(endpoint, (mid,), end, 1)
                                 b = perform(half2)
                                 auxiliary.append(b)
                                 if not b.accepted:
-                                    raise ArithmeticError("startup error-estimate second half step failed")
+                                    raise _StartupNewtonRejected("startup error-estimate second half step failed")
                                 fine = point(end, b.state, endpoint)
                                 estimate = 2 * storage_increment(endpoint, candidate, fine)
                             else:
@@ -411,6 +415,10 @@ def solve_bdf(
                         why = "accepted" if accepted else "local_error_rejected"
                         if accepted:
                             selected = point(end, candidate, endpoint)
+            except _StartupNewtonRejected as exc:
+                accepted = False
+                why = "startup_newton_" + auxiliary[-1].termination.value
+                message = f"ArithmeticError: {exc}"
             except Exception as exc:
                 accepted = False
                 why = "wall_budget_exhausted" if isinstance(exc, TimeoutError) else "evaluation_error"
