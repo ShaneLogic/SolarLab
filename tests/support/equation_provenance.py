@@ -133,12 +133,13 @@ def counted() -> Iterator[Evaluations]:
     """Count the original equation residual/Jacobian calls and the Assembler evaluations (with identities)."""
     from solarlab.equations.assembly.assembler import Assembler
     from solarlab.equations.dc_1d import DC1DProblem
+    from solarlab.equations.dc_2d import DC2DProblem
     from solarlab.equations.ionic_1d import Ionic1DProblem
     from solarlab.equations.multiple_ionic_1d import MultipleIonic1DProblem
 
     observed = Evaluations()
     with ExitStack() as stack:
-        for cls in (DC1DProblem, Ionic1DProblem, MultipleIonic1DProblem):
+        for cls in (DC1DProblem, Ionic1DProblem, MultipleIonic1DProblem, DC2DProblem):
             for name in ("residual", "jacobian"):
                 def original(self: Any, *args: Any, __method: Any = getattr(cls, name), **kwargs: Any) -> Any:
                     observed.original += 1

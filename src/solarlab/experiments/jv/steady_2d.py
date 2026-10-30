@@ -25,8 +25,9 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from solarlab.device.grain_2d import GRAIN_SRH_2D_V1, GrainRecombination2D
+from solarlab.equations.assembly.two_dimensional import AssembledDC2DProblem
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem, State2D
-from solarlab.equations.implementation import provenance_binding
+from solarlab.equations.implementation import provenance_binding, use_assembled
 from solarlab.experiments.jv.steady import SteadyJVMetrics, steady_jv_metrics
 from solarlab.experiments.transient_results import _decode, _encode
 from solarlab.experiments.worker import _atomic_json
@@ -118,6 +119,13 @@ class SteadyJV2DResult:
     @property
     def unattempted_voltage_V(self) -> np.ndarray:
         return self.requested_voltage_V[len(self.attempts):]
+
+
+def _problem(device: CompiledDevice2D, voltage_V: float, generation_scale: float) -> DC2DProblem | AssembledDC2DProblem:
+    """The selected 2D problem for admission and point checks (equations.implementation)."""
+    if use_assembled():
+        return AssembledDC2DProblem(device, voltage_V, generation_scale)
+    return DC2DProblem(device, voltage_V, generation_scale)
 
 
 def _scope(device: CompiledDevice2D) -> None:
@@ -237,7 +245,7 @@ def _admit(device: CompiledDevice2D, text: str, sha256: str,
                 or any(not np.array_equal(saved[name], getattr(state, name))
                        for name in ("potential_V", "electron_density_m3", "hole_density_m3"))):
             raise ValueError("initial accepted2D fields/coordinates are inconsistent")
-        checks = steady_checks(steady_diagnostics(DC2DProblem(device, voltage, generation), state.u, options), options)
+        checks = steady_checks(steady_diagnostics(_problem(device, voltage, generation), state.u, options), options)
         if ({item.name: item.limit for item in checks} != {item["name"]: item["limit"] for item in result["checks"]}
                 or not all(item.passed for item in checks)):
             raise ValueError("initial2D state fails current full original-gate admission")
@@ -400,7 +408,7 @@ def admit_steady_jv_2d_checkpoint(device: CompiledDevice2D, directory: str | Pat
         if any(not np.array_equal(point["state"][name], getattr(state, name))
                for name in ("potential_V", "electron_density_m3", "hole_density_m3")):
             raise ValueError("checkpoint physical fields changed")
-        if not all(item.passed for item in steady_checks(steady_diagnostics(DC2DProblem(device, state.voltage_V, generation), state.u,
+        if not all(item.passed for item in steady_checks(steady_diagnostics(_problem(device, state.voltage_V, generation), state.u,
                                                              controls.steady), controls.steady)):
             raise ValueError("checkpoint failed current original2D physical gate admission")
     return state, checkpoint["next_index"]
@@ -417,9 +425,14 @@ def run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volta
         checkpoint_directory=checkpoint_directory, absolute_deadline_s=absolute_deadline_s)
 
 
-def _admit_wall_prefix(device: CompiledDevice2D, path: str | Path, sha256: str,
-                        controls: SteadyJV2DOptions) -> tuple[SteadyJV2DInitial, np.ndarray, tuple[GateOutcome, ...]]:
-    """Only an exact wall-stopped prefix may supply its last accepted2D state."""
+def _read_wall_prefix(device: CompiledDevice2D, path: str | Path, sha256: str, controls: SteadyJV2DOptions,
+                      ) -> tuple[SteadyJV2DInitial, np.ndarray, Callable[[], tuple[State2D, float, tuple[GateOutcome, ...]]]]:
+    """Only an exact wall-stopped prefix may supply its last accepted2D state.
+
+    Reading parses and hash-checks the prefix and evaluates no equation. It returns the tail's initial
+    (the last accepted state, from its saved coordinates), the remaining requested voltages and the
+    prefix's numerical readmission, which the tail job runs once its equation binding is admitted.
+    """
     _scope(device)
     source = Path(path)
     record = read_steady_jv_2d(source, sha256)
@@ -447,28 +460,33 @@ def _admit_wall_prefix(device: CompiledDevice2D, path: str | Path, sha256: str,
                     "source_sha256": linked["original_initial_artifact"]["sha256"]}
     if result["compiled_identity"] != device.identity or result["solver_controls"] != asdict(controls):
         raise ValueError("wall-prefix2D model or controls changed")
-    _, generation, _ = _admit(device, Path(original["source_path"]).read_text(),
-                              original["source_sha256"], controls.steady)
-    if result["generation_scale"] != generation:
-        raise ValueError("wall-prefix2D generation identity changed")
-    admission: tuple[GateOutcome, ...] = ()
-    state = None
-    for attempt in points:
-        point = attempt["solution"]
-        if (point["solver_controls"]["numerical"]["electronic"] != asdict(controls.steady.electronic)):
-            raise ValueError("wall-prefix2D point physical source or controls changed")
-        state = device.state(point["state"]["u"], voltage_V=attempt["voltage_V"])
-        if any(not np.array_equal(point["state"][name], getattr(state, name))
-               for name in ("potential_V", "electron_density_m3", "hole_density_m3")):
-            raise ValueError("wall-prefix2D accepted physical fields changed")
-        admission = steady_checks(steady_diagnostics(DC2DProblem(device, state.voltage_V, generation), state.u,
-                                          controls.steady), controls.steady)
-        if not all(item.passed for item in admission):
-            raise ValueError("wall-prefix2D accepted state fails original physical gates")
-    if state is None:
-        raise ValueError("wall-prefix2D contains no accepted seed")
-    initial = SteadyJV2DInitial(state, generation, str(source.resolve()), sha256, source.read_text())
-    return initial, np.array(requested[accepted:], copy=True), admission
+    last = points[-1]
+    initial = SteadyJV2DInitial(device.state(last["solution"]["state"]["u"], voltage_V=last["voltage_V"]),
+                                result["generation_scale"], str(source.resolve()), sha256, source.read_text())
+
+    def readmit() -> tuple[State2D, float, tuple[GateOutcome, ...]]:
+        _, generation, _ = _admit(device, Path(original["source_path"]).read_text(),
+                                  original["source_sha256"], controls.steady)
+        if result["generation_scale"] != generation:
+            raise ValueError("wall-prefix2D generation identity changed")
+        admission: tuple[GateOutcome, ...] = ()
+        state = None
+        for attempt in points:
+            point = attempt["solution"]
+            if (point["solver_controls"]["numerical"]["electronic"] != asdict(controls.steady.electronic)):
+                raise ValueError("wall-prefix2D point physical source or controls changed")
+            state = device.state(point["state"]["u"], voltage_V=attempt["voltage_V"])
+            if any(not np.array_equal(point["state"][name], getattr(state, name))
+                   for name in ("potential_V", "electron_density_m3", "hole_density_m3")):
+                raise ValueError("wall-prefix2D accepted physical fields changed")
+            admission = steady_checks(steady_diagnostics(_problem(device, state.voltage_V, generation), state.u,
+                                              controls.steady), controls.steady)
+            if not all(item.passed for item in admission):
+                raise ValueError("wall-prefix2D accepted state fails original physical gates")
+        if state is None:
+            raise ValueError("wall-prefix2D contains no accepted seed")
+        return state, generation, admission
+    return initial, np.array(requested[accepted:], copy=True), readmit
 
 
 def continue_steady_jv_2d(device: CompiledDevice2D, prefix_path: str | Path, prefix_sha256: str,
@@ -480,16 +498,17 @@ def continue_steady_jv_2d(device: CompiledDevice2D, prefix_path: str | Path, pre
 
     The original failed artifact and driver-source identity remain unchanged.
     All physical sources/controls and accepted rows are readmitted before using
-    the last accepted state. This entry performs no retry of a numerical failure.
+    the last accepted state, inside the tail job once its equation binding is
+    admitted. This entry performs no retry of a numerical failure.
     A stopped linked tail may supply only its single final original endpoint.
     """
     controls = SteadyJV2DOptions() if options is None else options
-    initial, requested, admission = _admit_wall_prefix(device, prefix_path, prefix_sha256, controls)
+    initial, requested, readmit = _read_wall_prefix(device, prefix_path, prefix_sha256, controls)
     prefix = read_steady_jv_2d(prefix_path, prefix_sha256)
     return _run_steady_jv_2d(device, initial, requested, options=controls,
         incident_power_W_m2=prefix["result"]["incident_power_W_m2"], on_point=on_point,
         checkpoint_directory=checkpoint_directory, absolute_deadline_s=absolute_deadline_s,
-        wall_prefix_admission=admission)
+        wall_prefix_admission=readmit)
 
 
 def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, voltage_V: ArrayLike,
@@ -497,7 +516,8 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
                        on_point: Callable[[SteadyJV2DAttempt], None] | None = None,
                        checkpoint_directory: str | Path | None = None,
                        absolute_deadline_s: float | None = None,
-                       wall_prefix_admission: tuple[GateOutcome, ...] | None = None) -> SteadyJV2DResult:
+                       wall_prefix_admission: Callable[[], tuple[State2D, float, tuple[GateOutcome, ...]]] | None = None,
+                       ) -> SteadyJV2DResult:
     started = time.monotonic()
     _scope(device)
     controls = SteadyJV2DOptions() if options is None else options
@@ -507,13 +527,12 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
     if incident_power_W_m2 is not None and (not math.isfinite(incident_power_W_m2) or incident_power_W_m2 <= 0.0):
         raise ValueError("efficiency requires explicitly supplied finite positive irradiance W/m2")
     with job_provenance({"compiled_identity": device.identity, "geometry_identity": device.geometry.sha256, "initial_sha256": initial.source_sha256, "voltage_V": requested.tolist(), "controls": asdict(controls), "incident_power_W_m2": incident_power_W_m2},
-            # The 2D equations are not switched yet: the job states the original ones.
-            **provenance_binding("DC2DProblem.steady_jv", device, assembled=False)):
+            **provenance_binding("DC2DProblem.steady_jv", device)):
         pins = admitted_source_pins()
         if wall_prefix_admission is None:
             previous, generation, admission = _admit(device, initial.evidence_json, initial.source_sha256, controls.steady)
         else:
-            previous, generation, admission = initial.state, initial.generation_scale, wall_prefix_admission
+            previous, generation, admission = wall_prefix_admission()
         if not np.array_equal(_state(device, initial.state).u, previous.u) or initial.generation_scale != generation:
             raise ValueError("initial object differs from its admitted saved state")
         deadline = started + controls.wall_s
@@ -580,7 +599,7 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
                 if accepted:
                     if solution.state is None or solution.diagnostics is None:
                         raise ValueError("accepted2D point must retain its original state and current ledger")
-                    checks = steady_checks(steady_diagnostics(DC2DProblem(device, voltage, generation), solution.state.u, effective), effective)
+                    checks = steady_checks(steady_diagnostics(_problem(device, voltage, generation), solution.state.u, effective), effective)
                     if not all(item.passed for item in checks):
                         raise ValueError("accepted2D point fails original physical gates on readback")
                     previous = _state(device, solution.state)

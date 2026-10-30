@@ -1,9 +1,9 @@
 """Equation implementation of the 1D production entry points (milestone A switch).
 
 The assembled systems of :mod:`solarlab.equations.assembly` are the default
-for the steady, transient and small-signal 1D entry points. The original
-Problem, closure and small-signal classes stay selectable for one release,
-by an explicit opt-out:
+for the steady, transient and small-signal 1D entry points and the steady 2D
+entry point. The original Problem, closure and small-signal classes stay
+selectable for one release, by an explicit opt-out:
 
 * in code: ``with equation_implementation(LEGACY): ...`` (this context and
   everything it calls);

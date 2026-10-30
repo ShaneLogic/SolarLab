@@ -30,6 +30,7 @@ from solarlab.equations.assembly.two_dimensional import (
     AssembledDC2DProblem, assembled_problem_factory_2d,
 )
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem
+from solarlab.equations.implementation import LEGACY, equation_implementation
 from solarlab.experiments.transient_results import _encode
 from solarlab.solvers.nonlinear import steady_2d
 
@@ -150,7 +151,8 @@ def test_actual_195_row_steady_histories_are_bitwise(
         assembly_calls.append(derivatives)
         return assemble(self, values, derivatives=derivatives)
 
-    with monkeypatch.context() as patch:
+    # The reference runs the legacy opt-out: under the assembled default it would compare it with itself.
+    with monkeypatch.context() as patch, equation_implementation(LEGACY):
         patch.setattr(DC2DProblem, "residual", reference_residual)
         patch.setattr(DC2DProblem, "jacobian", reference_jacobian)
         reference = steady_2d.solve_steady_state_2d(device, voltage_V=voltage, generation_scale=light,

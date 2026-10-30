@@ -232,7 +232,11 @@ def prepare_steady_2d_job(prepared: PreparedDevice, spatial: JV2DInput, protocol
         raise ValueError("explicit new-core engine and 2D target protocol required")
     _validate(prepared, spatial, options)
     inputs = _identity_inputs(prepared, spatial, implementation)
-    environment = tuple(sorted((name, "1") for name in THREADS))
+    from solarlab.equations.implementation import selection_setting
+
+    # The child installs these before any engine import: a queued or spawned
+    # job runs the equation selection of the parent that prepared it.
+    environment = tuple(sorted([*((name, "1") for name in THREADS), selection_setting()]))
     runtime = RuntimeEnvironment(platform.python_implementation(), platform.python_version(),
         platform.system(), platform.machine(), tuple((name, importlib.metadata.version(name)) for name in PACKAGES),
         tuple((name, json.dumps(value)) for name, value in environment))
@@ -291,8 +295,12 @@ def _lateral_initial(device: CompiledDevice2D, column_u: np.ndarray, *, voltage_
 def run_steady_2d_worker(request: WorkerRequest, worker: WorkerContext) -> WorkerResult:
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
+    from solarlab.equations.implementation import verify_selection
+
+    verify_selection(binding.environment)
     _verify_sources(binding.execution)
     from solarlab.device.compile_2d import compile_device_2d
+    from solarlab.equations.implementation import provenance_binding
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyStateError, solve_steady_state
     from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, solve_steady_state_2d
     from solarlab.experiments.two_dimensional.steady_results import steady_2d_payload, result_digest
@@ -313,22 +321,23 @@ def run_steady_2d_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
                    _roles(prepared, body, binding.execution.implementation).items())):
         raise ValueError("2D request/input/model/controls differ from the bound execution")
     _verify_sources(binding.execution)
-    from solarlab.equations.implementation import LEGACY, equation_implementation, provenance_binding
-
-    # The 2D equations are not switched yet: the job, its 1D column seed included, runs and states the original ones.
-    with worker.admit_provenance(request, **provenance_binding("DC2DProblem.steady", None, assembled=False)):
-        started = time.monotonic()
+    started = time.monotonic()
+    started_utc = datetime.now(timezone.utc).isoformat()
+    with threadpool_limits(limits=1):
+        device = compile_device_2d(prepared, spatial)
+    # Admission names the bound equation systems the job evaluates, so the device is compiled first.
+    with worker.admit_provenance(request, **provenance_binding("DC2DProblem.steady", device)):
         attempts = []
-        capture: dict[str, Any] = {"started_utc": datetime.now(timezone.utc).isoformat(),
+        capture: dict[str, Any] = {"started_utc": started_utc,
             "build_source_commit": binding.execution.implementation.build_source_commit,
-            "runtime": json.loads(json.dumps(asdict(observe_environment(PACKAGES, THREADS)))),
+            "runtime": json.loads(json.dumps(asdict(observe_environment(
+                PACKAGES, tuple(name for name, _ in binding.environment))))),
             "manifest_sha256": binding.expected_sha256, "request_sha256": request.request.sha256,
             "prepared_sha256": prepared.content_sha256, "scope": "cold_auxiliary_seed_then_connected_2d_newton_in_worker"}
         with threadpool_limits(limits=1):
             pools = threadpool_info()
             if any(pool["num_threads"] != 1 for pool in pools):
                 raise ValueError("requested native thread ceiling was not installed")
-            device = compile_device_2d(prepared, spatial)
             deadline = started + options.wall_s
             for scale in protocol.generation_scales:
                 worker.check_cancel()
@@ -340,8 +349,7 @@ def run_steady_2d_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
                         raise TimeoutError("whole2D path exhausted before auxiliary seed")
                     worker.progress({"stage": "steady_2d_auxiliary_seed", "target": target})
                     seed_called = True
-                    with equation_implementation(LEGACY):
-                        seed = solve_steady_state(device.column, **target, initial_state=None, options=SteadyOptions())
+                    seed = solve_steady_state(device.column, **target, initial_state=None, options=SteadyOptions())
                     initial = _lateral_initial(device, seed.state.u, voltage_V=protocol.voltage_V)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:

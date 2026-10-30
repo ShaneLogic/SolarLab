@@ -310,8 +310,7 @@ def test_device_compilation_evaluates_no_equation() -> None:
     assert observed.original == observed.assembled == 0
 
 
-def test_unswitched_2d_jobs_state_the_original_equations_under_either_selection(tmp_path: Path) -> None:
-    """The 2D equations are not switched by this landing: a 2D job records and runs the original ones."""
+def test_2d_jv_admits_the_implementation_that_ran(tmp_path: Path) -> None:
     import numpy as np
 
     from examples.research_2d import dc_assembly, steady as steady_example
@@ -325,10 +324,7 @@ def test_unswitched_2d_jobs_state_the_original_equations_under_either_selection(
     controls = jv_2d.SteadyJV2DOptions()
     initial = jv_2d.load_steady_jv_2d_initial(device, path, hashlib.sha256(path.read_bytes()).hexdigest(),
                                               options=controls.steady)
-    for implementation in (LEGACY, ASSEMBLED):
-        with equation_implementation(implementation), counted() as observed:
-            result = jv_2d.run_steady_jv_2d(device, initial, np.array([0.0]), options=controls,
-                                            checkpoint_directory=tmp_path / implementation)
-        assert result.attempts and all(attempt.accepted for attempt in result.attempts)
-        assert split(result.job_provenance)[1] == expected("DC2DProblem.steady_jv", device, LEGACY)
-        assert observed.assembled == 0
+    runs = iter(("legacy", "assembled"))
+    pair(lambda: jv_2d.run_steady_jv_2d(device, initial, np.array([0.0]), options=controls,
+                                        checkpoint_directory=tmp_path / next(runs)),
+         lambda result: result.job_provenance, "DC2DProblem.steady_jv", device)

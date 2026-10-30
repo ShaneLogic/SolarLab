@@ -394,11 +394,13 @@ def test_exact_saved_wall_prefix_admission_does_not_solve(case, monkeypatch):
         pytest.skip("bind actual bc3 prefix under its unchanged physical source; no replay")
     monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("wall admission solved"))
     sha = "bc3d18fb81050751d4ed700947db957fdb36894c14bba3729e37e0688f30674c"
-    initial, requested, checks = driver._admit_wall_prefix(device, path, sha, driver.SteadyJV2DOptions())
+    initial, requested, readmit = driver._read_wall_prefix(device, path, sha, driver.SteadyJV2DOptions())
+    state, generation, checks = readmit()
     prefix = driver.read_steady_jv_2d(path, sha)
-    assert initial.state.voltage_V == .9750000000000001 and initial.generation_scale == 1.0
+    assert initial.state.voltage_V == .9750000000000001 and initial.generation_scale == generation == 1.0
     np.testing.assert_array_equal(requested, np.linspace(0.0, 1.25, 51)[40:])
     np.testing.assert_array_equal(initial.state.u, prefix["result"]["attempts"][39]["solution"]["state"]["u"])
+    np.testing.assert_array_equal(state.u, initial.state.u)
     assert all(item.passed for item in checks)
 
 
@@ -409,11 +411,13 @@ def test_exact_saved_linked_endpoint_admission_does_not_solve(case, monkeypatch)
         pytest.skip("bind actual e5 linked stopped tail under its unchanged physical source")
     monkeypatch.setattr(driver, "solve_steady_state_2d", lambda *a, **k: pytest.fail("endpoint admission solved"))
     sha = "e5a94d45064d4110b163ffdffe21b46341c6585f2bf00ab68c2205f9985ef3f8"
-    initial, requested, checks = driver._admit_wall_prefix(device, path, sha, driver.SteadyJV2DOptions())
+    initial, requested, readmit = driver._read_wall_prefix(device, path, sha, driver.SteadyJV2DOptions())
+    state, generation, checks = readmit()
     prefix = driver.read_steady_jv_2d(path, sha)
-    assert initial.state.voltage_V == 1.225 and initial.generation_scale == 1.0
+    assert initial.state.voltage_V == 1.225 and initial.generation_scale == generation == 1.0
     np.testing.assert_array_equal(requested, prefix["continuation"]["original_requested_voltage_V"][50:])
     np.testing.assert_array_equal(initial.state.u, prefix["result"]["attempts"][9]["solution"]["state"]["u"])
+    np.testing.assert_array_equal(state.u, initial.state.u)
     assert all(item.passed for item in checks)
 
 

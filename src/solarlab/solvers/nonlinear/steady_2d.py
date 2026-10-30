@@ -13,13 +13,15 @@ from solarlab.reproducibility.job_provenance import admitted_source_pins
 from dataclasses import asdict, dataclass, field
 import math
 import time
-from typing import Any
+from typing import Any, TypeAlias
 
 import numpy as np
 
 from solarlab.contracts import frozen_array
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
+from solarlab.equations.assembly.two_dimensional import AssembledDC2DProblem
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem, State2D
+from solarlab.equations.implementation import use_assembled
 from solarlab.mesh.geometry_2d import RECTANGULAR_HALF_ENDPOINT_2D_V1
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, ResidualScaling, StepControl, state_digest
@@ -39,6 +41,16 @@ class Steady2DOptions:
             raise ValueError("explicit existing SteadyOptions are required")
         if not math.isfinite(self.wall_s) or self.wall_s <= 0.0:
             raise ValueError("2D owned wall budget must be finite and positive")
+
+
+_Problem2D: TypeAlias = DC2DProblem | AssembledDC2DProblem
+
+
+def _problem(device: CompiledDevice2D, voltage_V: float, generation_scale: float) -> _Problem2D:
+    """The selected production 2D problem at one operating point (equations.implementation)."""
+    if use_assembled():
+        return AssembledDC2DProblem(device, voltage_V, generation_scale)
+    return DC2DProblem(device, voltage_V, generation_scale)
 
 
 def scope(device: CompiledDevice2D) -> None:
@@ -102,7 +114,7 @@ def sources(device: CompiledDevice2D | None = None) -> dict[str, str]:
     return admitted_source_pins()
 
 
-def diagnostics(problem: DC2DProblem, u: np.ndarray, options: Steady2DOptions) -> dict[str, Any]:
+def diagnostics(problem: _Problem2D, u: np.ndarray, options: Steady2DOptions) -> dict[str, Any]:
     d, g, N = problem.device, problem.device.geometry, problem.device.node_count
     residual = problem.residual(u)
     phi, n, p = d.fields(u, voltage_V=problem.voltage_V)
@@ -214,7 +226,7 @@ def solve_steady_state_2d(device: CompiledDevice2D, *, voltage_V: float, generat
     controls = Steady2DOptions() if options is None else options
     if not isinstance(controls, Steady2DOptions):
         raise ValueError("Steady2DOptions are required")
-    problem = DC2DProblem(device, voltage_V, generation_scale)
+    problem = _problem(device, voltage_V, generation_scale)
     if initial_state is None:
         u = device.extrude_coordinates(np.r_[device.column.reference_potential_V, np.zeros(2 * device.geometry.ny)])
         phi = u[:device.node_count]

@@ -244,8 +244,9 @@ def device_of(family: str) -> tuple[Any, str, int | None]:
     return device, operator, controls(13).inventory_row_node
 
 
-def test_the_unswitched_2d_steady_worker_states_the_original_equations(commit: str, tmp_path: Path) -> None:
-    """The 2D process example, its 1D column seed included, runs and records the original equations."""
+def test_the_2d_steady_worker_records_its_parent_selection(commit: str, tmp_path: Path,
+                                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 2D process example, spawned under each process setting, admits that selection's binding."""
     import json
     import os
     import sys
@@ -274,6 +275,8 @@ def test_the_unswitched_2d_steady_worker_states_the_original_equations(commit: s
             cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
         assert result.returncode == 0, result.stderr + result.stdout[-2000:]
         saved = json.loads(receipt.read_text())
-        assert binding(saved["receipt"]["worker_result"]) == expected("DC2DProblem.steady", device, LEGACY)
+        worker = saved["receipt"]["worker_result"]
+        assert binding(worker) == expected("DC2DProblem.steady", device, implementation), implementation
+        assert [ENVIRONMENT, json.dumps(implementation)] in [list(item) for item in worker["capture"]["runtime"]["settings"]]
         readbacks[implementation] = saved["readback"]["array_fingerprints"]
     assert readbacks[ASSEMBLED] and readbacks[ASSEMBLED] == readbacks[LEGACY]
