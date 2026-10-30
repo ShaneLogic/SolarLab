@@ -9,7 +9,7 @@ rejected trials, protocol restarts and interpolated samples are distinct.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import math
 import time
 from typing import Any, Protocol
@@ -20,6 +20,7 @@ from scipy.sparse import csc_matrix, diags, issparse
 from solarlab.contracts import frozen_array
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, Matrix, Vector
+from solarlab.solvers.time.carrier_seed import DensitySeedContext, recover_density_seed, stagnation_basin_signature
 
 
 class StorageProblem(Protocol):
@@ -257,6 +258,7 @@ def solve_bdf(
     convergence_norm: Callable[[Vector], float] | None = None,
     assess: Callable[[BDFStep, Vector], Assessment] | None = None,
     seed: Callable[[BDFStep], Vector] | None = None,
+    density_seed_context: Callable[[BDFStep, NewtonResult], DensitySeedContext | None] | None = None,
     breakpoints_s: tuple[float, ...] = (), events: tuple[BDFEvent, ...] = (),
     output_times_s: Vector | None = None,
 ) -> BDFResult:
@@ -283,6 +285,7 @@ def solve_bdf(
     counts = {"residual": 0, "jacobian": 0, "storage": 0, "assessment": 0, "sample_projection": 0,
               "sample_residual": 0, "sample_jacobian": 0}
     nonlinear_calls = 0
+    density_recoveries: list[dict[str, Any]] = []
     deadline = started + options.wall_s
 
     def checkpoint() -> None:
@@ -308,7 +311,7 @@ def solve_bdf(
     t, h, consecutive, next_order = start, options.initial_step_s, 0, 1
     termination, error = "completed", None
 
-    def perform(step: BDFStep, initial: Vector | None = None) -> NewtonResult:
+    def perform(step: BDFStep, initial: Vector | None = None, *, stage: str = "main") -> NewtonResult:
         nonlocal nonlinear_calls
         guess = (step.history[0].u.copy() if seed is None else seed(step)) if initial is None else initial
         control = settings(step)
@@ -319,8 +322,27 @@ def solve_bdf(
             checkpoint()
             return result
         nonlinear_calls += 1
-        return solve_newton(CallableProblem(lambda value: evaluate("residual", value),
-            lambda value: evaluate("jacobian", value)), guess, control, convergence_norm=convergence_norm)
+        target = CallableProblem(lambda value: evaluate("residual", value), lambda value: evaluate("jacobian", value))
+        original = solve_newton(target, guess, control, convergence_norm=convergence_norm)
+        if density_seed_context is None or not stagnation_basin_signature(original, control.tolerance):
+            return original
+        context = density_seed_context(step, original)
+        if context is None:
+            return original
+        record: dict[str, Any] = {"stage": stage, "start_s": step.history[0].time_s,
+            "end_s": step.end_s, "order": step.order, "coefficients": frozen_array(step.coefficients)}
+        density_recoveries.append(record)
+        try:
+            return recover_density_seed(target, guess, original, control,
+                replace(context, checkpoint=checkpoint), record, convergence_norm=convergence_norm)
+        finally:
+            retry = int(record.get("retry_attempted", False))
+            nonlinear_calls += retry
+            counts["density_recovery_original_failures"] = counts.get("density_recovery_original_failures", 0) + 1
+            counts["density_recovery_retry_calls"] = counts.get("density_recovery_retry_calls", 0) + retry
+            for kind, value in record.get("seed_work", {}).items():
+                key = "density_seed_" + kind
+                counts[key] = counts.get(key, 0) + value
 
     def restart(event: BDFEvent) -> bool:
         nonlocal history, next_order
@@ -386,13 +408,13 @@ def solve_bdf(
                                 estimator = "startup_step_doubling_physical_storage"
                                 middle = t + h / 2
                                 half = BDFStep(factory(middle, "right"), tuple(history), middle, 1)
-                                a = perform(half)
+                                a = perform(half, stage="startup_half_1")
                                 auxiliary.append(a)
                                 if not a.accepted:
                                     raise _StartupNewtonRejected("startup error-estimate half step failed")
                                 mid = point(middle, a.state, half.endpoint)
                                 half2 = BDFStep(endpoint, (mid,), end, 1)
-                                b = perform(half2)
+                                b = perform(half2, stage="startup_half_2")
                                 auxiliary.append(b)
                                 if not b.accepted:
                                     raise _StartupNewtonRejected("startup error-estimate second half step failed")
@@ -512,7 +534,10 @@ def solve_bdf(
             termination, error = "sample_projection_failed", f"{type(exc).__name__}: {exc}"
             sample_failure = {"time_s": float(target), "newton": projection, "error": error,
                               "accepted_sample_prefix": len(samples)}
+    controls = asdict(options)
+    if density_recoveries:
+        controls["density_seed_recoveries"] = tuple(density_recoveries)
     return BDFResult(start, u0, finish, frozen_array(accepted_times), tuple(accepted_u), tuple(attempts),
-        tuple(samples), tuple(restarts), asdict(options), t == finish and termination == "completed",
+        tuple(samples), tuple(restarts), controls, t == finish and termination == "completed",
         termination, time.monotonic() - started, nonlinear_calls, counts, error,
         requested_output_times_s=output, sample_failure=sample_failure)

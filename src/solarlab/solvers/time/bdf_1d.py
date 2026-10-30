@@ -8,6 +8,7 @@ Order2 combines physical secants and the corresponding displacement derivative.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import hashlib
 import math
 import time
 from typing import Any
@@ -37,6 +38,7 @@ from solarlab.solvers.time.ionic_backward_euler import (
 from solarlab.solvers.time.bdf import (
     Assessment, BDFEvent, BDFOptions, BDFResult, BDFStep, HistoryPoint, StorageProblem, solve_bdf,
 )
+from solarlab.solvers.time.carrier_seed import DensitySeedContext
 
 
 @dataclass(frozen=True)
@@ -421,11 +423,65 @@ def _adapter_step_budget(
     return min(bdf_options.max_steps, adaptive_max_steps)
 
 
+def _generation_density_context(drive: BDFDrive, step: BDFStep) -> DensitySeedContext | None:
+    """Only a complete BDF1 target starting at a dark-to-light value jump."""
+    if step.order != 1 or len(step.history) != 1:
+        return None
+    old = step.history[0]
+    if not isinstance(step.endpoint, ElectronicStorage1D) or not isinstance(old.problem, ElectronicStorage1D):
+        return None
+    exact = np.flatnonzero(drive.times_s == old.time_s)
+    if exact.size != 1:
+        return None
+    index = int(exact[0])
+    left, right = drive.left_values[index], drive.right_values[index]
+    if left[1] != 0.0 or right[1] <= 0.0 or left[0] != right[0]:
+        return None
+    endpoint, previous = step.endpoint.problem, old.problem.problem
+    if (endpoint.voltage_V != right[0] or previous.voltage_V != right[0]
+            or endpoint.generation_scale != right[1] or previous.generation_scale != right[1]):
+        return None
+    device = endpoint.device
+
+    def validate() -> None:
+        if (type(device) is not CompiledDevice1D or previous.device.identity != device.identity
+                or old.u.shape != (3 * device.node_count,)
+                or not {"classical_1d_dc", "maxwell_boltzmann", "ion_free"} <= set(device.capabilities)):
+            raise ValueError("density activation requires the matching compiled electronic log-coordinate target")
+        if (step.dt_s <= 0 or not math.isfinite(step.dt_s)
+                or not np.array_equal(step.coefficients, np.array([1.0, -1.0]))):
+            raise ValueError("density activation requires a complete positive-interval BDF1 target")
+        if endpoint.device.identity != device.identity or endpoint.voltage_V != right[0]:
+            raise ValueError("density activation device/reference changed")
+
+    def fingerprint() -> str:
+        digest = hashlib.sha256()
+        for point in step.history:
+            assert isinstance(point.problem, ElectronicStorage1D)
+            digest.update(point.time_s.hex().encode())
+            digest.update(point.u.tobytes())
+            digest.update(point.storage_value.tobytes())
+            digest.update(point.problem.problem.device.identity.encode())
+            digest.update(float(point.problem.problem.voltage_V).hex().encode())
+            digest.update(float(point.problem.problem.generation_scale).hex().encode())
+        return digest.hexdigest()
+
+    return DensitySeedContext(device, endpoint.voltage_V, {
+        "policy": "dark_generation_stagnation_density_v1", "device_identity": device.identity,
+        "coordinate_form": "electrode_quasi_fermi_1d_v1", "source_knot_s": old.time_s,
+        "left_source": frozen_array(left), "right_source": frozen_array(right),
+        "voltage_reference_V": endpoint.voltage_V, "complete_target": "BDFStep order1",
+    }, validate, fingerprint)
+
+
 def solve_electronic_bdf(
     compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions, bdf_options: BDFOptions,
     drive: BDFDrive | None = None, adaptive_max_steps: int | None = None,
+    density_seed_activation: bool = False,
 ) -> BDFResult:
+    if type(density_seed_activation) is not bool:
+        raise ValueError("density_seed_activation must be an explicit boolean")
     started = time.monotonic()
     work_steps = _adapter_step_budget(protocol, options.max_steps, bdf_options, adaptive_max_steps)
     _verify_point(compiled, initial, initial.generation_scale, initial_options)
@@ -452,6 +508,7 @@ def solve_electronic_bdf(
         options=replace(bdf_options, wall_s=remaining, max_steps=work_steps), settings=lambda step: base,
         convergence_norm=norm, assess=assessment,
         seed=lambda step: _be_step(step).initial_coordinates(options.predictor, voltage_lift=True),
+        density_seed_context=(lambda step, failed: _generation_density_context(source, step)) if density_seed_activation else None,
         breakpoints_s=tuple(float(t) for t in source.times_s[1:-1]),
         events=_events(source, factory, options), output_times_s=protocol.times_s)
     return replace(result, wall_s=time.monotonic() - started, controls={**result.controls, "physical_controls": asdict(options),
