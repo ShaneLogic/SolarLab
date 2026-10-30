@@ -21,7 +21,7 @@ import numpy as np
 
 from solarlab.contracts import frozen_array
 from solarlab.equations.assembly.ionic_1d import AssembledConstrainedIonic1DProblem, AssembledIonic1DProblem
-from solarlab.equations.implementation import use_assembled
+from solarlab.equations.implementation import equation_implementation, selected_implementation, use_assembled
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
 from solarlab.equations.ionic_closure import immobile_profile_binding
 from solarlab.experiments.transient import TransientOptions, TransientProtocol
@@ -297,8 +297,9 @@ time steps, and all dynamic ion continuity rows remain in residual and J.
         from solarlab.solvers.time.bdf_1d import solve_ionic_bdf
         if bdf_options is None:
             raise ValueError("BDF selection requires explicit BDFOptions")
-        return solve_ionic_bdf(compiled, initial, protocol, options=options,
-                              bdf_options=bdf_options, drive=bdf_drive)
+        with equation_implementation(selected_implementation(operator="BDFStep:Ionic1DProblem")):
+            return solve_ionic_bdf(compiled, initial, protocol, options=options,
+                                  bdf_options=bdf_options, drive=bdf_drive)
     if method != "backward_euler":
         raise ValueError("unknown time integrator")
     started = time.monotonic()

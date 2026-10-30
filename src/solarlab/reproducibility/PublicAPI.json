@@ -125,6 +125,13 @@
       "PreparedDevice",
       "PreparedTandem"
     ],
+    "solarlab.experiments.bdf_results": [
+      "CapturedBDFRun",
+      "run_bdf_for_publication",
+      "publish_bdf_result",
+      "read_bdf_result",
+      "read_bdf_packet"
+    ],
     "solarlab.experiments.registry": [
       "ExperimentDefinition",
       "ExperimentPreflight",

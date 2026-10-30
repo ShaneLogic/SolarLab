@@ -31,6 +31,12 @@ history never mixes implementations. :func:`implementation_source_modules`
 names this module and the assembly modules a producer can run, for source
 maps that must not depend on the selection.
 
+BDF's electronic and single-ion adapters currently support original equations
+only. :func:`selected_implementation` resolves those operators to ``LEGACY``
+by their declared capability when no choice is explicit, and refuses an
+explicit assembled choice. BDF capture scopes its admission and integration
+to that implementation; this is not an assembled-to-original fallback.
+
 Every production job admission (Q6 ``job_provenance``) states the
 implementation it runs, before numerical work (:func:`provenance_binding`):
 the original classes record the job's original operator label and no
@@ -86,9 +92,12 @@ _SCOPE: ContextVar[str | None] = ContextVar("solarlab_equation_implementation", 
 BINDING_SCHEMA = "solarlab.equation-binding.v1"
 # Each production job's original operator label (Q6): its analysis kind, its assembled
 # operator and the Assemblers it evaluates besides the device's bound ``system``.
-_OPERATORS: dict[str, tuple[str, str, tuple[str, ...]]] = {
+# A missing assembled operator declares an original-only capability.
+_OPERATORS: dict[str, tuple[str, str | None, tuple[str, ...]]] = {
     "DC1DProblem.steady_jv": ("steady", "AssembledDC1DProblem.steady_jv", ()),
     "BackwardEuler1DStep": ("transient", "BackwardEuler1DStep(AssembledStorage1D)", ()),
+    "BDFStep:DC1DProblem": ("transient", None, ()),
+    "BDFStep:Ionic1DProblem": ("transient", None, ()),
     "DC1DProblem.small_signal": ("ac", "AssembledDC1DProblem.small_signal", ()),
     "Ionic1DProblem.steady_jv": ("steady", "AssembledIonic1DProblem.steady_jv", ("closure", "electronic")),
     "Ionic1DProblem.initialization": ("initialization", "AssembledIonic1DProblem.initialization",
@@ -101,7 +110,8 @@ _OPERATORS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "DC2DProblem.steady_jv": ("steady", "AssembledDC2DProblem.steady_jv", ()),
     "DC2DProblem.steady": ("steady", "AssembledDC2DProblem.steady", ("column",)),
 }
-_ORIGINAL = {**{name: name for name in _OPERATORS}, **{entry[1]: name for name, entry in _OPERATORS.items()}}
+_ORIGINAL = {**{name: name for name in _OPERATORS},
+             **{entry[1]: name for name, entry in _OPERATORS.items() if entry[1] is not None}}
 
 
 class ProvenanceBinding(TypedDict):
@@ -118,12 +128,24 @@ def _checked(name: object) -> str:
     return name
 
 
-def selected_implementation() -> str:
-    """The innermost scope's choice, else the process setting, else the assembled default."""
+def selected_implementation(*, operator: str | None = None) -> str:
+    """The explicit scope/setting or the default supported by an operator's capability.
+
+    Without an operator, the existing assembled default is unchanged. An
+    original-only BDF operator accepts an implicit default or explicit legacy
+    choice; an explicit assembled choice is refused before admission.
+    """
     scoped = _SCOPE.get()
-    if scoped is not None:
-        return scoped
-    return _checked(os.environ.get(ENVIRONMENT, ASSEMBLED))
+    declared = scoped if scoped is not None else os.environ.get(ENVIRONMENT)
+    selected = _checked(ASSEMBLED if declared is None else declared)
+    if operator is not None:
+        if operator not in _OPERATORS:
+            raise ValueError(f"no equation binding is defined for operator {operator!r}")
+        if _OPERATORS[operator][1] is None:
+            if declared is not None and selected == ASSEMBLED:
+                raise ValueError("BDF currently supports original equations only")
+            return LEGACY
+    return selected
 
 
 def use_assembled() -> bool:
@@ -228,7 +250,13 @@ def provenance_binding(operator: str, device: object, *, inventory_row_node: int
     if operator not in _OPERATORS:
         raise ValueError(f"no equation binding is defined for operator {operator!r}")
     analysis, label_assembled, roles = _OPERATORS[operator]
+    if label_assembled is None:
+        selected_implementation(operator=operator)
+        if assembled is True:
+            raise ValueError("BDF currently supports original equations only")
+        assembled = False
     if use_assembled() if assembled is None else assembled:
+        assert label_assembled is not None
         implementation, label = ASSEMBLED, label_assembled
         assemblers = _assemblers(device, roles, inventory_row_node)
     else:

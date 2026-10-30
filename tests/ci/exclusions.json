@@ -24,7 +24,11 @@
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_inventory": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_matching_environment_keeps_a_frozen_word_failure_visible": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip": "Portable frozen-fixture schema or guard regression: checks recorded metadata and skip/refusal behavior, not local floating outputs against foreign captures, and must run on every platform.",
-    "tests/unit/solvers/time/test_assembled_ionic_steps.py::test_all_32_probes_match_frozen_step_and_storage_arrays": "Only the stored BE step/storage digests require the shared require_capture_environment guard. The separate test_all_32_probes_match_live_step_and_storage_arrays has no capture fixture or skip and compares all 32 live probes on every platform."
+    "tests/unit/solvers/time/test_assembled_ionic_steps.py::test_all_32_probes_match_frozen_step_and_storage_arrays": "Only the stored BE step/storage digests require the shared require_capture_environment guard. The separate test_all_32_probes_match_live_step_and_storage_arrays has no capture fixture or skip and compares all 32 live probes on every platform.",
+    "tests/integration/test_bdf_publication.py::test_saved_readiness_packets_keep_original_words_and_identity": "Reads exact captured ReadinessV1/V2 BDF words and checks stored integrity only; no locally regenerated floating output is compared, so readback runs on every platform.",
+    "tests/integration/test_bdf_publication.py::test_historical_packet_structural_tampering_refuses": "Reads exact captured ReadinessV1/V2 BDF words and checks stored integrity only; no locally regenerated floating output is compared, so readback runs on every platform.",
+    "tests/integration/test_bdf_publication.py::test_solver_free_process_reads_historical_packets": "Reads historical BDF fixture words with solver imports forbidden; this byte-integrity/readback test performs no local numerical recomputation and runs on every platform.",
+    "tests/integration/test_bdf_publication.py::test_reviewer_rejected_restart_witness_refuses_historical_packets": "Reseals one Boolean in a temporary copy of the captured V1/V2 packet; checks historical semantic integrity without recomputing floats, on every platform."
   },
   "markers": {
     "slow": "Excluded from the default fast command. scheduled-suite.yml inventories and partitions every slow node in both root and legacy suites; the older optional ci.yml smoke job retains its bounded legacy regression scope.",
@@ -76,13 +80,21 @@
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_frozen_inventory",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_matching_environment_keeps_a_frozen_word_failure_visible",
     "tests/unit/assembly_parity/test_frozen_baselines.py::test_unobserved_vendor_is_an_explicit_skip",
-    "tests/unit/solvers/time/test_assembled_ionic_steps.py::test_all_32_probes_match_frozen_step_and_storage_arrays"
+    "tests/unit/solvers/time/test_assembled_ionic_steps.py::test_all_32_probes_match_frozen_step_and_storage_arrays",
+    "tests/integration/test_bdf_publication.py::test_saved_readiness_packets_keep_original_words_and_identity",
+    "tests/integration/test_bdf_publication.py::test_historical_packet_structural_tampering_refuses",
+    "tests/integration/test_bdf_publication.py::test_solver_free_process_reads_historical_packets",
+    "tests/integration/test_bdf_publication.py::test_reviewer_rejected_restart_witness_refuses_historical_packets"
   ],
   "platform_bound_fixtures": {
     "tests/support/assembly_baselines.json": "Raw float/complex words and sparse patterns captured on the recorded Darwin arm64 Python/NumPy/SciPy and Accelerate stack.",
     "tests/unit/assembly/fixtures/dc2d_steady_seeds_v1.json": "Exact historical input-coordinate bytes are portable; decoded physical-field word digests require the supported capture stack. Live original-vs-assembled solves use the unchanged input words and current gates on every platform.",
     "env:SOLARLAB_ASSEMBLY_2D_BASELINE": "Optional pinned DC2D gate NPZ contains original captured float arrays and sparse patterns; compare only on the capture stack.",
-    "tests/independent/p04/fixtures/P04LegacyGoldenV1.json": "Existing macOS/Accelerate golden: floating comparisons retain their current platform prerequisites; metadata and quoted-value checks remain portable."
+    "tests/independent/p04/fixtures/P04LegacyGoldenV1.json": "Existing macOS/Accelerate golden: floating comparisons retain their current platform prerequisites; metadata and quoted-value checks remain portable.",
+    "tests/integration/fixtures/bdf_readiness/readinessv1_e_saved_packet.json.gz": "Exact captured BDF history words; reader tests preserve bytes without running a solver or comparing locally regenerated floating outputs.",
+    "tests/integration/fixtures/bdf_readiness/readinessv1_e_light_step.json.gz": "Exact captured BDF history words; reader tests preserve bytes without running a solver or comparing locally regenerated floating outputs.",
+    "tests/integration/fixtures/bdf_readiness/readinessv2_e_saved_packet.json.gz": "Exact captured BDF history words; reader tests preserve bytes without running a solver or comparing locally regenerated floating outputs.",
+    "tests/integration/fixtures/bdf_readiness/readinessv2_e_dark_voltage_step.json.gz": "Exact captured failed ReadinessV2 BDF restart history; validate the recorded left/right words without local floating recomputation or endpoint reconstruction."
   },
   "portable_fixtures": {
     "tests/fixtures/native_history/accepted.jsonl": "Exact historical reader bytes from the incomplete original attempt; no local floating output is regenerated or qualified against them.",
@@ -104,6 +116,7 @@
     "tests/runtime/fixtures/ionic_jv_failed_prefix.tar.gz": "Immutable failed-prefix store for historical reading/refusal checks; no failure is relabelled or replayed as a success.",
     "tests/runtime/fixtures/ionic_jv_saved_results.tar.gz": "Stored RunStore records and artifacts for reader/identity contracts; existing artifact bytes are compared without recomputation.",
     "tests/runtime/fixtures/steady_2d_process_saved.tar.gz": "Saved process/HTTP artifacts for historical readback and tamper checks, not a new solve against captured arrays.",
-    "tests/unit/reproducibility/fixtures/q6_readback_witnesses.tar.gz": "Pinned original and tampered Q6 review artifacts for byte-integrity, recorded-identity and reader-refusal checks; tests forbid numerical recomputation and source recapture, so no local floating output is compared to historical words."
+    "tests/unit/reproducibility/fixtures/q6_readback_witnesses.tar.gz": "Pinned original and tampered Q6 review artifacts for byte-integrity, recorded-identity and reader-refusal checks; tests forbid numerical recomputation and source recapture, so no local floating output is compared to historical words.",
+    "tests/integration/fixtures/bdf_readiness/manifest.json": "Original packet/source digests for BDF readback; no numerical output regeneration."
   }
 }

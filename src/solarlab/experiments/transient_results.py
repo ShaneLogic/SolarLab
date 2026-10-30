@@ -13,7 +13,7 @@ from enum import Enum
 import hashlib
 import math
 import re
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import numpy as np
 
@@ -26,10 +26,13 @@ from solarlab.io.artifacts import (
 )
 
 if TYPE_CHECKING:
+    from solarlab.experiments.bdf_results import CapturedBDFRun
     from solarlab.equations.dc_1d import CompiledDevice1D
     from solarlab.experiments.transient import TransientOptions, TransientProtocol, TransientResult1D
     from solarlab.io.run_store import AttemptToken, RunStore
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D
+    from solarlab.solvers.time.bdf import BDFOptions, BDFResult
+    from solarlab.solvers.time.bdf_1d import BDFDrive
 
 __all__ = ["CapturedTransientRun", "run_transient_for_publication",
            "publish_transient_result", "read_transient_result", "transient_result_payload"]
@@ -251,16 +254,43 @@ class CapturedTransientRun:
         return dict(_parse_document(self.capture_json)["identity"])
 
 
+@overload
 def run_transient_for_publication(
     compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions,
-) -> CapturedTransientRun:
+    method: Literal["backward_euler"] = "backward_euler", bdf_options: None = None,
+    bdf_drive: None = None,
+) -> CapturedTransientRun: ...
+
+
+@overload
+def run_transient_for_publication(
+    compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
+    options: TransientOptions, initial_options: SteadyOptions, method: Literal["bdf"],
+    bdf_options: BDFOptions, bdf_drive: BDFDrive | None = None,
+) -> CapturedBDFRun: ...
+
+
+def run_transient_for_publication(
+    compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
+    options: TransientOptions, initial_options: SteadyOptions,
+    method: str = "backward_euler", bdf_options: BDFOptions | None = None,
+    bdf_drive: BDFDrive | None = None,
+) -> CapturedTransientRun | CapturedBDFRun:
     """Capture this call's actual inputs/source/runtime, then run the existing solver.
 
     It makes no claim about when/how the supplied compiled device or initial
     DC state was produced. No HEAD, build commit, release or certificate is
     inferred. Sources are contemporaneous file hashes, not a source archive.
     """
+    if method == "bdf":
+        from solarlab.experiments.bdf_results import run_bdf_for_publication
+        if bdf_options is None:
+            raise ValueError("BDF publication requires explicit BDFOptions")
+        return run_bdf_for_publication(compiled, initial, protocol, options=options,
+            initial_options=initial_options, bdf_options=bdf_options, bdf_drive=bdf_drive)
+    if method != "backward_euler" or bdf_options is not None or bdf_drive is not None:
+        raise ValueError("mixed or unknown transient publication method/options")
     from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.transient import solve_transient
     nodes = np.frombuffer(compiled.nodes_m.tobytes(), dtype=compiled.nodes_m.dtype).reshape(compiled.nodes_m.shape)
@@ -286,10 +316,17 @@ def run_transient_for_publication(
 
 
 def publish_transient_result(
-    store: RunStore, token: AttemptToken, result: TransientResult1D, *, nodes_m: np.ndarray,
-    capture: CapturedTransientRun | None = None,
+    store: RunStore, token: AttemptToken, result: TransientResult1D | BDFResult, *, nodes_m: np.ndarray,
+    capture: CapturedTransientRun | CapturedBDFRun | None = None,
 ) -> dict[str, Any]:
     """Publish into an already claimed attempt; its owner still commits the terminal."""
+    if getattr(result, "schema", None) == "solarlab.physical_storage_bdf12.v1":
+        from solarlab.experiments.bdf_results import CapturedBDFRun, publish_bdf_result
+        if type(capture) is not CapturedBDFRun:
+            raise ValueError("BDF publication requires its contemporaneous capture")
+        return publish_bdf_result(store, token, cast("BDFResult", result), nodes_m=nodes_m, capture=capture)
+    result = cast("TransientResult1D", result)
+    capture = cast("CapturedTransientRun | None", capture)
     data, payloads = _payload(result, nodes_m)
     identity = store.get_run(token.run_id)["request"]["identity"]
     provenance: dict[str, Any] = {"status": "not_recorded",
@@ -332,6 +369,10 @@ def read_transient_result(store: RunStore, run_id: str, *, attempt_id: str | Non
     if attempt is None or attempt["state"] not in {"succeeded", "failed", "cancelled"} or attempt["terminal"] is None:
         raise ValueError("a committed terminal attempt of this run is required")
     document = attempt["result"]
+    if type(document) is dict and document.get("schema") == "solarlab.bdf-publication.v1":
+        from solarlab.experiments.bdf_results import read_bdf_result
+        return read_bdf_result(store, run_id, attempt_id=selected,
+                              current_identity=current_identity, strict_same_source=strict_same_source)
     if type(document) is not dict or document.get("schema") != _SCHEMA:
         raise ValueError("attempt does not contain a transient publication")
     origin = {"run_id": run_id, "attempt_id": selected, "generation": attempt["generation"]}

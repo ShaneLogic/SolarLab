@@ -1,0 +1,38 @@
+{
+  "schema": "solarlab.bdf-readiness-fixtures.v1",
+  "fixtures": [
+    {
+      "path": "tests/integration/fixtures/bdf_readiness/readinessv1_e_saved_packet.json.gz",
+      "source": "/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/test/ArchitectureRefactor/Stage04/P04CoreV1/Core1D/AdaptiveBDFV1/ReadinessV1/Cases/E_saved_packet/bdf.json",
+      "original_sha256": "98a455e3baa5f542a9a20075f0fb60dc11fbc82ff458fbd3a104bc8ad5c3db83",
+      "sha256": "febf3abf0e50d7af5e9998e851e88ddf1c7d3197faf60a55a6b782b1e91032a8",
+      "completed": true,
+      "termination": "completed"
+    },
+    {
+      "path": "tests/integration/fixtures/bdf_readiness/readinessv1_e_light_step.json.gz",
+      "source": "/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/test/ArchitectureRefactor/Stage04/P04CoreV1/Core1D/AdaptiveBDFV1/ReadinessV1/Cases/E_light_step/bdf.json",
+      "original_sha256": "d6836ab71a65b294816c4a341e54283e82177b333c724df287a2769270fd5d06",
+      "sha256": "5f8f1e8668295c8e4d6219deadfd61d780c4b76a17d4dbf2d0d1b9fc9e59d4e7",
+      "completed": false,
+      "termination": "evaluation_error"
+    },
+    {
+      "path": "tests/integration/fixtures/bdf_readiness/readinessv2_e_saved_packet.json.gz",
+      "source": "/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/test/ArchitectureRefactor/Stage04/P04CoreV1/Core1D/AdaptiveBDFV1/ReadinessV2/Cases/E_saved_packet/bdf.json",
+      "original_sha256": "d75044a2bd4cbbe45538e1a6238ab15e16d667a25051801f5d98a7a17d0600f5",
+      "sha256": "a9e38cdaf9a0a4c42c14a48103d4d4a018b6ca25f7bb9cd9c8dff24d9960734b",
+      "completed": true,
+      "termination": "completed"
+    },
+    {
+      "path": "tests/integration/fixtures/bdf_readiness/readinessv2_e_dark_voltage_step.json.gz",
+      "source": "/Users/bytedance/Library/Mobile Documents/com~apple~CloudDocs/projects/solarlab/test/ArchitectureRefactor/Stage04/P04CoreV1/Core1D/AdaptiveBDFV1/ReadinessV2/Cases/E_dark_voltage_step/bdf.json",
+      "original_sha256": "6aabd62125c019c9bca9e7f4cc207f4de02a632f8e1c2a2a96b046d7c1a2f2ad",
+      "sha256": "203f87b74d548fffb6067c4ac57f1acba07c6626a56c33cb65e7d550b55039ed",
+      "completed": false,
+      "termination": "rejection_budget_exhausted",
+      "accepted_restart_side": "right"
+    }
+  ]
+}

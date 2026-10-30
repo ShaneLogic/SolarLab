@@ -19,7 +19,7 @@ import numpy as np
 from solarlab.contracts import frozen_array
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, classical_dc_1d
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, State1D
-from solarlab.equations.implementation import use_assembled
+from solarlab.equations.implementation import equation_implementation, selected_implementation, use_assembled
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, Matrix, SolveBudget
@@ -187,8 +187,9 @@ additional voltage-rate storage term is added.
         from solarlab.solvers.time.bdf_1d import solve_electronic_bdf
         if bdf_options is None:
             raise ValueError("BDF selection requires explicit BDFOptions")
-        return solve_electronic_bdf(compiled, initial, protocol, options=options,
-            initial_options=initial_options, bdf_options=bdf_options, drive=bdf_drive)
+        with equation_implementation(selected_implementation(operator="BDFStep:DC1DProblem")):
+            return solve_electronic_bdf(compiled, initial, protocol, options=options,
+                initial_options=initial_options, bdf_options=bdf_options, drive=bdf_drive)
     if method != "backward_euler":
         raise ValueError("unknown time integrator")
     started = time.monotonic()
