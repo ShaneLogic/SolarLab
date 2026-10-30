@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 from types import SimpleNamespace
+import xml.etree.ElementTree as ET
 
 import pytest
 import yaml
@@ -80,14 +81,71 @@ def test_clock_bound_files_run_once_in_explicit_parent_only_coverage_shards():
     assert rows["coverage-root-backend-scan_execution"].get("subprocess_coverage", True)
 
 
-def test_large_slow_file_is_partitioned_without_dropping_parameterized_nodes():
+def test_large_slow_function_keeps_all_parameterized_cases_together():
     data = {"legacy": {"items": [
         item("tests/integration/test_large.py", f"test_case[{i}]", ("slow",))
         for i in range(52)
     ]}}
     shards = scheduled.build_shards(data)["slow"]
-    assert [row["count"] for row in shards] == [24, 24, 4]
+    assert [row["count"] for row in shards] == [52]
+    assert shards[0]["paths"] == ["tests/integration/test_large.py::test_case"]
+    assert shards[0]["function_counts"] == {"tests/integration/test_large.py::test_case": 52}
     assert len({node for row in shards for node in row["nodeids"]}) == 52
+
+
+def test_large_slow_file_splits_only_between_functions():
+    data = {"legacy": {"items": [
+        item("tests/integration/test_large.py", f"test_{name}[{i}]", ("slow",))
+        for name, count in (("a", 20), ("b", 20), ("c", 12)) for i in range(count)
+    ]}}
+    shards = scheduled.build_shards(data)["slow"]
+    assert [row["count"] for row in shards] == [20, 20, 12]
+    assert all(len(row["paths"]) == 1 and "[" not in row["paths"][0] for row in shards)
+
+
+def test_float_repr_drift_does_not_change_function_selectors_or_shard_ids():
+    path = "tests/integration/test_physical_interface_cbo_scan.py"
+    plans = []
+    for value in ("-0.04056782763682157", "-0.040567827636821575"):
+        plans.append(scheduled.build_shards({"legacy": {"items": [
+            item(path, f"TestProbe::test_case[{value}]", ("slow",)),
+            item(path, "TestProbe::test_case[1.0]", ("slow",)),
+        ]}})["slow"])
+    left, right = plans[0][0], plans[1][0]
+    assert len(plans[0]) == len(plans[1]) == 1
+    assert left["id"] == right["id"]
+    assert left["paths"] == right["paths"] == [path + "::TestProbe::test_case"]
+    assert left["function_counts"] == right["function_counts"] == {path + "::TestProbe::test_case": 2}
+    assert left["nodeids"] != right["nodeids"]  # Raw observations remain inspectable.
+
+
+def test_integration_coverage_retains_each_file_once_in_its_own_shard():
+    data = {"legacy": {"items": [
+        item("tests/integration/test_first.py", f"test_case[{i}]") for i in range(3)
+    ] + [item("tests/integration/test_second.py"), item("tests/unit/test_small.py")]}}
+    rows = scheduled.build_shards(data)["coverage"]
+    integration = [row for row in rows if row["id"].startswith("coverage-legacy-integration-")]
+    assert len(integration) == 2
+    assert sorted(row["count"] for row in integration) == [1, 3]
+    assert all(len(row["paths"]) == 1 for row in integration)
+    assert sum(row["count"] for row in rows) == 5
+
+
+def test_cigs_slow_file_is_split_by_function_with_parameters_kept_together():
+    path = "tests/regression/test_grading_cigs_notch.py"
+    data = {"legacy": {"items": [
+        item(path, f"test_thickness[{v}]", ("slow",)) for v in (0.5, 1.0, 2.0)
+    ] + [item(path, "test_production", ("slow",)), item(path, "test_observations", ("slow",))]}}
+    rows = scheduled.build_shards(data)["slow"]
+    assert sorted(row["count"] for row in rows) == [1, 1, 3]
+    assert all(len(row["paths"]) == 1 and "[" not in row["paths"][0] for row in rows)
+
+
+def test_function_cannot_span_shards_even_when_raw_node_partition_is_exact():
+    nodes = ["test.py::test_x[0.1]", "test.py::test_x[0.2]"]
+    shards = [{"id": str(i), "suite": "root", "nodeids": [node]} for i, node in enumerate(nodes)]
+    with pytest.raises(ValueError, match="test function split across shards"):
+        scheduled.verify_partition(shards, [("root", node) for node in nodes])
 
 
 def test_duplicate_coverage_is_not_silently_deduplicated():
@@ -176,6 +234,12 @@ def test_core_source_binding_follows_installation_audit_only_in_its_child(
 
     monkeypatch.setattr(scheduled, "verify_installation", audit)
     monkeypatch.setattr(scheduled.subprocess, "run", execute)
+
+    def slow(_shard, directory, environment, _result):
+        (directory / "pytest.log").write_text("")
+        return execute([sys.executable], env=environment).returncode
+
+    monkeypatch.setattr(scheduled, "run_slow_nodes", slow)
     out = tmp_path / "out"
     assert scheduled.run_shard(SimpleNamespace(plan=plan, kind=kind, shard="case", out=out)) == 0
     result = scheduled.read(out / "result.json")
@@ -223,6 +287,137 @@ def test_scheduled_runner_refuses_drift_and_preserves_failures(tmp_path, expecte
     assert data["exit_code"] == code
     if code == 1:
         assert any(row["outcome"] == "failed" for row in data["reports"])
+
+
+@pytest.mark.parametrize(("expected_counts", "code"), [
+    ((2, 1), 0), ((1, 1), 4), ((3, 1), 4), ((1, 2), 4),
+])
+def test_runner_accepts_repr_drift_but_requires_exact_counts_for_each_function(
+    tmp_path, expected_counts, code,
+):
+    sentinel = tmp_path / "executed"
+    (tmp_path / "test_probe.py").write_text(
+        "import pytest\nfrom pathlib import Path\n"
+        "@pytest.mark.parametrize('x', [1, 2], ids=['-0.040567827636821575', 'other'])\n"
+        "def test_probe(x):\n"
+        f"    with Path({str(sentinel)!r}).open('a') as out: out.write(str(x))\n"
+        "def test_other():\n"
+        f"    with Path({str(sentinel)!r}).open('a') as out: out.write('3')\n"
+    )
+    expected = [f"test_probe.py::{name}[plan-{i}]"
+                for name, count in zip(("test_probe", "test_other"), expected_counts)
+                for i in range(count)]
+    expected[0] = "test_probe.py::test_probe[-0.04056782763682157]"
+    expectation = tmp_path / "expected.json"
+    expectation.write_text(json.dumps(expected))
+    result = subprocess.run([
+        sys.executable, str(Path(scheduled.__file__)), "_pytest",
+        "--out", str(tmp_path / "actual.json"), "--expected", str(expectation),
+        "--", "test_probe.py", "-q", "-p", "no:cacheprovider",
+    ], cwd=tmp_path, text=True, capture_output=True, timeout=30)
+    assert result.returncode == code, result.stdout + result.stderr
+    if code == 0:
+        assert sentinel.read_text() == "123"
+    else:
+        assert "scheduled selection drift" in result.stderr
+        assert not sentinel.exists()  # No body runs after even a per-function count mismatch.
+
+
+def test_partial_receipts_preserve_named_failures_and_the_next_started_case(tmp_path):
+    output = tmp_path / "actual.json"
+    journal = tmp_path / "actual.jsonl"
+    (tmp_path / "test_probe.py").write_text(
+        "import json\nfrom pathlib import Path\n"
+        "def test_first():\n    assert False, 'preserve this failure before a later timeout'\n"
+        "def test_second():\n"
+        f"    current = json.loads(Path({str(output)!r}).read_text())\n"
+        "    assert current['status'] == 'running' and 'exit_code' not in current\n"
+        f"    rows = [json.loads(line) for line in Path({str(journal)!r}).read_text().splitlines()]\n"
+        "    failed = next(row for row in rows if row.get('outcome') == 'failed')\n"
+        "    assert failed['nodeid'] == 'test_probe.py::test_first'\n"
+        "    assert 'preserve this failure' in failed['longrepr']\n"
+        "    starts = [row['nodeid'] for row in rows if row['event'] == 'start']\n"
+        "    assert starts == ['test_probe.py::test_first', 'test_probe.py::test_second']\n"
+    )
+    result = subprocess.run([
+        sys.executable, str(Path(scheduled.__file__)), "_pytest", "--out", str(output),
+        "--", "test_probe.py", "-q", "-p", "no:cacheprovider",
+    ], cwd=tmp_path, text=True, capture_output=True, timeout=30)
+    assert result.returncode == 1, result.stdout + result.stderr
+    data = json.loads(output.read_text())
+    assert data["status"] == "completed" and data["exit_code"] == 1
+    assert [(row["nodeid"], row["outcome"]) for row in data["reports"] if row["when"] == "call"] == [
+        ("test_probe.py::test_first", "failed"), ("test_probe.py::test_second", "passed"),
+    ]
+
+
+def test_slow_watchdog_caps_use_measured_costs_without_changing_test_gates():
+    assert scheduled.slow_node_seconds("legacy", "tests/regression/test_grading_cigs_notch.py") == 1200
+    assert scheduled.slow_node_seconds("legacy", "tests/integration/test_physical_interface_cbo_scan.py") == 3600
+    assert scheduled.slow_node_seconds("legacy", "tests/regression/test_interface_balance_ridge.py") == 2820
+    assert scheduled.slow_node_seconds("root", "tests/test_new.py") == 1200
+    assert all(1200 <= scheduled.slow_node_seconds("legacy", path) <= 3600
+               for path in scheduled.MEASURED_SLOW_NODE_SECONDS)
+
+
+def test_slow_watchdog_records_timeout_failure_and_continues_to_next_case(tmp_path, monkeypatch):
+    (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers = slow: watchdog probe\n")
+    (tmp_path / "test_probe.py").write_text(
+        "import os, time, pytest\npytestmark = pytest.mark.slow\n"
+        "def test_first():\n    time.sleep(30)\n"
+        "@pytest.mark.parametrize('x', [1], ids=['-0.040567827636821575'])\n"
+        "def test_second(x):\n    assert os.environ['OMP_NUM_THREADS'] == '1'\n"
+    )
+    nodes = ["test_probe.py::test_first", "test_probe.py::test_second[-0.04056782763682157]"]
+    local_second = "test_probe.py::test_second[-0.040567827636821575]"
+    out = tmp_path / "out"
+    out.mkdir()
+    scheduled.write(out / "expected.json", nodes)
+    shard = {"id": "probe", "suite": "legacy", "paths": ["test_probe.py"],
+             "markers": "slow", "ignored": [], "node_wall_seconds": 5}
+    monkeypatch.setattr(scheduled, "SUITES", {"legacy": tmp_path})
+    original_watchdog = scheduled.run_with_watchdog
+
+    def interrupted_receipt(command, **kwargs):
+        value = original_watchdog(command, **kwargs)
+        if value["timeout"]:
+            with (Path(kwargs["log"]).parent / "tests.jsonl").open("a") as stream:
+                stream.write('{"interrupted":')
+        return value
+
+    monkeypatch.setattr(scheduled, "run_with_watchdog", interrupted_receipt)
+    result = {"status": "started"}
+    code = scheduled.run_slow_nodes(shard, out, scheduled.pinned_environment(), result)
+    assert code == 1
+    data = scheduled.read(out / "tests.json")
+    assert [(r["nodeid"], r["outcome"]) for r in data["node_outcomes"]] == [
+        (nodes[0], "timeout"), (local_second, "passed"),
+    ]
+    assert len(data["node_outcomes"][0]["receipt_errors"]) == 1
+    assert data["status"] == "completed" and data["exit_code"] == 1
+    timeout = next(r for r in data["reports"] if r["outcome"] == "timeout")
+    assert timeout["wasxfail"] is None and timeout["when"] == "watchdog"
+    xml = ET.parse(out / "junit.xml")
+    assert len(xml.findall(".//testcase")) == 2
+    assert len(xml.findall(".//failure[@type='timeout']")) == 1
+    assert not xml.findall(".//skipped")
+
+
+def test_slow_preflight_refuses_count_drift_before_any_node_body(tmp_path, monkeypatch):
+    sentinel = tmp_path / "executed"
+    (tmp_path / "test_probe.py").write_text(
+        "from pathlib import Path\ndef test_probe():\n"
+        f"    Path({str(sentinel)!r}).write_text('ran')\n"
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    scheduled.write(out / "expected.json", ["test_probe.py::absent"])
+    shard = {"id": "probe", "suite": "legacy", "paths": ["test_probe.py"],
+             "markers": "not slow", "ignored": [], "node_wall_seconds": 10}
+    monkeypatch.setattr(scheduled, "SUITES", {"legacy": tmp_path})
+    assert scheduled.run_slow_nodes(shard, out, scheduled.pinned_environment(), {}) == 4
+    assert not sentinel.exists()
+    assert "scheduled selection drift" in (out / "pytest.log").read_text()
 
 
 def test_workflow_triggers_are_bounded_and_have_no_threshold_gate():
