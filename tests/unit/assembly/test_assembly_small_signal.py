@@ -72,7 +72,7 @@ def originals_forbidden() -> ExitStack:
         (Ionic1DProblem, ("residual", "jacobian", "storage_jacobian", "ion_fluxes")),
         (MultipleIonic1DProblem, ("residual", "jacobian", "storage_jacobian", "ion_fluxes")),
         (IonicSmallSignal1D, ("system", "observe", "original_residual", "_carrier_particles",
-                              "_moving_voltage_partial")),
+                              "moving_voltage_partial")),
         (MultipleIonicSmallSignal1D, ("system", "observe", "original_residual", "_moving_voltage_partial")),
     ):
         for method in methods:

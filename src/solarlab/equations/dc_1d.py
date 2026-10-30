@@ -375,7 +375,7 @@ class DC1DProblem:
             total = sum_recombination_rates(total, extra)
         return total
 
-    def _contact_exchange(self, u: Vector, channel: CarrierExchangeChannel, node: int) -> tuple[float, float]:
+    def contact_exchange(self, u: Vector, channel: CarrierExchangeChannel, node: int) -> tuple[float, float]:
         """Evaluate the production contact slope on an accurate density excess."""
         count = self.device.node_count
         references = self.device.carrier_reference_potentials(self.voltage_V)
@@ -386,6 +386,10 @@ class DC1DProblem:
         excess = channel.reservoir_density_m3 * np.expm1(exponent)
         # The boundary kernel supplies n_out * S, including exactly zero for blocking.
         return boundary.density_derivative * excess, boundary.density_derivative
+
+    def _contact_exchange(self, u: Vector, channel: CarrierExchangeChannel, node: int) -> tuple[float, float]:
+        """Delegate for the pending backward-Euler accounting migration."""
+        return self.contact_exchange(u, channel, node)
 
     def residual(self, u: ArrayLike, udot: ArrayLike | None = None) -> Vector:
         device = self.device
@@ -424,7 +428,7 @@ class DC1DProblem:
                     shift = (phi[node] - reference[node]) / device.thermal_voltage_V
                     rows[node] = sign * (shift + values[offset + node])
                 else:
-                    exchange, _ = self._contact_exchange(values, channel, node)
+                    exchange, _ = self.contact_exchange(values, channel, node)
                     rows[node] += (1.0 if side == "left" else -1.0) * exchange
             result[offset:offset + count] = rows
         return result
@@ -512,7 +516,7 @@ class DC1DProblem:
                     matrix.rows[row] = [node, offset + node]
                     matrix.data[row] = [sign / thermal, sign]
                 else:
-                    _, slope = self._contact_exchange(values, channel, node)
+                    _, slope = self.contact_exchange(values, channel, node)
                     inflow = 1.0 if side == "left" else -1.0
                     matrix[row, node] += inflow * slope * sign * density[node] / thermal
                     matrix[row, offset + node] += inflow * slope * sign * density[node]
@@ -543,7 +547,7 @@ class DC1DProblem:
                 if channel.kind == "fixed_reservoir":
                     exchange = float(flux.flux[face] + (-1.0 if side == "left" else 1.0) * pairs[node])
                 else:
-                    exchange, _ = self._contact_exchange(values, channel, node)
+                    exchange, _ = self.contact_exchange(values, channel, node)
                 total += charge * exchange
             currents.append(total)
         return np.asarray(currents)

@@ -4,12 +4,13 @@ Import-linter operates on module dependencies; this check inspects the actual
 ImportFrom names, including relative imports. The 141 configuration, registry,
 serialization and experiment occurrences from AssemblyMigrationInventoryV1
 remain explicit exceptions. Public symbols merely aliased privately are not
-part of that historical count; promoted numerical APIs may not keep such aliases.
+part of that historical count; promoted module-level APIs may not keep aliases.
 
 The two temporary steady helper exceptions are now retired. Five additional
 BDF-to-experiment imports already present at f0c1027f are listed separately;
 their providers are outside the numerical roots. The reviewed 141-entry
-configuration/registry/experiment ledger remains unchanged.
+configuration/registry/experiment ledger remains unchanged. Method calls have
+a separate exact ledger for owned callers and unrelated same-name methods.
 """
 
 from __future__ import annotations
@@ -215,3 +216,168 @@ def test_detector_rejects_absolute_relative_and_duplicate_private_imports() -> N
         ("solarlab.equations", "solarlab.equations.example", "_secret"): 1})
     assert not private_imports("solarlab.equations.candidate",
         "from solarlab.physics.example import public as _local_alias")
+
+
+# Methods are class APIs, so they do not belong in a module's __all__.
+PUBLIC_METHOD_RENAMES = (
+    ('solarlab.equations.multiple_ionic_1d', 'CompiledMultipleIonicDevice1D', '_values', 'values'),
+    ('solarlab.equations.ionic_small_signal', 'IonicSmallSignal1D', '_moving_voltage_partial', 'moving_voltage_partial'),
+    ('solarlab.equations.dc_1d', 'DC1DProblem', '_contact_exchange', 'contact_exchange'),
+)
+MethodCallKey: TypeAlias = tuple[str, str, str, str]  # module, scope, receiver, method
+
+# These exact callers are owned by the concurrent production-wiring migration.
+# Retire each entry together with its delegating alias when that caller moves.
+DEFERRED_PRIVATE_METHOD_CALLS: Counter[MethodCallKey] = Counter({
+    ('solarlab.solvers.time.multiple_ionic_backward_euler',
+     'MultipleIonicBackwardEuler1DStep.inventory_rates_m2_s', 'device', '_values'): 1,
+    ('solarlab.solvers.time.backward_euler', 'step_accounting', 'problem', '_contact_exchange'): 1,
+})
+
+# This is a conservative syntactic guard, not Python type inference. Each
+# unrelated receiver with a colliding name is reviewed at this exact scope;
+# a module containing a homonym does not exempt its calls on other receivers.
+UNRELATED_PRIVATE_METHOD_CALLS: Counter[MethodCallKey] = Counter({
+    # A same-module AssembledIonicSmallSignal1D, not IonicSmallSignal1D.
+    ('solarlab.equations.assembly.small_signal',
+     'AssembledMultipleIonicSmallSignal1D._moving_voltage_partial', 'first', '_moving_voltage_partial'): 1,
+    # DC2DProblem has its own vector-valued contact law.
+    ('tests.integration.test_contacts_2d',
+     'test_contact_flux_sign_units_and_exact_density_jacobian', 'p', '_contact_exchange'): 1,
+    ('tests.integration.test_contacts_2d',
+     'test_zero_velocity_is_blocking_and_near_reservoir_excess_is_not_rounded_away',
+     'problem', '_contact_exchange'): 2,
+    ('tests.integration.test_contacts_2d',
+     'test_finite_exchange_has_the_compatible_fixed_reservoir_limit', 'problem', '_contact_exchange'): 1,
+    # MultipleIonicSmallSignal1D's distinct domain-combining implementation.
+    ('tests.integration.test_multiple_ionic_small_signal_1d',
+     'test_full_J_K_and_actual_moving_voltage_drive_directions', 'operator', '_moving_voltage_partial'): 1,
+    # Assembled single/multiple operators and the assembled storage adapter.
+    ('tests.unit.assembly.test_assembly_small_signal',
+     'test_moving_lift_drive_and_rate_match_finite_differences', 'operator', '_moving_voltage_partial'): 1,
+    ('tests.unit.assembly.test_assembly_small_signal',
+     'test_invalid_inputs_are_refused_as_before', 'operator', '_moving_voltage_partial'): 1,
+    ('tests.unit.solvers.time.test_assembled_storage',
+     'test_public_exchange_mapping_preserves_bound_channel_law_and_refusals', 'assembled', '_contact_exchange'): 1,
+})
+
+
+def private_method_calls(module: str, source: str) -> Counter[MethodCallKey]:
+    """Find calls of promoted names; waive only defining modules/local methods."""
+    providers = {old: provider for provider, _, old, _ in PUBLIC_METHOD_RENAMES}
+    found: Counter[MethodCallKey] = Counter()
+
+    class Calls(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.scope: list[str] = []
+            self.classes: list[ast.ClassDef] = []
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            self.scope.append(node.name)
+            self.classes.append(node)
+            self.generic_visit(node)
+            self.classes.pop()
+            self.scope.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            self.scope.append(node.name)
+            self.generic_visit(node)
+            self.scope.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Call(self, node: ast.Call) -> None:
+            if isinstance(node.func, ast.Attribute) and node.func.attr in providers:
+                receiver, name = node.func.value, node.func.attr
+                local_method = (
+                    self.classes and isinstance(receiver, ast.Name) and receiver.id in {'self', 'cls'}
+                    and any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == name
+                            for item in self.classes[-1].body)
+                )
+                if module != providers[name] and not local_method:
+                    found[module, '.'.join(self.scope) or '<module>', ast.unparse(receiver), name] += 1
+            self.generic_visit(node)
+
+    Calls().visit(ast.parse(source))
+    return found
+
+
+def test_no_unreviewed_private_cross_module_method_calls() -> None:
+    found: Counter[MethodCallKey] = Counter()
+    for directory in ('src', 'tests', 'examples', 'scripts'):
+        base = ROOT / 'src' if directory == 'src' else ROOT
+        for path in sorted((ROOT / directory).rglob('*.py')):
+            parts = path.relative_to(base).with_suffix('').parts
+            module = '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
+            found.update(private_method_calls(module, path.read_text()))
+    allowed = DEFERRED_PRIVATE_METHOD_CALLS + UNRELATED_PRIVATE_METHOD_CALLS
+    assert not found - allowed, (
+        'Use the public method, or document an exact unrelated receiver: ' + repr(dict(found - allowed))
+    )
+    assert found == allowed, 'Retire stale private-method exceptions with their migrated callers'
+
+
+@pytest.mark.parametrize(('module', 'owner', 'old', 'public'), PUBLIC_METHOD_RENAMES)
+def test_public_methods_and_only_required_delegating_aliases(
+    module: str, owner: str, old: str, public: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    implementation = import_module(module)
+    cls = getattr(implementation, owner)
+    assert public in vars(cls) and callable(getattr(cls, public))
+    assert public not in implementation.__all__
+    deferred = {key[-1] for key in DEFERRED_PRIVATE_METHOD_CALLS}
+    if old not in deferred:
+        assert not hasattr(cls, old)
+        return
+    sentinel = object()
+    calls: list[tuple[object, tuple[object, ...]]] = []
+
+    def public_spy(instance: object, *args: object) -> object:
+        calls.append((instance, args))
+        return sentinel
+
+    monkeypatch.setattr(cls, public, public_spy)
+    instance = object.__new__(cls)
+    args = (object(),) if old == '_values' else (object(), object(), object())
+    assert getattr(instance, old)(*args) is sentinel
+    assert calls == [(instance, args)]
+
+
+def test_method_detector_rejects_unknown_receivers_aliases_and_repeated_calls() -> None:
+    source = (
+        'from solarlab.equations.dc_1d import DC1DProblem as Renamed\n'
+        'Renamed._contact_exchange(problem, u, channel, node)\n'
+        'def evaluate(device):\n'
+        '    device._values(y)\n'
+        '    device._values(ydot)\n'
+        '    operator._moving_voltage_partial()\n'
+    )
+    assert private_method_calls('solarlab.equations.candidate', source) == Counter({
+        ('solarlab.equations.candidate', '<module>', 'Renamed', '_contact_exchange'): 1,
+        ('solarlab.equations.candidate', 'evaluate', 'device', '_values'): 2,
+        ('solarlab.equations.candidate', 'evaluate', 'operator', '_moving_voltage_partial'): 1,
+    })
+
+
+def test_local_homonym_does_not_hide_a_foreign_receiver() -> None:
+    source = (
+        'class Local:\n'
+        '    def _moving_voltage_partial(self):\n'
+        '        return 0\n'
+        '    def evaluate(self, first):\n'
+        '        self._moving_voltage_partial()\n'
+        '        return first._moving_voltage_partial()\n'
+    )
+    assert private_method_calls('solarlab.equations.candidate', source) == Counter({
+        ('solarlab.equations.candidate', 'Local.evaluate', 'first', '_moving_voltage_partial'): 1,
+    })
+    assert not private_method_calls('solarlab.equations.ionic_small_signal', source)
+    assert not private_method_calls('solarlab.equations.candidate',
+        'device.values(y)\noperator.moving_voltage_partial()\nproblem.contact_exchange(u, channel, node)')
+
+
+def test_private_method_deferrals_are_limited_to_the_two_owned_callers() -> None:
+    assert sum(DEFERRED_PRIVATE_METHOD_CALLS.values()) == 2
+    assert {key[0] for key in DEFERRED_PRIVATE_METHOD_CALLS} == {
+        'solarlab.solvers.time.backward_euler', 'solarlab.solvers.time.multiple_ionic_backward_euler',
+    }

@@ -320,7 +320,7 @@ def test_observation_kernels_equal_dc1d(kind: str) -> None:
                     candidate.contact_exchange(u, channel, node)
                 continue
             exchanged += 1
-            assert_bits(reference._contact_exchange(u, channel, node), candidate.contact_exchange(u, channel, node))
+            assert_bits(reference.contact_exchange(u, channel, node), candidate.contact_exchange(u, channel, node))
             with pytest.raises(ValueError, match="no bound exchange"):
                 candidate.contact_exchange(u, channel, device.node_count - 1 - node)
         with pytest.raises(ValueError, match="coordinate vector"):

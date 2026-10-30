@@ -172,7 +172,7 @@ class IonicSmallSignal1D:
             known[offset + N - 1] = -phi_right / device.electronic_component.thermal_voltage_V
         rhs_rate = np.zeros_like(rhs)
         if self.coordinate_form == "moving_boundary_lift_v1":
-            partial, drive = self._moving_voltage_partial(self.coordinate_lift_per_V)
+            partial, drive = self.moving_voltage_partial(self.coordinate_lift_per_V)
             rhs = -partial * voltage
             rhs_rate = drive * voltage
             known = {index: 0.0j for index in known}
@@ -248,7 +248,7 @@ class IonicSmallSignal1D:
                           + sign * flux.flux * (x[offset + 1:offset + N] + (x[1:N] + reference * reference_drive) / component.thermal_voltage_V))
         return values[0], values[1]
 
-    def _moving_voltage_partial(self, direction: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def moving_voltage_partial(self, direction: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
         """Grouped actual F_V+J*direction and K*(c-direction), before cancellation.
 
         Only the declared zero ion-reference/ion-lift path is used. The potential
@@ -387,7 +387,7 @@ class IonicSmallSignal1D:
         rhs[N - 1] = -component.voltage_polarity * voltage
         denominator = abs(matrix) @ abs(fixed_x) + abs(rhs)
         fixed_errors = np.divide(abs(fixed_residual), denominator, out=np.zeros_like(denominator), where=denominator != 0.0)
-        original_partial, _drive = self._moving_voltage_partial()
+        original_partial, _drive = self.moving_voltage_partial()
         moving_rhs = -original_partial * voltage + 1j * omega * (self.storage_jacobian @ self.reference_direction_per_V) * voltage
         residual = matrix @ moving_x - moving_rhs
         moving_denominator = abs(matrix) @ abs(moving_x) + abs(moving_rhs)

@@ -136,7 +136,7 @@ def test_zero_velocity_is_blocking_and_near_reservoir_excess_is_not_rounded_away
     np.testing.assert_array_equal(flux, slope * channel.reservoir_density_m3 * np.expm1(tiny))
     one = DC1DProblem(d.column, 0.0, 0.0)
     column_u = u.reshape(3, d.geometry.ny, d.geometry.nx)[:, :, 0].ravel()
-    expected, expected_slope = one._contact_exchange(column_u, channel, 0 if channel.side == "left" else d.geometry.ny - 1)
+    expected, expected_slope = one.contact_exchange(column_u, channel, 0 if channel.side == "left" else d.geometry.ny - 1)
     np.testing.assert_array_equal(flux, expected)
     assert slope == expected_slope
     blocked, blocked_slope = problem._contact_exchange(u, replace(channel, velocity_m_s=0.0), nodes)

@@ -129,7 +129,7 @@ class MultipleIonicSmallSignal1D:
         if moving.shape != (device.state_size,) or np.any(moving[3 * N:] != 0.0):
             raise ValueError("the voltage lift must keep every ionic coordinate unchanged")
         first = self._local_operators[0]
-        partial, drive = first._moving_voltage_partial(np.r_[moving[:3 * N],
+        partial, drive = first.moving_voltage_partial(np.r_[moving[:3 * N],
             np.zeros(first.device.state_size - 3 * N)])
         result, rate = np.zeros(device.state_size), np.zeros(device.state_size)
         result[:3 * N], rate[:3 * N] = partial[:3 * N], drive[:3 * N]

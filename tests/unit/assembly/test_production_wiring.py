@@ -80,7 +80,9 @@ WALL_CLOCK = frozenset({"wall_s"})
 LEGACY_IDENTITIES = frozenset({"source_sha256"})
 ASSEMBLED_IDENTITIES = frozenset({"analysis_identity", "ac_system_identity", "ac_row_operations"})
 ORIGINAL_EVALUATIONS = (
-    (DC1DProblem, ("residual", "jacobian", "storage_jacobian", "fluxes", "recombination_rate", "_contact_exchange")),
+    # contact_exchange is the evaluation; _contact_exchange, its alias for the pending accounting migration.
+    (DC1DProblem, ("residual", "jacobian", "storage_jacobian", "fluxes", "recombination_rate", "contact_exchange",
+                   "_contact_exchange")),
     (Ionic1DProblem, ("residual", "jacobian", "storage_jacobian", "ion_fluxes")),
     (MultipleIonic1DProblem, ("residual", "jacobian", "storage_jacobian", "ion_fluxes", "physical_storage")),
 )
@@ -188,6 +190,24 @@ def same_saved(legacy: bytes, assembled: bytes, binding: Binding | None = None, 
     assert json.dumps(right, sort_keys=False) == json.dumps(left, sort_keys=False)
     if ac:
         assert legacy_found == LEGACY_IDENTITIES and assembled_found == ASSEMBLED_IDENTITIES
+
+
+def test_every_guarded_original_evaluation_is_refused_before_its_body() -> None:
+    """Under assembled_only each listed method, and the public contact exchange by name, raises on entry.
+
+    An uninitialized instance has no device: a body that ran would fail with another error.
+    """
+    refused = "an original evaluation ran under the assembled selection"
+    with assembled_only():
+        for cls, methods in ORIGINAL_EVALUATIONS:
+            probe = object.__new__(cls)
+            for method in methods:
+                with pytest.raises(AssertionError, match=refused):
+                    getattr(probe, method)(None, None, 0)
+        with pytest.raises(AssertionError, match=refused):
+            object.__new__(DC1DProblem).contact_exchange(None, None, 0)
+    with pytest.raises(AttributeError):
+        object.__new__(DC1DProblem).contact_exchange(None, None, 0)
 
 
 def test_the_assembled_system_is_the_default_and_legacy_an_explicit_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:

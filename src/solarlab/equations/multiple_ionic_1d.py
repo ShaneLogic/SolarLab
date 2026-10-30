@@ -198,7 +198,8 @@ class CompiledMultipleIonicDevice1D:
             species: math.fsum((domain.ion_geometry.cell_measures_m * getattr(domain, species + "_ion_reference_m3")).tolist())
             for species in domain.ion_species_names} for domain in self.domains}
 
-    def _values(self, y: ArrayLike) -> Vector:
+    def values(self, y: ArrayLike) -> Vector:
+        """Validate complete coordinates or rates and return a real vector."""
         if np.asarray(y).dtype.kind not in {"i", "u", "f"}:
             raise ValueError("multiple-domain coordinates and rates must be real numeric arrays")
         values = np.asarray(y, dtype=float)
@@ -206,15 +207,19 @@ class CompiledMultipleIonicDevice1D:
             raise ValueError("coordinates must contain 3N and all species of both ionic domains")
         return values
 
+    def _values(self, y: ArrayLike) -> Vector:
+        """Delegate for the pending multiple-ion backward-Euler migration."""
+        return self.values(y)
+
     def local_coordinates(self, y: ArrayLike, domain_id: str) -> Vector:
-        values = self._values(y)
+        values = self.values(y)
         if domain_id not in self.domain_ids:
             raise ValueError("requested ion domain is not assembled")
         return np.r_[values[:3 * self.node_count], values[self.domain_slices[domain_id]]]
 
     def fields_by_domain(self, y: ArrayLike, *, voltage_V: float = 0.0) -> tuple[Vector, Vector, Vector, dict[str, tuple[Vector, ...]]]:
         voltage_V = _finite_scalar(voltage_V, "voltage_V")
-        values = self._values(y)
+        values = self.values(y)
         phi, n, p = self.electronic_component.fields(values[:3 * self.node_count], voltage_V=voltage_V)
         populations = {domain.domain_layer_id: domain.fields_by_species(
             self.local_coordinates(values, domain.domain_layer_id), voltage_V=voltage_V)[3]
@@ -223,7 +228,7 @@ class CompiledMultipleIonicDevice1D:
 
     def state(self, y: ArrayLike, *, voltage_V: float = 0.0) -> MultipleIonicState1D:
         voltage_V = _finite_scalar(voltage_V, "voltage_V")
-        values = self._values(y)
+        values = self.values(y)
         component = self.electronic_component.state(values[:3 * self.node_count], voltage_V=voltage_V)
         local = tuple(domain.state(self.local_coordinates(values, domain.domain_layer_id), voltage_V=voltage_V)
                       for domain in self.domains)
@@ -292,7 +297,7 @@ class MultipleIonic1DProblem:
         return DC1DProblem(self.device.electronic_component, self.voltage_V, self.generation_scale)
 
     def _derivative(self, ydot: ArrayLike | None) -> Vector:
-        return np.zeros(self.device.state_size) if ydot is None else self.device._values(ydot)
+        return np.zeros(self.device.state_size) if ydot is None else self.device.values(ydot)
 
     def ion_fluxes(self, y: ArrayLike, *, domain_id: str, species: str = "positive") -> Vector:
         if domain_id not in self.device.domain_ids:
@@ -318,7 +323,7 @@ class MultipleIonic1DProblem:
 
     def residual(self, y: ArrayLike, ydot: ArrayLike | None = None) -> Vector:
         device, count = self.device, self.device.node_count
-        values, derivative = device._values(y), self._derivative(ydot)
+        values, derivative = device.values(y), self._derivative(ydot)
         phi, n, p, populations = device.fields_by_domain(values, voltage_V=self.voltage_V)
         result = np.empty(device.state_size)
         result[:3 * count] = self.electronic_problem.residual(values[:3 * count], derivative[:3 * count])
@@ -356,7 +361,7 @@ class MultipleIonic1DProblem:
 
     def storage_jacobian(self, y: ArrayLike) -> csc_matrix:
         device, size = self.device, 3 * self.device.node_count
-        values = device._values(y)
+        values = device.values(y)
         electronic = self.electronic_problem.storage_jacobian(values[:size])
         ionic = [Ionic1DProblem(domain, self.voltage_V, self.generation_scale).storage_jacobian(
             device.local_coordinates(values, domain.domain_layer_id))[size:, size:] for domain in device.domains]
@@ -372,7 +377,7 @@ class MultipleIonic1DProblem:
     def jacobian(self, y: ArrayLike, ydot: ArrayLike | None = None, *, alpha: float = 0.0) -> csc_matrix:
         alpha = _finite_scalar(alpha, "alpha")
         device, size = self.device, 3 * self.device.node_count
-        values, derivative = device._values(y), self._derivative(ydot)
+        values, derivative = device.values(y), self._derivative(ydot)
         electronic = self.electronic_problem.jacobian(values[:size], derivative[:size], alpha=alpha)
         local = [Ionic1DProblem(domain, self.voltage_V, self.generation_scale).jacobian(
             device.local_coordinates(values, domain.domain_layer_id),

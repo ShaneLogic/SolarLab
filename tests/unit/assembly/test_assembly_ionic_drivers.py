@@ -48,7 +48,9 @@ MULTIPLE = ("multiple_constrained:positive", "multiple_constrained:independent",
             "multiple_constrained:shared", "multiple_constrained:immobile")
 WALL_CLOCK = frozenset({"wall_s"})
 ORIGINAL_EVALUATIONS = (
-    (DC1DProblem, ("residual", "jacobian", "storage_jacobian", "fluxes", "recombination_rate", "_contact_exchange")),
+    # contact_exchange is the evaluation; _contact_exchange, its alias for the pending accounting migration.
+    (DC1DProblem, ("residual", "jacobian", "storage_jacobian", "fluxes", "recombination_rate", "contact_exchange",
+                   "_contact_exchange")),
     (Ionic1DProblem, ("residual", "jacobian", "storage_jacobian", "ion_fluxes")),
     (MultipleIonic1DProblem, ("residual", "jacobian", "storage_jacobian", "ion_fluxes", "physical_storage")),
     (ionic_steady.ConstrainedIonic1DProblem, ("residual", "jacobian")),
@@ -184,3 +186,21 @@ def test_a_changed_history_is_detected() -> None:
     assert words(0.0) != words(-0.0)
     assert words(np.array([1.0])) != words(np.array([np.nextafter(1.0, 2.0)]))
     assert words({"wall_s": 1.0, "value": 2.0}) == words({"wall_s": 3.0, "value": 2.0})
+
+
+def test_every_guarded_original_evaluation_is_refused_before_its_body() -> None:
+    """Under Substituted each listed method, and the public contact exchange by name, raises on entry.
+
+    An uninitialized instance has no device: a body that ran would fail with another error.
+    """
+    refused = "an original evaluation ran during the substituted history"
+    with Substituted():
+        for cls, methods in ORIGINAL_EVALUATIONS:
+            probe = object.__new__(cls)
+            for method in methods:
+                with pytest.raises(AssertionError, match=refused):
+                    getattr(probe, method)(None, None, 0)
+        with pytest.raises(AssertionError, match=refused):
+            object.__new__(DC1DProblem).contact_exchange(None, None, 0)
+    with pytest.raises(AttributeError):
+        object.__new__(DC1DProblem).contact_exchange(None, None, 0)

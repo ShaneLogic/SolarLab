@@ -139,7 +139,7 @@ def test_public_exchange_mapping_preserves_bound_channel_law_and_refusals(device
     for carrier in ("n", "p"):
         for side, node in (("left", 0), ("right", bound.node_count - 1)):
             channel = bound.channel(carrier, side)
-            expected = np.array(original._contact_exchange(u, channel, node))
+            expected = np.array(original.contact_exchange(u, channel, node))
             bits(expected, np.array(assembled.contact_exchange(u, channel, node)))
             bits(expected, np.array(assembled._contact_exchange(u, channel, node)))
             with pytest.raises(ValueError, match="no bound exchange"):
