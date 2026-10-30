@@ -15,6 +15,14 @@ on:
         description: Run the existing dark p-n junction regression only
         type: boolean
         default: false
+      run_ionic_jv_diagnostics:
+        description: Repeat the real ionic J-V HTTP module and retain native evidence
+        type: boolean
+        default: false
+      ionic_jv_diagnostic_repetitions:
+        description: Positive integer repeat count for each diagnostic Python version
+        type: number
+        default: 20
 
 permissions:
   contents: read
@@ -224,6 +232,41 @@ jobs:
           uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
           tests/runtime/test_supervisor_control_failure.py -m 'not slow and not frontend' --durations=20
           --junitxml=${{ runner.temp }}/backend-control-${{ matrix.python }}.xml
+
+  ionic-jv-diagnostics:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ionic_jv_diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen --extra dev --extra server --no-editable
+      - name: Repeat ionic J-V HTTP diagnostics
+        env:
+          IONIC_JV_DIAGNOSTIC_REPETITIONS: ${{ inputs.ionic_jv_diagnostic_repetitions }}
+        run: >-
+          uv run --frozen --no-sync python scripts/ci/ionic_jv_diagnostics.py
+          --repetitions "$IONIC_JV_DIAGNOSTIC_REPETITIONS"
+          --output-dir "${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}"
+      - name: Upload every diagnostic attempt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ionic-jv-diagnostics-${{ matrix.python }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
 
   binding:
     runs-on: ubuntu-24.04

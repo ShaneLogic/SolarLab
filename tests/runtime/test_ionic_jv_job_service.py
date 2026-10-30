@@ -81,6 +81,40 @@ def historical(tmp_path_factory):
     return folder / "Store", proof
 
 
+def publication_failure(store_root, run_id, attempt_id, result, events, *, work):
+    """Preserve the original failure even if an auxiliary diagnostic read fails."""
+    diagnostic = {"run_id": run_id, "attempt_id": attempt_id, "result": result, "events": events}
+    outcome = result.get("result") or {}
+    diagnostic["terminal_reason"] = (outcome.get("worker_result") or {}).get("reason", outcome.get("reason"))
+    try:
+        with RunStore(store_root, read_only=True) as store:
+            run = store.get_run(run_id)
+            diagnostic["run_state"] = {key: run[key] for key in (
+                "run_id", "state", "current_attempt_id", "generation")}
+            diagnostic["attempt_state"] = next(a for a in store.attempts(run_id) if a["attempt_id"] == attempt_id)
+            if work is not None:
+                directory = Path(work) / (store.store_id + "-" + attempt_id)
+                receipt = directory / "receipt.json"
+                # Store commit precedes the final receipt fsync. This wait is
+                # only for diagnostics on an already-failed artifact assertion.
+                deadline = time.monotonic() + 5
+                while not receipt.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                diagnostic["receipt_path"] = str(receipt)
+                diagnostic["receipt"] = json.loads(receipt.read_text()) if receipt.exists() else None
+    except Exception as error:
+        diagnostic["read_error"] = f"{type(error).__name__}: {error}"
+    target = Path(os.environ.get("SOLARLAB_IONIC_JV_HTTP_EVIDENCE") or Path(store_root).parent)
+    path = target / f"PublicationFailure-{attempt_id}.json"
+    diagnostic["evidence_path"] = str(path)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(diagnostic, indent=2, allow_nan=False))
+    except Exception as error:
+        diagnostic["write_error"] = f"{type(error).__name__}: {error}"
+    return json.dumps(diagnostic, sort_keys=True, allow_nan=False)
+
+
 def observe_http_case(client, store_root, run_id, attempt_id, *, registered, work=None):
     result_url = f"/results/{run_id}/attempts/{attempt_id}"
     events_url = f"/runs/{run_id}/attempts/{attempt_id}/events"
@@ -91,7 +125,8 @@ def observe_http_case(client, store_root, run_id, attempt_id, *, registered, wor
     assert response.status_code == 200, response.text
     result = response.json()
     payloads, arrays = {}, {}
-    assert len(result["artifacts"]) == 15
+    assert len(result["artifacts"]) == 15, publication_failure(
+        store_root, run_id, attempt_id, result, events, work=work)
     for item in result["artifacts"]:
         content = client.get(item["content_url"])
         record = client.get("/artifacts/" + item["artifact_id"])
@@ -189,6 +224,37 @@ def actual(tmp_path_factory, implementation, historical):
             save("ActualHTTP.json", evidence)
     assert code == 0 and evidence["port_closed"], err_path.read_text()
     return evidence
+
+
+@pytest.mark.parametrize("reason", ["wall_limit", "wall_limit_during_publication", "supervisor_control_failure"])
+def test_missing_publication_preserves_terminal_diagnosis_and_still_refuses(tmp_path, monkeypatch, reason):
+    evidence = tmp_path / "evidence"
+    monkeypatch.setenv("SOLARLAB_IONIC_JV_HTTP_EVIDENCE", str(evidence))
+    with RunStore(tmp_path / "store") as store:
+        run = store.enqueue("missing-publication", opaque_identity={
+            "H_input": "diagnostic-input", "H_physics": "diagnostic-physics", "H_execution": "diagnostic-execution",
+        }, input_metadata={})
+        token = store.claim(run["run_id"], expected_attempt_id=run["current_attempt_id"],
+            expected_generation=run["generation"], owner_id="test")
+        result = {"worker_result": {"reason": reason, "control_reason": "injected"},
+            "resources": {"owned_wall_seconds": 30.1}}
+        store.complete(token, state="failed", result=result)
+        work = tmp_path / "work"
+        directory = work / (store.store_id + "-" + token.attempt_id)
+        directory.mkdir(parents=True)
+        receipt = {"store_state": "failed", "worker_result": result["worker_result"], "terminal_committed": True}
+        (directory / "receipt.json").write_text(json.dumps(receipt))
+        with TestClient(create_app(store.root)) as client:
+            with pytest.raises(AssertionError, match=reason) as failure:
+                observe_http_case(client, store.root, run["run_id"], token.attempt_id, registered=True, work=work)
+        observed = json.loads((evidence / f"PublicationFailure-{token.attempt_id}.json").read_text())
+        assert observed["result"]["state"] == "failed" and observed["result"]["artifacts"] == []
+        assert observed["result"]["result"] == result
+        assert observed["run_state"]["state"] == observed["attempt_state"]["state"] == "failed"
+        assert observed["terminal_reason"] == reason and observed["receipt"] == receipt
+        assert json.dumps(observed, sort_keys=True) in str(failure.value)
+        terminal = [event for event in observed["events"] if event["kind"] == "terminal"]
+        assert len(terminal) == 1 and terminal[0]["payload"]["state"] == "failed"
 
 
 def test_prepared_request_routes_to_existing_worker_without_changing_body(catalog):
