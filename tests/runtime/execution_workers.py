@@ -61,6 +61,8 @@ def supervised_client(request, context):
 
 def cooperative(request, context):
     _ready(context)
+    # Durable readiness survives progress coalescing and precedes the stop loop.
+    _atomic_json(Path("cooperative_ready.json"), {"pid": os.getpid()})
     while True:
         context.check_cancel()
         time.sleep(0.005)

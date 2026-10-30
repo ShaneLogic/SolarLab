@@ -1,5 +1,6 @@
 """Actual spawn/SQLite/file checks for the infrastructure preparation only."""
 
+from contextlib import ExitStack
 from dataclasses import FrozenInstanceError, asdict, replace
 import hashlib
 import json
@@ -103,24 +104,44 @@ def test_actual_spawn_coalesces_ui_progress_and_commits_independent_artifact(tmp
 
 
 def test_shared_bounded_queue_duplicates_and_both_cancellation_paths(tmp_path):
-    with RunStore(tmp_path / "db") as store, supervisor(store, tmp_path / "work", max_pending=1) as pool:
-        first = pool.submit("running", "cooperative", request(), limits())
-        ready(store, first)
-        queued = pool.submit("queued", "normal", request(), limits())
-        assert pool.submit("queued", "normal", request(), limits()) == queued
+    # Allow slow runners to schedule, fsync and reap a cooperative child. The
+    # uncooperative-worker test separately exercises the short escalation timers.
+    caps = limits(wall_seconds=30.0)
+    with RunStore(tmp_path / "db") as store, ExitStack() as cleanup:
+        pool = supervisor(store, tmp_path / "work", max_pending=1, soft_grace_seconds=10.0)
+        cleanup.callback(pool.close, timeout=15.0)
+        first = pool.submit("running", "cooperative", request(), caps)
+        directory = tmp_path / "work" / (store.store_id + "-" + first.attempt_id)
+        ready_path = directory / "cooperative_ready.json"
+        deadline = time.monotonic() + 15.0
+        while not ready_path.exists():
+            assert time.monotonic() < deadline, "cooperative child did not reach its durable ready boundary"
+            time.sleep(0.01)
+        ready_pid = json.loads(ready_path.read_text())["pid"]
+        queued = pool.submit("queued", "normal", request(), caps)
+        assert pool.submit("queued", "normal", request(), caps) == queued
         with pytest.raises(QueueFull):
-            pool.submit("full", "normal", request(), limits())
+            pool.submit("full", "normal", request(), caps)
         with pytest.raises(KeyError):
             store.get_run("full")
         assert pool.cancel(queued)
         assert not pool.wait(queued, 1).data["process_started"]
         assert store.get_run("queued")["state"] == "cancelled"
         assert pool.cancel(first)
-        result = assert_reaped(pool.wait(first, 3))
+        result = assert_reaped(pool.wait(first, 15))
         assert result["store_state"] == "cancelled" and result["signals"] == ["soft_stop"]
+        assert result["pid"] == ready_pid and result["exitcode"] == 0
+        # The child's durable terminal acknowledges check_cancel; a parent-only
+        # cancelled state would also be possible after forcibly killing it.
+        terminal = json.loads((directory / "terminal.json").read_text())
+        assert terminal["token"] == result["token"]
+        assert terminal["state"] == "cancelled" and terminal["result"]["reason"] == "cooperative_stop"
+        assert result["terminal_committed"]
+        assert result["worker_result"] == {"reason": "cancel_requested", "discarded_terminal_state": "cancelled"}
+        assert store.get_run("running")["state"] == "cancelled"
         assert not pool.cancel(first)
-        follow = pool.submit("next", "normal", request(), limits())
-        assert assert_reaped(pool.wait(follow, 3))["store_state"] == "succeeded"
+        follow = pool.submit("next", "normal", request(), caps)
+        assert assert_reaped(pool.wait(follow, 15))["store_state"] == "succeeded"
         assert len(terminal_events(store, "running")) == len(terminal_events(store, "queued")) == 1
 
 
