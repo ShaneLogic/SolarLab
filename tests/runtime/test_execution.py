@@ -244,7 +244,7 @@ def test_cancel_decision_wins_over_success_terminal_file(tmp_path):
         assert len(terminal_events(store, "late")) == 1
 
 
-def test_reopen_reconciles_actual_join_after_db_failure_and_retains_queued_work(tmp_path, monkeypatch):
+def test_control_failure_repairs_terminal_commit_and_requires_explicit_retry(tmp_path, monkeypatch):
     database, work = tmp_path / "db", tmp_path / "work"
     store = RunStore(database)
     pool = supervisor(store, work)
@@ -257,19 +257,26 @@ def test_reopen_reconciles_actual_join_after_db_failure_and_retains_queued_work(
     with pytest.raises(RuntimeError, match="supervisor failed"):
         pool.close()
     first = assert_reaped(pool.wait(current, 1))
-    assert not first["terminal_committed"] and first["store_state"] == "running"
-    assert store.get_run("queued-restart")["state"] == "queued"
+    assert first["terminal_committed"] and first["store_state"] == "failed"
+    assert first["worker_result"]["reason"] == "supervisor_control_failure"
+    assert store.get_run("queued-restart")["state"] == "failed"
+    assert len(terminal_events(store, "interrupted")) == len(terminal_events(store, "queued-restart")) == 1
     store.close()
     with RunStore(database) as reopened, supervisor(reopened, work) as recovered:
-        assert recovered.accounting()["unresolved_owned_slots"] == 1
+        assert recovered.accounting()["unresolved_owned_slots"] == 0
         recovery = recovered.reconcile_interrupted()
-        assert recovery["released_owned_reservations"] == [current.attempt_id]
-        assert recovery["invalidated_owned_attempts"] == [current.attempt_id]
+        assert recovery["released_owned_reservations"] == []
+        assert recovery["invalidated_owned_attempts"] == []
         assert reopened.get_run("interrupted")["state"] == "failed"
+        old = reopened.get_run("queued-restart")
+        reopened.retry("queued-restart", expected_attempt_id=queued.attempt_id, expected_generation=old["generation"])
         resumed = recovered.submit("queued-restart", "normal", request(), limits())
-        assert resumed == queued
+        assert resumed.attempt_id != queued.attempt_id
         assert assert_reaped(recovered.wait(resumed, 3))["store_state"] == "succeeded"
-        assert len(reopened.attempts("interrupted")) == len(reopened.attempts("queued-restart")) == 1
+        assert len(reopened.attempts("interrupted")) == 1
+        assert [attempt["state"] for attempt in reopened.attempts("queued-restart")] == ["failed", "succeeded"]
+        assert len(terminal_events(reopened, "interrupted")) == 1
+        assert len(terminal_events(reopened, "queued-restart")) == 2
     # Positive reconciliation remains deterministic on another reopen.
     with RunStore(database) as reopened, supervisor(reopened, work) as recovered:
         assert recovered.accounting()["unresolved_owned_slots"] == 0

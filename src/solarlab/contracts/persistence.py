@@ -66,6 +66,11 @@ class PersistencePort(PersistenceReader, Protocol[_Token, _Payload]):
         self, token: _Token, *, state: str, result: dict[str, Any], artifacts: Sequence[str] = (),
     ) -> int: ...
 
+    def fail_queued(
+        self, run_id: str, *, expected_attempt_id: str, expected_generation: int,
+        result: dict[str, Any],
+    ) -> int: ...
+
     def cancel(
         self, run_id: str, *, expected_attempt_id: str, expected_generation: int, reason: str,
     ) -> int: ...

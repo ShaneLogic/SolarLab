@@ -203,6 +203,7 @@ jobs:
         run: >-
           uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
           tests/runtime --ignore tests/runtime/test_scan_execution.py
+          --ignore tests/runtime/test_supervisor_control_failure.py
           -m 'not slow and not frontend' --durations=20
           --junitxml=${{ runner.temp }}/backend-${{ matrix.python }}.xml
       # Separate process: pool RSS includes pytest and its process family.
@@ -215,6 +216,14 @@ jobs:
           uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
           tests/runtime/test_scan_execution.py -m 'not slow and not frontend' --durations=20
           --junitxml=${{ runner.temp }}/backend-scan-${{ matrix.python }}.xml
+      - name: Isolated supervisor control and recovery contracts
+        working-directory: .
+        env:
+          PYTEST_CI_ISOLATED_GROUP: supervisor_control_failure
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime/test_supervisor_control_failure.py -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/backend-control-${{ matrix.python }}.xml
 
   binding:
     runs-on: ubuntu-24.04

@@ -525,6 +525,23 @@ sidecars; its owner must keep that historical database closed to future writers.
                 records.append(record)
             return self._finish(attempt, state, result, records)
 
+    def fail_queued(
+        self, run_id: str, *, expected_attempt_id: str, expected_generation: int,
+        result: dict[str, Any],
+    ) -> int:
+        """Fail an unclaimed attempt without inventing a worker or start time.
+
+        The exact queued generation is required. Matching repeated failure is
+        idempotent; claimed attempts require their owner token via complete.
+        """
+        _object(result)
+        with self._guard():
+            self._expected(run_id, expected_attempt_id, expected_generation)
+            attempt = self._attempt(expected_attempt_id)
+            if attempt["owner_id"] is not None or attempt["state"] not in {"queued", "failed"}:
+                raise StateConflict("only an unclaimed attempt can fail without an owner token")
+            return self._finish(attempt, "failed", result, [])
+
     def cancel(
         self, run_id: str, *, expected_attempt_id: str, expected_generation: int, reason: str,
     ) -> int:

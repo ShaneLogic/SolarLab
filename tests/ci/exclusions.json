@@ -57,6 +57,13 @@
       ],
       "reason": "Pool RSS includes the pytest parent process family; importing all numerical/runtime modules first exhausts the unchanged per-job budgets. Run this file once in its own pytest process and ignore it only in bulk discovery."
     },
+    "supervisor_control_failure": {
+      "job": "backend",
+      "files": [
+        "tests/runtime/test_supervisor_control_failure.py"
+      ],
+      "reason": "The real 768 MiB supervisor budget charges the pytest process family. Bulk runtime imports can exhaust it and stop the barrier child before control-failure injection; run these recovery contracts once in a fresh process with unchanged RSS and sampling limits."
+    },
     "run_client": {
       "job": "frontend",
       "files": [

@@ -16,7 +16,8 @@ def test_developer_command_reuses_every_ci_selection_and_isolated_group():
     expected = workflow_selections(workflow)
     actual = test_all.selections(test_all.ROOT)
     assert [asdict(group) for group in actual] == [asdict(group) for group in expected]
-    assert {group.isolated_group for group in actual} >= {"scan_execution", "run_client"}
+    assert {group.isolated_group for group in actual} >= {
+        "scan_execution", "supervisor_control_failure", "run_client"}
     assert all(path == "tests" or path.startswith("tests/") for group in actual for path in group.directories)
 
 

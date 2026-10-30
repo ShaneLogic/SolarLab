@@ -478,6 +478,10 @@ def _process_info(pids: list[int], *, include_descendants: bool = False) -> dict
     fields = "pid=,ppid=,lstart=,rss="
     argv = ["ps", "-axo", fields] if include_descendants else ["ps", "-p", ",".join(str(p) for p in pids), "-o", fields]
     result = subprocess.run(argv, capture_output=True, text=True, timeout=0.5)
+    if include_descendants and result.returncode:
+        # A failed whole-family query is not a complete RSS measurement, even
+        # if ps happened to print a partial set of otherwise valid rows.
+        raise subprocess.CalledProcessError(result.returncode, argv, result.stdout, result.stderr)
     found = {}
     for line in result.stdout.splitlines():
         words = line.split()

@@ -25,6 +25,7 @@ def inventory():
             item("tests/integration/test_package.py"),
             item("tests/runtime/test_pool.py"),
             item("tests/runtime/test_scan_execution.py"),
+            item("tests/runtime/test_supervisor_control_failure.py"),
             item("tests/refactor/test_browser.py", markers=("frontend",)),
             item("tests/runtime/test_run_client_contract.py", markers=("frontend",)),
             item("tests/numerical_contracts/test_slow_case.py", markers=("slow",)),
@@ -44,14 +45,16 @@ def test_actual_push_partition_is_reused_without_losing_process_isolation():
     shards = scheduled.build_shards(inventory())
     rows = {row["id"]: row for row in shards["coverage"]}
     assert rows["coverage-root-backend"]["ignored"] == [
-        "tests/runtime/test_scan_execution.py"
+        "tests/runtime/test_scan_execution.py",
+        "tests/runtime/test_supervisor_control_failure.py",
     ]
     assert rows["coverage-root-backend-scan_execution"]["count"] == 1
+    assert rows["coverage-root-backend-supervisor_control_failure"]["count"] == 1
     assert rows["coverage-root-frontend-run_client"]["count"] == 1
     assert rows["coverage-root-frontend"]["ignored"] == [
         "tests/runtime/test_run_client_contract.py"
     ]
-    assert sum(row["count"] for row in shards["coverage"]) == 9
+    assert sum(row["count"] for row in shards["coverage"]) == 10
     assert sum(row["count"] for row in shards["slow"]) == 5
     assert len(shards["slow"]) == 4  # Two expensive nodes; other file fixtures shared.
     assert Counter(row["suite"] for row in shards["slow"]) == {"root": 1, "legacy": 3}
