@@ -37,6 +37,14 @@ THREADS = (
     "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS", "BLIS_NUM_THREADS",
 )
+# These tests observe real child-process deadlines. Instrument the pytest
+# parent, but leave the measured children in the same mode as push CI.
+PARENT_ONLY_COVERAGE = {
+    "tests/numerical_contracts/test_g2_route_launcher.py":
+        "Synthetic process-group startup/closeout is measured inside a fixed wall budget.",
+    "tests/runtime/test_ionic_jv_job_service.py":
+        "The HTTP worker has a fixed 30 s wall limit; child tracing changes the measured workload.",
+}
 
 
 def read(path):
@@ -64,6 +72,10 @@ def pinned_environment():
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
+    # Each child receives this runner's explicit coverage policy, never an
+    # outer caller's automatic subprocess tracing configuration.
+    env.pop("COVERAGE_PROCESS_CONFIG", None)
+    env.pop("COVERAGE_PROCESS_START", None)
     return env
 
 
@@ -222,8 +234,27 @@ def build_shards(collections):
                 )
                 shard["ignored"] = list(selection.ignored_files)
                 shard["ci_job"] = selection.job
-                if selected:
+                isolated = {
+                    path: [item for item in selected if item["path"] == path]
+                    for path in PARENT_ONLY_COVERAGE
+                    if any(item["path"] == path for item in selected)
+                }
+                if isolated:
+                    shard["nodeids"] = [item["nodeid"] for item in selected
+                                        if item["path"] not in isolated]
+                    shard["count"] = len(shard["nodeids"])
+                    shard["ignored"] += sorted(isolated)
+                if shard["count"]:
                     coverage.append(shard)
+                for path, items in sorted(isolated.items()):
+                    separate = make_shard(
+                        "coverage", suite, [path], selection.markers, items,
+                        shard["id"] + "-" + Path(path).stem.removeprefix("test_"),
+                    )
+                    separate["ci_job"] = selection.job
+                    separate["subprocess_coverage"] = False
+                    separate["coverage_limitation"] = PARENT_ONLY_COVERAGE[path]
+                    coverage.append(separate)
         else:
             groups = defaultdict(list)
             for item in default_items:
@@ -288,14 +319,17 @@ def plan(args):
             print(kind, row["id"], row["count"], *row["paths"])
 
 
-def coverage_config(path):
+def coverage_config(path, *, subprocesses=True):
     """Trace only this checkout and its installed packages, not old producer clones."""
     site = Path(sysconfig.get_paths()["purelib"])
     pairs = {
         "solarlab": [ROOT / "src/solarlab", site / "solarlab"],
         "perovskite_sim": [ROOT / "perovskite-sim/perovskite_sim", site / "perovskite_sim"],
     }
-    text = "[run]\nparallel = true\npatch = subprocess\nsigterm = true\nsource =\n"
+    text = "[run]\nparallel = true\n"
+    if subprocesses:
+        text += "patch = subprocess\n"
+    text += "sigterm = true\nsource =\n"
     text += "".join(f"    {p}\n" for paths in pairs.values() for p in paths)
     text += "\n[paths]\n"
     for name, paths in pairs.items():
@@ -320,6 +354,12 @@ def run_shard(args):
     env = pinned_environment()
     if shard.get("ci_job"):
         env["PYTEST_CI_JOB"] = shard["ci_job"]
+    if args.kind == "coverage" and shard.get("ci_job") == "core":
+        # Live reference loaders require classes from this exact checkout.
+        # Audit the non-editable installation above before binding only the
+        # pytest child to the same bytes, as the core push job already does.
+        env["PYTHONPATH"] = str(ROOT / "src")
+        result["execution_source"] = str(ROOT / "src")
     pytest_args = [
         *shard["paths"], "-m", shard["markers"], "-q", "-ra", "-p",
         "no:cacheprovider", "--durations=0", "--junitxml=" + str(out / "junit.xml"),
@@ -329,7 +369,8 @@ def run_shard(args):
     command = [sys.executable]
     if args.kind == "coverage":
         config = out / "coverage.ini"
-        coverage_config(config)
+        result["subprocess_coverage"] = shard.get("subprocess_coverage", True)
+        coverage_config(config, subprocesses=result["subprocess_coverage"])
         env["COVERAGE_FILE"] = str(out / "coverage.data")
         command += ["-m", "coverage", "run", "--rcfile=" + str(config),
                     "--parallel-mode", "--context=" + shard["id"]]

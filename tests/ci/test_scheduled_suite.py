@@ -63,6 +63,23 @@ def test_new_unowned_root_directory_fails_the_default_suite_plan():
         scheduled.build_shards(data)
 
 
+def test_clock_bound_files_run_once_in_explicit_parent_only_coverage_shards():
+    data = inventory()
+    for path in scheduled.PARENT_ONLY_COVERAGE:
+        data["root"]["items"].append(item(path))
+    rows = {row["id"]: row for row in scheduled.build_shards(data)["coverage"]}
+    for job, file in [("core", "test_g2_route_launcher.py"),
+                      ("backend", "test_ionic_jv_job_service.py")]:
+        isolated = next(row for row in rows.values() if row["paths"] == [next(
+            path for path in scheduled.PARENT_ONLY_COVERAGE if path.endswith(file)
+        )])
+        assert isolated["ci_job"] == job and isolated["subprocess_coverage"] is False
+        assert isolated["coverage_limitation"]
+        assert isolated["paths"][0] in rows["coverage-root-" + job]["ignored"]
+        assert sum(isolated["nodeids"][0] in row["nodeids"] for row in rows.values()) == 1
+    assert rows["coverage-root-backend-scan_execution"].get("subprocess_coverage", True)
+
+
 def test_large_slow_file_is_partitioned_without_dropping_parameterized_nodes():
     data = {"legacy": {"items": [
         item("tests/integration/test_large.py", f"test_case[{i}]", ("slow",))
@@ -100,6 +117,87 @@ def test_coverage_filters_current_source_and_installed_copy_not_foreign_producer
     assert "patch = subprocess" in text
     assert "*" not in text
     assert "fail_under" not in text and "fail-under" not in text
+
+
+def test_parent_only_coverage_keeps_parent_trace_and_leaves_children_uninstrumented(tmp_path):
+    config = tmp_path / "coverage.ini"
+    scheduled.coverage_config(config, subprocesses=False)
+    assert "patch = subprocess" not in config.read_text()
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import coverage, subprocess, sys\n"
+        "assert coverage.Coverage.current() is not None\n"
+        "subprocess.run([sys.executable, '-c', "
+        "'import coverage; assert coverage.Coverage.current() is None'], check=True)\n"
+    )
+    env = scheduled.pinned_environment()
+    env["COVERAGE_FILE"] = str(tmp_path / "coverage.data")
+    result = subprocess.run([sys.executable, "-m", "coverage", "run", "--rcfile=" + str(config), str(probe)],
+                            env=env, cwd=tmp_path, text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(("kind", "job", "source_bound"), [
+    ("coverage", "core", True),
+    ("coverage", "backend", False),
+    ("slow", None, False),
+])
+def test_core_source_binding_follows_installation_audit_only_in_its_child(
+    tmp_path, monkeypatch, kind, job, source_bound,
+):
+    monkeypatch.setattr(scheduled, "ROOT", tmp_path)
+    monkeypatch.setattr(scheduled, "SUITES", {"root": tmp_path})
+    monkeypatch.setattr(scheduled, "commit", lambda: "frozen")
+    monkeypatch.setenv("PYTHONPATH", "/foreign/source")
+    monkeypatch.delenv("PYTEST_CI_JOB", raising=False)
+    (tmp_path / "uv.lock").write_text("locked")
+    shard = {"id": "case", "suite": "root", "paths": ["tests"],
+             "markers": "not slow", "nodeids": ["tests/test_one.py::test_one"],
+             "ignored": [], "ci_job": job}
+    plan = tmp_path / "plan.json"
+    scheduled.write(plan, {"commit": "frozen", "lock_sha256": scheduled.sha256(tmp_path / "uv.lock"),
+                           "selected_shards": {kind: [shard]}})
+    audited = []
+
+    def audit():
+        # Source binding must not make the installation guard audit itself.
+        assert scheduled.os.environ["PYTHONPATH"] == "/foreign/source"
+        audited.append(True)
+        return {"solarlab": {"files_verified": 1}}
+
+    def execute(command, **kwargs):
+        assert audited == [True]
+        assert kwargs["env"].get("PYTHONPATH") == (
+            str(tmp_path / "src") if source_bound else None
+        )
+        assert kwargs["env"].get("PYTEST_CI_JOB") == job
+        assert ("coverage" in command) is (kind == "coverage")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(scheduled, "verify_installation", audit)
+    monkeypatch.setattr(scheduled.subprocess, "run", execute)
+    out = tmp_path / "out"
+    assert scheduled.run_shard(SimpleNamespace(plan=plan, kind=kind, shard="case", out=out)) == 0
+    result = scheduled.read(out / "result.json")
+    assert result["installed_source_verification"] == {"solarlab": {"files_verified": 1}}
+    assert result.get("execution_source") == (str(tmp_path / "src") if source_bound else None)
+
+
+def test_source_bound_coverage_never_runs_after_installation_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(scheduled, "ROOT", tmp_path)
+    monkeypatch.setattr(scheduled, "commit", lambda: "frozen")
+    (tmp_path / "uv.lock").write_text("locked")
+    plan = tmp_path / "plan.json"
+    scheduled.write(plan, {"commit": "frozen", "lock_sha256": scheduled.sha256(tmp_path / "uv.lock"),
+                           "selected_shards": {"coverage": [{"id": "case", "ci_job": "core", "nodeids": []}]}})
+
+    def stale():
+        raise ValueError("installed package differs from checkout")
+
+    monkeypatch.setattr(scheduled, "verify_installation", stale)
+    monkeypatch.setattr(scheduled.subprocess, "run", lambda *a, **k: pytest.fail("stale package executed"))
+    with pytest.raises(ValueError, match="installed package differs"):
+        scheduled.run_shard(SimpleNamespace(plan=plan, kind="coverage", shard="case", out=tmp_path / "out"))
 
 
 @pytest.mark.parametrize(("expected", "body", "code"), [
