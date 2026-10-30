@@ -163,6 +163,54 @@
       "status": "retained_until_RS_exit; not deleted to close product G9P",
       "replacement": "solarlab_research public-contract migration with original certificate verification",
       "exit_tasks": ["P07-01", "P07-05", "P09-03"]
+    },
+    {
+      "id": "legacy-notebooks",
+      "paths": [
+        "perovskite-sim/notebooks/Degradation.ipynb",
+        "perovskite-sim/notebooks/DeviceParameterSweep.ipynb",
+        "perovskite-sim/notebooks/Impedance.ipynb",
+        "perovskite-sim/notebooks/JvHysteresis.ipynb"
+      ],
+      "owner": "WS5",
+      "status": "retained_legacy_product_notebooks",
+      "replacement": "Reviewed notebook/experiment interfaces at the backend migration and the single user-entry switch",
+      "exit_tasks": ["P06-06", "P09-02", "P09-03"]
+    },
+    {
+      "id": "retained-research-benchmark-tools",
+      "paths": [
+        "scripts/benchmarks/coupled_device_prototype.py",
+        "scripts/benchmarks/diagnose_r1_saved_failure.py",
+        "scripts/benchmarks/g2_compare.py",
+        "scripts/benchmarks/hysteresis_qualification.py",
+        "scripts/benchmarks/hysteresis_reference.py",
+        "scripts/benchmarks/interval_observation.py",
+        "scripts/benchmarks/native_observation.py",
+        "scripts/benchmarks/nonlocal_device.py",
+        "scripts/benchmarks/physical_tolerance.py",
+        "scripts/benchmarks/precision_prototype.py"
+      ],
+      "owner": "RS",
+      "status": "retained_research_until_RS_exit",
+      "replacement": "Explicit RS-reviewed public-contract replacement or retained source-bound evidence reader",
+      "exit_tasks": ["P09-03"],
+      "research_retention": {
+        "condition": "No retirement until explicit RS consumer-exit review; preserve original hashes, failures and qualification",
+        "exit_owner": "RS",
+        "label": "research-retained"
+      }
+    },
+    {
+      "id": "legacy-browser-wire",
+      "paths": [
+        "web/src/api.ts",
+        "web/src/job-stream.ts"
+      ],
+      "owner": "WS4",
+      "status": "retained_legacy_wire_clients",
+      "replacement": "Registered product clients and the single reviewed user-entry switch",
+      "exit_tasks": ["P06-06", "P09-02", "P09-03"]
     }
   ],
   "historical_evidence": {

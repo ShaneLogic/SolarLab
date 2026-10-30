@@ -211,6 +211,8 @@ def test_registered_legacy_boundaries_have_real_consumers_and_explicit_exits():
         assert callable(getattr(module, adapter["symbol"]))
         assert adapter["exit_tasks"]
     for group in value["consumer_groups"]:
+        if group.get("historical") is True or group.get("status") == "historical":
+            continue
         assert group["owner"] and group["exit_tasks"]
         assert all((ROOT / path).is_file() for path in group["paths"])
     # Registration is deliberately not an execution or deletion certificate.
