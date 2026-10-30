@@ -142,6 +142,35 @@ product release.
 
 ## Common Commands
 
+### Root developer test command
+
+With the locked editable all-extras development environment active and `web/`
+dependencies installed (`uv sync --frozen --all-extras` and `npm ci --prefix web`),
+run from the SolarLab root:
+
+```bash
+python scripts/test_all.py
+```
+
+This runs every ordinary **root pytest selection** in `.github/workflows/ci.yml`
+on the active Python, with the matching `PYTEST_CI_JOB`. Each selection gets a
+fresh process, including the isolated `scan_execution` and `run_client` groups;
+BLAS uses one thread. The runner reads CI's discovery/isolation policy, keeps all
+failures visible, continues through the remaining groups, prints one final
+per-job/overall summary, and exits nonzero if any selection fails. It writes
+JUnit reports and `summary.json` under `outputs/test_all/` (`--output-dir` overrides
+that path). Existing reasoned skips and xfails (strict marks and conditional runtime xfails) remain visible in the totals.
+The 768 MiB pool limit is unchanged; do not substitute a single root `pytest`
+process, whose accumulated imports count toward the pools' process-family RSS.
+
+This local command uses the existing installation; CI still checks its Python
+matrix, package installation modes, binding probe, lint/types and web test/build
+steps. **legacy suite: not part of the green claim** — the separate
+`perovskite-sim` suite is outside this command. Optional scheduled slow/coverage jobs retain
+their own commands and scope.
+
+### Legacy commands
+
 Run from **inside `perovskite-sim/`**, not from the SolarLab root:
 
 ```bash
