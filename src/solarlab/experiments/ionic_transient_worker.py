@@ -177,7 +177,11 @@ def prepare_ionic_transient_job(prepared: PreparedDevice, protocol: TransientPro
     _validate(prepared, protocol, intervals, ion_domain_layer, ion_domain_endpoints, options, initial_options)
     inputs = _identity_inputs(prepared, implementation)
     body = _body(prepared, protocol, intervals, ion_domain_layer, ion_domain_endpoints, options, initial_options)
-    settings = tuple(sorted((name, "1") for name in _THREADS))
+    from solarlab.equations.implementation import selection_setting
+
+    # The child installs these before any engine import: a queued or spawned
+    # job runs the equation selection of the parent that prepared it.
+    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting()]))
     environment = RuntimeEnvironment(platform.python_implementation(), platform.python_version(), platform.system(), platform.machine(),
         tuple((name, importlib.metadata.version(name)) for name in _PACKAGES), tuple((name, json.dumps(value)) for name, value in settings))
     description = ExecutionDescription(**_roles(prepared, body, implementation), implementation=implementation,
@@ -199,9 +203,13 @@ def ionic_transient_worker_binding() -> WorkerBinding:
 def run_ionic_transient_worker(request: WorkerRequest, worker: WorkerContext) -> WorkerResult:
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
+    from solarlab.equations.implementation import verify_selection
+
+    verify_selection(binding.environment)
     _verify_sources(binding.execution)
     _limits(worker._limits)
     from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
+    from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.ionic_transient import IonicTransientInitial, IonicTransientOptions, solve_ionic_transient
     from solarlab.experiments.ionic_transient_results import INITIAL_ROLE, ionic_initial_document, ionic_transient_payload, result_digest
     from solarlab.experiments.transient import TransientOptions, TransientProtocol
@@ -230,18 +238,22 @@ def run_ionic_transient_worker(request: WorkerRequest, worker: WorkerContext) ->
         raise ValueError("ionic request/configuration/protocol/controls differ from manifest")
     _verify_sources(binding.execution)
     worker.check_cancel()
-    with worker.admit_provenance(request, operator="IonicBackwardEuler1DStep"):
-        capture: dict[str, Any] = {"scope": "cold_ionic_compile_steady_and_time_in_worker", "started_utc": datetime.now(timezone.utc).isoformat(),
+    started_utc = datetime.now(timezone.utc).isoformat()
+    worker.progress({"stage": "ionic_cold_compile"})
+    with threadpool_limits(limits=1):
+        compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
+                                         ion_domain_layer=domain, ion_domain_endpoints=endpoints)
+    # Admission names the bound equation system the job evaluates, so the device is compiled first.
+    with worker.admit_provenance(request, **provenance_binding("IonicBackwardEuler1DStep", compiled,
+                                                         inventory_row_node=initial_options.inventory_row_node)):
+        capture: dict[str, Any] = {"scope": "cold_ionic_compile_steady_and_time_in_worker", "started_utc": started_utc,
             "prepared_sha256": prepared.content_sha256, "request_sha256": request.request.sha256,
             "manifest_sha256": binding.expected_sha256, "build_source_commit": binding.execution.implementation.build_source_commit}
         with threadpool_limits(limits=1):
             pools = threadpool_info()
             if any(pool["num_threads"] != 1 for pool in pools):
                 raise ValueError("child thread limit was not installed")
-            capture.update(runtime=asdict(observe_environment(_PACKAGES, _THREADS)), threadpools=pools)
-            worker.progress({"stage": "ionic_cold_compile"})
-            compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
-                                             ion_domain_layer=domain, ion_domain_endpoints=endpoints)
+            capture.update(runtime=asdict(observe_environment(_PACKAGES, tuple(name for name, _ in binding.environment))), threadpools=pools)
             worker.check_cancel()
             worker.progress({"stage": "ionic_initial_steady", "electrical_nodes": compiled.node_count, "ion_nodes": compiled.ion_node_count})
             initial = solve_ionic_steady_state(compiled, voltage_V=float(protocol.voltage_V[0]),

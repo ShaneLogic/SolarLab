@@ -25,7 +25,11 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.dc_1d import DC1DProblem, State1D
+from solarlab.equations.implementation import (
+    DCProblem, provenance_binding, substage_binding, use_assembled,
+)
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, IonicState1D
 from solarlab.experiments.ionic_transient import IonicTransientInitial, _admit_evidence, _same_state
 from solarlab.experiments.transient_results import _decode, _encode
@@ -189,18 +193,22 @@ def initialize_ionic_steady_state(
         diffusion = getattr(compiled, species + "_ion_diffusivity_faces_m2_s")
         if not np.all(np.isfinite(diffusion)) or np.any(diffusion <= 0):
             raise ValueError("ionic initialization requires connected positive-D species")
-    admitted, old_generation, checks = _admit_evidence(
-        compiled, initial.evidence_json, initial.source_sha256, initial.steady_controls)
-    if not _same_state(admitted, initial.state) or old_generation != initial.generation_scale:
-        raise ValueError("initial state/generation disagrees with its pinned original evidence")
-    component = compiled.electronic_component
-    electronic_u = component.rebase_coordinates(
-        admitted.electronic_state.u, admitted.voltage_V, voltage)
-    electronic_initial = component.state(electronic_u, voltage_V=voltage)
     # In a process job this is a preparation substage of the already admitted
-    # ionic curve; standalone initialization declares its own operator.
+    # ionic curve, bound to its implementation; standalone initialization
+    # declares its own operator. Revalidating the evidence evaluates the
+    # equations, so it runs inside the job that names them.
+    closure = options.steady.inventory_row_node
     with job_provenance({"compiled_identity": compiled.identity, "initial_sha256": initial.source_sha256, "voltage_V": voltage, "generation_scale": generation, "controls": asdict(options), "density_seed_sha256": None if density_seed_artifact is None else density_seed_artifact.source_sha256},
-            operator="Ionic1DProblem.initialization" if current_provenance() is None else None):
+            **(provenance_binding("Ionic1DProblem.initialization", compiled, inventory_row_node=closure)
+               if current_provenance() is None else substage_binding(compiled, inventory_row_node=closure))):
+        admitted, old_generation, checks = _admit_evidence(
+            compiled, initial.evidence_json, initial.source_sha256, initial.steady_controls)
+        if not _same_state(admitted, initial.state) or old_generation != initial.generation_scale:
+            raise ValueError("initial state/generation disagrees with its pinned original evidence")
+        component = compiled.electronic_component
+        electronic_u = component.rebase_coordinates(
+            admitted.electronic_state.u, admitted.voltage_V, voltage)
+        electronic_initial = component.state(electronic_u, voltage_V=voltage)
         pins = admitted_source_pins()
         density_seed = component_result = component_failure = coupled_initial = coupled_result = None
         density_seed_provenance = ({"mode": "fresh",
@@ -246,12 +254,23 @@ def initialize_ionic_steady_state(
                     counts["density_jacobian"] += 1
                     return super().jacobian(u, udot, alpha=alpha)
 
+            class ObservedAssembledDensityProblem(AssembledDC1DProblem):
+                def residual(self, u: ArrayLike, udot: ArrayLike | None = None) -> np.ndarray:
+                    counts["density_residual"] += 1
+                    return super().residual(u, udot)
+
+                def jacobian(self, u: ArrayLike, udot: ArrayLike | None = None, *, alpha: float = 0.0) -> Any:
+                    counts["density_jacobian"] += 1
+                    return super().jacobian(u, udot, alpha=alpha)
+
+            observed: DCProblem = (ObservedAssembledDensityProblem(component, voltage, generation) if use_assembled()
+                                   else ObservedDensityProblem(component, voltage, generation))
             if expired():
                 return finish(False, "wall_budget_exhausted")
             stage_started = time.monotonic()
             counts["density_preparation_calls"] += 1
             try:
-                seeded_u = density_basin_seed(ObservedDensityProblem(component, voltage, generation), electronic_u)
+                seeded_u = density_basin_seed(observed, electronic_u)
                 density_seed = component.state(seeded_u, voltage_V=voltage)
                 if (not np.array_equal(density_seed.potential_V, electronic_initial.potential_V)
                         or any(not np.all(np.isfinite(a)) or np.any(a <= 0)

@@ -1,14 +1,13 @@
-"""The unmodified ionic drivers on the assembled ionic system, word for word.
+"""The ionic drivers on the assembled ionic system, word for word.
 
 The ionic steady drivers (single-domain and per-domain closures with their
 row weights, step limits, diagnostics and numerical checks) and the ionic
 backward-Euler transient drivers (evidence admission, voltage-lift seeds,
-Newton steps, step accounting) run twice: as shipped, and with the assembled
-problems substituted for the classes they construct. The substitution is
-test-only (no source file pinned by saved artifacts changes), and during the
-substituted run every evaluation method of the original classes raises, so
-the second history comes from the Assembler alone. Every result field must
-then have the same binary64 words, except the wall-clock ``wall_s``.
+Newton steps, step accounting) run twice: under the legacy opt-out, and
+under the assembled production selection. During the assembled run every
+evaluation method of the original classes raises, so the second history
+comes from the Assembler alone. Every result field must then have the same
+binary64 words, except the wall-clock ``wall_s``.
 """
 
 from __future__ import annotations
@@ -33,39 +32,21 @@ from examples.research_1d.transient import json_value
 import solarlab.experiments.ionic_transient as ionic_transient
 import solarlab.experiments.multiple_ionic_transient as multiple_transient
 from solarlab.equations.assembly.assembler import Assembler
-from solarlab.equations.assembly.ionic_1d import (
-    AssembledConstrainedIonic1DProblem, AssembledConstrainedMultipleIonic1DProblem, AssembledIonic1DProblem,
-    AssembledMultipleIonic1DProblem,
-)
 from solarlab.equations.dc_1d import DC1DProblem
+from solarlab.equations.implementation import ASSEMBLED, LEGACY, equation_implementation
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem
 from solarlab.experiments.transient_results import _encode
 import solarlab.solvers.nonlinear.ionic_1d as ionic_steady
 import solarlab.solvers.nonlinear.multiple_ionic_1d as multiple_steady
-import solarlab.solvers.time.ionic_backward_euler as ionic_be
-import solarlab.solvers.time.multiple_ionic_backward_euler as multiple_be
 from support.assembly_references import REFERENCE_FACTORIES
+from support import equation_provenance
 
 SINGLE = ("ionic_constrained:confined", "ionic_constrained:dual", "ionic_constrained:shared",
           "ionic_constrained:immobile", "ionic_constrained:immobile_single")
 MULTIPLE = ("multiple_constrained:positive", "multiple_constrained:independent",
             "multiple_constrained:shared", "multiple_constrained:immobile")
 WALL_CLOCK = frozenset({"wall_s"})
-SUBSTITUTIONS = (
-    (ionic_steady, "Ionic1DProblem", AssembledIonic1DProblem),
-    (ionic_steady, "ConstrainedIonic1DProblem", AssembledConstrainedIonic1DProblem),
-    (multiple_steady, "MultipleIonic1DProblem", AssembledMultipleIonic1DProblem),
-    (multiple_steady, "ConstrainedMultipleIonic1DProblem", AssembledConstrainedMultipleIonic1DProblem),
-    (ionic_transient, "Ionic1DProblem", AssembledIonic1DProblem),
-    (ionic_transient, "ConstrainedIonic1DProblem", AssembledConstrainedIonic1DProblem),
-    (multiple_transient, "MultipleIonic1DProblem", AssembledMultipleIonic1DProblem),
-    (multiple_transient, "ConstrainedMultipleIonic1DProblem", AssembledConstrainedMultipleIonic1DProblem),
-    # The steppers' type checks, and the per-domain secant steps they build.
-    (ionic_be, "Ionic1DProblem", AssembledIonic1DProblem),
-    (multiple_be, "Ionic1DProblem", AssembledIonic1DProblem),
-    (multiple_be, "MultipleIonic1DProblem", AssembledMultipleIonic1DProblem),
-)
 ORIGINAL_EVALUATIONS = (
     (DC1DProblem, ("residual", "jacobian", "storage_jacobian", "fluxes", "recombination_rate", "_contact_exchange")),
     (Ionic1DProblem, ("residual", "jacobian", "storage_jacobian", "ion_fluxes")),
@@ -82,7 +63,7 @@ def blas1() -> Iterator[None]:
 
 
 class Substituted:
-    """Test-only: assembled problems in the drivers, original evaluations forbidden."""
+    """The assembled production selection, with original evaluations forbidden."""
 
     def __init__(self) -> None:
         self.evaluations = 0
@@ -92,8 +73,7 @@ class Substituted:
         def forbidden(*args: object, **kwargs: object) -> NoReturn:
             raise AssertionError("an original evaluation ran during the substituted history")
 
-        for module, name, value in SUBSTITUTIONS:
-            self._stack.enter_context(mock.patch.object(module, name, value))
+        self._stack.enter_context(equation_implementation(ASSEMBLED))
         for cls, methods in ORIGINAL_EVALUATIONS:
             for method in methods:
                 self._stack.enter_context(mock.patch.object(cls, method, forbidden))
@@ -151,6 +131,14 @@ def evidence(device: Any, point: Any, directory: Path) -> tuple[Path, str]:
     return path, hashlib.sha256(raw).hexdigest()
 
 
+def bound(result: Any, device: Any, implementation: str) -> Any:
+    """A transient history with its Q6 equation binding asserted and set aside (two-domain results record one)."""
+    if not isinstance(device, CompiledMultipleIonicDevice1D):
+        return result
+    closure = steady_controls(device.domains[0].ion_node_count).inventory_row_node
+    return equation_provenance.checked(result, "MultipleIonicBackwardEuler1DStep", device, implementation, closure)
+
+
 def transient(device: Any, path: Path, digest: str) -> Any:
     if isinstance(device, CompiledMultipleIonicDevice1D):
         controls = steady_controls(device.domains[0].ion_node_count)
@@ -166,7 +154,8 @@ def transient(device: Any, path: Path, digest: str) -> Any:
 def test_steady_and_transient_histories_are_identical(name: str, tmp_path: Path,
                                                      request: pytest.FixtureRequest) -> None:
     device = REFERENCE_FACTORIES[name]().device
-    legacy = steady(device)
+    with equation_implementation(LEGACY):
+        legacy = steady(device)
     with Substituted() as run:
         candidate = steady(device)
     assert run.evaluations > 0
@@ -177,12 +166,13 @@ def test_steady_and_transient_histories_are_identical(name: str, tmp_path: Path,
                               "steady_assembled_evaluations": run.evaluations}
     if legacy.accepted:
         path, digest = evidence(device, legacy, tmp_path)
-        before = transient(device, path, digest)
+        with equation_implementation(LEGACY):
+            before = transient(device, path, digest)
         with Substituted() as run:
             after = transient(device, path, digest)
         assert run.evaluations > 0
         assert len(before.states) == protocol(4).times_s.size
-        assert words(after) == words(before)
+        assert words(bound(after, device, ASSEMBLED)) == words(bound(before, device, LEGACY))
         record.update(transient_states=len(before.states), transient_assembled_evaluations=run.evaluations,
                       transient_iterations=[None if attempt.newton is None else len(attempt.newton.iterations)
                                             for attempt in before.attempts])

@@ -12,12 +12,14 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 import math
 import time
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 
 from solarlab.contracts import frozen_array
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, classical_dc_1d
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, State1D
+from solarlab.equations.implementation import use_assembled
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, Matrix, SolveBudget
@@ -27,6 +29,7 @@ from solarlab.solvers.nonlinear.production import (
 )
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyState1D
 from solarlab.solvers.time import BackwardEuler1DStep, step_accounting
+from solarlab.solvers.time.assembled_storage import AssembledStorage1D
 
 if TYPE_CHECKING:
     from solarlab.solvers.time.bdf import BDFOptions, BDFResult
@@ -215,11 +218,17 @@ additional voltage-rate storage term is added.
         options.newton_budget, (), False,
     )
     deadline = started + options.wall_s
+    # One bound assembled system serves every step (the BE bridge's storage adapter).
+    binding = classical_dc_1d(compiled) if use_assembled() else None
     states, accepted_times, attempts = [initial.state], [float(protocol.times_s[0])], []
     for index in range(1, protocol.times_s.size):
         start, end = float(protocol.times_s[index - 1]), float(protocol.times_s[index])
         voltage, generation = float(protocol.voltage_V[index]), float(protocol.generation_scale[index])
-        step = BackwardEuler1DStep(DC1DProblem(compiled, voltage, generation), states[-1], end - start)
+        # The storage adapter has the step's endpoint surface (as in the BE bridge).
+        endpoint = (DC1DProblem(compiled, voltage, generation) if binding is None
+                    else cast(DC1DProblem, AssembledStorage1D(AssembledDC1DProblem(compiled, voltage, generation,
+                                                                                   binding))))
+        step = BackwardEuler1DStep(endpoint, states[-1], end - start)
         candidate = step.initial_coordinates(voltage_lift=True)
         initial_guess = candidate.copy()
         attempt_start = time.monotonic()

@@ -13,11 +13,15 @@ import json
 import math
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
 from solarlab.contracts import frozen_array
+from solarlab.equations.assembly.ionic_1d import (
+    AssembledConstrainedMultipleIonic1DProblem, AssembledMultipleIonic1DProblem,
+)
+from solarlab.equations.implementation import provenance_binding, use_assembled
 from solarlab.equations.ionic_closure import immobile_profile_binding, ion_mobility_partition
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem, MultipleIonicState1D
 from solarlab.experiments.ionic_transient import IonicTransientOptions, _finite_accounting
@@ -28,6 +32,7 @@ from solarlab.solvers.nonlinear.multiple_ionic_1d import ConstrainedMultipleIoni
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, Matrix, ResidualScaling, StepControl, state_digest
 from solarlab.solvers.nonlinear.production import production_convergence_norm, production_coordinates, production_residual_scaling
+from solarlab.solvers.time.assembled_ionic_backward_euler import AssembledMultipleIonicBackwardEuler1DStep
 from solarlab.solvers.time.multiple_ionic_backward_euler import MultipleIonicBackwardEuler1DStep, multiple_ionic_step_accounting
 
 __all__ = ["MultipleIonicTransientInitial", "MultipleIonicTransientAttempt", "MultipleIonicTransientResult",
@@ -92,7 +97,13 @@ def _admit(
     # This reader explicitly admits the dark initial scope by rechecking G=0;
     # the old saved envelope did not record a standalone generation field.
     generation = 0.0
-    problem = ConstrainedMultipleIonic1DProblem(MultipleIonic1DProblem(device, voltage, generation), controls.inventory_row_node)
+    problem: ConstrainedMultipleIonic1DProblem | AssembledConstrainedMultipleIonic1DProblem
+    if use_assembled():
+        problem = AssembledConstrainedMultipleIonic1DProblem(AssembledMultipleIonic1DProblem(device, voltage, generation),
+                                                             controls.inventory_row_node)
+    else:
+        problem = ConstrainedMultipleIonic1DProblem(MultipleIonic1DProblem(device, voltage, generation),
+                                                    controls.inventory_row_node)
     checks = multiple_ionic_checks(problem, state.u, controls)
     if not all(check.passed for check in checks):
         raise ValueError("saved state fails current full original steady revalidation")
@@ -187,7 +198,9 @@ def solve_multiple_ionic_transient(
     started = time.monotonic()
     if not isinstance(initial, MultipleIonicTransientInitial) or not isinstance(protocol, TransientProtocol) or not isinstance(options, IonicTransientOptions):
         raise ValueError("explicit bound initial evidence, protocol and reviewed ionic controls are required")
-    with job_provenance({"compiled_identity": device.identity, "initial_sha256": initial.source_sha256, "steady_controls": asdict(initial.steady_controls), "protocol": _encode(protocol), "controls": asdict(options)}, operator="MultipleIonicBackwardEuler1DStep"):
+    with job_provenance({"compiled_identity": device.identity, "initial_sha256": initial.source_sha256, "steady_controls": asdict(initial.steady_controls), "protocol": _encode(protocol), "controls": asdict(options)},
+            **provenance_binding("MultipleIonicBackwardEuler1DStep", device,
+                inventory_row_node=initial.steady_controls.inventory_row_node)):
         admitted, generation, admission_checks = _admit(device, initial.evidence_json, initial.source_sha256, initial.steady_controls)
         if not _same_record(_decode(_encode(admitted)), _decode(_encode(initial.state))) or initial.generation_scale != generation:
             raise ValueError("initial object disagrees with pinned evidence")
@@ -197,6 +210,7 @@ def solve_multiple_ionic_transient(
             raise ValueError("requested steps exceed the existing max_steps control")
         settings, norm = _settings(device, options)
         deadline = started + options.electronic.wall_s
+        assembled = use_assembled()
         states, times, attempts = [admitted], [float(protocol.times_s[0])], []
         total = {"residual": 0, "jacobian": 0, "accounting": 0}
         def checkpoint() -> None:
@@ -221,7 +235,12 @@ def solve_multiple_ionic_transient(
                 return value
             try:
                 checkpoint()
-                step = MultipleIonicBackwardEuler1DStep(MultipleIonic1DProblem(device, voltage, light), states[-1], end - start)
+                # The assembled step is constructor-compatible with the original one.
+                step = (cast(MultipleIonicBackwardEuler1DStep, AssembledMultipleIonicBackwardEuler1DStep(
+                            AssembledMultipleIonic1DProblem(device, voltage, light), states[-1], end - start))
+                        if assembled else
+                        MultipleIonicBackwardEuler1DStep(MultipleIonic1DProblem(device, voltage, light), states[-1],
+                                                         end - start))
                 seed = step.initial_coordinates()
                 candidate = seed.copy()
                 newton = solve_newton(CallableProblem(lambda y: evaluate("residual", y),

@@ -12,7 +12,7 @@ import json
 import math
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -23,6 +23,10 @@ from solarlab.experiments.multiple_ionic_transient import MultipleIonicTransient
 from solarlab.experiments.transient_results import _decode, _encode
 from solarlab.solvers.linear import FrequencyOptions, FrequencySolution, solve_frequency_systems
 from solarlab.solvers.nonlinear.problem import GateOutcome, state_digest
+
+if TYPE_CHECKING:
+    from solarlab.equations.assembly.small_signal import AssembledMultipleIonicSmallSignal1D
+    from solarlab.equations.multiple_ionic_small_signal import MultipleIonicSmallSignal1D
 
 __all__ = ["MultipleIonicImpedanceResult", "solve_multiple_ionic_impedance",
            "write_multiple_ionic_impedance_result", "read_multiple_ionic_impedance_result"]
@@ -101,6 +105,8 @@ def solve_multiple_ionic_impedance(device: CompiledMultipleIonicDevice1D, initia
                                   ion_mode: str = "mobile", options: IonicImpedanceOptions | None = None) -> MultipleIonicImpedanceResult:
     """No DC solve or retry; preserve all requested/accepted/first-failed frequencies."""
     started = time.monotonic()
+    from solarlab.equations.assembly.small_signal import assembled_multiple_ionic_small_signal
+    from solarlab.equations.implementation import observation_binding, provenance_binding, use_assembled
     from solarlab.equations.multiple_ionic_small_signal import scope, build_multiple_ionic_small_signal
     scope(device, ion_mode)
     controls = IonicImpedanceOptions() if options is None else options
@@ -110,13 +116,19 @@ def solve_multiple_ionic_impedance(device: CompiledMultipleIonicDevice1D, initia
     voltage = complex(voltage_phasor_V)
     if not np.isfinite(voltage) or voltage == 0.0:
         raise ValueError("voltage normalization must be finite and nonzero")
-    with job_provenance({"compiled_identity": device.identity, "initial_sha256": initial.source_sha256, "steady_controls": asdict(initial.steady_controls), "frequencies_Hz": requested.tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "ion_mode": ion_mode, "controls": asdict(controls)}, operator="MultipleIonicSmallSignal1D"):
+    with job_provenance({"compiled_identity": device.identity, "initial_sha256": initial.source_sha256, "steady_controls": asdict(initial.steady_controls), "frequencies_Hz": requested.tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "ion_mode": ion_mode, "controls": asdict(controls)},
+            **provenance_binding("MultipleIonicSmallSignal1D", device,
+                inventory_row_node=initial.steady_controls.inventory_row_node)):
         pins = admitted_source_pins()
         state, generation, initial_checks = _admit(device, initial.evidence_json, initial.source_sha256, initial.steady_controls)
         if not _same_record(_decode(_encode(state)), _decode(_encode(initial.state))) or initial.generation_scale != generation:
             raise ValueError("initial object disagrees with its exact admitted evidence")
-        operator = build_multiple_ionic_small_signal(device, state, generation_scale=generation)
-        pins.update(operator.source_sha256)
+        operator: MultipleIonicSmallSignal1D | AssembledMultipleIonicSmallSignal1D
+        if use_assembled():
+            operator = assembled_multiple_ionic_small_signal(device, state, generation_scale=generation)
+        else:
+            operator = build_multiple_ionic_small_signal(device, state, generation_scale=generation)
+            pins.update(operator.source_sha256)
         deadline = started + controls.wall_s
         attempts, calls = [], 0
         def checkpoint() -> None:
@@ -136,7 +148,8 @@ def solve_multiple_ionic_impedance(device: CompiledMultipleIonicDevice1D, initia
                 solved = solve_frequency_systems(system.jacobian, system.storage_jacobian, system.rhs, [frequency],
                     options=controls.linear, fixed_coordinates=system.fixed_coordinates, rhs_rate=system.rhs_rate)[0]
                 checkpoint()
-                observed = operator.observe(solved.solution, frequency, voltage_phasor_V=voltage)
+                observed = operator.observe(solved.solution, frequency, voltage_phasor_V=voltage,
+                                            **observation_binding(operator, system))
                 if (not _finite(observed) or observed["original_rows_enforced"] != tuple(range(device.state_size))
                         or not np.array_equal(observed["solve_coordinate_perturbation"], solved.solution)
                         or observed["coordinate_form"] != representation):

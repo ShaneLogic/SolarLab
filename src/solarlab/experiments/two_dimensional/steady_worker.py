@@ -313,7 +313,10 @@ def run_steady_2d_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
                    _roles(prepared, body, binding.execution.implementation).items())):
         raise ValueError("2D request/input/model/controls differ from the bound execution")
     _verify_sources(binding.execution)
-    with worker.admit_provenance(request, operator="DC2DProblem.steady"):
+    from solarlab.equations.implementation import LEGACY, equation_implementation, provenance_binding
+
+    # The 2D equations are not switched yet: the job, its 1D column seed included, runs and states the original ones.
+    with worker.admit_provenance(request, **provenance_binding("DC2DProblem.steady", None, assembled=False)):
         started = time.monotonic()
         attempts = []
         capture: dict[str, Any] = {"started_utc": datetime.now(timezone.utc).isoformat(),
@@ -337,7 +340,8 @@ def run_steady_2d_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
                         raise TimeoutError("whole2D path exhausted before auxiliary seed")
                     worker.progress({"stage": "steady_2d_auxiliary_seed", "target": target})
                     seed_called = True
-                    seed = solve_steady_state(device.column, **target, initial_state=None, options=SteadyOptions())
+                    with equation_implementation(LEGACY):
+                        seed = solve_steady_state(device.column, **target, initial_state=None, options=SteadyOptions())
                     initial = _lateral_initial(device, seed.state.u, voltage_V=protocol.voltage_V)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:

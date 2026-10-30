@@ -259,6 +259,24 @@
       "State1D",
       "quasi_fermi_potential_tangents"
     ],
+    "solarlab.equations.implementation": [
+      "ASSEMBLED",
+      "BINDING_SCHEMA",
+      "ENVIRONMENT",
+      "IMPLEMENTATIONS",
+      "LEGACY",
+      "DCProblem",
+      "ProvenanceBinding",
+      "equation_implementation",
+      "implementation_source_modules",
+      "observation_binding",
+      "provenance_binding",
+      "selected_implementation",
+      "selection_setting",
+      "substage_binding",
+      "use_assembled",
+      "verify_selection"
+    ],
     "solarlab.solvers.nonlinear.steady_1d": [
       "SteadyOptions",
       "SteadyState1D",

@@ -15,7 +15,9 @@ import numpy as np
 from scipy.sparse import diags
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, State1D
+from solarlab.equations.implementation import DCProblem, use_assembled
 from solarlab.physics.contacts import ContactEndpoint, assess_contact_thermodynamics
 from solarlab.solvers.nonlinear.newton import (
     NewtonResult, NewtonSettings, factorize, gate_from, solve_newton,
@@ -140,7 +142,7 @@ class SteadyStateError(RuntimeError):
         )
 
 
-def _continuity_current_bound(problem: DC1DProblem, u: np.ndarray) -> float:
+def _continuity_current_bound(problem: DCProblem, u: np.ndarray) -> float:
     count = problem.device.node_count
     residual = problem.residual(u)
     total = 0.0
@@ -154,7 +156,7 @@ def _continuity_current_bound(problem: DC1DProblem, u: np.ndarray) -> float:
 
 
 def physical_gates(
-    problem: DC1DProblem, options: SteadyOptions, *, equilibrium: bool
+    problem: DCProblem, options: SteadyOptions, *, equilibrium: bool
 ) -> tuple[PhysicalGate, ...]:
     device = problem.device
     count = device.node_count
@@ -222,11 +224,18 @@ def physical_gates(
     return tuple(gates)
 
 
+def _problem(device: CompiledDevice1D, voltage_V: float, generation_scale: float) -> DCProblem:
+    """The selected production problem at one operating point (equations.implementation)."""
+    if use_assembled():
+        return AssembledDC1DProblem(device, voltage_V, generation_scale)
+    return DC1DProblem(device, voltage_V, generation_scale)
+
+
 def _solve_point(
     device: CompiledDevice1D, u: np.ndarray, voltage_V: float,
     generation_scale: float, options: SteadyOptions, *, equilibrium: bool = False,
-) -> tuple[DC1DProblem, NewtonResult]:
-    problem = DC1DProblem(device, voltage_V, generation_scale)
+) -> tuple[DCProblem, NewtonResult]:
+    problem = _problem(device, voltage_V, generation_scale)
     settings = NewtonSettings(
         production_residual_scaling(
             device, poisson_tolerance=options.poisson_tolerance,
@@ -250,7 +259,7 @@ def _solve_point(
 
 
 def _point_result(
-    problem: DC1DProblem, result: NewtonResult, preparation: tuple[NewtonResult, ...] = (),
+    problem: DCProblem, result: NewtonResult, preparation: tuple[NewtonResult, ...] = (),
     density_basin_stages: tuple[tuple[float, float], ...] = (),
 ) -> SteadyState1D:
     return SteadyState1D(
@@ -260,7 +269,7 @@ def _point_result(
     )
 
 
-def density_basin_seed(problem: DC1DProblem, u: np.ndarray) -> np.ndarray:
+def density_basin_seed(problem: DCProblem, u: np.ndarray) -> np.ndarray:
     """One physical density linearization at frozen phi, used only as a seed.
 
     The full production Jacobian supplies SG, contact, and recombination
@@ -339,7 +348,7 @@ def solve_steady_state(
 ) -> SteadyState1D:
     """Solve a real operating point; an accepted state may seed the next point."""
     controls = SteadyOptions() if options is None else options
-    target = DC1DProblem(device, voltage_V, generation_scale)
+    target = _problem(device, voltage_V, generation_scale)
     if initial_state is not None:
         if not isinstance(initial_state, State1D) or initial_state.device_sha256 != device.sha256:
             raise ValueError("initial_state must belong to the same compiled device")
@@ -374,7 +383,7 @@ def solve_steady_state(
         # orders of magnitude. Prepare in physical density coordinates from
         # the previous accepted point, then certify with coupled Newton.
         if index < len(light_steps) and light > 0.0:
-            u = density_basin_seed(DC1DProblem(device, voltage, light), u)
+            u = density_basin_seed(_problem(device, voltage, light), u)
             density_stages.append((voltage, light))
         problem, result = _solve_point(device, u, voltage, light, controls)
         u = result.state

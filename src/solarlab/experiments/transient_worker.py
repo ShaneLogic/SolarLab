@@ -146,7 +146,11 @@ def prepare_transient_job(prepared: PreparedDevice, protocol: TransientProtocol,
     _validate_controls(protocol, intervals_per_layer, options, initial_options)
     inputs = _identity_inputs(prepared, implementation)
     body = _body(prepared, protocol, intervals_per_layer, options, initial_options)
-    settings = tuple(sorted((name, "1") for name in _THREADS))
+    from solarlab.equations.implementation import selection_setting
+
+    # The child installs these before any engine import: a queued or spawned
+    # job runs the equation selection of the parent that prepared it.
+    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting()]))
     environment = RuntimeEnvironment(platform.python_implementation(), platform.python_version(),
         platform.system(), platform.machine(), tuple((n, importlib.metadata.version(n)) for n in _PACKAGES),
         tuple((name, json.dumps(value)) for name, value in settings))
@@ -172,6 +176,9 @@ def run_transient_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
     """Cold compile/DC followed by one time history, within the existing owner."""
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
+    from solarlab.equations.implementation import verify_selection
+
+    verify_selection(binding.environment)
     _verify_sources(binding.execution)
     body = json.loads(request.request.content)
     prepared = binding.inputs.prepared
@@ -179,6 +186,7 @@ def run_transient_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
         raise ValueError("request differs from the explicit transient invocation")
     validate_steady_jv_scope(prepared)
     from solarlab.device.compile_1d import compile_device_1d
+    from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.transient import TransientOptions, TransientProtocol
     from solarlab.experiments.transient_results import _payload, run_transient_for_publication
     from solarlab.solvers.nonlinear.problem import SolveBudget
@@ -201,15 +209,17 @@ def run_transient_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
         raise ValueError("whole-job counter budgets are not observed by this transient adapter")
     _verify_sources(binding.execution)
     worker.check_cancel()
-    with worker.admit_provenance(request, operator="BackwardEuler1DStep"):
-        started = datetime.now(timezone.utc).isoformat()
+    started = datetime.now(timezone.utc).isoformat()
+    worker.progress({"stage": "transient_cold_compile", "requested_steps": protocol.times_s.size - 1})
+    with threadpool_limits(limits=1):
+        compiled = compile_device_1d(prepared, intervals_per_layer=intervals)
+    # Admission names the bound equation system the job evaluates, so the device is compiled first.
+    with worker.admit_provenance(request, **provenance_binding("BackwardEuler1DStep", compiled)):
         with threadpool_limits(limits=1):
             pools = threadpool_info()
             if any(pool["num_threads"] != 1 for pool in pools):
                 raise ValueError("child numerical thread limit was not installed")
-            runtime = asdict(observe_environment(_PACKAGES, _THREADS))
-            worker.progress({"stage": "transient_cold_compile", "requested_steps": protocol.times_s.size - 1})
-            compiled = compile_device_1d(prepared, intervals_per_layer=intervals)
+            runtime = asdict(observe_environment(_PACKAGES, tuple(name for name, _ in binding.environment)))
             worker.check_cancel()
             worker.progress({"stage": "transient_initial_dc", "nodes": compiled.node_count})
             initial = solve_steady_state(compiled, voltage_V=float(protocol.voltage_V[0]),

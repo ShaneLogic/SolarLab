@@ -26,6 +26,7 @@ from numpy.typing import ArrayLike
 
 from solarlab.device.grain_2d import GRAIN_SRH_2D_V1, GrainRecombination2D
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem, State2D
+from solarlab.equations.implementation import provenance_binding
 from solarlab.experiments.jv.steady import SteadyJVMetrics, steady_jv_metrics
 from solarlab.experiments.transient_results import _decode, _encode
 from solarlab.experiments.worker import _atomic_json
@@ -505,7 +506,9 @@ def _run_steady_jv_2d(device: CompiledDevice2D, initial: SteadyJV2DInitial, volt
     requested = _voltages(voltage_V, controls.max_points)
     if incident_power_W_m2 is not None and (not math.isfinite(incident_power_W_m2) or incident_power_W_m2 <= 0.0):
         raise ValueError("efficiency requires explicitly supplied finite positive irradiance W/m2")
-    with job_provenance({"compiled_identity": device.identity, "geometry_identity": device.geometry.sha256, "initial_sha256": initial.source_sha256, "voltage_V": requested.tolist(), "controls": asdict(controls), "incident_power_W_m2": incident_power_W_m2}, operator="DC2DProblem.steady_jv"):
+    with job_provenance({"compiled_identity": device.identity, "geometry_identity": device.geometry.sha256, "initial_sha256": initial.source_sha256, "voltage_V": requested.tolist(), "controls": asdict(controls), "incident_power_W_m2": incident_power_W_m2},
+            # The 2D equations are not switched yet: the job states the original ones.
+            **provenance_binding("DC2DProblem.steady_jv", device, assembled=False)):
         pins = admitted_source_pins()
         if wall_prefix_admission is None:
             previous, generation, admission = _admit(device, initial.evidence_json, initial.source_sha256, controls.steady)

@@ -17,7 +17,7 @@ import json
 import math
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -26,6 +26,10 @@ from solarlab.equations.ionic_1d import CompiledIonicDevice1D
 from solarlab.experiments.ionic_transient import IonicTransientInitial, _admit_evidence, _same_state
 from solarlab.solvers.linear.frequency_domain import FrequencyOptions, FrequencySolution, solve_frequency_systems
 from solarlab.solvers.nonlinear.problem import GateOutcome, state_digest
+
+if TYPE_CHECKING:
+    from solarlab.equations.assembly.small_signal import AssembledIonicSmallSignal1D
+    from solarlab.equations.ionic_small_signal import IonicSmallSignal1D
 
 __all__ = [
     "IonicImpedanceOptions", "IonicImpedanceAttempt", "IonicImpedanceResult",
@@ -207,16 +211,22 @@ def solve_ionic_impedance(
         raise ValueError("ionic AC currently supports only fixed-reservoir carrier contacts")
 
     # Kept lazy so checksum-checked result reading never loads the AC operator.
+    from solarlab.equations.assembly.small_signal import assembled_ionic_small_signal
+    from solarlab.equations.implementation import observation_binding, provenance_binding, use_assembled
     from solarlab.equations.ionic_small_signal import build_ionic_small_signal
 
-    with job_provenance({"compiled_identity": compiled.identity, "initial_sha256": initial.source_sha256, "initial_state_sha256": state_digest(initial.state.u), "steady_controls": asdict(initial.steady_controls), "frequencies_Hz": requested.tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "ion_mode": ion_mode, "controls": asdict(controls)}, operator="IonicSmallSignal1D"):
+    with job_provenance({"compiled_identity": compiled.identity, "initial_sha256": initial.source_sha256, "initial_state_sha256": state_digest(initial.state.u), "steady_controls": asdict(initial.steady_controls), "frequencies_Hz": requested.tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "ion_mode": ion_mode, "controls": asdict(controls)},
+            **provenance_binding("IonicSmallSignal1D", compiled,
+                inventory_row_node=initial.steady_controls.inventory_row_node)):
         pins = admitted_source_pins()
         admitted, generation, initial_checks = _admit_evidence(
             compiled, initial.evidence_json, initial.source_sha256, initial.steady_controls,
         )
         if not _same_state(initial.state, admitted) or initial.generation_scale != generation:
             raise ValueError("ionic AC initial object disagrees with its pinned steady evidence")
-        operator = build_ionic_small_signal(compiled, admitted, generation_scale=generation)
+        operator: IonicSmallSignal1D | AssembledIonicSmallSignal1D = (
+            assembled_ionic_small_signal(compiled, admitted, generation_scale=generation) if use_assembled()
+            else build_ionic_small_signal(compiled, admitted, generation_scale=generation))
         deadline = started + controls.wall_s
         attempts = []
         calls = 0
@@ -249,7 +259,8 @@ def solve_ionic_impedance(
                     rhs_rate=system.rhs_rate,
                 )[0]
                 checkpoint()
-                observed = operator.observe(solved.solution, frequency, voltage_phasor_V=voltage, ion_mode=ion_mode)
+                observed = operator.observe(solved.solution, frequency, voltage_phasor_V=voltage, ion_mode=ion_mode,
+                                            **observation_binding(operator, system))
                 if not isinstance(observed, dict) or not _finite(observed):
                     raise ValueError("ionic AC accounting is malformed or nonfinite")
                 observed_rows = observed["original_rows_enforced"]

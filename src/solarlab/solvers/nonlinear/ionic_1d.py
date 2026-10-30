@@ -20,7 +20,9 @@ import numpy as np
 from scipy.sparse import csc_matrix
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
+from solarlab.equations.assembly.ionic_1d import AssembledConstrainedIonic1DProblem, AssembledIonic1DProblem
 from solarlab.equations.dc_1d import CapabilityError
+from solarlab.equations.implementation import use_assembled
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
 from solarlab.equations.ionic_closure import (
     declared_immobile_profiles, immobile_profile_binding, ion_mobility_partition,
@@ -202,7 +204,8 @@ def ionic_steady_control_record(device: CompiledIonicDevice1D, options: IonicSte
     return recorded
 
 
-def diagnostics(problem: ConstrainedIonic1DProblem, y: np.ndarray) -> dict[str, object]:
+def diagnostics(problem: ConstrainedIonic1DProblem | AssembledConstrainedIonic1DProblem,
+                y: np.ndarray) -> dict[str, object]:
     """Keep historical positive aliases; dual evidence also names each species."""
     original, device = problem.original, problem.original.device
     count = device.node_count
@@ -366,8 +369,13 @@ def solve_ionic_steady_state(
     started = time.monotonic()
     if not isinstance(device, CompiledIonicDevice1D) or not isinstance(options, IonicSteadyOptions):
         raise ValueError("an actual full ionic device and explicit ionic steady controls are required")
-    original = Ionic1DProblem(device, voltage_V=voltage_V, generation_scale=generation_scale)
-    problem = ConstrainedIonic1DProblem(original, options.inventory_row_node)
+    problem: ConstrainedIonic1DProblem | AssembledConstrainedIonic1DProblem
+    if use_assembled():
+        problem = AssembledConstrainedIonic1DProblem(
+            AssembledIonic1DProblem(device, voltage_V, generation_scale), options.inventory_row_node)
+    else:
+        original = Ionic1DProblem(device, voltage_V=voltage_V, generation_scale=generation_scale)
+        problem = ConstrainedIonic1DProblem(original, options.inventory_row_node)
     initial = device.initial_state(voltage_V=voltage_V) if initial_state is None else initial_state
     if (not isinstance(initial, IonicState1D) or initial.device_sha256 != device.identity
             or initial.voltage_V != voltage_V

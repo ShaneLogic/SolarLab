@@ -13,7 +13,11 @@ from scipy.sparse import csc_matrix
 
 from solarlab.contracts import frozen_array
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
+from solarlab.equations.assembly.ionic_1d import (
+    AssembledConstrainedMultipleIonic1DProblem, AssembledMultipleIonic1DProblem,
+)
 from solarlab.equations.dc_1d import DC1DProblem
+from solarlab.equations.implementation import use_assembled
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.equations.ionic_closure import immobile_profile_binding, ion_mobility_partition
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem, MultipleIonicState1D
@@ -139,7 +143,7 @@ class MultipleIonicSteadyResult:
             raise ValueError("acceptance requires the joint Newton result and every original check")
 
 
-def multiple_ionic_diagnostics(problem: ConstrainedMultipleIonic1DProblem, y: np.ndarray) -> dict[str, Any]:
+def multiple_ionic_diagnostics(problem: ConstrainedMultipleIonic1DProblem | AssembledConstrainedMultipleIonic1DProblem, y: np.ndarray) -> dict[str, Any]:
     original, device = problem.original, problem.original.device
     count = device.node_count
     state = device.state(y, voltage_V=original.voltage_V)
@@ -217,7 +221,7 @@ def multiple_ionic_diagnostics(problem: ConstrainedMultipleIonic1DProblem, y: np
 
 
 def multiple_ionic_checks(
-    problem: ConstrainedMultipleIonic1DProblem, y: np.ndarray, options: IonicSteadyOptions,
+    problem: ConstrainedMultipleIonic1DProblem | AssembledConstrainedMultipleIonic1DProblem, y: np.ndarray, options: IonicSteadyOptions,
 ) -> tuple[GateOutcome, ...]:
     """Recheck original electronic gates and each complete closed-domain balance."""
     original, device = problem.original, problem.original.device
@@ -259,7 +263,7 @@ def multiple_ionic_checks(
     return tuple(outcomes)
 
 
-def _settings(problem: ConstrainedMultipleIonic1DProblem, options: IonicSteadyOptions) -> NewtonSettings:
+def _settings(problem: ConstrainedMultipleIonic1DProblem | AssembledConstrainedMultipleIonic1DProblem, options: IonicSteadyOptions) -> NewtonSettings:
     device = problem.original.device
     weights = np.r_[production_residual_scaling(device.electronic_component,
         poisson_tolerance=options.electronic.poisson_tolerance,
@@ -291,8 +295,13 @@ def solve_multiple_ionic_steady_state(
     started = time.monotonic()
     if not isinstance(device, CompiledMultipleIonicDevice1D) or not isinstance(options, IonicSteadyOptions):
         raise TypeError("full multiple-domain device and existing explicit ionic controls are required")
-    original = MultipleIonic1DProblem(device, voltage_V, generation_scale)
-    problem = ConstrainedMultipleIonic1DProblem(original, options.inventory_row_node)
+    problem: ConstrainedMultipleIonic1DProblem | AssembledConstrainedMultipleIonic1DProblem
+    if use_assembled():
+        problem = AssembledConstrainedMultipleIonic1DProblem(
+            AssembledMultipleIonic1DProblem(device, voltage_V, generation_scale), options.inventory_row_node)
+    else:
+        original = MultipleIonic1DProblem(device, voltage_V, generation_scale)
+        problem = ConstrainedMultipleIonic1DProblem(original, options.inventory_row_node)
     initial = device.initial_state(voltage_V=voltage_V) if initial_state is None else initial_state
     device.validate_state(initial)
     if initial.voltage_V != voltage_V:

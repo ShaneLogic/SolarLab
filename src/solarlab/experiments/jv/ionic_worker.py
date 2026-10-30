@@ -205,7 +205,11 @@ def prepare_ionic_jv_job(prepared: PreparedDevice, protocol: IonicJVProtocol, *,
     body = {"schema": REQUEST_SCHEMA.id, "engine": "solarlab", "prepared_sha256": prepared.content_sha256,
         "protocol": asdict(protocol), "grid": {"intervals_per_layer": list(intervals), "ion_domain_layer": ion_domain_layer,
         "ion_domain_endpoints": list(ion_domain_endpoints)}, "controls": asdict(options), "initial": _initial_body(initial)}
-    settings = tuple(sorted((name, "1") for name in _THREADS))
+    from solarlab.equations.implementation import selection_setting
+
+    # The child installs these before any engine import: a queued or spawned
+    # job runs the equation selection of the parent that prepared it.
+    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting()]))
     environment = RuntimeEnvironment(platform.python_implementation(), platform.python_version(), platform.system(), platform.machine(),
         tuple((name, importlib.metadata.version(name)) for name in _PACKAGES), tuple((name, json.dumps(value)) for name, value in settings))
     description = ExecutionDescription(**_roles(prepared, body, implementation), implementation=implementation,
@@ -227,9 +231,13 @@ def ionic_jv_worker_binding() -> WorkerBinding:
 def run_ionic_jv_worker(request: WorkerRequest, worker: WorkerContext) -> WorkerResult:
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
+    from solarlab.equations.implementation import verify_selection
+
+    verify_selection(binding.environment)
     _verify_sources(binding.execution)
     _limits(worker._limits)
     from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
+    from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.ionic_initialization import IonicInitializationOptions, initialize_ionic_steady_state
     from solarlab.experiments.ionic_transient import IonicTransientInitial, _admit_evidence
     from solarlab.experiments.jv.ionic_results import initial_document, ionic_jv_payload, result_digest
@@ -259,9 +267,16 @@ def run_ionic_jv_worker(request: WorkerRequest, worker: WorkerContext) -> Worker
             or any(getattr(binding.execution, k) != v for k, v in _roles(prepared, body, binding.execution.implementation).items())):
         raise ValueError("ionic J-V request/initial/configuration differs from manifest")
     _verify_sources(binding.execution)
-    with worker.admit_provenance(request, operator="Ionic1DProblem.steady_jv"):
+    started_utc = datetime.now(timezone.utc).isoformat()
+    worker.progress({"stage": "ionic_jv_compile"})
+    with threadpool_limits(limits=1):
+        compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
+                                         ion_domain_layer=domain, ion_domain_endpoints=endpoints)
+    # Admission names the bound equation system the job evaluates, so the device is compiled first.
+    with worker.admit_provenance(request, **provenance_binding("Ionic1DProblem.steady_jv", compiled,
+                                                         inventory_row_node=steady.inventory_row_node)):
         capture: dict[str, Any] = {"scope": "ionic_compile_initialization_and_steady_jv_in_worker",
-            "started_utc": datetime.now(timezone.utc).isoformat(), "prepared_sha256": prepared.content_sha256,
+            "started_utc": started_utc, "prepared_sha256": prepared.content_sha256,
             "request_sha256": request.request.sha256, "manifest_sha256": binding.expected_sha256,
             "build_source_commit": binding.execution.implementation.build_source_commit}
         dark = illumination = curve = admitted = None
@@ -269,10 +284,7 @@ def run_ionic_jv_worker(request: WorkerRequest, worker: WorkerContext) -> Worker
             pools = threadpool_info()
             if any(pool["num_threads"] != 1 for pool in pools):
                 raise ValueError("child thread limit was not installed")
-            capture.update(runtime=asdict(observe_environment(_PACKAGES, _THREADS)), threadpools=pools)
-            worker.progress({"stage": "ionic_jv_compile"})
-            compiled = compile_ionic_device_1d(prepared, intervals_per_layer=intervals,
-                                             ion_domain_layer=domain, ion_domain_endpoints=endpoints)
+            capture.update(runtime=asdict(observe_environment(_PACKAGES, tuple(name for name, _ in binding.environment))), threadpools=pools)
             worker.check_cancel()
             if initial.policy == "saved_accepted":
                 assert initial.artifact_bytes is not None and initial.artifact_sha256 is not None

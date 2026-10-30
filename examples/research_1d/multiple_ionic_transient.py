@@ -16,6 +16,7 @@ from examples.research_1d.ionic_transient import controls, protocol
 from examples.research_1d.multiple_ionic_domains import DOMAINS, INTERVALS, prepare_multiple_ionic_device
 from examples.research_1d.multiple_ionic_steady import prepare_mixed_immobile_device
 from solarlab.device.compile_multiple_ionic_1d import compile_multiple_ionic_device_1d
+from solarlab.equations.implementation import implementation_source_modules
 from solarlab.experiments.multiple_ionic_transient import (
     MultipleIonicTransientResult, load_multiple_ionic_steady_initial, read_multiple_ionic_transient,
     solve_multiple_ionic_transient, write_multiple_ionic_transient,
@@ -54,7 +55,9 @@ def run_case(initial_path: Path, initial_sha256: str, output: Path, *, mixed_imm
             }
     names = ("solarlab.solvers.time.multiple_ionic_backward_euler", "solarlab.experiments.multiple_ionic_transient",
              "solarlab.solvers.time.ionic_backward_euler", "solarlab.solvers.time.backward_euler",
-             "solarlab.equations.multiple_ionic_1d", "solarlab.solvers.nonlinear.multiple_ionic_1d")
+             "solarlab.equations.multiple_ionic_1d", "solarlab.solvers.nonlinear.multiple_ionic_1d",
+             "solarlab.solvers.time.assembled_storage", "solarlab.solvers.time.assembled_ionic_backward_euler",
+             ) + implementation_source_modules("ionic")
     sources = {}
     for name in names:
         filename = importlib.import_module(name).__file__

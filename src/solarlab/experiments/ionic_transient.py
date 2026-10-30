@@ -15,11 +15,13 @@ import json
 import math
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 
 from solarlab.contracts import frozen_array
+from solarlab.equations.assembly.ionic_1d import AssembledConstrainedIonic1DProblem, AssembledIonic1DProblem
+from solarlab.equations.implementation import use_assembled
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
 from solarlab.equations.ionic_closure import immobile_profile_binding
 from solarlab.experiments.transient import TransientOptions, TransientProtocol
@@ -34,6 +36,7 @@ from solarlab.solvers.nonlinear.production import (
     POISSON_CONTACT_BALANCE_V1, production_convergence_norm,
     production_coordinates, production_residual_scaling,
 )
+from solarlab.solvers.time.assembled_ionic_backward_euler import AssembledIonicBackwardEuler1DStep
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep, step_accounting
 
 if TYPE_CHECKING:
@@ -121,7 +124,12 @@ def _admit_evidence(
     except (KeyError, TypeError, AttributeError) as exc:
         raise ValueError("incomplete or malformed initial steady artifact") from exc
     # Initial admission only. The time loop below never constructs this problem.
-    steady = ConstrainedIonic1DProblem(Ionic1DProblem(compiled, voltage, generation), controls.inventory_row_node)
+    steady: ConstrainedIonic1DProblem | AssembledConstrainedIonic1DProblem
+    if use_assembled():
+        steady = AssembledConstrainedIonic1DProblem(AssembledIonic1DProblem(compiled, voltage, generation),
+                                                    controls.inventory_row_node)
+    else:
+        steady = ConstrainedIonic1DProblem(Ionic1DProblem(compiled, voltage, generation), controls.inventory_row_node)
     checks = ionic_checks(ionic_diagnostics(steady, state.u), controls)
     saved_limits = {check.name: check.limit for check in saved_checks}
     if len(saved_limits) != len(saved_checks) or saved_limits != {check.name: check.limit for check in checks}:
@@ -310,6 +318,7 @@ time steps, and all dynamic ion continuity rows remain in residual and J.
         raise ValueError("initial voltage/generation must equal the first protocol sample")
     settings, convergence_norm = _newton_settings(compiled, options)
     deadline = started + electronic.wall_s
+    assembled = use_assembled()
     states, accepted_times, attempts = [admitted], [float(protocol.times_s[0])], []
     total_counts = {"residual": 0, "jacobian": 0, "accounting": 0}
 
@@ -338,7 +347,11 @@ time steps, and all dynamic ion continuity rows remain in residual and J.
 
         try:
             checkpoint()
-            step = IonicBackwardEuler1DStep(Ionic1DProblem(compiled, voltage, generation), states[-1], end - start)
+            # The assembled step is constructor-compatible with the original one.
+            step = (cast(IonicBackwardEuler1DStep, AssembledIonicBackwardEuler1DStep(
+                        AssembledIonic1DProblem(compiled, voltage, generation), states[-1], end - start))
+                    if assembled else
+                    IonicBackwardEuler1DStep(Ionic1DProblem(compiled, voltage, generation), states[-1], end - start))
             candidate = step.initial_coordinates(electronic.predictor, voltage_lift=True)
             seed = candidate.copy()
             checkpoint()

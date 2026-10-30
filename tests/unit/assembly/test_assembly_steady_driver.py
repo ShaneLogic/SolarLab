@@ -1,11 +1,10 @@
 """Analyses run only against the assembled system, with unchanged results.
 
-The existing steady driver (Poisson-Boltzmann preparation, light and bias
-continuation, density-basin seeds, physical gates), unmodified, is run twice:
-as shipped, and with the assembled problem substituted for the DC1DProblem
-class it constructs. The substitution is test-only, so no source file pinned
-by saved artifacts changes. Every accepted state, every Newton iteration
-record, every gate value and every current must be identical. The frequency operator J + i omega M and a sparse
+The steady driver (Poisson-Boltzmann preparation, light and bias
+continuation, density-basin seeds, physical gates) is run twice: under the
+legacy opt-out, and under the assembled production selection. Every
+accepted state, every Newton iteration record, every gate value and every
+current must be identical. The frequency operator J + i omega M and a sparse
 solve against it are checked the same way.
 """
 
@@ -20,10 +19,10 @@ from threadpoolctl import threadpool_limits
 
 from examples.research_1d.steady import load_device
 from solarlab.device.compile_1d import compile_device_1d
-from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, assembled_problem_factory
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.assembly.quasi_fermi import quasi_fermi_potential_tangents
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, quasi_fermi_potential_tangents as reference_quasi_fermi_potential_tangents
-from solarlab.solvers.nonlinear import steady_1d
+from solarlab.equations.implementation import ASSEMBLED, LEGACY, equation_implementation
 from solarlab.solvers.nonlinear.newton import NewtonResult
 from solarlab.solvers.nonlinear.steady_1d import SteadyState1D, solve_equilibrium, solve_steady_state
 
@@ -40,10 +39,9 @@ def device() -> CompiledDevice1D:
 
 
 @pytest.fixture
-def assembled(monkeypatch: pytest.MonkeyPatch, device: CompiledDevice1D) -> Iterator[None]:
-    """Substitute the assembled problem for the class the driver constructs."""
-    with monkeypatch.context() as patch:
-        patch.setattr(steady_1d, "DC1DProblem", assembled_problem_factory(device))
+def assembled() -> Iterator[None]:
+    """The assembled production selection."""
+    with equation_implementation(ASSEMBLED):
         yield
 
 
@@ -84,7 +82,8 @@ CASES = [(0.0, 0.0), (0.0, 1.0), (0.6, 1.0), (0.9, 0.0), (-0.2, 1.0)]
 
 @pytest.fixture(scope="module")
 def references(device: CompiledDevice1D) -> dict[tuple[float, float], SteadyState1D]:
-    return {case: solve_steady_state(device, voltage_V=case[0], generation_scale=case[1]) for case in CASES}
+    with equation_implementation(LEGACY):
+        return {case: solve_steady_state(device, voltage_V=case[0], generation_scale=case[1]) for case in CASES}
 
 
 @pytest.mark.parametrize("voltage, light", CASES)
@@ -112,9 +111,10 @@ def test_substitution_really_routes_through_the_assembler(device: CompiledDevice
 
 @pytest.fixture(scope="module")
 def reference_sweep(device: CompiledDevice1D) -> list[SteadyState1D]:
-    points = [solve_steady_state(device)]
-    for voltage in np.round(np.arange(0.05, 1.01, 0.05), 2):
-        points.append(solve_steady_state(device, initial_state=points[-1].state, voltage_V=float(voltage)))
+    with equation_implementation(LEGACY):
+        points = [solve_steady_state(device)]
+        for voltage in np.round(np.arange(0.05, 1.01, 0.05), 2):
+            points.append(solve_steady_state(device, initial_state=points[-1].state, voltage_V=float(voltage)))
     return points
 
 
@@ -129,9 +129,9 @@ def test_continuation_from_an_accepted_state_is_identical(device: CompiledDevice
 
 
 def test_equilibrium_entry_point_is_identical(device: CompiledDevice1D) -> None:
-    reference = solve_equilibrium(device)
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(steady_1d, "DC1DProblem", assembled_problem_factory(device))
+    with equation_implementation(LEGACY):
+        reference = solve_equilibrium(device)
+    with equation_implementation(ASSEMBLED):
         candidate = solve_equilibrium(device)
     assert_same_point(reference, candidate)
 

@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from solarlab.equations.implementation import provenance_binding
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, IonicState1D
 from solarlab.experiments.ionic_transient import IonicTransientInitial, _admit_evidence, _same_state
 from solarlab.experiments.jv.steady import SteadyJVMetrics, steady_jv_metrics
@@ -189,7 +190,8 @@ def run_ionic_steady_jv(
     polarity = float(compiled.electronic_component.voltage_polarity)
     if polarity not in {-1.0, 1.0}:
         raise ValueError("terminal voltage polarity must be explicitly signed")
-    with job_provenance({"compiled_identity": compiled.identity, "voltage_V": requested.tolist(), "generation_scale": generation, "controls": asdict(options), "initial_policy": initial_policy, "initial_sha256": None if initial is None else initial.source_sha256, "incident_power_W_m2": incident_power_W_m2}, operator="Ionic1DProblem.steady_jv"):
+    with job_provenance({"compiled_identity": compiled.identity, "voltage_V": requested.tolist(), "generation_scale": generation, "controls": asdict(options), "initial_policy": initial_policy, "initial_sha256": None if initial is None else initial.source_sha256, "incident_power_W_m2": incident_power_W_m2},
+            **provenance_binding("Ionic1DProblem.steady_jv", compiled, inventory_row_node=options.steady.inventory_row_node)):
         pins = admitted_source_pins()
         previous = None
         initial_provenance: dict[str, Any] = {"policy": initial_policy}

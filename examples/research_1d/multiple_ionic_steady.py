@@ -14,6 +14,7 @@ from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_multiple_ionic_1d import compile_multiple_ionic_device_1d
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
+from solarlab.equations.implementation import implementation_source_modules
 from solarlab.experiments.transient_results import _encode
 from solarlab.solvers.nonlinear.multiple_ionic_1d import MultipleIonicSteadyResult, solve_multiple_ionic_steady_state
 
@@ -36,7 +37,7 @@ def run_case(output: Path, *, mixed_immobile: bool = False) -> MultipleIonicStea
     names = ("solarlab.device.compile_multiple_ionic_1d", "solarlab.equations.multiple_ionic_1d",
         "solarlab.equations.ionic_1d", "solarlab.solvers.nonlinear.multiple_ionic_1d",
         "solarlab.solvers.nonlinear.newton", "solarlab.solvers.nonlinear.production",
-        "solarlab.solvers.nonlinear.steady_1d")
+        "solarlab.solvers.nonlinear.steady_1d") + implementation_source_modules("ionic")
     sources = {}
     for name in names:
         filename = importlib.import_module(name).__file__

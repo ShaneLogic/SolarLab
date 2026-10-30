@@ -187,8 +187,14 @@ def test_capture_is_limited_to_this_call_and_unknown_history_stays_unknown(saved
         job = description["job_provenance"]["record"]
         assert description["build_source_commit"] == job["git_commit"]
         assert job["environment_lock_sha256"] and description["sources"]
-        # Complete inventory membership does not enable an ionic physical law.
-        assert job["assembler"]["operator"] == "BackwardEuler1DStep"
+        # Complete inventory membership does not enable an ionic physical law: the job
+        # admitted the DC BE binding of the selection it ran under.
+        from examples.research_1d.steady import load_device
+        from solarlab.device.compile_1d import compile_device_1d
+        from solarlab.equations.implementation import selected_implementation
+        from support.equation_provenance import expected
+        compiled = compile_device_1d(load_device(), intervals_per_layer=12)
+        assert job["assembler"] == expected("BackwardEuler1DStep", compiled, selected_implementation())
         unknown = read_transient_result(store, "uncaptured")["provenance"]
         assert unknown["status"] == "not_recorded" and "shape_checked_only" in unknown["node_grid"]
         with pytest.raises(ValueError, match="committed terminal"):

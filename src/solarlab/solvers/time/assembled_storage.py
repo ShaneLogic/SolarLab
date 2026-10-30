@@ -9,17 +9,21 @@ constructed and no storage secant is replaced by coordinate differences.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
-from solarlab.equations.assembly.ionic_1d import AssembledIonic1DProblem, AssembledMultipleIonic1DProblem
 from solarlab.equations.dc_1d import CompiledDevice1D
-from solarlab.equations.ionic_1d import CompiledIonicDevice1D
-from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D
 from solarlab.physics.contacts import CarrierExchangeChannel
 from solarlab.physics.recombination.bulk import RecombinationRate
 from solarlab.physics.transport.electrochemical_flux import CarrierFaceFluxes
 from solarlab.solvers.nonlinear.problem import Matrix, Vector
 from solarlab.solvers.time.bdf import StorageProblem
+
+if TYPE_CHECKING:
+    # Ion-free transients bind no ionic source; the ionic adapter imports these when used.
+    from solarlab.equations.assembly.ionic_1d import AssembledIonic1DProblem, AssembledMultipleIonic1DProblem
+    from solarlab.equations.ionic_1d import CompiledIonicDevice1D
+    from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,8 @@ class AssembledIonicStorage1D:
     problem: AssembledIonic1DProblem | AssembledMultipleIonic1DProblem
 
     def __post_init__(self) -> None:
+        from solarlab.equations.assembly.ionic_1d import AssembledIonic1DProblem, AssembledMultipleIonic1DProblem
+
         if not isinstance(self.problem, (AssembledIonic1DProblem, AssembledMultipleIonic1DProblem)):
             raise TypeError("ionic assembled storage requires original-row ionic assembly")
 

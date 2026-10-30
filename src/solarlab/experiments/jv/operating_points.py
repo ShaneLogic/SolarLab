@@ -13,7 +13,9 @@ import math
 
 import numpy as np
 
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem
+from solarlab.equations.implementation import DCProblem, use_assembled
 from solarlab.experiments.jv.steady import SteadyJVResult
 from solarlab.solvers.nonlinear.newton import NewtonResult
 from solarlab.solvers.nonlinear.problem import state_digest
@@ -157,7 +159,8 @@ def _verify_point(
     for name in ("potential_V", "electron_density_m3", "hole_density_m3"):
         if not np.array_equal(getattr(state, name), getattr(point.state, name)):
             raise VocBracketError("saved fields do not match the actual state coordinates")
-    problem = DC1DProblem(compiled, point.voltage_V, generation_scale)
+    problem: DCProblem = (AssembledDC1DProblem(compiled, point.voltage_V, generation_scale) if use_assembled()
+                          else DC1DProblem(compiled, point.voltage_V, generation_scale))
     current = problem.current_density(point.state.u)
     contact = problem.contact_current_density(point.state.u)
     if not np.array_equal(current, point.current_density_A_m2) or not np.array_equal(

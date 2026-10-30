@@ -261,13 +261,14 @@ def run_transient_for_publication(
     DC state was produced. No HEAD, build commit, release or certificate is
     inferred. Sources are contemporaneous file hashes, not a source archive.
     """
+    from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.transient import solve_transient
     nodes = np.frombuffer(compiled.nodes_m.tobytes(), dtype=compiled.nodes_m.dtype).reshape(compiled.nodes_m.shape)
     arrays = {"requested_times_s": protocol.times_s, "requested_voltage_V": protocol.voltage_V,
               "requested_generation_scale": protocol.generation_scale, "nodes_m": nodes}
     inputs = _inputs(compiled.identity, arrays, _decode(_encode(initial)), asdict(initial_options))
     with job_provenance({"inputs": inputs, "numerics": _encode(asdict(options))},
-                        operator="BackwardEuler1DStep") as admitted:
+                        **provenance_binding("BackwardEuler1DStep", compiled)) as admitted:
         description = {"scope": "solve_transient_call", "inputs": inputs, "numerics": _encode(asdict(options)),
             "sources": admitted_source_pins(path_keys=True), "job_provenance": admitted.envelope(),
             "runtime": admitted.export()["runtime_observed"],

@@ -24,9 +24,11 @@ from numpy.typing import ArrayLike
 from scipy.sparse import csc_matrix, eye
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.dc_1d import (
     CompiledDevice1D, DC1DProblem, quasi_fermi_potential_tangents,
 )
+from solarlab.equations.implementation import DCProblem, provenance_binding, use_assembled
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
 from solarlab.solvers.linear import FrequencyOptions, FrequencySolution, solve_frequency_systems
@@ -116,7 +118,7 @@ class SmallSignalResult1D:
 
 
 def _particle_perturbations(
-    problem: DC1DProblem, u: np.ndarray, x: np.ndarray, voltage: complex,
+    problem: DCProblem, u: np.ndarray, x: np.ndarray, voltage: complex,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Use the same stable quasi-Fermi tangent blocks as the production Fy."""
     device = problem.device
@@ -158,7 +160,7 @@ def _particle_perturbations(
 
 
 def _moving_voltage_partial(
-    problem: DC1DProblem, u: np.ndarray, coordinate_direction: np.ndarray | None = None,
+    problem: DCProblem, u: np.ndarray, coordinate_direction: np.ndarray | None = None,
 ) -> np.ndarray:
     """Actual F_V+J*direction, combining density/contact terms before cancellation."""
     device = problem.device
@@ -198,7 +200,7 @@ def _moving_voltage_partial(
     return partial
 
 
-def _lifted_storage_drive(problem: DC1DProblem, u: np.ndarray, lift: np.ndarray) -> np.ndarray:
+def _lifted_storage_drive(problem: DCProblem, u: np.ndarray, lift: np.ndarray) -> np.ndarray:
     """K*(c-lift), evaluated as the merged physical density drive."""
     device = problem.device
     count = device.node_count
@@ -221,7 +223,7 @@ def _lifted_storage_drive(problem: DC1DProblem, u: np.ndarray, lift: np.ndarray)
     return result
 
 
-def _uniform_carrier_partial(problem: DC1DProblem, u: np.ndarray, shifted_carrier: str) -> np.ndarray:
+def _uniform_carrier_partial(problem: DCProblem, u: np.ndarray, shifted_carrier: str) -> np.ndarray:
     """Production derivative for a uniform dimensionless carrier offset.
 
     A unit electron offset gives dn=n; a unit hole offset gives dp=-p.
@@ -255,7 +257,7 @@ def _uniform_carrier_partial(problem: DC1DProblem, u: np.ndarray, shifted_carrie
 
 
 def _reference_anchor_system(
-    problem: DC1DProblem, u: np.ndarray, J: csc_matrix, K: csc_matrix,
+    problem: DCProblem, u: np.ndarray, J: csc_matrix, K: csc_matrix,
 ) -> tuple[csc_matrix, csc_matrix, csc_matrix, tuple[int, int]]:
     """Sparse carrier-offset basis with analytically grouped uniform columns.
 
@@ -322,7 +324,6 @@ def solve_impedance(
         raise ValueError("numerical current-closure controls must be finite and positive")
     controls = SteadyOptions() if steady_options is None else steady_options
     linear = FrequencyOptions() if linear_options is None else linear_options
-    _verify_point(compiled, operating_point, operating_point.generation_scale, controls)
     limits = {
         "poisson_balance": controls.poisson_tolerance,
         "continuity_current_bound": controls.continuity_tolerance_A_m2,
@@ -341,9 +342,14 @@ def solve_impedance(
         for carrier in ("n", "p"):
             if all(compiled.channel(carrier, side).kind == "blocking" for side in ("left", "right")):
                 raise ValueError(f"zero-frequency {carrier} blocked at both ends is not validated by this small-signal slice")
-    with job_provenance({"compiled_identity": compiled.identity, "state_sha256": state_digest(operating_point.state.u), "voltage_V": operating_point.voltage_V, "generation_scale": operating_point.generation_scale, "frequencies_Hz": np.asarray(frequencies_Hz).tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "steady": asdict(controls), "linear": asdict(linear), "current_absolute_tolerance_A_m2_V": current_absolute_tolerance_A_m2_V, "current_relative_tolerance": current_relative_tolerance}, operator="DC1DProblem.small_signal"):
+    with job_provenance({"compiled_identity": compiled.identity, "state_sha256": state_digest(operating_point.state.u), "voltage_V": operating_point.voltage_V, "generation_scale": operating_point.generation_scale, "frequencies_Hz": np.asarray(frequencies_Hz).tolist(), "voltage_phasor_V": [voltage.real, voltage.imag], "steady": asdict(controls), "linear": asdict(linear), "current_absolute_tolerance_A_m2_V": current_absolute_tolerance_A_m2_V, "current_relative_tolerance": current_relative_tolerance},
+            **provenance_binding("DC1DProblem.small_signal", compiled)):
+        # Revalidation evaluates the equations, so it runs inside the job that names them.
+        _verify_point(compiled, operating_point, operating_point.generation_scale, controls)
         source_pins = admitted_source_pins()
-        problem = DC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale)
+        problem: DCProblem = (
+            AssembledDC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale)
+            if use_assembled() else DC1DProblem(compiled, operating_point.voltage_V, operating_point.generation_scale))
         u = operating_point.state.u
         J, K = problem.jacobian(u), problem.storage_jacobian(u)
         scaled = production_residual_scaling(

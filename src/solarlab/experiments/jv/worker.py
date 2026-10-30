@@ -209,7 +209,11 @@ def prepare_steady_jv_job(prepared: PreparedDevice, protocol: SteadyJVProtocol, 
         raise ValueError("explicit steady protocol and actual implementation sources required")
     validate_steady_jv_scope(prepared)
     inputs = steady_jv_identity_inputs(prepared, implementation)
-    settings = tuple(sorted((name, "1") for name in _THREADS))
+    from solarlab.equations.implementation import selection_setting
+
+    # The child installs these before any engine import: a queued or spawned
+    # job runs the equation selection of the parent that prepared it.
+    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting()]))
     environment = RuntimeEnvironment(platform.python_implementation(), platform.python_version(),
         platform.system(), platform.machine(), tuple((name, importlib.metadata.version(name)) for name in _PACKAGES),
         tuple((name, json.dumps(value)) for name, value in settings))
@@ -236,6 +240,9 @@ def run_steady_jv_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
     """Run the explicitly bound cold job using the supplied existing context."""
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
+    from solarlab.equations.implementation import verify_selection
+
+    verify_selection(binding.environment)
     body = json.loads(request.request.content)
     protocol = SteadyJVProtocol(**body["protocol"])
     prepared = binding.inputs.prepared
@@ -250,18 +257,21 @@ def run_steady_jv_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
         raise ValueError("steady input/model/protocol roles differ from the manifest")
     worker.check_cancel()
     from solarlab.device.compile_1d import compile_device_1d
+    from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.jv.steady import run_steady_jv, steady_jv_payload
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
     from threadpoolctl import threadpool_info, threadpool_limits
 
     _verify_sources(binding.execution)  # Check newly imported numerical modules before native work.
-    with worker.admit_provenance(request, operator="DC1DProblem.steady_jv"):
+    worker.progress({"stage": "steady_jv_native", "voltage_points": len(protocol.voltage_V)})
+    with threadpool_limits(limits=1):
+        compiled = compile_device_1d(prepared, intervals_per_layer=protocol.intervals_per_layer)
+    # Admission names the bound equation system the job evaluates, so the device is compiled first.
+    with worker.admit_provenance(request, **provenance_binding("DC1DProblem.steady_jv", compiled)):
         with threadpool_limits(limits=1):
             pools = threadpool_info()
             if any(pool["num_threads"] != 1 for pool in pools):
                 raise ValueError("child numerical thread limit was not installed")
-            worker.progress({"stage": "steady_jv_native", "voltage_points": len(protocol.voltage_V)})
-            compiled = compile_device_1d(prepared, intervals_per_layer=protocol.intervals_per_layer)
             result = run_steady_jv(compiled, protocol.voltage_V, generation_scale=protocol.generation_scale,
                 incident_power_W_m2=protocol.incident_power_W_m2, options=SteadyOptions())
         worker.check_cancel()

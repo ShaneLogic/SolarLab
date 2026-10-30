@@ -3,6 +3,9 @@
 The original diagnostics receive only an assembled endpoint, with the public
 observation names mapped by AssembledStorage1D. Missing phase-2a observations
 are strict expected failures before any nonlinear solve, never legacy fallbacks.
+Each original reference runs under the legacy opt-out and is shown to evaluate
+the original classes only; each candidate runs explicitly assembled. A one-ulp
+change to the assembled residuals alone makes the comparison fail.
 """
 
 from dataclasses import asdict, replace
@@ -20,7 +23,7 @@ from examples.research_1d.transient import controls, json_value
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, classical_dc_1d
 from solarlab.equations.dc_1d import DC1DProblem
-from solarlab.experiments import transient
+from solarlab.equations.implementation import ASSEMBLED, LEGACY, equation_implementation
 from solarlab.experiments.ionic_transient import _finite_accounting
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.experiments.transient import TransientProtocol, solve_transient
@@ -34,6 +37,7 @@ from solarlab.solvers.time.assembled_storage import AssembledStorage1D
 from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, step_accounting
 from solarlab.solvers.time.bdf import Assessment, BDFEvent, BDFOptions, BDFStep, HistoryPoint, solve_bdf
 from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, _events, bdf_accounting
+from support.equation_provenance import counted, one_ulp_residual
 
 
 INITIALS = {}
@@ -222,26 +226,24 @@ def test_original_accounting_uses_assembled_public_observations(device):
     assert_accounting(step_accounting(original, u), step_accounting(assembled, u))
 
 
-@pytest.mark.parametrize("generation", [0.0, 1.0])
-def test_fixed_step_assembled_BE_and_BDF1_are_bitwise(device, generation, monkeypatch):
-    require_observations()
-    point = initial(device, generation)
-    requested, drive = protocol(generation)
-    settings = BDFOptions(1e-7, max_step_s=1e-7, max_order=1, adaptive=False)
-    original_BE = solve_transient(device, point, requested, options=controls(), initial_options=SteadyOptions())
-    record("BE_" + str(generation), original_BE)
-    original_BDF = solve_transient(device, point, requested, options=controls(), initial_options=SteadyOptions(),
-                                  method="bdf", bdf_options=settings)
-    record("BDF1_legacy_" + str(generation), original_BDF)
-    assembled_BDF = run_assembled(device, point, requested, drive, settings)
-    record("BDF1_assembled_" + str(generation), assembled_BDF)
-    assert_bdf(original_BDF, assembled_BDF, device, drive)
-    binding = classical_dc_1d(device)
-    with monkeypatch.context() as patch:
-        patch.setattr(transient, "DC1DProblem", lambda bound, voltage, light:
-            AssembledStorage1D(AssembledDC1DProblem(bound, voltage, light, binding)))
-        assembled_BE = solve_transient(device, point, requested, options=controls(), initial_options=SteadyOptions())
-    record("BE_assembled_" + str(generation), assembled_BE)
+def legacy_reference(run):
+    """An original reference: the legacy opt-out, evaluating the original classes and no Assembler."""
+    # Under the assembled default it would compare the assembled path with itself.
+    with equation_implementation(LEGACY), counted() as observed:
+        result = run()
+    assert observed.original > 0 and observed.assembled == 0
+    return result
+
+
+def assembled_candidate(run):
+    """A candidate run explicitly assembled, evaluating no original class."""
+    with equation_implementation(ASSEMBLED), counted() as observed:
+        result = run()
+    assert observed.assembled > 0 and observed.original == 0
+    return result
+
+
+def assert_be(original_BE, assembled_BE, assembled_BDF):
     assert original_BE.completed and assembled_BE.completed
     assert_bits(original_BE.accepted_times_s, assembled_BE.accepted_times_s)
     for a, b, u in zip(original_BE.states, assembled_BE.states, assembled_BDF.accepted_coordinates):
@@ -257,15 +259,61 @@ def test_fixed_step_assembled_BE_and_BDF1_are_bitwise(device, generation, monkey
 
 
 @pytest.mark.parametrize("generation", [0.0, 1.0])
+def test_fixed_step_assembled_BE_and_BDF1_are_bitwise(device, generation):
+    require_observations()
+    point = initial(device, generation)
+    requested, drive = protocol(generation)
+    settings = BDFOptions(1e-7, max_step_s=1e-7, max_order=1, adaptive=False)
+    original_BE = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
+                                                           initial_options=SteadyOptions()))
+    record("BE_" + str(generation), original_BE)
+    original_BDF = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
+        initial_options=SteadyOptions(), method="bdf", bdf_options=settings))
+    record("BDF1_legacy_" + str(generation), original_BDF)
+    assembled_BDF = assembled_candidate(lambda: run_assembled(device, point, requested, drive, settings))
+    record("BDF1_assembled_" + str(generation), assembled_BDF)
+    assert_bdf(original_BDF, assembled_BDF, device, drive)
+    # The production BE driver on its assembled storage system (one binding per history).
+    assembled_BE = assembled_candidate(lambda: solve_transient(device, point, requested, options=controls(),
+                                                               initial_options=SteadyOptions()))
+    record("BE_assembled_" + str(generation), assembled_BE)
+    assert_be(original_BE, assembled_BE, assembled_BDF)
+
+
+def test_a_one_ulp_assembled_residual_change_fails_both_comparisons(device):
+    """The comparisons are not degenerate: the mutation reaches the assembled side only."""
+    require_observations()
+    point = initial(device, 1.0)
+    requested, drive = protocol(1.0)
+    settings = BDFOptions(1e-7, max_step_s=1e-7, max_order=1, adaptive=False)
+    original_BE = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
+                                                           initial_options=SteadyOptions()))
+    original_BDF = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
+        initial_options=SteadyOptions(), method="bdf", bdf_options=settings))
+    with one_ulp_residual() as perturbed:
+        assembled_BDF = assembled_candidate(lambda: run_assembled(device, point, requested, drive, settings))
+        assembled_BE = assembled_candidate(lambda: solve_transient(device, point, requested, options=controls(),
+                                                                   initial_options=SteadyOptions()))
+    assert perturbed
+    with pytest.raises(AssertionError):
+        assert_bdf(original_BDF, assembled_BDF, device, drive)
+    with pytest.raises(AssertionError):
+        assert_be(original_BE, assembled_BE, assembled_BDF)
+    # Unperturbed, the same references and candidates agree.
+    assert_bdf(original_BDF, assembled_candidate(lambda: run_assembled(device, point, requested, drive, settings)),
+               device, drive)
+
+
+@pytest.mark.parametrize("generation", [0.0, 1.0])
 def test_adaptive_assembled_history_orders_rejections_and_dense_samples_are_bitwise(device, generation):
     require_observations()
     point = initial(device, generation)
     requested, drive = protocol(generation, np.array([0.0, .13, .31, 1.0]) * 4e-7)
     settings = BDFOptions(1e-7, max_step_s=2e-7, relative_tolerance=1e-5)
-    original = solve_transient(device, point, requested, options=controls(), initial_options=SteadyOptions(),
-                               method="bdf", bdf_options=settings, bdf_drive=drive)
+    original = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
+        initial_options=SteadyOptions(), method="bdf", bdf_options=settings, bdf_drive=drive))
     record("adaptive_legacy_" + str(generation), original)
-    assembled = run_assembled(device, point, requested, drive, settings)
+    assembled = assembled_candidate(lambda: run_assembled(device, point, requested, drive, settings))
     record("adaptive_assembled_" + str(generation), assembled)
     assert_bdf(original, assembled, device, drive)
     record("parity_" + str(generation), {
