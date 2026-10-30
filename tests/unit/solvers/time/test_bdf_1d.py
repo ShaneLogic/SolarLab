@@ -1,5 +1,6 @@
 """Real electronic/positive-ion protocol adapters, BE parity and BDF tangents."""
 
+from dataclasses import replace
 import hashlib
 import json
 
@@ -23,7 +24,10 @@ from solarlab.solvers.nonlinear.ionic_1d import solve_ionic_steady_state
 from solarlab.solvers.time.backward_euler import BackwardEuler1DStep
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep
 from solarlab.solvers.time.bdf import BDFOptions, BDFStep, HistoryPoint
-from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, IonicStorage1D, _displacement, bdf_accounting
+from solarlab.solvers.time.bdf_1d import (
+    BDFDrive, ElectronicStorage1D, IonicStorage1D, _adapter_step_budget, _displacement,
+    bdf_accounting, solve_electronic_bdf, solve_ionic_bdf,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -162,3 +166,58 @@ def test_selection_and_unsupported_population_refusals_are_explicit(electronic):
         solve_transient(device, initial, protocol, options=controls(), initial_options=admission, method="bdf")
     with pytest.raises(ValueError, match="unknown"):
         solve_transient(device, initial, protocol, options=controls(), initial_options=admission, method="bogus")
+
+
+@pytest.mark.parametrize("invalid", [True, 0, -1, 4.0])
+def test_explicit_adaptive_work_budget_is_validated_and_keeps_sample_admission(invalid):
+    protocol = TransientProtocol([0, 1], [0, 0], [0, 0])
+    bdf_options = BDFOptions(.25, max_steps=8)
+    with pytest.raises(ValueError, match="explicit positive integer"):
+        _adapter_step_budget(protocol, 1, bdf_options, invalid)
+    assert _adapter_step_budget(protocol, 1, bdf_options, None) == 1
+    assert _adapter_step_budget(protocol, 1, bdf_options, 4) == 4
+    assert _adapter_step_budget(protocol, 1, bdf_options, 100) == 8
+    extra_samples = TransientProtocol([0, .5, 1], [0, 0, 0], [0, 0, 0])
+    with pytest.raises(ValueError, match="sample admission"):
+        _adapter_step_budget(extra_samples, 1, bdf_options, 4)
+
+
+def test_electronic_explicit_work_budget_changes_work_admission_only(electronic):
+    device, initial, admission = electronic
+    protocol = TransientProtocol([0, 2e-8], [0, 0], [1, 1])
+    physical = replace(controls(), max_steps=1)
+    bdf_options = BDFOptions(5e-9, adaptive=False, max_order=1, max_steps=8)
+    default = solve_electronic_bdf(device, initial, protocol, options=physical,
+        initial_options=admission, bdf_options=bdf_options)
+    explicit = solve_electronic_bdf(device, initial, protocol, options=physical,
+        initial_options=admission, bdf_options=bdf_options, adaptive_max_steps=4)
+    assert not default.completed and default.termination == "step_budget_exhausted"
+    assert len(default.accepted_steps) == default.controls["max_steps"] == 1
+    assert "adapter_adaptive_max_steps" not in default.controls
+    assert explicit.completed and len(explicit.accepted_steps) == explicit.controls["max_steps"] == 4
+    assert explicit.controls["physical_controls"] == default.controls["physical_controls"]
+    assert explicit.controls["adapter_sample_interval_limit"] == 1
+    assert explicit.controls["adapter_adaptive_max_steps"] == 4
+    for result in (default, explicit):
+        for u in result.accepted_coordinates:
+            assert u.tobytes() == initial.state.u.tobytes()
+
+
+def test_single_ion_explicit_work_budget_keeps_the_default_and_physical_checks(ionic):
+    device, initial = ionic
+    protocol = TransientProtocol([0, .2], [.002, .002], [0, 0])
+    original = ionic_controls()
+    physical = replace(original, electronic=replace(original.electronic, max_steps=1))
+    bdf_options = BDFOptions(.05, adaptive=False, max_order=1, max_steps=8)
+    default = solve_ionic_bdf(device, initial, protocol, options=physical, bdf_options=bdf_options)
+    explicit = solve_ionic_bdf(device, initial, protocol, options=physical,
+        bdf_options=bdf_options, adaptive_max_steps=4)
+    assert not default.completed and default.termination == "step_budget_exhausted"
+    assert len(default.accepted_steps) == default.controls["max_steps"] == 1
+    assert "adapter_adaptive_max_steps" not in default.controls
+    assert explicit.completed and len(explicit.accepted_steps) == explicit.controls["max_steps"] == 4
+    assert explicit.controls["physical_controls"] == default.controls["physical_controls"]
+    assert explicit.controls["adapter_sample_interval_limit"] == 1
+    assert explicit.controls["adapter_adaptive_max_steps"] == 4
+    assert default.accepted_coordinates[1].tobytes() == explicit.accepted_coordinates[1].tobytes()
+    assert all(all(check.passed for check in a.assessment.checks) for a in explicit.accepted_steps)

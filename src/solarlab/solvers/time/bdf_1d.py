@@ -402,12 +402,32 @@ def _events(drive: BDFDrive, factory: Any, controls: TransientOptions) -> tuple[
     return tuple(sorted(events, key=lambda event: event.time_s))
 
 
+def _adapter_step_budget(
+    protocol: TransientProtocol, max_sample_intervals: int, bdf_options: BDFOptions,
+    adaptive_max_steps: int | None,
+) -> int:
+    """Keep legacy clipping unless an independent adaptive work cap is explicit.
+
+    The explicit route retains the production limit on requested sample
+    intervals. Its accepted-step work cap is independent and still bounded
+    by BDFOptions.max_steps; no physical or nonlinear controls change.
+    """
+    if adaptive_max_steps is None:
+        return min(bdf_options.max_steps, max_sample_intervals)
+    if type(adaptive_max_steps) is not int or adaptive_max_steps < 1:
+        raise ValueError("adaptive_max_steps must be an explicit positive integer")
+    if len(protocol.times_s) - 1 > max_sample_intervals:
+        raise ValueError("requested timepoints exceed max_steps sample admission")
+    return min(bdf_options.max_steps, adaptive_max_steps)
+
+
 def solve_electronic_bdf(
     compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions, bdf_options: BDFOptions,
-    drive: BDFDrive | None = None,
+    drive: BDFDrive | None = None, adaptive_max_steps: int | None = None,
 ) -> BDFResult:
     started = time.monotonic()
+    work_steps = _adapter_step_budget(protocol, options.max_steps, bdf_options, adaptive_max_steps)
     _verify_point(compiled, initial, initial.generation_scale, initial_options)
     source = BDFDrive.from_protocol(protocol) if drive is None else drive
     if source.values(float(protocol.times_s[0]), "left") != (initial.voltage_V, initial.generation_scale):
@@ -429,21 +449,25 @@ def solve_electronic_bdf(
     if remaining <= 0:
         raise TimeoutError("BDF initial admission exhausted the whole-history wall budget")
     result = solve_bdf(factory, initial.state.u, (float(protocol.times_s[0]), float(protocol.times_s[-1])),
-        options=replace(bdf_options, wall_s=remaining, max_steps=min(bdf_options.max_steps, options.max_steps)), settings=lambda step: base,
+        options=replace(bdf_options, wall_s=remaining, max_steps=work_steps), settings=lambda step: base,
         convergence_norm=norm, assess=assessment,
         seed=lambda step: _be_step(step).initial_coordinates(options.predictor, voltage_lift=True),
         breakpoints_s=tuple(float(t) for t in source.times_s[1:-1]),
         events=_events(source, factory, options), output_times_s=protocol.times_s)
     return replace(result, wall_s=time.monotonic() - started, controls={**result.controls, "physical_controls": asdict(options),
         "initial_controls": asdict(initial_options), "compiled_identity": compiled.identity,
-        "drive": asdict(source), "initial_admission_wall_s": preparation_s, "method": "classical_physical_storage_bdf12"})
+        "drive": asdict(source), "initial_admission_wall_s": preparation_s, "method": "classical_physical_storage_bdf12",
+        **({"adapter_adaptive_max_steps": adaptive_max_steps, "adapter_sample_interval_limit": options.max_steps}
+           if adaptive_max_steps is not None else {})})
 
 
 def solve_ionic_bdf(
     compiled: CompiledIonicDevice1D, initial: IonicTransientInitial, protocol: TransientProtocol, *,
     options: IonicTransientOptions, bdf_options: BDFOptions, drive: BDFDrive | None = None,
+    adaptive_max_steps: int | None = None,
 ) -> BDFResult:
     started = time.monotonic()
+    work_steps = _adapter_step_budget(protocol, options.electronic.max_steps, bdf_options, adaptive_max_steps)
     admitted, generation, checks = _admit_evidence(compiled, initial.evidence_json, initial.source_sha256,
                                                   initial.steady_controls)
     if not _same_state(initial.state, admitted) or initial.generation_scale != generation:
@@ -466,7 +490,7 @@ def solve_ionic_bdf(
     if remaining <= 0:
         raise TimeoutError("BDF ionic admission exhausted the whole-history wall budget")
     result = solve_bdf(factory, admitted.u, (float(protocol.times_s[0]), float(protocol.times_s[-1])),
-        options=replace(bdf_options, wall_s=remaining, max_steps=min(bdf_options.max_steps, options.electronic.max_steps)),
+        options=replace(bdf_options, wall_s=remaining, max_steps=work_steps),
         settings=lambda step: base, convergence_norm=norm, assess=assessment,
         seed=lambda step: _be_step(step).initial_coordinates(options.electronic.predictor, voltage_lift=True),
         breakpoints_s=tuple(float(t) for t in source.times_s[1:-1]),
@@ -474,4 +498,7 @@ def solve_ionic_bdf(
     return replace(result, wall_s=time.monotonic() - started, controls={**result.controls, "physical_controls": asdict(options),
         "initial_source_sha256": initial.source_sha256, "initial_checks": checks,
         "compiled_identity": compiled.identity, "drive": asdict(source), "initial_admission_wall_s": preparation_s,
-        "method": "classical_physical_storage_bdf12"})
+        "method": "classical_physical_storage_bdf12",
+        **({"adapter_adaptive_max_steps": adaptive_max_steps,
+            "adapter_sample_interval_limit": options.electronic.max_steps}
+           if adaptive_max_steps is not None else {})})
