@@ -334,6 +334,7 @@ def solve_bdf(
         if passed:
             history, next_order = [new], 1
             all_points.append(new)
+            accepted_u[-1] = new.u
         return passed
 
     try:
