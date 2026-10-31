@@ -38,7 +38,13 @@ if TYPE_CHECKING:
     from solarlab.io.run_store import RunStore
 
 __all__ = ["IonicJVProtocol", "IonicJVInitial", "IonicJVJob", "prepare_ionic_jv_job",
-           "ionic_jv_worker_binding", "run_ionic_jv_worker", "read_ionic_jv_job", "ionic_jv_identity_inputs"]
+           "ionic_jv_worker_binding", "run_ionic_jv_worker", "read_ionic_jv_job", "ionic_jv_identity_inputs",
+           "REGISTERED_WALL_SECONDS"]
+# Provisional engineering allowance, passed only by an opted-in installed v1
+# registration. Linux run 41062040632 was censored at 30 s; uncensored direct
+# diagnostics must confirm ceil(max(128 s, 4 * p95, 2 * max)). Numerical-stage
+# caps remain 30/25/25 s, and direct submissions retain their 30 s default.
+REGISTERED_WALL_SECONDS = 128.
 WORKER_ID = "ionic_steady_jv"
 REQUEST_SCHEMA = _document("solarlab.ionic-jv.worker-request.v1", {
     "engine": "solarlab", "fields": ["schema", "engine", "prepared_sha256", "protocol", "grid", "controls", "initial"]})
@@ -177,9 +183,12 @@ def _roles(prepared: PreparedDevice, body: dict[str, Any], implementation: Build
         "numeric_controls": _document("solarlab.ionic-jv.controls.v1", body["controls"])}
 
 
-def _limits(limits: ResourceLimits) -> None:
-    if limits.accepted_steps is not None or limits.calls is not None or limits.wall_seconds > 30:
-        raise ValueError("ionic J-V requires wall<=30s and no unobserved whole-job counter caps")
+def _limits(limits: ResourceLimits, *, wall_ceiling_seconds: float = 30.) -> None:
+    if (type(wall_ceiling_seconds) not in {int, float}
+            or not 30. <= wall_ceiling_seconds <= REGISTERED_WALL_SECONDS):
+        raise ValueError("ionic J-V requires a bounded approved wall ceiling")
+    if limits.accepted_steps is not None or limits.calls is not None or limits.wall_seconds > wall_ceiling_seconds:
+        raise ValueError(f"ionic J-V requires wall<={wall_ceiling_seconds:g}s and no unobserved whole-job counter caps")
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,14 +237,15 @@ def ionic_jv_worker_binding() -> WorkerBinding:
     return WorkerBinding.from_function(WORKER_ID, run_ionic_jv_worker, registry_sha256=REGISTRY.sha256, schema_sha256=REQUEST_SCHEMA.sha256)
 
 
-def run_ionic_jv_worker(request: WorkerRequest, worker: WorkerContext) -> WorkerResult:
+def run_ionic_jv_worker(request: WorkerRequest, worker: WorkerContext, *,
+                       wall_ceiling_seconds: float = 30.) -> WorkerResult:
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
     from solarlab.equations.implementation import verify_selection
 
     verify_selection(binding.environment)
     _verify_sources(binding.execution)
-    _limits(worker._limits)
+    _limits(worker._limits, wall_ceiling_seconds=wall_ceiling_seconds)
     from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
     from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.ionic_initialization import IonicInitializationOptions, initialize_ionic_steady_state

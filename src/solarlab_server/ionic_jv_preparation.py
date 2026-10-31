@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from solarlab.config.identity import BuildSource, ExecutionEngine
 from solarlab.device.resolved import PreparedDevice
 from solarlab.experiments.jv.ionic_worker import (
-    IonicJVInitial, IonicJVJob, IonicJVProtocol,
+    REGISTERED_WALL_SECONDS, IonicJVInitial, IonicJVJob, IonicJVProtocol,
     ionic_jv_identity_inputs, ionic_jv_worker_binding, prepare_ionic_jv_job, read_ionic_jv_job, run_ionic_jv_worker,
 )
 from solarlab.experiments.worker import ResourceLimits, WorkerContext, WorkerRequest, WorkerResult
@@ -39,6 +39,11 @@ EXPERIMENT_ID = "ionic_steady_jv"
 _CORE_REQUEST_SCHEMA_ID = "solarlab.ionic-jv.worker-request.v1"
 _CORE_RESULT_SCHEMA_ID = "solarlab.ionic-jv.worker-result.v1"
 SCOPE = "illuminated_shared_site_positive_D_single_blocking_domain_ionic_steady_jv"
+_REGISTERED_WALL_DEVICE_ID = "research_1d_shared"
+# Content-only approval for this device and the exact fixed v1 recipe. Source
+# locations and the catalog-origin hashes derived from them are normalized;
+# the ordinary prepared/compiled identities retain their full provenance.
+_REGISTERED_WALL_PROFILE_SHA256 = "b051cb0cc9f99205c3c2361f0540162a412114f983b4d98bfc0ac873bab4908b"
 VOLTAGES_V = tuple(tick / 40. for tick in range(51))
 _SERVER_PATHS = ("ionic_jv_preparation.py", "ionic_transient_preparation.py", "transient_preparation.py",
                  "steady_preparation.py", "job_service.py", "registered_worker.py", "app.py",
@@ -80,6 +85,40 @@ def _policy() -> dict[str, Any]:
     return {"protocol": {"voltage_V": list(VOLTAGES_V), "generation_scale": 1., "incident_power_W_m2": None},
         "intervals_per_layer": [12, 12, 12], "controls": asdict(_options()),
         "initial": {"policy": "dark_direct_density_seed_v1", "voltage_V": .002, "wall_s": 25.}}
+
+
+def _wall_profile_sha256(prepared: PreparedDevice, ion_domain_layer: str,
+                         ion_domain_endpoints: tuple[str, ...]) -> str:
+    """Bind all prepared values and the fixed recipe without source locations."""
+    data = prepared.to_mapping()
+    source_origin = "catalog:" + prepared.defaults.content_sha256
+    data["input_sources"] = [{"sha256": item["sha256"]}
+        for item in sorted(data["input_sources"], key=lambda item: item["sha256"])]
+    data["default_catalog"]["evidence"] = sorted(sha for _, sha in data["default_catalog"]["evidence"])
+    content_origin = "catalog:" + metadata_digest(data["default_catalog"])
+    for layer in data["layers"]:
+        for item in layer["provenance"]:
+            if item["origin"] == source_origin:
+                item["origin"] = content_origin
+    for item in data["resource_bindings"]:
+        del item["source_id"]  # Source bytes and resource content digests remain bound.
+    return metadata_digest({"schema": "solarlab.ionic-jv.wall-profile.v1",
+        "device_id": _REGISTERED_WALL_DEVICE_ID, "input": json.loads(prepared.input_json),
+        "prepared": data, "ion_domain_layer": ion_domain_layer,
+        "ion_domain_endpoints": list(ion_domain_endpoints), "fixed_numerical_policy": _policy()})
+
+
+def _wall_ceiling_seconds(device_id: str, prepared: PreparedDevice, ion_domain_layer: str,
+                          ion_domain_endpoints: tuple[str, ...], wall_profile_sha256: str | None) -> float:
+    if wall_profile_sha256 is None:
+        return 30.
+    if type(wall_profile_sha256) is not str or wall_profile_sha256 != _REGISTERED_WALL_PROFILE_SHA256:
+        raise ValueError("ionic J-V wall profile is not the approved installed request")
+    if device_id != _REGISTERED_WALL_DEVICE_ID:
+        return 30.
+    if _wall_profile_sha256(prepared, ion_domain_layer, ion_domain_endpoints) != wall_profile_sha256:
+        raise ValueError("ionic J-V wall profile differs from the approved prepared device and recipe")
+    return REGISTERED_WALL_SECONDS
 
 
 def _control_schema(schema: dict[str, Any]) -> None:
@@ -176,6 +215,18 @@ class IonicJVPreparationContext:
                 return prepared
         raise ValueError("device is not installed in the trusted ionic J-V catalog")
 
+    def registered_wall_profile(self) -> str:
+        """Approve only the installed device content and the exact v1 recipe."""
+        profile = _wall_profile_sha256(self.device(_REGISTERED_WALL_DEVICE_ID),
+                                      self.ion_domain_layer, ("blocking", "blocking"))
+        if profile != _REGISTERED_WALL_PROFILE_SHA256:
+            raise ValueError("ionic J-V wall profile differs from the approved prepared device and recipe")
+        return profile
+
+    def wall_ceiling_seconds(self, device_id: str, *, wall_profile_sha256: str | None = None) -> float:
+        return _wall_ceiling_seconds(device_id, self.device(device_id), self.ion_domain_layer,
+                                     ("blocking", "blocking"), wall_profile_sha256)
+
     def verify_sources(self) -> None:
         if self.server_sources != _server_documents():
             raise ValueError("ionic J-V server source changed after installation")
@@ -200,14 +251,15 @@ def prepare_ionic_jv_input(input: IonicJVJobInput, context: IonicJVPreparationCo
         implementation=context.implementation, current_repository_head=context.current_repository_head, engine=ExecutionEngine("solarlab"))
 
 
-def ionic_jv_execution_catalog(context: IonicJVPreparationContext, *, ceiling: ResourceLimits) -> ExecutionCatalog:
+def ionic_jv_execution_catalog(context: IonicJVPreparationContext, *, ceiling: ResourceLimits,
+                               wall_profile_sha256: str | None = None) -> ExecutionCatalog:
     from solarlab.experiments.jv.ionic_results import ionic_jv_payload
     from solarlab.experiments.registry import ExperimentDefinition, ExperimentRegistry
     from solarlab.physics.registry import CapabilityRule, EvidenceRef
     from solarlab_server.job_service import ExecutionCatalog, IonicJVRegistration
     from solarlab_server.registered_worker import run_ionic_jv
     if type(context) is not IonicJVPreparationContext or ceiling.wall_seconds > 30:
-        raise ValueError("explicit ionic J-V installation and <=30s job ceiling required")
+        raise ValueError("explicit ionic J-V installation and <=30s ordinary job ceiling required")
     context.verify_sources()
     documents = {s.id: s for s in context.server_sources}
 
@@ -233,7 +285,8 @@ def ionic_jv_execution_catalog(context: IonicJVPreparationContext, *, ceiling: R
                        statistics=("maxwell_boltzmann",)), tuple(m.ref for m in context.models.definitions))
     registry = ExperimentRegistry((definition,))
     return ExecutionCatalog(registry, context.models, tuple(documents.values()),
-        (IonicJVRegistration(EXPERIMENT_ID, 1, context),), registry.content_sha256, context.models.content_sha256, ceiling)
+        (IonicJVRegistration(EXPERIMENT_ID, 1, context, wall_profile_sha256),),
+        registry.content_sha256, context.models.content_sha256, ceiling)
 
 
 def _registration(request: WorkerRequest) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -275,7 +328,18 @@ def execute_registered_ionic_jv(request: WorkerRequest, context: WorkerContext) 
             or body["grid"]["ion_domain_layer"] != installation["ion_domain_layer"]
             or body["grid"]["ion_domain_endpoints"] != installation["ion_domain_endpoints"]):
         raise ValueError("ionic J-V initial/domain differs from explicit installed recipe")
-    output = run_ionic_jv_worker(request, context)
+    allowance = entry.get("whole_job_wall_allowance")
+    profile = None
+    if allowance is not None:
+        if (type(allowance) is not dict or set(allowance) != {"profile_sha256", "wall_seconds"}
+                or type(allowance["profile_sha256"]) is not str
+                or type(allowance["wall_seconds"]) not in {int, float}
+                or allowance["wall_seconds"] != REGISTERED_WALL_SECONDS):
+            raise ValueError("ionic J-V wall allowance is not the bounded registered profile")
+        profile = allowance["profile_sha256"]
+    wall_ceiling = _wall_ceiling_seconds(device_id, prepared, body["grid"]["ion_domain_layer"],
+        tuple(body["grid"]["ion_domain_endpoints"]), profile)
+    output = run_ionic_jv_worker(request, context, wall_ceiling_seconds=wall_ceiling)
     return WorkerResult.from_dict({**json.loads(output.result_json), "experiment_id": EXPERIMENT_ID, "experiment_version": 1,
         "registered_device_id": declared.device_id, "execution_catalog_sha256": request.registry.sha256,
         "registered_input_schema_sha256": metadata_digest(entry["input_schema"]),

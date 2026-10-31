@@ -22,7 +22,7 @@ from solarlab.experiments.execution import JobHandle, ProcessSupervisor
 from solarlab.experiments.jv.worker import SteadyJVJob, steady_jv_worker_binding
 from solarlab.experiments.transient_worker import TransientJob, transient_worker_binding
 from solarlab.experiments.ionic_transient_worker import IonicTransientJob, ionic_transient_worker_binding
-from solarlab.experiments.jv.ionic_worker import IonicJVJob, ionic_jv_worker_binding
+from solarlab.experiments.jv.ionic_worker import REGISTERED_WALL_SECONDS, IonicJVJob, ionic_jv_worker_binding
 from solarlab.experiments.two_dimensional.steady_worker import Steady2DJob, steady_2d_worker_binding
 from solarlab.experiments.registry import ExperimentRegistry
 from solarlab.experiments.worker import ManifestBinding, ResourceLimits, RunSpec, WorkerBinding, WorkerRequest
@@ -153,6 +153,7 @@ class IonicJVRegistration:
     experiment_id: str
     version: int
     context: IonicJVPreparationContext
+    wall_profile_sha256: str | None = None
     engine: Literal["solarlab"] = field(default="solarlab", init=False)
     input_type: type[IonicJVJobInput] = field(default=IonicJVJobInput, init=False)
     legacy_kinds: tuple[str, ...] = field(default=(), init=False)
@@ -161,6 +162,10 @@ class IonicJVRegistration:
     def __post_init__(self) -> None:
         if type(self.context) is not IonicJVPreparationContext or self.experiment_id != IONIC_JV_EXPERIMENT_ID or self.version != 1:
             raise ValueError("ionic J-V requires the explicit installed v1 route and preparation context")
+        if (self.wall_profile_sha256 is not None
+                and (type(self.wall_profile_sha256) is not str
+                     or self.wall_profile_sha256 != self.context.registered_wall_profile())):
+            raise ValueError("ionic J-V wall profile differs from the approved installed request")
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +246,10 @@ class ExecutionCatalog:
         elif isinstance(registration, IonicJVRegistration):
             entry.update(driver=IONIC_JV_EXPERIMENT_ID, scope=IONIC_JV_SCOPE,
                 preparation_context=registration.context.export(), worker_source_sha256=ionic_jv_worker_binding().source_sha256,
-                result_schema="solarlab.ionic-jv.worker-result.v1")
+                result_schema="solarlab.ionic-jv.worker-result.v1",
+                **({"whole_job_wall_allowance": {"profile_sha256": registration.wall_profile_sha256,
+                                                "wall_seconds": REGISTERED_WALL_SECONDS}}
+                   if registration.wall_profile_sha256 is not None else {}))
         else:
             entry.update(driver=STEADY_2D_EXPERIMENT_ID, scope=STEADY_2D_SCOPE,
                 preparation_context=registration.context.export(), worker_source_sha256=steady_2d_worker_binding().source_sha256,
@@ -323,8 +331,19 @@ class ExecutionCatalog:
         if submission.engine != registration.engine:
             raise ValueError("engine differs from the installed registration; fallback is forbidden")
         limits = ResourceLimits(**submission.limits.model_dump())
+        wall_maximum = self.ceiling.wall_seconds
+        if isinstance(registration, IonicJVRegistration):
+            ionic_jv_input = IonicJVJobInput.model_validate(submission.input)
+            ionic_jv_ceiling = registration.context.wall_ceiling_seconds(
+                ionic_jv_input.device_id, wall_profile_sha256=registration.wall_profile_sha256)
+            # Only the approved registration may exceed the ordinary service
+            # wall. The catalog ceiling and every other route remain unchanged.
+            if ionic_jv_ceiling > 30.:
+                wall_maximum = max(wall_maximum, ionic_jv_ceiling)
         for key, maximum in asdict(self.ceiling).items():
             value = getattr(limits, key)
+            if key == "wall_seconds":
+                maximum = wall_maximum
             if maximum is not None and (value is None or value > maximum):
                 raise ValueError("requested budget exceeds the service ceiling: " + key)
         job: LegacyJob | SteadyJVJob | TransientJob | IonicTransientJob | IonicJVJob | Steady2DJob
@@ -366,9 +385,10 @@ class ExecutionCatalog:
             worker_id, request_kind = "registered_ionic_transient", "ionic_transient"
             extra = {"device_id": ionic_input.device_id}
         elif isinstance(registration, IonicJVRegistration):
-            if limits.accepted_steps is not None or limits.calls is not None or limits.wall_seconds > 30:
-                raise ValueError("ionic J-V requires <=30s and no unobserved counter budgets")
-            ionic_jv_input = IonicJVJobInput.model_validate(submission.input)
+            if limits.accepted_steps is not None or limits.calls is not None:
+                raise ValueError("ionic J-V requires no unobserved counter budgets")
+            if limits.wall_seconds > ionic_jv_ceiling:
+                raise ValueError("ionic J-V exceeds the installed request wall ceiling")
             job = prepare_ionic_jv_input(ionic_jv_input, registration.context)
             if type(job) is not IonicJVJob or job.execution.engine.name != "solarlab":
                 raise ValueError("registered preparation did not return the explicit ionic J-V worker")

@@ -122,6 +122,7 @@
     "tests/refactor/fixtures/r1_pair_common_state_preparation.json": "Saved paired-coordinate initial input; high/low words and identity must be preserved when decoded.",
     "tests/runtime/fixtures/ionic_jv_failed_prefix.tar.gz": "Immutable failed-prefix store for historical reading/refusal checks; no failure is relabelled or replayed as a success.",
     "tests/runtime/fixtures/ionic_jv_saved_results.tar.gz": "Stored RunStore records and artifacts for reader/identity contracts; existing artifact bytes are compared without recomputation.",
+    "tests/runtime/fixtures/ionic_jv_wall_composition_baseline.json": "Boolean admission outcomes and ordinary wall ceilings observed on cbec4788; portable policy comparisons without captured floating-point numerical results.",
     "tests/runtime/fixtures/steady_2d_process_saved.tar.gz": "Saved process/HTTP artifacts for historical readback and tamper checks, not a new solve against captured arrays.",
     "tests/unit/reproducibility/fixtures/q6_readback_witnesses.tar.gz": "Pinned original and tampered Q6 review artifacts for byte-integrity, recorded-identity and reader-refusal checks; tests forbid numerical recomputation and source recapture, so no local floating output is compared to historical words.",
     "tests/integration/fixtures/bdf_readiness/manifest.json": "Original packet/source digests for BDF readback; no numerical output regeneration."

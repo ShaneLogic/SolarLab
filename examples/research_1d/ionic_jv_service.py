@@ -7,7 +7,7 @@ the same committed store, including historical failed process prefixes.
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
 def resource_limits() -> ResourceLimits:
     from solarlab.experiments.worker import ResourceLimits
-    return ResourceLimits(30., 1536 * 1024**2, 96 * 1024**2, None, None)
+    from solarlab.experiments.jv.ionic_worker import REGISTERED_WALL_SECONDS
+    return ResourceLimits(REGISTERED_WALL_SECONDS,
+                          1536 * 1024**2, 96 * 1024**2, None, None)
 
 
 def example_submission(run_id: str = "http-ionic-jv-completed") -> dict[str, Any]:
@@ -38,7 +40,8 @@ def installed_catalog(implementation: BuildSource, current_repository_head: str)
     from solarlab_server.ionic_jv_preparation import IonicJVPreparationContext, ionic_jv_execution_catalog
     context = IonicJVPreparationContext((("research_1d_shared", prepare_confined_shared_site_ion_device()),),
                                        "absorber", implementation, current_repository_head)
-    return ionic_jv_execution_catalog(context, ceiling=resource_limits())
+    return ionic_jv_execution_catalog(context, ceiling=replace(resource_limits(), wall_seconds=30.),
+                                     wall_profile_sha256=context.registered_wall_profile())
 
 
 def main() -> None:

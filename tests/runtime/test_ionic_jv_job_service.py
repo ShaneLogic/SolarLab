@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 
-from examples.research_1d.ionic_jv_service import example_submission, installed_catalog
+from examples.research_1d.ionic_jv_service import example_submission, installed_catalog, resource_limits
 from examples.research_1d.process_ionic_transient import source_build
 from solarlab.experiments.execution import JobHandle
 from solarlab.experiments.jv.ionic_worker import read_ionic_jv_job
@@ -29,7 +29,7 @@ from solarlab.io.run_store import RunStore
 from solarlab.materials.source import SourceDocument
 from solarlab_server.app import create_app
 from solarlab_server.ionic_jv_preparation import (
-    IonicJVJobInput, prepare_ionic_jv_input, read_registered_ionic_jv_job,
+    IonicJVJobInput, ionic_jv_execution_catalog, prepare_ionic_jv_input, read_registered_ionic_jv_job,
 )
 from solarlab_server.job_service import JobService, JobSubmission, canonical
 from test_ionic_transient_job_service import _hold
@@ -164,7 +164,7 @@ def observe_http_case(client, store_root, run_id, attempt_id, *, registered, wor
                 time.sleep(.01)
             receipt = json.loads((directory / "receipt.json").read_text())
             assert receipt["process_joined"] and receipt["process_exit_observed"] and receipt["exitcode"] == 0
-            assert receipt["signals"] == [] and receipt["resources"]["owned_wall_seconds"] <= 30
+            assert receipt["signals"] == [] and receipt["resources"]["owned_wall_seconds"] <= resource_limits().wall_seconds
             child = json.loads((directory / "terminal.json").read_text())
             for item in child["artifacts"]:
                 assert hashlib.sha256((directory / item["file"]).read_bytes()).hexdigest() == payloads[item["name"]]["sha256"]
@@ -197,7 +197,7 @@ def actual(tmp_path_factory, implementation, historical):
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=out, stderr=err, start_new_session=True)
         evidence["service_pid"] = process.pid
         try:
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=45) as client:
+            with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=resource_limits().wall_seconds + 15) as client:
                 advertised = ready(client, process)
                 headers = {k: advertised.headers[k] for k in ("x-solarlab-registry", "x-solarlab-job-schema")}
                 evidence.update(catalog=advertised.json(), submission_headers=headers)
@@ -333,11 +333,139 @@ def test_request_rejections_happen_before_enqueue(tmp_path, catalog):
             body = example_submission()
             body["input"]["voltage_V"][1] = .026
             assert client.post("/jobs", json=body, headers=headers).status_code == 422
-            for key, value in (("wall_seconds", 31.), ("rss_bytes", 2 * 1024**3), ("calls", 1), ("accepted_steps", 1)):
+            for key, value in (("wall_seconds", resource_limits().wall_seconds + 1), ("rss_bytes", 2 * 1024**3), ("calls", 1), ("accepted_steps", 1)):
                 body = example_submission()
                 body["limits"][key] = value
                 assert client.post("/jobs", json=body, headers=headers).status_code == 422
             assert store.events() == []
+
+
+def test_registered_wall_allowance_keeps_the_ordinary_catalog_ceiling(catalog):
+    registration = catalog.registrations[0]
+    context = registration.context
+    assert registration.wall_profile_sha256 == context.registered_wall_profile()
+    assert catalog.ceiling.wall_seconds == 30.
+    document = json.loads(catalog.document.content)
+    assert document["resource_ceiling"]["wall_seconds"] == 30.
+    assert "default_wall_ceiling_seconds" not in document
+    assert context.wall_ceiling_seconds("research_1d_shared") == 30.
+    assert context.wall_ceiling_seconds("research_1d_shared",
+        wall_profile_sha256=registration.wall_profile_sha256) == resource_limits().wall_seconds == 128.
+    assert document["bindings"][0]["whole_job_wall_allowance"] == {
+        "profile_sha256": registration.wall_profile_sha256, "wall_seconds": 128.}
+    spec, _ = catalog.prepare(JobSubmission.model_validate(example_submission()))
+    assert spec.limits == resource_limits()
+    assert spec.limits.rss_bytes == 1536 * 1024**2 and spec.limits.output_bytes == 96 * 1024**2
+    assert spec.limits.accepted_steps is spec.limits.calls is None
+
+    with pytest.raises(ValueError, match="ordinary job ceiling"):
+        ionic_jv_execution_catalog(context, ceiling=resource_limits(),
+                                   wall_profile_sha256=registration.wall_profile_sha256)
+    ordinary_catalog = ionic_jv_execution_catalog(context, ceiling=catalog.ceiling)
+    assert ordinary_catalog.registrations[0].wall_profile_sha256 is None
+    assert "whole_job_wall_allowance" not in json.loads(ordinary_catalog.document.content)["bindings"][0]
+    # Even a wider global service ceiling cannot grant an unapproved request
+    # this device-specific allowance.
+    ordinary_catalog = replace(ordinary_catalog, ceiling=resource_limits())
+    body = example_submission()
+    body["limits"]["wall_seconds"] = 31.
+    with pytest.raises(ValueError, match="installed request wall ceiling"):
+        ordinary_catalog.prepare(JobSubmission.model_validate(body))
+    body["limits"]["wall_seconds"] = 30.
+    assert ordinary_catalog.prepare(JobSubmission.model_validate(body))[0].limits.wall_seconds == 30.
+
+
+@pytest.mark.parametrize("profile", [True, False, 128, "0" * 64, "another-profile"])
+def test_registered_wall_allowance_rejects_unapproved_profiles(catalog, profile):
+    with pytest.raises(ValueError, match="wall profile"):
+        replace(catalog.registrations[0], wall_profile_sha256=profile)
+
+
+@pytest.mark.parametrize("change", ["name", "content", "both"])
+def test_wall_profile_cannot_authorize_another_prepared_device(tmp_path, catalog, change):
+    from examples.research_1d.shared_site_ionic_fixture import prepare_confined_shared_site_ion_device
+    registration = catalog.registrations[0]
+    device_id = "other_shared" if change in {"name", "both"} else "research_1d_shared"
+    prepared = (prepare_confined_shared_site_ion_device(positive_diffusivity_m2_s=2e-16)
+                if change in {"content", "both"} else registration.context.devices[0][1])
+    context = replace(registration.context, devices=((device_id, prepared),))
+    with pytest.raises(ValueError):
+        replace(registration, context=context)
+    with pytest.raises(ValueError):
+        ionic_jv_execution_catalog(context, ceiling=catalog.ceiling,
+                                   wall_profile_sha256=registration.wall_profile_sha256)
+    ordinary = replace(ionic_jv_execution_catalog(context, ceiling=catalog.ceiling), ceiling=resource_limits())
+    body = example_submission()
+    body["input"]["device_id"] = device_id
+    body["limits"]["wall_seconds"] = 30.
+    assert ordinary.prepare(JobSubmission.model_validate(body))[0].limits.wall_seconds == 30.
+    body["limits"]["wall_seconds"] = 31.
+    with pytest.raises(ValueError, match="installed request wall ceiling"):
+        ordinary.prepare(JobSubmission.model_validate(body))
+    with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", ordinary) as owner:
+        with TestClient(create_app(store.root, job_service=JobService(ordinary, owner))) as client:
+            headers = {"X-Solarlab-Registry": ordinary.document.sha256, "X-Solarlab-Job-Schema": ordinary.schema.sha256}
+            for wall in (31., 128.):
+                body["limits"]["wall_seconds"] = wall
+                assert client.post("/jobs", json=body, headers=headers).status_code == 422
+            assert store.events() == []
+
+
+def test_other_device_in_the_opted_in_catalog_keeps_its_default(catalog):
+    from examples.research_1d.shared_site_ionic_fixture import prepare_confined_shared_site_ion_device
+    registration = catalog.registrations[0]
+    context = replace(registration.context, devices=(*registration.context.devices,
+        ("other_shared", prepare_confined_shared_site_ion_device(positive_diffusivity_m2_s=2e-16))))
+    combined = ionic_jv_execution_catalog(context, ceiling=catalog.ceiling,
+                                          wall_profile_sha256=registration.wall_profile_sha256)
+    body = example_submission()
+    assert combined.prepare(JobSubmission.model_validate(body))[0].limits.wall_seconds == 128.
+    body["input"]["device_id"] = "other_shared"
+    body["limits"]["wall_seconds"] = 31.
+    with pytest.raises(ValueError, match="wall_seconds"):
+        combined.prepare(JobSubmission.model_validate(body))
+    body["limits"]["wall_seconds"] = 30.
+    assert combined.prepare(JobSubmission.model_validate(body))[0].limits.wall_seconds == 30.
+
+
+def test_wall_profile_normalizes_locations_without_changing_prepared_identity(tmp_path, monkeypatch, catalog):
+    from examples.research_1d.shared_site_ionic_fixture import prepare_confined_shared_site_ion_device
+    from examples.research_1d.steady import load_device
+    registration = catalog.registrations[0]
+    source = tmp_path / "relocated-device.json"
+    source.write_bytes((ROOT / "examples/research_1d/device.json").read_bytes())
+    monkeypatch.setattr("examples.research_1d.ionic_multilayer.load_device", lambda: load_device(source))
+    prepared = prepare_confined_shared_site_ion_device()
+    original_sha = prepared.content_sha256
+    assert original_sha != registration.context.devices[0][1].content_sha256
+    context = replace(registration.context, devices=(("research_1d_shared", prepared),))
+    assert context.registered_wall_profile() == registration.wall_profile_sha256
+    relocated = ionic_jv_execution_catalog(context, ceiling=catalog.ceiling,
+                                           wall_profile_sha256=registration.wall_profile_sha256)
+    assert relocated.prepare(JobSubmission.model_validate(example_submission()))[0].limits.wall_seconds == 128.
+    assert prepared.content_sha256 == original_sha
+
+
+@pytest.fixture(scope="module")
+def wall_companions(implementation):
+    from ionic_jv_wall_fixtures import companions
+    return companions(implementation)
+
+
+@pytest.mark.parametrize("kind", ["legacy", "ion_free", "ionic_transient", "two_dimensional"])
+@pytest.mark.parametrize("method", ["ionic_base", "other_base", "constructor"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_catalog_compositions_match_the_base_wall_oracle(catalog, wall_companions, kind, method, reverse):
+    from ionic_jv_wall_fixtures import admit, compose, submissions
+    oracle = json.loads((ROOT / "tests/runtime/fixtures/ionic_jv_wall_composition_baseline.json").read_text())
+    assert oracle["base_commit"] == "cbec4788a0f83ae5c6c4719b1fd95c0fc037d09d"
+    combined = compose(catalog, wall_companions[kind], method, reverse)
+    assert combined.ceiling.wall_seconds == oracle["ordinary_ceilings"][kind]
+    for key, body in submissions(kind):
+        expected = oracle["admitted"][key]
+        if body["experiment_id"] == "ionic_steady_jv":
+            expected = True  # The sole approved request; all sampled walls are <=128.
+        assert admit(combined, body) is expected, (method, reverse, key)
 
 
 def test_historical_failed_fixture_retains_original_store_identity_and_http_reads(historical):
@@ -356,7 +484,7 @@ def test_historical_failed_fixture_retains_original_store_identity_and_http_read
 
 
 def test_coinstalled_steady_transient_and_ionic_routes_are_unchanged(catalog, implementation):
-    from examples.research_1d.ionic_transient_service import installed_catalog as ionic_catalog
+    from examples.research_1d.ionic_transient_service import example_submission as ionic_submission, installed_catalog as ionic_catalog
     from examples.research_1d.transient_service import installed_catalog as transient_catalog
     from solarlab.experiments.registry import ExperimentRegistry
     others = [ionic_catalog(implementation, implementation.build_source_commit), transient_catalog(implementation, implementation.build_source_commit)]
@@ -371,11 +499,21 @@ def test_coinstalled_steady_transient_and_ionic_routes_are_unchanged(catalog, im
     body = example_submission()
     body.update(experiment_id="steady_jv", input={"device_id": "research_1d", "voltage_V": [0., .05, .1],
         "intervals_per_layer": 12, "generation_scale": 1., "incident_power_W_m2": None})
+    body["limits"]["wall_seconds"] = 30.
     spec, _ = combined.prepare(JobSubmission.model_validate(body))
     assert spec.worker_id == "registered_steady"
+    body["limits"]["wall_seconds"] = 31.
+    with pytest.raises(ValueError, match="service ceiling: wall_seconds"):
+        combined.prepare(JobSubmission.model_validate(body))
+    other = ionic_submission()
+    other["limits"]["wall_seconds"] = 31.
+    with pytest.raises(ValueError, match="service ceiling: wall_seconds"):
+        combined.prepare(JobSubmission.model_validate(other))
+    # The ion-free service has an existing 60 s policy; it is unchanged too.
+    assert others[0].ceiling.wall_seconds == 30. and others[1].ceiling.wall_seconds == 60.
 
 
-@pytest.mark.parametrize("change", ["server", "model", "policy"])
+@pytest.mark.parametrize("change", ["server", "model", "policy", "wall", "wall_profile", "wall_type"])
 def test_child_refuses_changed_registration_before_numerical_work(tmp_path, catalog, change):
     spec, execution = catalog.prepare(JobSubmission.model_validate(example_submission()))
     data = json.loads(catalog.document.content)
@@ -384,8 +522,14 @@ def test_child_refuses_changed_registration_before_numerical_work(tmp_path, cata
         entry["preparation_context"]["server_sources"][0]["sha256"] = "0" * 64
     elif change == "model":
         entry["model_registry_sha256"] = "0" * 64
-    else:
+    elif change == "policy":
         entry["preparation_context"]["fixed_numerical_policy"]["controls"]["wall_s"] = 1.
+    elif change == "wall":
+        entry["whole_job_wall_allowance"]["wall_seconds"] = resource_limits().wall_seconds + 1
+    elif change == "wall_profile":
+        entry["whole_job_wall_allowance"]["profile_sha256"] = "0" * 64
+    else:
+        entry["whole_job_wall_allowance"]["wall_seconds"] = True
     document = SourceDocument("changed-catalog", canonical(data))
     binding = replace(catalog.worker_binding("solarlab"), registry_sha256=document.sha256)
     with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", catalog, bindings=(binding,)) as owner:
@@ -394,6 +538,92 @@ def test_child_refuses_changed_registration_before_numerical_work(tmp_path, cata
         assert receipt["store_state"] == "failed" and receipt["terminal_artifacts"] == []
         assert receipt["process_joined"] and receipt["process_exit_observed"]
         assert not any(e["payload"].get("ui_progress", {}).get("stage", "").startswith("ionic_jv") for e in store.events(run_id="invalid", limit=1000))
+
+
+@pytest.mark.parametrize("change", ["name", "content", "absent_profile"])
+def test_child_rechecks_profile_authorization_before_numerical_work(tmp_path, catalog, change):
+    from examples.research_1d.shared_site_ionic_fixture import prepare_confined_shared_site_ion_device
+    registration = catalog.registrations[0]
+    device_id = "other_shared" if change == "name" else "research_1d_shared"
+    prepared = (prepare_confined_shared_site_ion_device(positive_diffusivity_m2_s=2e-16)
+                if change == "content" else registration.context.devices[0][1])
+    context = replace(registration.context, devices=((device_id, prepared),))
+    ordinary = ionic_jv_execution_catalog(context, ceiling=catalog.ceiling)
+    body = example_submission()
+    body["input"]["device_id"] = device_id
+    body["limits"]["wall_seconds"] = 30.
+    spec, execution = ordinary.prepare(JobSubmission.model_validate(body))
+    data = json.loads(ordinary.document.content)
+    if change != "absent_profile":
+        data["bindings"][0]["whole_job_wall_allowance"] = {
+            "profile_sha256": registration.wall_profile_sha256, "wall_seconds": 128.}
+    document = SourceDocument("unapproved-wall-catalog", canonical(data))
+    binding = replace(ordinary.worker_binding("solarlab"), registry_sha256=document.sha256)
+    with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", ordinary, bindings=(binding,)) as owner:
+        handle = owner.submit("unapproved", binding.id, replace(spec.request, registry=document),
+                              resource_limits(), execution=execution)
+        receipt = owner.wait(handle, 15).data
+        assert receipt["store_state"] == "failed" and receipt["terminal_artifacts"] == []
+        assert receipt["process_joined"] and receipt["process_exit_observed"]
+        assert not any(e["payload"].get("ui_progress", {}).get("stage", "").startswith("ionic_jv")
+                       for e in store.events(run_id="unapproved", limit=1000))
+        directory = tmp_path / "work" / (store.store_id + "-" + handle.attempt_id)
+        result = json.loads((directory / "terminal.json").read_text())["result"]
+        assert result["reason"] == "worker_exception" and result["exception_type"] == "ValueError"
+        expected = "approved prepared device and recipe" if change == "content" else "wall<=30s"
+        assert expected in result["detail"]
+        save("ChildProfile-" + change + ".json", {"result": result, "receipt": receipt})
+
+
+def test_registered_child_rejects_a_different_v1_recipe(tmp_path, catalog):
+    from solarlab.config.identity import ExecutionEngine
+    from solarlab.experiments.jv.ionic_worker import IonicJVProtocol, prepare_ionic_jv_job
+    from solarlab_server.ionic_jv_preparation import _initial, _options
+    registration = catalog.registrations[0]
+    context = registration.context
+    declared = IonicJVJobInput.model_validate(example_submission()["input"])
+    job = prepare_ionic_jv_job(context.device(declared.device_id),
+        IonicJVProtocol(tuple(declared.voltage_V), 2., declared.incident_power_W_m2),
+        intervals_per_layer=tuple(declared.intervals_per_layer), ion_domain_layer=context.ion_domain_layer,
+        ion_domain_endpoints=("blocking", "blocking"), options=_options(), initial=_initial(),
+        implementation=context.implementation, current_repository_head=context.current_repository_head,
+        engine=ExecutionEngine("solarlab"))
+    request = replace(job.request, registry=catalog.document, schema=catalog.schema)
+    with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", catalog) as owner:
+        handle = owner.submit("wrong-recipe", catalog.worker_binding("solarlab").id, request,
+                              resource_limits(), execution=job.execution)
+        receipt = owner.wait(handle, 15).data
+        assert receipt["store_state"] == "failed" and receipt["terminal_artifacts"] == []
+        assert receipt["process_joined"] and receipt["process_exit_observed"]
+        directory = tmp_path / "work" / (store.store_id + "-" + handle.attempt_id)
+        result = json.loads((directory / "terminal.json").read_text())["result"]
+        assert result["reason"] == "worker_exception" and result["exception_type"] == "ValidationError"
+        assert "generation_scale" in result["detail"]
+        assert not any(e["payload"].get("ui_progress", {}).get("stage", "").startswith("ionic_jv")
+                       for e in store.events(run_id="wrong-recipe", limit=1000))
+        save("ChildRecipe.json", {"result": result, "receipt": receipt})
+
+
+def test_direct_submit_and_raw_binding_keep_the_30_second_ceiling(tmp_path, catalog):
+    from solarlab.experiments.jv.ionic_worker import ionic_jv_worker_binding
+    job = prepare_ionic_jv_input(IonicJVJobInput.model_validate(example_submission()["input"]),
+                                 catalog.registrations[0].context)
+    for wall in (31., 128.):
+        with pytest.raises(ValueError, match="wall<=30s"):
+            job.submit(None, "direct-too-large", replace(resource_limits(), wall_seconds=wall))
+    binding = ionic_jv_worker_binding()
+    with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", catalog, bindings=(binding,)) as owner:
+        handle = owner.submit("raw-too-large", binding.id, job.request, resource_limits(), execution=job.execution)
+        receipt = owner.wait(handle, 15).data
+        assert receipt["store_state"] == "failed" and receipt["terminal_artifacts"] == []
+        assert receipt["process_joined"] and receipt["process_exit_observed"]
+        directory = tmp_path / "work" / (store.store_id + "-" + handle.attempt_id)
+        result = json.loads((directory / "terminal.json").read_text())["result"]
+        assert result["reason"] == "worker_exception" and result["exception_type"] == "ValueError"
+        assert "wall<=30s" in result["detail"]
+        assert not any(e["payload"].get("ui_progress", {}).get("stage", "").startswith("ionic_jv")
+                       for e in store.events(run_id="raw-too-large", limit=1000))
+        save("RawBinding.json", {"result": result, "receipt": receipt})
 
 
 def test_existing_exact_queue_cancellation_has_no_ionic_curve(tmp_path, catalog):
@@ -473,7 +703,7 @@ def test_actual_fixed51_http_outcome_and_historical_failure_truth(actual):
     receipt = current["receipt"]
     assert receipt["proposed_state"] == receipt["store_state"] == current["result"]["state"]
     assert receipt["commit_error"] is None and receipt["publication_error"] is None
-    assert receipt["resources"]["observed_limit_violations"] == [] and receipt["resources"]["owned_wall_seconds"] <= 30
+    assert receipt["resources"]["observed_limit_violations"] == [] and receipt["resources"]["owned_wall_seconds"] <= resource_limits().wall_seconds
     assert all(c["terminal_count"] == 1 and len(c["payloads"]) == 15 and len(c["logical_arrays"]) == 23 for c in actual["cases"])
 
 

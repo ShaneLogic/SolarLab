@@ -17,6 +17,10 @@ def test_workflow_diagnostics_are_manual_and_keep_both_python_versions():
     inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
     assert inputs["run_ionic_jv_diagnostics"]["default"] is False
     assert inputs["ionic_jv_diagnostic_repetitions"]["default"] == 20
+    timing, = [step for step in job["steps"] if "scripts/ci/ionic_jv_timing.py" in step.get("run", "")]
+    assert timing["if"] == "always()"
+    assert timing["env"]["IONIC_JV_DIAGNOSTIC_REPETITIONS"] == "${{ inputs.ionic_jv_diagnostic_repetitions }}"
+    assert 'ionic-jv-diagnostics-${{ matrix.python }}/uncensored' in timing["run"]
     upload, = [step for step in job["steps"] if "actions/upload-artifact@" in step.get("uses", "")]
     assert upload["if"] == "always()"
     assert "ionic-jv-diagnostics-${{ matrix.python }}" in upload["with"]["path"]

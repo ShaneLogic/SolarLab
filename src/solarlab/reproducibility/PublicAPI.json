@@ -542,7 +542,8 @@
       "ionic_jv_worker_binding",
       "run_ionic_jv_worker",
       "read_ionic_jv_job",
-      "ionic_jv_identity_inputs"
+      "ionic_jv_identity_inputs",
+      "REGISTERED_WALL_SECONDS"
     ],
     "solarlab.experiments.two_dimensional.steady_worker": [
       "INITIAL_POLICY",
@@ -1136,7 +1137,8 @@
       "ionic_jv_worker_binding",
       "run_ionic_jv_worker",
       "read_ionic_jv_job",
-      "ionic_jv_identity_inputs"
+      "ionic_jv_identity_inputs",
+      "REGISTERED_WALL_SECONDS"
     ],
     "solarlab.experiments.jv.ionic_results": [
       "ionic_jv_payload"

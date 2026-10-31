@@ -1,0 +1,41 @@
+{
+  "admitted": {
+    "ion_free/ionic_steady_jv/128": false,
+    "ion_free/ionic_steady_jv/30": true,
+    "ion_free/ionic_steady_jv/60": false,
+    "ion_free/ionic_steady_jv/61": false,
+    "ion_free/steady_jv/128": false,
+    "ion_free/steady_jv/30": true,
+    "ion_free/steady_jv/60": true,
+    "ion_free/steady_jv/61": false,
+    "ion_free/transient_1d/128": false,
+    "ion_free/transient_1d/30": true,
+    "ion_free/transient_1d/60": true,
+    "ion_free/transient_1d/61": false,
+    "ionic_transient/ionic_steady_jv/128": false,
+    "ionic_transient/ionic_steady_jv/30": true,
+    "ionic_transient/ionic_steady_jv/31": false,
+    "ionic_transient/ionic_transient_1d/128": false,
+    "ionic_transient/ionic_transient_1d/30": true,
+    "ionic_transient/ionic_transient_1d/31": false,
+    "legacy/ionic_steady_jv/128": false,
+    "legacy/ionic_steady_jv/30": true,
+    "legacy/ionic_steady_jv/31": false,
+    "legacy/jv/128": false,
+    "legacy/jv/30": true,
+    "legacy/jv/31": false,
+    "two_dimensional/ionic_steady_jv/128": false,
+    "two_dimensional/ionic_steady_jv/30": true,
+    "two_dimensional/ionic_steady_jv/31": false,
+    "two_dimensional/steady_2d/128": false,
+    "two_dimensional/steady_2d/30": true,
+    "two_dimensional/steady_2d/31": false
+  },
+  "base_commit": "cbec4788a0f83ae5c6c4719b1fd95c0fc037d09d",
+  "ordinary_ceilings": {
+    "ion_free": 60.0,
+    "ionic_transient": 30.0,
+    "legacy": 30.0,
+    "two_dimensional": 30.0
+  }
+}

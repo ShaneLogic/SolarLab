@@ -258,6 +258,14 @@ jobs:
           uv run --frozen --no-sync python scripts/ci/ionic_jv_diagnostics.py
           --repetitions "$IONIC_JV_DIAGNOSTIC_REPETITIONS"
           --output-dir "${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}"
+      - name: Uncensored direct ionic J-V child timings
+        if: always()
+        env:
+          IONIC_JV_DIAGNOSTIC_REPETITIONS: ${{ inputs.ionic_jv_diagnostic_repetitions }}
+        run: >-
+          uv run --frozen --no-sync python scripts/ci/ionic_jv_timing.py
+          --repetitions "$IONIC_JV_DIAGNOSTIC_REPETITIONS"
+          --output-dir "${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}/uncensored"
       - name: Upload every diagnostic attempt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
