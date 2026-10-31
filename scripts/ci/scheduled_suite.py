@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import builtins
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 import hashlib
@@ -15,20 +16,59 @@ import subprocess
 import sys
 import sysconfig
 import time
+from types import FunctionType
 from typing import Any, TextIO
 import xml.etree.ElementTree as ET
 
 # Tests deliberately patch these shared modules. Recorder calls must keep the
 # originals, including the independent error encoder and already-open streams.
-_RECORDER_DUMPS = json.dumps
 _RECORDER_LOADS = json.loads
 _RECORDER_ERROR_QUOTE = json.encoder.encode_basestring_ascii
+# JSONEncoder and even a bound json.dumps still resolve shared encoder globals.
+# Clone the standard Python generator with private globals, and supply every
+# serialization primitive explicitly instead of using the mutable C dispatcher.
+_RECORDER_ENCODER_TEMPLATE: FunctionType = getattr(json.encoder, "_make_iterencode")
+_RECORDER_MAKE_ITERENCODE = FunctionType(
+    _RECORDER_ENCODER_TEMPLATE.__code__, {"__builtins__": vars(builtins).copy()},
+    argdefs=_RECORDER_ENCODER_TEMPLATE.__defaults__,
+)
+del _RECORDER_ENCODER_TEMPLATE
+_RECORDER_FLOAT_REPR = float.__repr__
+_RECORDER_INFINITY = float("inf")
 _RECORDER_MONOTONIC = time.monotonic
 _RECORDER_GETCWD = os.getcwd
 _RECORDER_OPEN = open
 _RECORDER_REPLACE = os.replace
 _RECORDER_FSYNC = os.fsync
 _RECORDER_STDERR = os.write
+
+
+def _recorder_floatstr(value: float) -> str:
+    if value != value:
+        return "NaN"
+    if value == _RECORDER_INFINITY:
+        return "Infinity"
+    if value == -_RECORDER_INFINITY:
+        return "-Infinity"
+    return _RECORDER_FLOAT_REPR(value)
+
+
+def _recorder_json_default(value: Any) -> Any:
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _recorder_dumps(value: Any, *, indent: int | str | None = None,
+                    sort_keys: bool = False) -> str:
+    """Match the recorder's json.dumps modes without consulting shared JSON state."""
+    indentation = " " * indent if isinstance(indent, int) else indent
+    encode = _RECORDER_MAKE_ITERENCODE(
+        {}, _recorder_json_default, _RECORDER_ERROR_QUOTE, indentation, _recorder_floatstr,
+        ": ", ", " if indent is None else ",", sort_keys, False, True,
+    )
+    return "".join(encode(value, 0))
+
+
+_RECORDER_DUMPS = _recorder_dumps
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITES = {"root": ROOT, "legacy": ROOT / "perovskite-sim"}

@@ -2,6 +2,9 @@
 import hashlib
 import json
 from pathlib import Path
+import random
+import runpy
+import struct
 import subprocess
 import sys
 import textwrap
@@ -35,12 +38,121 @@ def test_canary():
 """
 
 
-def run_recorder(tmp_path, source, *, conftest="", extra=()):
+JSON_INTERNAL_ATTRIBUTES = (
+    "json.encoder.encode_basestring_ascii", "json.encoder.encode_basestring",
+    "json.encoder.c_make_encoder", "json.encoder._make_iterencode", "json.encoder.INFINITY",
+    "json.encoder.sorted", "json.encoder.TypeError",
+    "json.JSONEncoder.encode", "json.JSONEncoder.iterencode", "json.JSONEncoder.default",
+    "json.JSONEncoder.__init__", "json._default_encoder", "json.JSONEncoder",
+    "json.encoder.JSONEncoder", "json.dump", "json.dumps", "json.encoder",
+)
+REQUIRED_JSON_INTERNAL_ATTRIBUTES = (
+    "json.encoder.encode_basestring_ascii", "json.encoder.c_make_encoder", "json.JSONEncoder.iterencode",
+)
+
+
+JSON_INTERNALS_PROBE = '''
+import json, sys, pytest
+from pathlib import Path
+
+def test_monkeypatch(monkeypatch, request):
+    targets = []
+    for path in ATTRIBUTES:
+        parts = path.split(".")
+        owner = json
+        for part in parts[1:-1]:
+            owner = getattr(owner, part)
+        targets.append((owner, parts[-1]))
+    def forbidden(*args, **kwargs):
+        pytest.fail("shared JSON internals were called")
+    for owner, name in targets:
+        monkeypatch.setattr(owner, name, forbidden, raising=False)
+    recorder = next(p for p in request.config.pluginmanager.get_plugins()
+                    if type(p).__name__ == "_PytestRecorder")
+    # Exercise snapshots while the patch is active as well as the call journal.
+    # The parent assertions require an error-free receipt for this operation.
+    recorder.snapshot()
+
+def test_canary():
+    Path("canary").write_text("ran")
+'''.replace("ATTRIBUTES", repr(REQUIRED_JSON_INTERNAL_ATTRIBUTES))
+JSON_ALL_INTERNALS_PROBE = JSON_INTERNALS_PROBE.replace(
+    repr(REQUIRED_JSON_INTERNAL_ATTRIBUTES), repr(JSON_INTERNAL_ATTRIBUTES),
+)
+
+
+def patch_json_internals(monkeypatch):
+    targets = []
+    for path in JSON_INTERNAL_ATTRIBUTES:
+        parts = path.split(".")
+        owner = json
+        for part in parts[1:-1]:
+            owner = getattr(owner, part)
+        targets.append((owner, parts[-1]))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("shared JSON internals were called")
+
+    for owner, name in targets:
+        monkeypatch.setattr(owner, name, forbidden, raising=False)
+
+
+def v3_recorder_file():
+    path = Path(__file__).parent / "fixtures" / "scheduled_suite_v3.py"
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
+        "7a81306030d131c102b160b8d6a9260e18e25b808ef4e561d44f748c9729cb31"
+    )
+    return path
+
+
+def serialization_samples():
+    values = [None, True, False, 0, 1, -1, 2**256, -(2**256),
+              0.0, -0.0, 0.1, -0.1, 1e-300, 1e300, float("nan"), float("inf"), -float("inf"),
+              "", 'quotes " and backslashes \\', "\b\f\n\r\t", "".join(map(chr, range(32))),
+              "é Ω 汉字 🌊 \u2028\u2029", "\ud800\udfff", [], {}, (),
+              {"z": [None, True, 1.5, {"nested": "Ω"}], "a": (1, 2), "empty": {}},
+              {3: "three", 1: "one", 2: "two"},
+              {"event": "report", "nodeid": 'test_Ω.py::test_case["x"]', "when": "call",
+               "outcome": "failed", "duration": 0.123456789, "wasxfail": None,
+               "longrepr": 'failure\nwith quotes " and a backslash \\'},
+              {"status": "running", "items": [{"nodeid": "test.py::test_x", "markers": []}],
+               "reports": [], "seconds": -0.0}]
+    rng = random.Random(41201981031)
+    for _ in range(256):
+        values.append(struct.unpack("!d", rng.getrandbits(64).to_bytes(8, "big"))[0])
+    for _ in range(64):
+        values.append({"z": [rng.choice(values[:26]), rng.choice(values[:26])],
+                       "a": {"Ω": rng.choice(values[:26]), "b": [rng.randrange(-10000, 10000)]}})
+    return values
+
+
+def test_private_serialization_matches_v3_bytes_under_all_json_patches(monkeypatch):
+    encode_v3 = runpy.run_path(str(v3_recorder_file()))["_RECORDER_DUMPS"]
+    cases = [(value, {"indent": indent, "sort_keys": sort})
+             for value in serialization_samples() for indent in (None, 0, 2, "\t") for sort in (False, True)]
+    expected = [encode_v3(value, **options) for value, options in cases]
+    patch_json_internals(monkeypatch)
+    assert [scheduled._RECORDER_DUMPS(value, **options) for value, options in cases] == expected
+
+
+def test_private_serialization_preserves_invalid_input_failures(monkeypatch):
+    patch_json_internals(monkeypatch)
+    cycle = []
+    cycle.append(cycle)
+    with pytest.raises(ValueError, match="Circular reference detected"):
+        scheduled._RECORDER_DUMPS(cycle)
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        scheduled._RECORDER_DUMPS(object())
+    with pytest.raises(TypeError, match="keys must be"):
+        scheduled._RECORDER_DUMPS({object(): "unsupported key"})
+
+
+def run_recorder(tmp_path, source, *, conftest="", extra=(), runner=None):
     (tmp_path / "test_probe.py").write_text(textwrap.dedent(source))
     if conftest:
         (tmp_path / "conftest.py").write_text(textwrap.dedent(conftest))
     output = tmp_path / "actual.json"
-    command = [sys.executable, str(Path(scheduled.__file__)), "_pytest", "--out", str(output),
+    command = [sys.executable, str(runner or Path(scheduled.__file__)), "_pytest", "--out", str(output),
                "--", "test_probe.py", "-q", "-p", "no:cacheprovider",
                "--junitxml=" + str(tmp_path / "junit.xml"), *extra]
     env = scheduled.pinned_environment()
@@ -73,6 +185,29 @@ def test_real_recorder_survives_shared_json_monkeypatch_and_runs_canary(tmp_path
     observed = run_recorder(tmp_path, JSON_PROBE)
     assert_complete_two_tests(*observed)
     assert (tmp_path / "canary").read_text() == "ran"
+
+
+@pytest.mark.parametrize("probe", [JSON_INTERNALS_PROBE, JSON_ALL_INTERNALS_PROBE], ids=["required", "all"])
+def test_real_recorder_survives_json_internals_and_keeps_v3_bytes(tmp_path, probe):
+    observed = run_recorder(tmp_path, probe)
+    assert_complete_two_tests(*observed)
+    assert (tmp_path / "canary").read_text() == "ran"
+    encode_v3 = runpy.run_path(str(v3_recorder_file()))["_RECORDER_DUMPS"]
+    data, journal = observed[1:3]
+    assert (tmp_path / "actual.jsonl").read_text() == "".join(encode_v3(row) + "\n" for row in journal)
+    assert (tmp_path / "actual.json").read_text() == encode_v3(data, indent=2, sort_keys=True) + "\n"
+
+
+@pytest.mark.parametrize("probe", [JSON_INTERNALS_PROBE, JSON_ALL_INTERNALS_PROBE], ids=["required", "all"])
+def test_v3_negative_control_records_json_internals_failure(tmp_path, probe):
+    result, data, journal, errors, xml = run_recorder(tmp_path, probe, runner=v3_recorder_file())
+    assert result.returncode == 1 and data["pytest_exit_code"] == 0
+    assert data["status"] == "recorder_error" and data["execution_complete"]
+    assert len(data["reports"]) == 6 and len(xml.findall(".//testcase")) == 2
+    assert data["recorder_errors"] == errors and errors
+    assert any(row["event"] == "recorder_error" for row in journal)
+    assert (tmp_path / "canary").read_text() == "ran"
+    assert "SCHEDULED RECORDER" in result.stderr and "INTERNALERROR" not in result.stdout
 
 
 def test_8a0bf115_recorder_file_negative_control_aborts_before_canary(tmp_path):
@@ -253,6 +388,7 @@ def test_recorder_error_protects_unprintable_exception_messages(tmp_path):
 @pytest.mark.parametrize("method", ["encode", "iterencode"])
 @pytest.mark.parametrize("exception", ["RuntimeError", "pytest.fail"])
 def test_patched_encoder_methods_fail_receipts_without_aborting_tests(tmp_path, method, exception):
+    # Keep the scheduled node identities; V4 strengthens this to clean receipts.
     source = '''
         import json, pytest
         from pathlib import Path
@@ -271,18 +407,9 @@ def test_patched_encoder_methods_fail_receipts_without_aborting_tests(tmp_path, 
         "RAISE", 'raise RuntimeError("encoder fault")' if exception == "RuntimeError" else
         'pytest.fail("encoder fault")',
     )
-    result, data, journal, errors, xml = run_recorder(tmp_path, source)
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert data["pytest_exit_code"] == 0 and data["exit_code"] == 1
-    assert data["status"] == "recorder_error" and data["execution_complete"]
-    assert data["not_started_nodeids"] == data["incomplete_nodeids"] == []
-    assert len(data["reports"]) == 6 and (tmp_path / "canary").read_text() == "ran"
-    assert errors == data["recorder_errors"] and errors
-    assert all(row["message"] == "encoder fault" for row in errors)
-    assert {row["stage"] for row in errors} == {"journal"}
-    assert any(row["event"] == "recorder_error" for row in journal)
-    assert "SCHEDULED RECORDER" in result.stderr and "INTERNALERROR" not in result.stdout
-    assert len(xml.findall(".//testcase")) == 2 and not xml.findall(".//error")
+    observed = run_recorder(tmp_path, source)
+    assert_complete_two_tests(*observed)
+    assert (tmp_path / "canary").read_text() == "ran"
 
 
 @pytest.mark.parametrize("fault", ["sinks", "quoting"])
@@ -396,6 +523,7 @@ def test_recorder_io_failure_keeps_tests_running_but_fails_receipt(tmp_path, sin
                 raise AssertionError("error reporting used a shared callable")
             for obj, name in [(json, "dumps"), (json, "loads"), (os, "write")]:
                 monkeypatch.setattr(obj, name, forbidden)
+            monkeypatch.setattr(json.JSONEncoder, "iterencode", forbidden)
             if SINK == "journal":
                 monkeypatch.setattr(recorder, "journal_write", broken)
             elif SINK == "encoder":
@@ -416,6 +544,7 @@ def test_recorder_io_failure_keeps_tests_running_but_fails_receipt(tmp_path, sin
     assert len(data["reports"]) == 6 and (tmp_path / "canary").read_text() == "ran"
     assert errors and errors == data["recorder_errors"]
     assert all(r["event"] == "recorder_error" and "injected recorder I/O failure" in r["message"] for r in errors)
+    assert {row["stage"] for row in errors} == ({"snapshot"} if sink == "snapshot" else {"journal"})
     assert "SCHEDULED RECORDER" in result.stderr and "INTERNALERROR" not in result.stdout
     if sink != "journal":
         assert any(r["event"] == "recorder_error" for r in journal)
