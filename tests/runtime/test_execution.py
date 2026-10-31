@@ -14,6 +14,7 @@ import time
 import pytest
 
 import execution_workers as workers
+from runtime_evidence import preserve_runtime_evidence, record_resource_samples
 import solarlab.experiments.execution as execution_module
 from solarlab.experiments.execution import ProcessSupervisor, QueueFull
 from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerRequest, _directory_bytes, _process_info
@@ -356,18 +357,31 @@ def test_changed_trusted_worker_source_digest_is_rejected_in_the_spawn_child(tmp
 
 
 @pytest.mark.parametrize("malformed", ["not_mapping", "missing_name"])
-def test_malformed_terminal_is_isolated_and_independent_jobs_continue(tmp_path, malformed):
-    with RunStore(tmp_path / "db") as store, supervisor(store, tmp_path / "work", max_active=2) as pool:
-        independent = pool.submit("independent", "barrier_success", request(), limits())
-        ready(store, independent)
-        bad = pool.submit("bad-terminal", "malformed_terminal", request(malformed=malformed), limits())
-        following = pool.submit("following", "normal", request(), limits())
-        value = assert_reaped(pool.wait(bad, 4))
-        assert value["store_state"] == "failed" and value["worker_result"]["reason"] == "invalid_terminal"
-        release(tmp_path, store, independent)
-        assert pool.wait(independent, 3).data["store_state"] == "succeeded"
-        assert pool.wait(following, 3).data["store_state"] == "succeeded"
-        assert len(terminal_events(store, "bad-terminal")) == 1
+def test_malformed_terminal_is_isolated_and_independent_jobs_continue(tmp_path, monkeypatch, malformed):
+    samples = []
+    try:
+        with RunStore(tmp_path / "db") as store, supervisor(store, tmp_path / "work", max_active=2) as pool:
+            samples = record_resource_samples(pool, monkeypatch)
+            independent = pool.submit("independent", "barrier_success", request(), limits())
+            # Start both cold interpreters together. The malformed writer stays
+            # behind its barrier until the independent child is known to run.
+            bad = pool.submit("bad-terminal", "malformed_terminal", request(malformed=malformed, wait=True), limits())
+            ready(store, independent)
+            ready(store, bad)
+            following = pool.submit("following", "normal", request(), limits())
+            assert store.get_run(independent.run_id)["state"] == "running"
+            assert store.get_run(following.run_id)["state"] == "queued"
+            release(tmp_path, store, bad)
+            value = assert_reaped(pool.wait(bad, 4))
+            assert value["store_state"] == "failed" and value["worker_result"]["reason"] == "invalid_terminal"
+            release(tmp_path, store, independent)
+            assert pool.wait(independent, 3).data["store_state"] == "succeeded"
+            assert pool.wait(following, 3).data["store_state"] == "succeeded"
+            assert len(terminal_events(store, "bad-terminal")) == 1
+    except BaseException as error:
+        error.add_note(preserve_runtime_evidence(tmp_path, "db", "malformed-" + malformed, samples))
+        raise
+    preserve_runtime_evidence(tmp_path, "db", "malformed-" + malformed, samples)
 
 
 @pytest.mark.parametrize("kind, size", [("artifact", 98304), ("result", 65536)])

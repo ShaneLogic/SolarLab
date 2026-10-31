@@ -10,13 +10,15 @@ import time
 
 import pytest
 
+import execution_workers as workers
+from runtime_evidence import preserve_runtime_evidence, record_resource_samples
 
 from examples.research_1d.process_transient import example_job, source_build
 from examples.research_1d.service import committed_implementation
 from solarlab.experiments.execution import ProcessSupervisor
 from solarlab.experiments.transient_worker import read_transient_job, transient_worker_binding
 from solarlab.experiments.worker import ResourceLimits, WorkerBinding, WorkerRequest, WorkerResult
-from solarlab.io.artifacts import ArtifactIntegrityError, ArtifactPayload, _json_document, bytes_artifact
+from solarlab.io.artifacts import ArtifactIntegrityError, ArtifactPayload, _json_document
 from solarlab.io.run_store import RunStore
 from solarlab.materials.source import SourceDocument
 
@@ -268,20 +270,9 @@ def test_actual_running_transient_cancellation_closes_owner_without_publication(
                                        "terminal_count": len(terminals(store, handle.run_id))})
 
 
-def _returned_failure(request, context):
-    """Infrastructure fixture, not a numerical computation claim."""
-    body = json.loads(request.request.content)
-    context.progress({"stage": "ready"})
-    if body.get("wait"):
-        while not Path("release").exists():
-            time.sleep(.005)  # Deliberately return late after the parent cancellation.
-    return WorkerResult.from_dict({"reason": "fixture_numerical_failure"},
-        artifacts=(("prefix", bytes_artifact(b"retained fixture prefix", metadata={"fixture": True})),), state="failed")
-
-
 def fixture_request(**body):
     source = SourceDocument("fixture", _json_document(body).encode())
-    binding = WorkerBinding.from_function("fixture_failure", _returned_failure, registry_sha256=source.sha256,
+    binding = WorkerBinding.from_function("fixture_failure", workers.returned_failure, registry_sha256=source.sha256,
                                           schema_sha256=source.sha256)
     return WorkerRequest(source, source, source, source, source.sha256, source.sha256), binding
 
@@ -295,33 +286,70 @@ def test_worker_result_defaults_and_refuses_cancelled_or_unknown_state():
 
 @pytest.mark.parametrize("override", ["cancel", "publication-error", "publication-wall", "missing-counter"])
 def test_failed_payloads_cannot_bypass_parent_cancellation_or_resource_guards(tmp_path, monkeypatch, override):
-    request, binding = fixture_request(wait=override == "cancel")
+    request, binding = fixture_request(wait=True)
     cap = replace(limits(), wall_seconds=2., calls=1 if override == "missing-counter" else None)
-    with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", (binding,), soft_grace_seconds=.8) as supervisor:
-        if override == "publication-error":
-            def broken(*args, **kwargs):
-                raise OSError("injected publication failure")
-            monkeypatch.setattr(store, "publish", broken)
-        if override == "publication-wall":
-            original = store.publish
-            def slow(*args, **kwargs):
-                record = original(*args, **kwargs)
-                time.sleep(cap.wall_seconds)
-                return record
-            monkeypatch.setattr(store, "publish", slow)
-        handle = supervisor.submit("guarded", binding.id, request, cap)
-        if override == "cancel":
+    samples = []
+    try:
+        with RunStore(tmp_path / "store") as store, pool(store, tmp_path / "work", (binding,), soft_grace_seconds=.8) as supervisor:
+            samples = record_resource_samples(supervisor, monkeypatch)
+            guard_ready = False
+            resource_reason = supervisor._resource_reason
+            def guard_resource_reason(job, now):
+                # This fixture's two-second guard window starts at release.
+                # Cold startup has its own unchanged real readiness deadline;
+                # RSS, output and counters still use the real guard throughout.
+                assert job.started is not None
+                return resource_reason(job, now if guard_ready else job.started)
+            monkeypatch.setattr(supervisor, "_resource_reason", guard_resource_reason)
+            if override == "publication-error":
+                def broken(*args, **kwargs):
+                    raise OSError("injected publication failure")
+                monkeypatch.setattr(store, "publish", broken)
+            if override == "publication-wall":
+                original = store.publish
+                def expired_after_publish(*args, **kwargs):
+                    record = original(*args, **kwargs)
+                    # Cross the existing deadline at this exact phase, instead
+                    # of spending the fixture's time budget on a real sleep.
+                    job = supervisor._known[handle.attempt_id]
+                    assert job.started is not None
+                    guard_elapsed = time.monotonic() - job.started
+                    assert guard_elapsed < cap.wall_seconds
+                    job.started -= cap.wall_seconds
+                    clock.update(elapsed_offset_seconds=cap.wall_seconds,
+                        guard_elapsed_before_step=guard_elapsed,
+                        real_elapsed_before_step=time.monotonic() - real_started)
+                    clock_path.write_text(json.dumps(clock))
+                    return record
+                monkeypatch.setattr(store, "publish", expired_after_publish)
+            handle = supervisor.submit("guarded", binding.id, request, cap)
             deadline = time.monotonic() + 2
             while not any(e["payload"].get("ui_progress", {}).get("stage") == "ready"
                           for e in store.events(run_id=handle.run_id, limit=1000)):
                 assert time.monotonic() < deadline
                 time.sleep(.005)
-            assert supervisor.cancel(handle)
+            with supervisor._condition:
+                job = supervisor._known[handle.attempt_id]
+                assert job.started is not None and job.stop_reason is None
+                real_started = job.started
+                job.started = time.monotonic()
+                guard_ready = True
+                clock = {"scope": "fixture_only_guard_phase_wall_clock",
+                    "real_job_started_monotonic": real_started, "guard_started_monotonic": job.started,
+                    "excluded_bootstrap_seconds": job.started - real_started, "elapsed_offset_seconds": 0.0}
+                clock_path = tmp_path / "work" / (store.store_id + "-" + handle.attempt_id) / "fixture-clock.json"
+                clock_path.write_text(json.dumps(clock))
+            if override == "cancel":
+                assert supervisor.cancel(handle)
             (tmp_path / "work" / (store.store_id + "-" + handle.attempt_id) / "release").touch()
-        receipt = supervisor.wait(handle, 8).data
-        assert receipt["store_state"] == ("cancelled" if override == "cancel" else "failed")
-        assert not receipt["terminal_artifacts"] and len(terminals(store, handle.run_id)) == 1
-        assert receipt["process_joined"] and receipt["process_exit_observed"]
-        reason = receipt["worker_result"]["reason"]
-        assert reason == {"cancel": "cancel_requested", "publication-error": "artifact_publication",
-                          "publication-wall": "wall_limit_during_publication", "missing-counter": "worker_exception"}[override]
+            receipt = supervisor.wait(handle, 8).data
+            assert receipt["store_state"] == ("cancelled" if override == "cancel" else "failed")
+            assert not receipt["terminal_artifacts"] and len(terminals(store, handle.run_id)) == 1
+            assert receipt["process_joined"] and receipt["process_exit_observed"]
+            reason = receipt["worker_result"]["reason"]
+            assert reason == {"cancel": "cancel_requested", "publication-error": "artifact_publication",
+                              "publication-wall": "wall_limit_during_publication", "missing-counter": "worker_exception"}[override]
+    except BaseException as error:
+        error.add_note(preserve_runtime_evidence(tmp_path, "store", "guard-" + override, samples))
+        raise
+    preserve_runtime_evidence(tmp_path, "store", "guard-" + override, samples)

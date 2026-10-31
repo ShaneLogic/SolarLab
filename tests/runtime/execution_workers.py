@@ -91,6 +91,18 @@ def barrier_success(request, context):
     return WorkerResult.from_dict({"returned_after_release": True})
 
 
+def returned_failure(request, context):
+    """Guard fixture without importing the scientific transient test module."""
+    body = json.loads(request.request.content)
+    context.progress({"stage": "ready"})
+    if body.get("wait"):
+        while not Path("release").exists():
+            # Deliberately return late after the parent cancellation.
+            time.sleep(.005)
+    return WorkerResult.from_dict({"reason": "fixture_numerical_failure"},
+        artifacts=(("prefix", bytes_artifact(b"retained fixture prefix", metadata={"fixture": True})),), state="failed")
+
+
 def exception(request, context):
     _ready(context)
     raise ValueError("infrastructure fixture exception")
@@ -130,8 +142,13 @@ def nested_pool(request, context):
 def malformed_terminal(request, context):
     """Deliberately bypass the normal encoder to exercise parent validation."""
     _ready(context)
+    body = json.loads(request.request.content)
+    if body.get("wait"):
+        while not Path("release").exists():
+            context.check_cancel()
+            time.sleep(.005)
     source = json.loads(Path("launch.json").read_text())
-    kind = json.loads(request.request.content)["malformed"]
+    kind = body["malformed"]
     entry = None if kind == "not_mapping" else {"file": "artifact-0.bin"}
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     _atomic_json(Path("terminal.json"), {"token": source["token"],
