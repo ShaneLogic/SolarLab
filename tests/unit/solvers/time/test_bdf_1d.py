@@ -16,6 +16,7 @@ from examples.research_1d.ionic_transient import controls as ionic_controls
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
 from solarlab.equations.dc_1d import DC1DProblem
+from solarlab.equations.implementation import ASSEMBLED, LEGACY, equation_implementation
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.experiments.transient import TransientProtocol, solve_transient
 from solarlab.experiments.ionic_transient import load_ionic_steady_initial, solve_ionic_transient
@@ -28,6 +29,8 @@ from solarlab.solvers.time.bdf_1d import (
     BDFDrive, ElectronicStorage1D, IonicStorage1D, _displacement, bdf_accounting,
 )
 from solarlab.experiments.bdf import _adapter_step_budget, solve_electronic_bdf, solve_ionic_bdf
+from solarlab.experiments.bdf_results import _canonical, _decode, _encode
+from support.equation_provenance import counted, one_ulp_residual
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -166,6 +169,58 @@ def test_selection_and_unsupported_population_refusals_are_explicit(electronic):
         solve_transient(device, initial, protocol, options=controls(), initial_options=admission, method="bdf")
     with pytest.raises(ValueError, match="unknown"):
         solve_transient(device, initial, protocol, options=controls(), initial_options=admission, method="bogus")
+
+
+def _numerical_bdf_bytes(result):
+    saved = _decode(_encode(result))
+    del saved["wall_s"]
+    del saved["controls"]["wall_s"]
+    del saved["controls"]["initial_admission_wall_s"]
+    for attempt in saved["attempts"]:
+        del attempt["wall_s"]
+    return _canonical(_encode(saved))
+
+
+@pytest.mark.parametrize("family", ["electronic", "single-ion"])
+def test_public_assembled_BDF2_history_is_bitwise_and_uses_only_its_selected_equations(electronic, ionic, family):
+    if family == "electronic":
+        device, initial, admission = electronic
+        request = TransientProtocol([0., 1e-7, 2e-7, 4e-7], [0.] * 4, [1.] * 4)
+
+        def run():
+            return solve_transient(device, initial, request, options=controls(), initial_options=admission,
+                method="bdf", bdf_options=BDFOptions(1e-7))
+    else:
+        device, initial = ionic
+        request = TransientProtocol([0., .25, .5, 1.], [.002] * 4, [0.] * 4)
+
+        def run():
+            return solve_ionic_transient(device, initial, request, options=ionic_controls(), method="bdf",
+                bdf_options=BDFOptions(.25))
+    results = []
+    for implementation in (LEGACY, ASSEMBLED):
+        with equation_implementation(implementation), counted() as observed:
+            result = run()
+        assert result.completed and any(step.order == 2 for step in result.accepted_steps)
+        assert (observed.original > 0 and observed.assembled == 0) if implementation == LEGACY else (
+            observed.original == 0 and observed.assembled > 0)
+        results.append(result)
+    assert _numerical_bdf_bytes(results[0]) == _numerical_bdf_bytes(results[1])
+
+
+def test_public_BDF_does_not_fall_back_after_an_assembled_only_word_change(electronic):
+    device, initial, admission = electronic
+    request = TransientProtocol([0., 1e-7, 2e-7], [0.] * 3, [1., 1.001, 1.004])
+
+    def run():
+        return solve_transient(device, initial, request, options=controls(), initial_options=admission,
+            method="bdf", bdf_options=BDFOptions(1e-7, adaptive=False, max_order=1))
+    with equation_implementation(LEGACY):
+        reference = run()
+    with equation_implementation(ASSEMBLED), counted() as observed, one_ulp_residual() as mutations:
+        candidate = run()
+    assert mutations[0] > 0 and observed.original == 0 and observed.assembled > 0
+    assert _numerical_bdf_bytes(reference) != _numerical_bdf_bytes(candidate)
 
 
 @pytest.mark.parametrize("invalid", [True, 0, -1, 4.0])

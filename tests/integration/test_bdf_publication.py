@@ -12,6 +12,7 @@ import sys
 import numpy as np
 import pytest
 
+from solarlab.equations.implementation import ASSEMBLED, ENVIRONMENT, LEGACY, equation_implementation
 from solarlab.experiments.bdf_results import (
     _canonical, _decode, _digest, _encode, _input_record, _validate_history, _work, read_bdf_packet, read_bdf_result,
 )
@@ -28,6 +29,22 @@ FIXTURES = ROOT / "tests/integration/fixtures/bdf_readiness"
 
 @pytest.fixture(scope="module")
 def published(tmp_path_factory):
+    # Keep the historical/pre-wiring fixtures on their explicit original route.
+    with equation_implementation(LEGACY):
+        return _published(tmp_path_factory, assembled=False)
+
+
+@pytest.fixture(scope="module", params=["default", "environment", "scope"])
+def assembled_published(tmp_path_factory, request, published):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.delenv(ENVIRONMENT, raising=False)
+        if request.param == "environment":
+            patch.setenv(ENVIRONMENT, ASSEMBLED)
+        with equation_implementation(ASSEMBLED) if request.param == "scope" else nullcontext():
+            return _published(tmp_path_factory, assembled=True, ionic_initial_path=published[0] / "ionic_initial.json")
+
+
+def _published(tmp_path_factory, *, assembled, ionic_initial_path=None):
     from examples.research_1d.steady import load_device
     from examples.research_1d.transient import controls
     from solarlab.device.compile_1d import compile_device_1d
@@ -86,7 +103,8 @@ def published(tmp_path_factory):
                 capture = run_transient_for_publication(compiled, initial, active_protocol,
                     options=options, initial_options=initial_options, method="bdf", bdf_options=requested,
                     bdf_drive=active_drive)
-            assert observed.original > 0 and observed.assembled == 0
+            assert (observed.original == 0 and observed.assembled > 0) if assembled else (
+                observed.original > 0 and observed.assembled == 0)
             assert capture.result.completed == (name == "completed")
             row = store.enqueue(name, opaque_identity=capture.identity, input_metadata={"fixture": name})
             token = store.claim(name, expected_attempt_id=row["current_attempt_id"], expected_generation=row["generation"], owner_id="test")
@@ -107,13 +125,17 @@ def published(tmp_path_factory):
 
         device = compile_ionic_device_1d(prepare_single_ion_device(diffusion_only=True), intervals_per_layer=12)
         admission = ionic_steady_controls(device.ion_node_count)
-        point = solve_ionic_steady_state(device, voltage_V=.002, generation_scale=0., options=admission)
-        assert point.accepted
-        saved = {"summary": {"accepted": True, "compiled_identity": device.identity,
-                            "voltage_V": .002, "generation_scale": 0.}, "result": point}
-        raw = (json.dumps(json_value(saved), allow_nan=False) + "\n").encode()
-        initial_path = root / "ionic_initial.json"
-        initial_path.write_bytes(raw)
+        if ionic_initial_path is None:
+            point = solve_ionic_steady_state(device, voltage_V=.002, generation_scale=0., options=admission)
+            assert point.accepted
+            saved = {"summary": {"accepted": True, "compiled_identity": device.identity,
+                                "voltage_V": .002, "generation_scale": 0.}, "result": point}
+            raw = (json.dumps(json_value(saved), allow_nan=False) + "\n").encode()
+            initial_path = root / "ionic_initial.json"
+            initial_path.write_bytes(raw)
+        else:
+            initial_path = ionic_initial_path
+            raw = initial_path.read_bytes()
         ion_initial = load_ionic_steady_initial(device, initial_path, hashlib.sha256(raw).hexdigest(), controls=admission)
         times = np.linspace(0., 1., 5)
         for name in ("ionic-completed", "ionic-cap"):
@@ -124,7 +146,8 @@ def published(tmp_path_factory):
                 capture = run_bdf_for_publication(device, ion_initial,
                     TransientProtocol(times, .002 + .002 * times, np.zeros(5)), options=physical,
                     bdf_options=BDFOptions(.25, adaptive=False, max_order=1))
-            assert observed.original > 0 and observed.assembled == 0
+            assert (observed.original == 0 and observed.assembled > 0) if assembled else (
+                observed.original > 0 and observed.assembled == 0)
             assert capture.result.completed == (name == "ionic-completed")
             row = store.enqueue(name, opaque_identity=capture.identity, input_metadata={"fixture": name})
             token = store.claim(name, expected_attempt_id=row["current_attempt_id"], expected_generation=0, owner_id="test")
@@ -137,7 +160,7 @@ def published(tmp_path_factory):
 
 @pytest.mark.parametrize("name", ["completed", "cap", "newton", "restart-rejected", "restart-at-end",
                                   "restart-at-start", "ionic-completed", "ionic-cap"])
-def test_bdf_capture_keeps_the_full_original_only_wiring_binding(published, name):
+def test_bdf_capture_keeps_the_full_legacy_opt_out_wiring_binding(published, name):
     from solarlab.equations.implementation import BINDING_SCHEMA
 
     root, captures = published
@@ -158,63 +181,88 @@ def test_bdf_capture_keeps_the_full_original_only_wiring_binding(published, name
 
 
 @pytest.mark.parametrize("operator", ["BDFStep:DC1DProblem", "BDFStep:Ionic1DProblem"])
-def test_bdf_capability_distinguishes_implicit_default_from_forced_assembled(monkeypatch, operator):
+def test_bdf_capability_defaults_to_assembled_and_retains_legacy_opt_out(monkeypatch, operator):
     from solarlab.equations.implementation import (
         ASSEMBLED, ENVIRONMENT, LEGACY, equation_implementation, provenance_binding, selected_implementation,
     )
 
     monkeypatch.delenv(ENVIRONMENT, raising=False)
     assert selected_implementation() == ASSEMBLED
-    assert selected_implementation(operator=operator) == LEGACY
+    assert selected_implementation(operator=operator) == ASSEMBLED
     binding = provenance_binding(operator, object(), assembled=False)
     assert binding["operator"] == operator and binding["assembler_identity"] is None
-    with pytest.raises(ValueError, match="BDF currently supports original equations only"):
+    with pytest.raises(TypeError, match="no assembled equation system is bound"):
         provenance_binding(operator, object(), assembled=True)
     with equation_implementation(LEGACY):
         assert selected_implementation(operator=operator) == LEGACY
-    with equation_implementation(ASSEMBLED), pytest.raises(ValueError, match="original equations only"):
-        provenance_binding(operator, object(), assembled=False)
+    with equation_implementation(ASSEMBLED):
+        assert selected_implementation(operator=operator) == ASSEMBLED
     assert selected_implementation() == ASSEMBLED
     monkeypatch.setenv(ENVIRONMENT, LEGACY)
     assert selected_implementation(operator=operator) == LEGACY
     monkeypatch.setenv(ENVIRONMENT, ASSEMBLED)
-    with pytest.raises(ValueError, match="original equations only"):
-        selected_implementation(operator=operator)
+    assert selected_implementation(operator=operator) == ASSEMBLED
 
 
 @pytest.mark.parametrize("ionic", [False, True])
-@pytest.mark.parametrize("forced", ["environment", "scope"])
-def test_explicit_assembled_bdf_publication_refuses_before_admission(monkeypatch, ionic, forced):
+def test_unknown_bdf_implementation_refuses_before_admission(monkeypatch, ionic):
     from examples.research_1d.ionic_residual import prepare_single_ion_device
     from examples.research_1d.steady import load_device
     from solarlab.device.compile_1d import compile_device_1d
     from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
-    from solarlab.equations.implementation import ASSEMBLED, ENVIRONMENT, equation_implementation
     from solarlab.experiments import bdf_results
     from solarlab.solvers.time.bdf import BDFOptions
 
     compiled = (compile_ionic_device_1d(prepare_single_ion_device(diffusion_only=True), intervals_per_layer=12)
                 if ionic else compile_device_1d(load_device(), intervals_per_layer=12))
-    monkeypatch.delenv(ENVIRONMENT, raising=False)
-    if forced == "environment":
-        monkeypatch.setenv(ENVIRONMENT, ASSEMBLED)
+    monkeypatch.setenv(ENVIRONMENT, "unknown")
     monkeypatch.setattr(bdf_results, "job_provenance", lambda *a, **k: pytest.fail("refusal must precede admission"))
-    with equation_implementation(ASSEMBLED) if forced == "scope" else nullcontext():
-        with pytest.raises(ValueError, match="BDF currently supports original equations only"):
-            bdf_results.run_bdf_for_publication(compiled, None, None, options=None,
-                initial_options=object(), bdf_options=BDFOptions(1e-7))
-        if ionic:
-            from solarlab.experiments.ionic_transient import solve_ionic_transient
-            with pytest.raises(ValueError, match="BDF currently supports original equations only"):
-                solve_ionic_transient(compiled, None, None, options=None, method="bdf", bdf_options=BDFOptions(1e-7))
-        else:
-            from solarlab.experiments.transient import solve_transient
-            with pytest.raises(ValueError, match="BDF currently supports original equations only"):
-                run_transient_for_publication(compiled, None, None, options=None, initial_options=object(),
-                                              method="bdf", bdf_options=BDFOptions(1e-7))
-            with pytest.raises(ValueError, match="BDF currently supports original equations only"):
-                solve_transient(compiled, None, None, options=None, initial_options=object(),
-                                method="bdf", bdf_options=BDFOptions(1e-7))
+    with pytest.raises(ValueError, match="unknown equation implementation"):
+        bdf_results.run_bdf_for_publication(compiled, None, None, options=None,
+            initial_options=object(), bdf_options=BDFOptions(1e-7))
+    if ionic:
+        from solarlab.experiments.ionic_transient import solve_ionic_transient
+        with pytest.raises(ValueError, match="unknown equation implementation"):
+            solve_ionic_transient(compiled, None, None, options=None, method="bdf", bdf_options=BDFOptions(1e-7))
+    else:
+        from solarlab.experiments.transient import solve_transient
+        with pytest.raises(ValueError, match="unknown equation implementation"):
+            run_transient_for_publication(compiled, None, None, options=None, initial_options=object(),
+                                          method="bdf", bdf_options=BDFOptions(1e-7))
+        with pytest.raises(ValueError, match="unknown equation implementation"):
+            solve_transient(compiled, None, None, options=None, initial_options=object(),
+                            method="bdf", bdf_options=BDFOptions(1e-7))
+
+
+@pytest.mark.parametrize("name", ["completed", "cap", "newton", "restart-rejected", "restart-at-end",
+                                  "restart-at-start", "ionic-completed", "ionic-cap"])
+def test_assembled_bdf_publication_preserves_legacy_numerical_words(published, assembled_published, name):
+    _, original = published
+    root, candidate = assembled_published
+
+    def numerical_bytes(result):
+        saved = _decode(_encode(result))
+        del saved["wall_s"]
+        del saved["controls"]["wall_s"]
+        del saved["controls"]["initial_admission_wall_s"]
+        for attempt in saved["attempts"]:
+            del attempt["wall_s"]
+        return _canonical(_encode(saved))
+
+    assert numerical_bytes(original[name].result) == numerical_bytes(candidate[name].result)
+    with RunStore(root / "store", read_only=True, immutable=True) as store:
+        loaded = read_transient_result(store, name)
+    assert _digest(loaded["history"]) == _digest(candidate[name].result)
+    implementation = loaded["record"]["request"]["equation_implementation"]
+    assert implementation["kind"] == "assembled" and implementation["unified_assembler"] is True
+    binding = implementation["provenance_binding"]
+    assert binding["operator"] == "BDFStep:" + ("AssembledIonic1DProblem" if name.startswith("ionic-")
+                                               else "AssembledDC1DProblem")
+    assert isinstance(binding["assembler_identity"], str) and len(binding["assembler_identity"]) == 64
+    description = json.loads(candidate[name].capture_json)["description"]
+    assert provenance.read_provenance(description["job_provenance"]).export()["assembler"] == {
+        "operator": binding["operator"], "identity": binding["assembler_identity"], "unified_assembler": True,
+        "analysis_identity": binding["analysis_identity"]}
 
 
 @pytest.mark.parametrize("name", ["completed", "cap", "newton"])

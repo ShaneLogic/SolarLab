@@ -479,21 +479,25 @@ def _capture_identity(body: dict[str, Any], provenance: dict[str, Any]) -> dict[
              and value["assembler"]["unified_assembler"] == request["equation_implementation"]["unified_assembler"],
              "BDF declared equation binding differs from admission")
     implementation = request["equation_implementation"]
-    _require(implementation["kind"] == "original" and implementation["unified_assembler"] is False,
-             "BDF currently supports original equations only")
+    assembled = implementation["kind"] == "assembled"
+    _require(implementation["kind"] in {"original", "assembled"}
+             and implementation["unified_assembler"] is assembled,
+             "BDF implementation kind differs from its equation binding")
     if "provenance_binding" in implementation:
         binding = implementation["provenance_binding"]
         _require(type(binding) is dict and set(binding) == {"operator", "assembler_identity", "analysis_identity"},
                  "BDF saved equation binding is incomplete")
         expected_binding = {"operator": binding["operator"], "identity": binding["assembler_identity"],
-                            "analysis_identity": binding["analysis_identity"], "unified_assembler": False}
+                            "analysis_identity": binding["analysis_identity"], "unified_assembler": assembled}
     else:
         # Pre-wiring captures used Q6's original operator-only analysis identity.
         # Verify that historical form from saved fields; never import today's helper.
+        _require(not assembled, "assembled BDF capture requires its complete saved equation binding")
         operator = "BDFStep:" + implementation["problem"].rsplit(".", 1)[1]
         expected_binding = {"operator": operator, "identity": None, "unified_assembler": False,
                             "analysis_identity": _sha(_canonical({"operator": operator}))}
-    _require(value["assembler"] == expected_binding and expected_binding["identity"] is None,
+    _require(value["assembler"] == expected_binding
+             and (isinstance(expected_binding["identity"], str) if assembled else expected_binding["identity"] is None),
              "BDF full saved equation binding differs from admission")
     hashes = {"source_tree_sha256": value["source_tree_sha256"],
               "runtime_sha256": _sha(_canonical(value["runtime_observed"])),
@@ -615,7 +619,9 @@ def run_bdf_for_publication(
     Initial/DC history is represented by its supplied bytes, not re-attributed.
     """
     from solarlab.equations.dc_1d import CompiledDevice1D
-    from solarlab.equations.implementation import equation_implementation, provenance_binding, selected_implementation
+    from solarlab.equations.implementation import (
+        ASSEMBLED, equation_implementation, provenance_binding, selected_implementation,
+    )
     from solarlab.equations.ionic_1d import CompiledIonicDevice1D
     from solarlab.experiments.transient import solve_transient
     from solarlab.experiments.ionic_transient import solve_ionic_transient
@@ -628,13 +634,17 @@ def run_bdf_for_publication(
     _require(ionic or initial_options is not None, "electronic BDF publication requires initial controls")
     operator = "Ionic1DProblem" if ionic else "DC1DProblem"
     selection = selected_implementation(operator="BDFStep:" + operator)
-    binding = provenance_binding("BDFStep:" + operator, compiled, assembled=False)
+    assembled = selection == ASSEMBLED
+    binding = provenance_binding("BDFStep:" + operator, compiled,
+        inventory_row_node=initial.steady_controls.inventory_row_node if ionic else None, assembled=assembled)
     drive = BDFDrive.from_protocol(protocol) if bdf_drive is None else bdf_drive
     _require(type(drive) is BDFDrive, "BDF publication requires the actual drive")
     nodes = np.frombuffer(compiled.nodes_m.tobytes(), dtype=compiled.nodes_m.dtype).reshape(compiled.nodes_m.shape)
-    implementation = {"problem": "solarlab.equations." + ("ionic_1d." if ionic else "dc_1d.") + operator,
+    problem_module = ("assembly.ionic_1d" if ionic else "assembly.classical_1d") if assembled else (
+        "ionic_1d" if ionic else "dc_1d")
+    implementation = {"problem": "solarlab.equations." + problem_module + "." + ("Assembled" if assembled else "") + operator,
         "time_adapter": "solarlab.experiments.bdf." + ("solve_ionic_bdf" if ionic else "solve_electronic_bdf"),
-        "kind": "original", "unified_assembler": False, "provenance_binding": binding}
+        "kind": "assembled" if assembled else "original", "unified_assembler": assembled, "provenance_binding": binding}
     request = _decode(_encode({
         "method": "bdf", "bdf_options": asdict(bdf_options), "physical_controls": asdict(options),
         "initial_controls": initial.steady_controls if ionic else asdict(initial_options),
@@ -656,8 +666,7 @@ def run_bdf_for_publication(
     }))
     inputs = _input_record(request)
     started = datetime.now(timezone.utc).isoformat()
-    # BDF's declared original-only capability includes its initial admission;
-    # an explicit assembled request was refused above, before entering this scope.
+    # Initial admission and integration retain the same resolved implementation.
     with equation_implementation(selection), job_provenance(inputs, **binding) as admitted:
         # A later RunStore publication is supported here, as in the BE capture
         # API. Existing spawned routes must retain their separate verified

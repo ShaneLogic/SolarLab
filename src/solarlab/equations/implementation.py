@@ -31,11 +31,9 @@ history never mixes implementations. :func:`implementation_source_modules`
 names this module and the assembly modules a producer can run, for source
 maps that must not depend on the selection.
 
-BDF's electronic and single-ion adapters currently support original equations
-only. :func:`selected_implementation` resolves those operators to ``LEGACY``
-by their declared capability when no choice is explicit, and refuses an
-explicit assembled choice. BDF capture scopes its admission and integration
-to that implementation; this is not an assembled-to-original fallback.
+BDF's admitted electronic and single-positive-ion adapters also default to
+assembled equations. BDF capture scopes its admission and integration to the
+selected implementation; the original equations remain an explicit opt-out.
 
 Every production job admission (Q6 ``job_provenance``) states the
 implementation it runs, before numerical work (:func:`provenance_binding`):
@@ -96,8 +94,8 @@ BINDING_SCHEMA = "solarlab.equation-binding.v1"
 _OPERATORS: dict[str, tuple[str, str | None, tuple[str, ...]]] = {
     "DC1DProblem.steady_jv": ("steady", "AssembledDC1DProblem.steady_jv", ()),
     "BackwardEuler1DStep": ("transient", "BackwardEuler1DStep(AssembledStorage1D)", ()),
-    "BDFStep:DC1DProblem": ("transient", None, ()),
-    "BDFStep:Ionic1DProblem": ("transient", None, ()),
+    "BDFStep:DC1DProblem": ("transient", "BDFStep:AssembledDC1DProblem", ()),
+    "BDFStep:Ionic1DProblem": ("transient", "BDFStep:AssembledIonic1DProblem", ("closure", "electronic")),
     "DC1DProblem.small_signal": ("ac", "AssembledDC1DProblem.small_signal", ()),
     "Ionic1DProblem.steady_jv": ("steady", "AssembledIonic1DProblem.steady_jv", ("closure", "electronic")),
     "Ionic1DProblem.initialization": ("initialization", "AssembledIonic1DProblem.initialization",
@@ -131,9 +129,9 @@ def _checked(name: object) -> str:
 def selected_implementation(*, operator: str | None = None) -> str:
     """The explicit scope/setting or the default supported by an operator's capability.
 
-    Without an operator, the existing assembled default is unchanged. An
-    original-only BDF operator accepts an implicit default or explicit legacy
-    choice; an explicit assembled choice is refused before admission.
+    Without an operator, the assembled default is unchanged. An operator
+    without assembled capability accepts an implicit default or explicit
+    legacy choice; an explicit assembled choice is refused before admission.
     """
     scoped = _SCOPE.get()
     declared = scoped if scoped is not None else os.environ.get(ENVIRONMENT)

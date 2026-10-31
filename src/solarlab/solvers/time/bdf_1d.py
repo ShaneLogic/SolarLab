@@ -9,16 +9,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 
 from solarlab.contracts import frozen_array
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.physics.electrostatics import contact_displacement
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
+from solarlab.equations.assembly.ionic_1d import AssembledIonic1DProblem
 from solarlab.equations.dc_1d import DC1DProblem
 from solarlab.equations.ionic_1d import Ionic1DProblem
 from solarlab.solvers.nonlinear.problem import Matrix, Vector
+from solarlab.solvers.time.assembled_ionic_backward_euler import AssembledIonicBackwardEuler1DStep
+from solarlab.solvers.time.assembled_storage import AssembledIonicStorage1D, AssembledStorage1D
 from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, storage_mask, inventory_m2, step_accounting
 from solarlab.solvers.time.ionic_backward_euler import (
     IonicBackwardEuler1DStep, step_accounting as ionic_accounting,
@@ -92,7 +96,7 @@ class BDFDrive:
 
 @dataclass(frozen=True)
 class ElectronicStorage1D:
-    problem: DC1DProblem
+    problem: DC1DProblem | AssembledDC1DProblem
 
     def residual(self, u: Vector) -> Vector:
         return self.problem.residual(u)
@@ -101,19 +105,30 @@ class ElectronicStorage1D:
         return self.problem.jacobian(u)
 
     def physical_storage(self, u: Vector) -> Vector:
+        if isinstance(self.problem, AssembledDC1DProblem):
+            return AssembledStorage1D(self.problem).physical_storage(u)
         device = self.problem.device
         state = device.state(u, voltage_V=self.problem.voltage_V)
         return np.r_[np.zeros(device.node_count), inventory_m2(device, state).ravel()]
 
     def storage(self, u: Vector) -> Vector:
+        if isinstance(self.problem, AssembledDC1DProblem):
+            return self.problem.storage(u)
         result = self.physical_storage(u)
         result[self.problem.device.node_count:] *= storage_mask(self.problem.device).ravel()
         return result
 
     def storage_tangent(self, u: Vector) -> Matrix:
+        if isinstance(self.problem, AssembledDC1DProblem):
+            return self.problem.storage_tangent(u)
         return -self.problem.storage_jacobian(u)
 
     def physical_increment(self, u: Vector, old: ElectronicStorage1D, old_u: Vector) -> Vector:
+        if isinstance(self.problem, AssembledDC1DProblem) != isinstance(old.problem, AssembledDC1DProblem):
+            raise ValueError("electronic BDF history must retain its equation implementation")
+        if isinstance(self.problem, AssembledDC1DProblem):
+            assert isinstance(old.problem, AssembledDC1DProblem)
+            return AssembledStorage1D(self.problem).physical_increment(u, AssembledStorage1D(old.problem), old_u)
         state = old.problem.device.state(old_u, voltage_V=old.problem.voltage_V)
         change = BackwardEuler1DStep(self.problem, state, 1.0).inventory_rate_m2_s(u)
         return np.r_[np.zeros(self.problem.device.node_count), change.ravel()]
@@ -121,6 +136,11 @@ class ElectronicStorage1D:
     def storage_increment(self, u: Vector, old_problem: StorageProblem, old_u: Vector) -> Vector:
         if not isinstance(old_problem, ElectronicStorage1D):
             raise ValueError("electronic BDF history must keep its original reference problem")
+        if isinstance(self.problem, AssembledDC1DProblem):
+            if not isinstance(old_problem.problem, AssembledDC1DProblem):
+                raise ValueError("electronic BDF history must retain its equation implementation")
+            return AssembledStorage1D(self.problem).storage_increment(
+                u, AssembledStorage1D(old_problem.problem), old_u)
         change = self.physical_increment(u, old_problem, old_u)
         change[self.problem.device.node_count:] *= storage_mask(self.problem.device).ravel()
         return change
@@ -128,7 +148,7 @@ class ElectronicStorage1D:
 
 @dataclass(frozen=True)
 class IonicStorage1D:
-    problem: Ionic1DProblem
+    problem: Ionic1DProblem | AssembledIonic1DProblem
 
     def __post_init__(self) -> None:
         if self.problem.device.ion_species_count != 1:
@@ -145,21 +165,33 @@ class IonicStorage1D:
         return self.problem.jacobian(u)
 
     def physical_storage(self, u: Vector) -> Vector:
+        if isinstance(self.problem, AssembledIonic1DProblem):
+            return AssembledIonicStorage1D(self.problem).physical_storage(u)
         device = self.problem.device
         state = device.state(u, voltage_V=self.problem.voltage_V)
         return np.r_[self.electronic.physical_storage(u[:3 * device.node_count]),
                      device.ion_geometry.cell_measures_m * state.positive_ion_density_m3]
 
     def storage(self, u: Vector) -> Vector:
+        if isinstance(self.problem, AssembledIonic1DProblem):
+            return self.problem.storage(u)
         device = self.problem.device
         state = device.state(u, voltage_V=self.problem.voltage_V)
         return np.r_[self.electronic.storage(u[:3 * device.node_count]),
                      device.ion_geometry.cell_measures_m * state.positive_ion_density_m3]
 
     def storage_tangent(self, u: Vector) -> Matrix:
+        if isinstance(self.problem, AssembledIonic1DProblem):
+            return self.problem.storage_tangent(u)
         return -self.problem.storage_jacobian(u)
 
     def physical_increment(self, u: Vector, old: IonicStorage1D, old_u: Vector) -> Vector:
+        if isinstance(self.problem, AssembledIonic1DProblem) != isinstance(old.problem, AssembledIonic1DProblem):
+            raise ValueError("ionic BDF history must retain its equation implementation")
+        if isinstance(self.problem, AssembledIonic1DProblem):
+            assert isinstance(old.problem, AssembledIonic1DProblem)
+            return AssembledIonicStorage1D(self.problem).physical_increment(
+                u, AssembledIonicStorage1D(old.problem), old_u)
         state = old.problem.device.state(old_u, voltage_V=old.problem.voltage_V)
         carrier, ion = IonicBackwardEuler1DStep(self.problem, state, 1.0).inventory_rate_m2_s(u)
         return np.r_[np.zeros(self.problem.device.node_count), carrier.ravel(), ion]
@@ -167,18 +199,27 @@ class IonicStorage1D:
     def storage_increment(self, u: Vector, old_problem: StorageProblem, old_u: Vector) -> Vector:
         if not isinstance(old_problem, IonicStorage1D):
             raise ValueError("ionic BDF history must keep its original physical reference")
+        if isinstance(self.problem, AssembledIonic1DProblem):
+            if not isinstance(old_problem.problem, AssembledIonic1DProblem):
+                raise ValueError("ionic BDF history must retain its equation implementation")
+            return AssembledIonicStorage1D(self.problem).storage_increment(
+                u, AssembledIonicStorage1D(old_problem.problem), old_u)
         change = self.physical_increment(u, old_problem, old_u)
         count = self.problem.device.node_count
         change[count:3 * count] *= storage_mask(self.problem.device.electronic_component).ravel()
         return change
 
 
-def _be_step(step: BDFStep) -> BackwardEuler1DStep | IonicBackwardEuler1DStep:
+def _be_step(step: BDFStep) -> BackwardEuler1DStep | IonicBackwardEuler1DStep | AssembledIonicBackwardEuler1DStep:
     new, old = step.endpoint, step.history[0]
     if isinstance(new, ElectronicStorage1D) and isinstance(old.problem, ElectronicStorage1D):
-        return BackwardEuler1DStep(new.problem, old.problem.problem.device.state(old.u,
+        endpoint = AssembledStorage1D(new.problem) if isinstance(new.problem, AssembledDC1DProblem) else new.problem
+        return BackwardEuler1DStep(cast(DC1DProblem, endpoint), old.problem.problem.device.state(old.u,
             voltage_V=old.problem.problem.voltage_V), step.dt_s)
     if isinstance(new, IonicStorage1D) and isinstance(old.problem, IonicStorage1D):
+        if isinstance(new.problem, AssembledIonic1DProblem):
+            return AssembledIonicBackwardEuler1DStep(new.problem, old.problem.problem.device.state(old.u,
+                voltage_V=old.problem.problem.voltage_V), step.dt_s)
         return IonicBackwardEuler1DStep(new.problem, old.problem.problem.device.state(old.u,
             voltage_V=old.problem.problem.voltage_V), step.dt_s)
     raise TypeError("matched electronic or single-ion BDF history required")
@@ -224,7 +265,7 @@ def bdf_accounting(step: BDFStep, u: Vector) -> dict[str, Any]:
     """Original order1 readout, or full coefficient-consistent BDF2 accounting."""
     be = _be_step(step)
     data: dict[str, Any] = dict(step_accounting(be, u) if isinstance(be, BackwardEuler1DStep)
-                               else ionic_accounting(be, u))
+                               else ionic_accounting(cast(IonicBackwardEuler1DStep, be), u))
     if step.order == 1:
         return data
     be_comparison = dict(data)
@@ -250,7 +291,7 @@ def bdf_accounting(step: BDFStep, u: Vector) -> dict[str, Any]:
     carrier_rate = rate[count:3 * count].reshape(2, count)
     if ionic:
         assert isinstance(adapter, IonicStorage1D)
-        assert isinstance(be, IonicBackwardEuler1DStep)
+        assert isinstance(be, (IonicBackwardEuler1DStep, AssembledIonicBackwardEuler1DStep))
         electronic_data = step_accounting(be.electronic_step, u[:3 * count])
         old_rate = np.asarray(data["carrier_inventory_rate_m2_s"])
         particles = np.array(data["carrier_particle_fluxes_m2_s"], copy=True)

@@ -11,8 +11,10 @@ from typing import Any, cast
 import numpy as np
 
 from solarlab.contracts import frozen_array
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.assembly.ionic_1d import AssembledIonic1DProblem, AssembledMultipleIonic1DProblem
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem
+from solarlab.equations.implementation import use_assembled
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D
 from solarlab.experiments import ionic_transient, multiple_ionic_transient
@@ -32,13 +34,11 @@ from solarlab.solvers.time.assembled_ionic_bdf import (
     IonicDevice, IonicState, assembled_ionic_bdf_accounting, assembled_ionic_bdf_seed,
 )
 from solarlab.solvers.time.assembled_storage import AssembledIonicStorage1D
-from solarlab.solvers.time.backward_euler import BackwardEuler1DStep
 from solarlab.solvers.time.bdf import (
     Assessment, BDFEvent, BDFOptions, BDFResult, BDFStep, HistoryPoint, StorageProblem, solve_bdf,
 )
 from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, IonicStorage1D, bdf_accounting, bdf_seed
 from solarlab.solvers.time.carrier_seed import DensitySeedContext
-from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep
 
 __all__ = ["solve_electronic_bdf", "solve_ionic_bdf", "solve_assembled_ionic_bdf", "solve_assembled_multiple_ionic_bdf"]
 
@@ -49,16 +49,13 @@ def _events(drive: BDFDrive, factory: Any, controls: TransientOptions) -> tuple[
         assert isinstance(old, (ElectronicStorage1D, IonicStorage1D))
         assert isinstance(new, type(old))
         if isinstance(new, IonicStorage1D) and isinstance(old, IonicStorage1D):
-            previous_ion = old.problem.device.state(u, voltage_V=old.problem.voltage_V)
-            be: IonicBackwardEuler1DStep | BackwardEuler1DStep = IonicBackwardEuler1DStep(new.problem, previous_ion, 1.0)
             e = new.problem.device.electronic_component
         elif isinstance(new, ElectronicStorage1D) and isinstance(old, ElectronicStorage1D):
-            previous_electronic = old.problem.device.state(u, voltage_V=old.problem.voltage_V)
-            be = BackwardEuler1DStep(new.problem, previous_electronic, 1.0)
             e = new.problem.device
         else:
             raise ValueError("restart must retain the same storage adapter kind")
-        right = be.initial_coordinates("previous", voltage_lift=True)
+        right = bdf_seed(BDFStep(new, (HistoryPoint(0.0, u, old.storage(u), old),), 1.0, 1),
+                         "previous", voltage_lift=True)
         tangent = new.storage_tangent(right)
         algebraic = np.asarray(abs(tangent).sum(axis=1)).ravel() == 0
         weights = production_residual_scaling(e, poisson_tolerance=controls.poisson_tolerance,
@@ -190,9 +187,11 @@ def solve_electronic_bdf(
         1.0, production_coordinates(compiled, potential_step_V=options.potential_step_V,
         quasi_fermi_step=options.quasi_fermi_step), options.newton_budget, (), False)
     norm = production_convergence_norm(compiled, convergence_policy=options.convergence_policy)
+    bound = AssembledDC1DProblem(compiled, initial.voltage_V, initial.generation_scale) if use_assembled() else None
     def factory(t: float, side: str) -> ElectronicStorage1D:
         voltage, generation = source.values(t, side)
-        return ElectronicStorage1D(DC1DProblem(compiled, voltage, generation))
+        return ElectronicStorage1D(bound.at(voltage, generation) if bound is not None
+                                   else DC1DProblem(compiled, voltage, generation))
     def assessment(step: BDFStep, u: Vector) -> Assessment:
         data = bdf_accounting(step, u)
         finite = _finite_accounting(data)
@@ -230,9 +229,10 @@ def solve_ionic_bdf(
     if source.values(float(protocol.times_s[0]), "left") != (admitted.voltage_V, generation):
         raise ValueError("BDF initial drive must match the admitted ionic steady state")
     base, norm = _newton_settings(compiled, options)
+    bound = AssembledIonic1DProblem(compiled, admitted.voltage_V, generation) if use_assembled() else None
     def factory(t: float, side: str) -> IonicStorage1D:
         voltage, scale = source.values(t, side)
-        return IonicStorage1D(Ionic1DProblem(compiled, voltage, scale))
+        return IonicStorage1D(bound.at(voltage, scale) if bound is not None else Ionic1DProblem(compiled, voltage, scale))
     def assessment(step: BDFStep, u: Vector) -> Assessment:
         data = bdf_accounting(step, u)
         finite = _finite_accounting(data)
