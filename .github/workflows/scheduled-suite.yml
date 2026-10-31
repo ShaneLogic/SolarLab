@@ -165,6 +165,7 @@ jobs:
         timeout-minutes: 110
         env:
           SHARD_ID: ${{ matrix.id }}
+          SOLARLAB_ROOT_RUNTIME_EVIDENCE: ${{ runner.temp }}/coverage-result/runtime-evidence/${{ matrix.id }}
         run: |
           uv run --frozen --no-sync python scripts/ci/scheduled_suite.py run \
             --plan "$RUNNER_TEMP/suite-plan/plan.json" --kind coverage \

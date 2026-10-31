@@ -464,6 +464,75 @@ def test_workflow_triggers_are_bounded_and_have_no_threshold_gate():
         assert workflow["env"][variable] == "1"
 
 
+def test_coverage_shards_upload_runtime_evidence_for_success_and_failure():
+    workflow = yaml.load(
+        (scheduled.ROOT / ".github/workflows/scheduled-suite.yml").read_text(), Loader=yaml.BaseLoader,
+    )
+    steps = workflow["jobs"]["coverage"]["steps"]
+    run = next(step for step in steps if "--kind coverage" in step.get("run", ""))
+    upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
+    uploaded = upload["with"]["path"].rstrip("/")
+    assert uploaded == "${{ runner.temp }}/coverage-result"
+    assert '--out "$RUNNER_TEMP/coverage-result"' in run["run"]
+    assert run["env"]["SOLARLAB_ROOT_RUNTIME_EVIDENCE"] == uploaded + "/runtime-evidence/${{ matrix.id }}"
+    assert "if" not in run and upload["if"] == "always()"
+    assert upload["with"]["name"] == "coverage-data-${{ matrix.id }}"
+
+
+def test_runtime_evidence_is_not_a_node_receipt_or_coverage_shard(tmp_path, monkeypatch):
+    from coverage import CoverageData
+
+    nodeid = "test_probe.py::test_probe"
+    shard = {"id": "probe", "count": 1, "nodeids": [nodeid]}
+    plan = tmp_path / "plan.json"
+    scheduled.write(plan, {"commit": "frozen", "selected_shards": {"coverage": [shard]},
+                           "all_shards": {"coverage": [shard]}})
+    directory = tmp_path / "coverage-shards/coverage-data-probe"
+    reports = [{"nodeid": nodeid, "when": phase, "outcome": "passed"}
+               for phase in ("setup", "call", "teardown")]
+    scheduled.write(directory / "tests.json", {
+        "items": [{"nodeid": nodeid}], "reports": reports, "status": "completed", "exit_code": 0,
+        "collection_complete": True, "execution_complete": True,
+        "recorder_errors": [], "started_nodeids": [nodeid],
+    })
+    (directory / "tests.jsonl").write_text("".join(
+        json.dumps({"event": "report", **row}) + "\n" for row in reports
+    ))
+    receipt = scheduled._coverage_receipt(directory, [nodeid], 0)
+    assert receipt["receipt_complete"]
+    result = {"shard": shard, "commit": "frozen", "status": "passed", "coverage_data": True,
+              "plan_sha256": scheduled.sha256(plan)}
+    scheduled.write(directory / "result.json", result)
+    evidence = directory / "runtime-evidence/probe"
+    labels = ["malformed-not_mapping", "malformed-missing_name", "guard-cancel",
+              "guard-publication-error", "guard-publication-wall", "guard-missing-counter"]
+    for label in labels:
+        scheduled.write(evidence / (label + ".json"), {
+            "workers": {"attempt": {"receipt.json": {"content": {"store_state": "failed"}},
+                                    "fixture-clock.json": {"content": {"elapsed_offset_seconds": 2.0}}}},
+            "resource_samples": [], "events": [],
+        })
+    retained = {path: path.read_bytes() for path in evidence.glob("*.json")}
+    assert scheduled._coverage_receipt(directory, [nodeid], 0) == receipt
+
+    source = tmp_path / "probe.py"
+    source.write_text("value = 1\n")
+    data = CoverageData(basename=str(directory / "coverage.data.probe"))
+    data.add_lines({str(source): {1}})
+    data.write()
+    monkeypatch.setattr(scheduled, "commit", lambda: "frozen")
+    monkeypatch.setattr(scheduled, "verify_installation", lambda: {})
+    monkeypatch.setattr(scheduled, "coverage_config", lambda path: path.write_text("[run]\nparallel = true\n"))
+    output = tmp_path / "coverage-report"
+    scheduled.combine(SimpleNamespace(plan=plan, data=directory.parent, out=output))
+    scope = scheduled.read(output / "scope.json")
+    assert scope["full_default_run_passed"] is True
+    assert scope["shard_results"] == {"probe": result}
+    assert scheduled.read(directory / "tests.json")["items"] == [{"nodeid": nodeid}]
+    assert scheduled.read(output / "coverage.json")["totals"]["covered_lines"] == 1
+    assert {path: path.read_bytes() for path in evidence.glob("*.json")} == retained
+
+
 @pytest.mark.parametrize("stale", [False, True])
 def test_installation_audit_refuses_stale_package_bytes(tmp_path, monkeypatch, stale):
     root = tmp_path / "checkout"
