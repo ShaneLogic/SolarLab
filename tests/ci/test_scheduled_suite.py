@@ -233,6 +233,20 @@ def test_core_source_binding_follows_installation_audit_only_in_its_child(
         )
         assert kwargs["env"].get("PYTEST_CI_JOB") == job
         assert ("coverage" in command) is (kind == "coverage")
+        nodeid = shard["nodeids"][0]
+        reports = [{"nodeid": nodeid, "when": phase, "outcome": "passed"}
+                   for phase in ("setup", "call", "teardown")]
+        scheduled.write(out / "tests.json", {
+            "items": [{"nodeid": nodeid}], "reports": reports, "status": "completed",
+            "exit_code": 0, "collection_complete": True, "execution_complete": True,
+            "recorder_errors": [], "started_nodeids": [nodeid],
+        })
+        (out / "tests.jsonl").write_text("".join(
+            json.dumps(row) + "\n" for row in [
+                {"event": "start", "nodeid": nodeid},
+                *({"event": "report", **report} for report in reports),
+            ]
+        ))
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(scheduled, "verify_installation", audit)
@@ -421,6 +435,10 @@ def test_slow_preflight_refuses_count_drift_before_any_node_body(tmp_path, monke
     assert scheduled.run_slow_nodes(shard, out, scheduled.pinned_environment(), {}) == 4
     assert not sentinel.exists()
     assert "scheduled selection drift" in (out / "pytest.log").read_text()
+    aggregate = scheduled.read(out / "tests.json")
+    assert aggregate["status"] == "incomplete" and aggregate["exit_code"] == 4
+    assert not aggregate["collection_complete"] and not aggregate["execution_complete"]
+    assert aggregate["not_started_nodeids"] == ["test_probe.py::absent"]
 
 
 def test_workflow_triggers_are_bounded_and_have_no_threshold_gate():

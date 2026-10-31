@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Sequence
 import hashlib
 import importlib.util
 import json
@@ -14,7 +15,20 @@ import subprocess
 import sys
 import sysconfig
 import time
+from typing import Any, TextIO
 import xml.etree.ElementTree as ET
+
+# Tests deliberately patch these shared modules. Recorder calls must keep the
+# originals, including the independent error encoder and already-open streams.
+_RECORDER_DUMPS = json.dumps
+_RECORDER_LOADS = json.loads
+_RECORDER_ERROR_QUOTE = json.encoder.encode_basestring_ascii
+_RECORDER_MONOTONIC = time.monotonic
+_RECORDER_GETCWD = os.getcwd
+_RECORDER_OPEN = open
+_RECORDER_REPLACE = os.replace
+_RECORDER_FSYNC = os.fsync
+_RECORDER_STDERR = os.write
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITES = {"root": ROOT, "legacy": ROOT / "perovskite-sim"}
@@ -71,36 +85,37 @@ PARENT_ONLY_COVERAGE = {
 }
 
 
-def read(path):
-    return json.loads(Path(path).read_text())
+def read(path: str | Path) -> Any:
+    with _RECORDER_OPEN(path, encoding="utf-8") as stream:
+        return _RECORDER_LOADS(stream.read())
 
 
-def write(path, value):
+def write(path: str | Path, value: Any) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def sha256(path):
+def sha256(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def function_nodeid(nodeid):
+def function_nodeid(nodeid: str) -> str:
     """Keep file/class/function identity, without machine-dependent case reprs."""
     return nodeid.partition("[")[0]
 
 
-def function_counts(nodeids):
+def function_counts(nodeids: Iterable[str]) -> Counter[str]:
     return Counter(function_nodeid(nodeid) for nodeid in nodeids)
 
 
-def function_groups(items):
-    groups = defaultdict(list)
+def function_groups(items: Iterable[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in items:
         groups[function_nodeid(item["nodeid"])].append(item)
     return [groups[name] for name in sorted(groups)]
 
 
-def slow_node_seconds(suite, path):
+def slow_node_seconds(suite: str, path: str) -> int:
     measured = MEASURED_SLOW_NODE_SECONDS.get(path, 0) if suite == "legacy" else 0
     # Four times the measured maximum, rounded to minutes, within 20-60 min.
     # The largest completed case is 48.3 min; a global 4x cap would outlive the
@@ -108,13 +123,13 @@ def slow_node_seconds(suite, path):
     return max(1200, min(3600, ((4 * measured + 59) // 60) * 60))
 
 
-def commit():
+def commit() -> str:
     return subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
     ).strip()
 
 
-def pinned_environment():
+def pinned_environment() -> dict[str, str]:
     env = dict(os.environ)
     env.update({name: "1" for name in THREADS})
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -127,7 +142,7 @@ def pinned_environment():
     return env
 
 
-def verify_installation():
+def verify_installation() -> dict[str, dict[str, Any]]:
     """Reject a stale local-project wheel before tracing it as current source."""
     packages = {}
     for name, relative in PACKAGE_ROOTS.items():
@@ -153,48 +168,183 @@ def verify_installation():
     return packages
 
 
-def pytest_session(arguments, output, expected=None):
-    """Collect actual inherited/parameterized nodes and preserve raw outcomes."""
-    import pytest
+def _recorder_error_message(exc: BaseException) -> str:
+    try:
+        return str(exc)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        return "Recorder exception could not be formatted"
 
-    data = {"items": [], "collection_reports": [], "reports": [], "status": "collecting"}
-    started = time.monotonic()
 
-    class Recorder:
-        def pytest_collectreport(self, report):
+def _recorder_error_line(event: dict[str, Any]) -> str:
+    """Encode flat diagnostic records without consulting JSONEncoder methods."""
+    try:
+        fields = []
+        for key, value in sorted(event.items()):
+            if value is None:
+                encoded = "null"
+            elif type(value) is int:
+                encoded = str(value)
+            else:
+                encoded = _RECORDER_ERROR_QUOTE(str(value))
+            fields.append(_RECORDER_ERROR_QUOTE(key) + ": " + encoded)
+        return "{" + ", ".join(fields) + "}\n"
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        return '{"event":"recorder_error","stage":"error_record_encoding"}\n'
+
+
+def _recorder_diagnostic(event: dict[str, Any]) -> None:
+    """A failed evidence sink must still produce a non-recursive diagnostic."""
+    try:
+        _RECORDER_STDERR(2, ("SCHEDULED RECORDER: " + _recorder_error_line(event)).encode())
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        pass  # The caller still fails the run if even stderr is unavailable.
+
+
+def _execution_gaps(items: list[dict[str, Any]], rows: list[dict[str, Any]],
+                    started: set[str]) -> tuple[list[str], list[str]]:
+    reports: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for report in rows:
+        reports[report["nodeid"]].append(report)
+    missing, incomplete = [], []
+    for item in items:
+        nodeid = item["nodeid"]
+        phases = {row["when"] for row in reports[nodeid]}
+        if nodeid not in started and not phases:
+            missing.append(nodeid)
+            continue
+        setup_stopped = any(row["when"] == "setup" and row["outcome"] in {"failed", "skipped"}
+                            for row in reports[nodeid])
+        required = {"setup", "teardown"} | (set() if setup_stopped else {"call"})
+        if not required <= phases:
+            incomplete.append(nodeid)
+    return missing, incomplete
+
+
+class _PytestRecorder:
+    def __init__(self, output: Path, expected: list[str] | None, journal: TextIO,
+                 errors: TextIO, cwd: Path) -> None:
+        self.output = str(output)
+        self.temporary = str(output.with_suffix(output.suffix + ".tmp"))
+        self.cwd = cwd
+        self.expected = expected
+        self.journal_write, self.journal_flush = journal.write, journal.flush
+        self.error_write, self.error_flush = errors.write, errors.flush
+        self.error_fileno = errors.fileno
+        self.started = _RECORDER_MONOTONIC()
+        self.started_nodes: set[str] = set()
+        self.collection_complete = False
+        self.collect_only = False
+        self.data: dict[str, Any] = {
+            "items": [], "collection_reports": [], "reports": [],
+            "recorder_errors": [], "status": "collecting",
+        }
+
+    def error(self, stage: str, exc: BaseException, nodeid: str | None = None) -> None:
+        event = {"event": "recorder_error", "stage": stage, "nodeid": nodeid,
+                 "error_type": type(exc).__name__, "message": _recorder_error_message(exc)}
+        self.data["recorder_errors"].append(event)
+        # Do not retry the operation that failed or use the normal event path.
+        # The separate sink remains usable if the main journal itself failed.
+        line = _recorder_error_line(event)
+        for write_line, flush in ((self.journal_write, self.journal_flush),
+                                  (self.error_write, self.error_flush)):
+            try:
+                write_line(line)
+                flush()
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException:
+                pass
+        _recorder_diagnostic(event)
+
+    def event(self, value: dict[str, Any]) -> None:
+        try:
+            self.journal_write(_RECORDER_DUMPS(value) + "\n")
+            self.journal_flush()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("journal", exc, value.get("nodeid"))
+
+    def snapshot(self) -> bool:
+        try:
+            with _RECORDER_OPEN(self.temporary, "w", encoding="utf-8") as stream:
+                stream.write(_RECORDER_DUMPS(self.data, indent=2, sort_keys=True) + "\n")
+                stream.flush()
+                _RECORDER_FSYNC(stream.fileno())
+            _RECORDER_REPLACE(self.temporary, self.output)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("snapshot", exc)
+            return False
+        return True
+
+    def pytest_collectreport(self, report: Any) -> None:
+        try:
             if report.failed or report.skipped:
-                data["collection_reports"].append({
+                self.data["collection_reports"].append({
                     "nodeid": report.nodeid, "outcome": report.outcome,
                     "reason": str(report.longrepr),
                 })
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("collection_report", exc)
 
-        def pytest_collection_finish(self, session):
-            data["items"] = [
+    def pytest_collection_finish(self, session: Any) -> None:
+        try:
+            import pytest
+
+            self.collect_only = session.config.option.collectonly
+            self.data["items"] = [
                 {"nodeid": item.nodeid,
-                 "path": item.path.relative_to(Path.cwd()).as_posix(),
+                 "path": item.path.relative_to(self.cwd).as_posix(),
                  "markers": sorted({mark.name for mark in item.iter_markers()})}
                 for item in session.items
             ]
-            if expected is not None:
-                actual = function_counts(item["nodeid"] for item in data["items"])
-                wanted = function_counts(expected)
+            selection_error = None
+            if self.expected is not None:
+                actual = function_counts(item["nodeid"] for item in self.data["items"])
+                wanted = function_counts(self.expected)
                 if actual != wanted:
-                    raise pytest.UsageError(
+                    selection_error = pytest.UsageError(
                         "scheduled selection drift: missing="
                         + repr(dict(sorted((wanted - actual).items())))
                         + "; extra="
                         + repr(dict(sorted((actual - wanted).items())))
                     )
-            # Retain the collection even if the outer job later times out.
-            data["status"] = "running"
-            write(output, data)
+            if selection_error is None:
+                self.collection_complete = True
+                self.data["status"] = "running"
+                self.snapshot()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("collection", exc)
+            raise pytest.UsageError("scheduled collection could not be verified") from exc
+        if selection_error is not None:
+            # Preserve the established intentional selection refusal (exit 4).
+            raise selection_error
 
-        def pytest_runtest_logstart(self, nodeid, location):
-            journal.write(json.dumps({"event": "start", "nodeid": nodeid,
-                                      "seconds": time.monotonic() - started}) + "\n")
-            journal.flush()
+    def pytest_runtest_logstart(self, nodeid: str, location: Any) -> None:
+        try:
+            self.started_nodes.add(nodeid)
+            self.event({"event": "start", "nodeid": nodeid,
+                        "seconds": _RECORDER_MONOTONIC() - self.started})
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("test_start", exc, nodeid)
 
-        def pytest_runtest_logreport(self, report):
+    def pytest_runtest_logreport(self, report: Any) -> None:
+        try:
             recorded = {
                 "nodeid": report.nodeid, "when": report.when,
                 "outcome": report.outcome, "duration": report.duration,
@@ -202,20 +352,104 @@ def pytest_session(arguments, output, expected=None):
             }
             if report.failed:
                 recorded["longrepr"] = str(report.longrepr)
-            data["reports"].append(recorded)
-            journal.write(json.dumps({"event": "report", **recorded}) + "\n")
-            journal.flush()
+            self.data["reports"].append(recorded)
+            self.event({"event": "report", **recorded})
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("test_report", exc)
 
-    sys.path.insert(0, str(Path.cwd()))
-    Path(output).parent.mkdir(parents=True, exist_ok=True)
-    with Path(output).with_suffix(".jsonl").open("w") as journal:
-        result = pytest.main(arguments, plugins=[Recorder()])
-    data.update(status="completed", exit_code=int(result), seconds=time.monotonic() - started)
-    write(output, data)
-    return int(result)
+    def finish(self, pytest_code: int) -> int:
+        try:
+            return self._finish(pytest_code)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("session_finish", exc)
+            code = pytest_code or 1
+            self.data.update(status="recorder_error", exit_code=code,
+                             pytest_exit_code=pytest_code, execution_complete=False)
+            self.snapshot()
+            return code
+
+    def _finish(self, pytest_code: int) -> int:
+        missing: list[str] = []
+        incomplete: list[str] = []
+        if not self.collect_only:
+            missing, incomplete = _execution_gaps(self.data["items"], self.data["reports"], self.started_nodes)
+        complete = self.collection_complete and not missing and not incomplete
+        self.data.update(
+            pytest_exit_code=pytest_code, not_started_nodeids=missing,
+            incomplete_nodeids=incomplete, collection_complete=self.collection_complete,
+            execution_complete=complete and not self.collect_only,
+            started_nodeids=sorted(self.started_nodes),
+        )
+        try:
+            self.data["seconds"] = _RECORDER_MONOTONIC() - self.started
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("session_clock", exc)
+        try:
+            self.error_flush()
+            _RECORDER_FSYNC(self.error_fileno())
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            self.error("error_sink_flush", exc)
+        code = pytest_code
+        if not complete:
+            status = "incomplete"
+            code = code or 1
+            _recorder_diagnostic({"event": "incomplete", "not_started": len(missing),
+                                  "incomplete": len(incomplete), "pytest_exit_code": pytest_code})
+        elif self.data["recorder_errors"]:
+            status, code = "recorder_error", code or 1
+        else:
+            status = "collected" if self.collect_only else "completed"
+        self.data.update(status=status, exit_code=code)
+        if not self.snapshot():
+            code = code or 1
+            self.data.update(status="incomplete" if not complete else "recorder_error", exit_code=code)
+            self.snapshot()  # A transient final-write failure must not leave a passing snapshot.
+        if self.data["recorder_errors"]:
+            # Test-time diagnostics may be captured even when the test passes.
+            # Repeat the failing result after pytest has released its capture.
+            _recorder_diagnostic({"event": "recorder_error", "stage": "session_result",
+                                  "errors": len(self.data["recorder_errors"]), "exit_code": code})
+        return code
 
 
-def collect(suite, directory):
+def pytest_session(arguments: list[str], output: Path, expected: list[str] | None = None) -> int:
+    """Preserve pytest results; recorder errors fail the receipt, not the test loop."""
+    import pytest
+
+    try:
+        cwd = Path(_RECORDER_GETCWD())
+        sys.path.insert(0, str(cwd))
+        output = Path(output).absolute()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        # Both handles are opened before any test code or test monkeypatch runs.
+        with _RECORDER_OPEN(output.with_suffix(".jsonl"), "w", encoding="utf-8") as journal, \
+                _RECORDER_OPEN(output.with_suffix(".recorder-errors.jsonl"), "w", encoding="utf-8") as errors:
+            recorder = _PytestRecorder(output, expected, journal, errors, cwd)
+            try:
+                result = pytest.main(arguments, plugins=[recorder])
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException as exc:
+                recorder.error("pytest_session", exc)
+                return recorder.finish(1)
+            return recorder.finish(int(result))
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as exc:
+        _recorder_diagnostic({"event": "recorder_error", "stage": "recorder_files",
+                              "error_type": type(exc).__name__, "message": _recorder_error_message(exc)})
+        return 1
+
+
+def collect(suite: str, directory: Path) -> dict[str, Any]:
     output = directory / (suite + "-collection.json")
     command = [
         sys.executable, str(Path(__file__).resolve()), "_collect", "--out",
@@ -232,10 +466,11 @@ def collect(suite, directory):
     return read(output)
 
 
-def make_shard(kind, suite, paths, markers, items, name=None):
+def make_shard(kind: str, suite: str, paths: Sequence[str], markers: str,
+               items: list[dict[str, Any]], name: str | None = None) -> dict[str, Any]:
     key = json.dumps([kind, suite, paths], separators=(",", ":"))
     identifier = name or f"{kind}-{suite}-" + hashlib.sha256(key.encode()).hexdigest()[:10]
-    shard = {
+    shard: dict[str, Any] = {
         "id": identifier, "suite": suite, "paths": list(paths),
         "markers": markers, "nodeids": [item["nodeid"] for item in items],
         "function_counts": dict(sorted(function_counts(item["nodeid"] for item in items).items())),
@@ -246,12 +481,12 @@ def make_shard(kind, suite, paths, markers, items, name=None):
     return shard
 
 
-def verify_partition(shards, expected):
+def verify_partition(shards: list[dict[str, Any]], expected: Iterable[tuple[str, str]]) -> None:
     actual = Counter((shard["suite"], node) for shard in shards for node in shard["nodeids"])
     wanted = Counter(expected)
     if actual != wanted:
         raise ValueError(f"partition mismatch: missing={wanted - actual}; extra={actual - wanted}")
-    owners = {}
+    owners: dict[tuple[str, str], str] = {}
     for shard in shards:
         for function in function_counts(shard["nodeids"]):
             key = (shard["suite"], function)
@@ -264,15 +499,16 @@ def verify_partition(shards, expected):
         raise ValueError("GitHub matrix limit exceeded; split the workflow explicitly")
 
 
-def build_shards(collections):
+def build_shards(collections: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     policy = runpy.run_path(str(ROOT / "tests/ci/policy.py"))
     import yaml
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     slow, coverage = [], []
-    expected_slow, expected_default = [], []
+    expected_slow: list[tuple[str, str]] = []
+    expected_default: list[tuple[str, str]] = []
     for suite, inventory in collections.items():
-        by_file = defaultdict(list)
+        by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
         default_items = []
         for item in inventory["items"]:
             is_slow = "slow" in item["markers"]
@@ -285,7 +521,8 @@ def build_shards(collections):
             if suite == "legacy" and (file in FUNCTION_SHARDS or file in MEASURED_SLOW_NODE_SECONDS):
                 chunks = function_groups(items)
             elif len(items) > MAX_SLOW_NODES:
-                chunks, chunk = [], []
+                chunks = []
+                chunk: list[dict[str, Any]] = []
                 for group in function_groups(items):
                     if chunk and len(chunk) + len(group) > MAX_SLOW_NODES:
                         chunks.append(chunk)
@@ -359,7 +596,7 @@ def build_shards(collections):
     return {"slow": slow, "coverage": coverage}
 
 
-def choose(shards, requested):
+def choose(shards: list[dict[str, Any]], requested: str) -> list[dict[str, Any]]:
     if requested == "all":
         return list(shards)
     names = requested.split(",")
@@ -374,7 +611,7 @@ def choose(shards, requested):
     return [known[name] for name in names]
 
 
-def plan(args):
+def plan(args: argparse.Namespace) -> None:
     directory = args.out.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     installation = verify_installation()
@@ -410,7 +647,7 @@ def plan(args):
             print(kind, row["id"], row["count"], *row["paths"])
 
 
-def coverage_config(path, *, subprocesses=True):
+def coverage_config(path: Path, *, subprocesses: bool = True) -> None:
     """Trace only this checkout and its installed packages, not old producer clones."""
     site = Path(sysconfig.get_paths()["purelib"])
     pairs = {
@@ -429,7 +666,8 @@ def coverage_config(path, *, subprocesses=True):
     path.write_text(text)
 
 
-def run_with_watchdog(command, *, cwd, env, log, seconds):
+def run_with_watchdog(command: Sequence[str], *, cwd: Path, env: dict[str, str],
+                      log: Path, seconds: float) -> dict[str, Any]:
     """Bound one owned process group; a timeout is never an expected failure."""
     started = time.monotonic()
     with Path(log).open("w") as stream:
@@ -458,7 +696,8 @@ def run_with_watchdog(command, *, cwd, env, log, seconds):
             "seconds": time.monotonic() - started}
 
 
-def watchdog_failure(suites, nodeid, outcome, seconds, message):
+def watchdog_failure(suites: ET.Element, nodeid: str, outcome: str, seconds: float,
+                     message: str) -> dict[str, Any]:
     suite = ET.SubElement(suites, "testsuite", name="scheduled-watchdog", tests="1",
                           failures="1", errors="0", skipped="0", time=str(seconds))
     case = ET.SubElement(suite, "testcase", classname=nodeid.partition("::")[0],
@@ -468,7 +707,8 @@ def watchdog_failure(suites, nodeid, outcome, seconds, message):
             "duration": seconds, "wasxfail": None, "longrepr": message}
 
 
-def run_slow_nodes(shard, out, env, result):
+def run_slow_nodes(shard: dict[str, Any], out: Path, env: dict[str, str],
+                   result: dict[str, Any]) -> int:
     """Verify function counts, then run each worker-local case under a watchdog."""
     seconds = shard["node_wall_seconds"]
     cwd = SUITES[shard["suite"]]
@@ -489,13 +729,17 @@ def run_slow_nodes(shard, out, env, result):
         outcome = "timeout" if preflight["timeout"] else "failed"
         report = watchdog_failure(suites, shard["id"] + "::<collection>", outcome,
                                   preflight["seconds"], "Scheduled slow collection did not complete successfully")
-        write(out / "tests.json", {"items": [], "reports": [report], "status": "completed",
+        write(out / "tests.json", {"items": [], "reports": [report], "status": "incomplete",
+                                   "collection_complete": False, "execution_complete": False,
+                                   "not_started_nodeids": read(out / "expected.json"),
                                    "exit_code": preflight["returncode"] or 1})
         ET.ElementTree(suites).write(out / "junit.xml", encoding="utf-8", xml_declaration=True)
         return preflight["returncode"] or 1
     inventory = read(collected)
-    aggregate = {"items": inventory["items"], "collection_reports": inventory["collection_reports"],
-                 "reports": [], "node_outcomes": [], "status": "running"}
+    aggregate: dict[str, Any] = {
+        "items": inventory["items"], "collection_reports": inventory["collection_reports"],
+        "reports": [], "node_outcomes": [], "status": "running",
+    }
     result["watchdog"] = {"node_wall_seconds": seconds, "scope": "scheduled slow only",
                           "isolation": "one process per locally collected case; shared fixtures recreated"}
     write(out / "result.json", result)
@@ -544,11 +788,14 @@ def run_slow_nodes(shard, out, env, result):
                 log.write(f"TIMEOUT {nodeid}: {message}\n")
                 failed = True
             elif receipt_errors:
-                outcome = "failed"
+                recorder_failed = child is not None and child.get("status") == "recorder_error"
+                outcome = "recorder_error" if recorder_failed else "failed"
                 reports.append(watchdog_failure(suites, nodeid, outcome, executed["seconds"],
-                                               "Scheduled node exited without complete test receipts"))
+                    "Scheduled node recorder error" if recorder_failed else
+                    "Scheduled node exited without complete test receipts"))
                 failed = True
             else:
+                assert child is not None and child_xml is not None
                 reports = child["reports"]
                 suites.extend(list(child_xml) if child_xml.tag == "testsuites" else [child_xml])
                 outcome = "failed" if executed["returncode"] else "passed"
@@ -569,7 +816,59 @@ def run_slow_nodes(shard, out, env, result):
     return int(failed)
 
 
-def run_shard(args):
+def _coverage_receipt(out: Path, expected: list[str], exit_code: int) -> dict[str, Any]:
+    """A clean process exit cannot certify an absent or unfinished test ledger."""
+    errors = []
+    items = [{"nodeid": nodeid} for nodeid in expected]
+    reports: list[dict[str, Any]] = []
+    started: set[str] = set()
+    try:
+        child = read(out / "tests.json")
+        collected = child["items"]
+        if function_counts(item["nodeid"] for item in collected) != function_counts(expected):
+            errors.append("planned versus collected function counts differ")
+        else:
+            items = collected
+        reports = child["reports"]
+        if child.get("status") != "completed" or child.get("exit_code") != exit_code:
+            errors.append("missing or inconsistent final recorder status/exit code")
+        if not child.get("collection_complete") or not child.get("execution_complete"):
+            errors.append("recorder did not certify collection and execution completeness")
+        if child.get("recorder_errors"):
+            errors.append("recorder errors were reported")
+        started.update(child.get("started_nodeids", []))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        errors.append("test receipt: " + str(exc))
+    try:
+        journal_reports = []
+        for line in (out / "tests.jsonl").read_text().splitlines():
+            row = json.loads(line)
+            if row.get("event") == "start":
+                started.add(row["nodeid"])
+            elif row.get("event") == "report":
+                journal_reports.append(row)
+        # A hard exit may leave the JSON snapshot at collection while the
+        # journal still distinguishes started/partial from never-started nodes.
+        if errors:
+            reports = journal_reports
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        errors.append("test journal: " + str(exc))
+    try:
+        missing, incomplete = _execution_gaps(items, reports, started)
+        unexpected = sorted({row["nodeid"] for row in reports} - {item["nodeid"] for item in items})
+        if unexpected:
+            errors.append("unplanned executed nodes: " + repr(unexpected))
+    except (ValueError, TypeError, KeyError) as exc:
+        errors.append("test phases: " + str(exc))
+        missing, incomplete = expected, []
+    if missing or incomplete:
+        errors.append("missing complete outcomes for planned nodes")
+    return {"receipt_complete": not errors, "receipt_errors": errors,
+            "not_started_nodeids": missing, "incomplete_nodeids": incomplete,
+            "pytest_process_exit_code": exit_code}
+
+
+def run_shard(args: argparse.Namespace) -> int:
     value = read(args.plan)
     if value["commit"] != commit() or value["lock_sha256"] != sha256(ROOT / "uv.lock"):
         raise ValueError("plan source/lock does not match this immutable job checkout")
@@ -577,8 +876,10 @@ def run_shard(args):
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     write(out / "expected.json", shard["nodeids"])
-    result = {"shard": shard, "commit": value["commit"], "status": "started",
-              "plan_sha256": sha256(args.plan), "coverage_data": False}
+    result: dict[str, Any] = {
+        "shard": shard, "commit": value["commit"], "status": "started",
+        "plan_sha256": sha256(args.plan), "coverage_data": False,
+    }
     write(out / "result.json", result)
     result["installed_source_verification"] = verify_installation()
     write(out / "result.json", result)
@@ -617,6 +918,12 @@ def run_shard(args):
             executed = subprocess.run(command, cwd=SUITES[shard["suite"]], env=env,
                                       stdout=log, stderr=subprocess.STDOUT, check=False)
         returncode = executed.returncode
+        receipt = _coverage_receipt(out, shard["nodeids"], returncode)
+        result.update(receipt)
+        if not receipt["receipt_complete"]:
+            returncode = returncode or 1
+            with (out / "pytest.log").open("a") as log:
+                log.write("\nSCHEDULED INCOMPLETE RECEIPT: " + json.dumps(receipt, sort_keys=True) + "\n")
     result.update(
         status="passed" if returncode == 0 else "failed",
         exit_code=returncode, seconds=time.monotonic() - started,
@@ -627,7 +934,7 @@ def run_shard(args):
     return returncode
 
 
-def combine(args):
+def combine(args: argparse.Namespace) -> None:
     from coverage import Coverage
 
     value = read(args.plan)
@@ -671,7 +978,7 @@ def combine(args):
     print(json.dumps({"full_default_run_passed": complete, "report_only": True}))
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     command = sub.add_parser("plan")
