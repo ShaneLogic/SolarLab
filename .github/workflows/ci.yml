@@ -23,6 +23,10 @@ on:
         description: Positive integer repeat count for each diagnostic Python version
         type: number
         default: 20
+      ionic_jv_measure_curve_64s:
+        description: Measure only the direct diagnostic curve with a 64s ceiling; no limit recommendation
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -262,10 +266,16 @@ jobs:
         if: always()
         env:
           IONIC_JV_DIAGNOSTIC_REPETITIONS: ${{ inputs.ionic_jv_diagnostic_repetitions }}
-        run: >-
-          uv run --frozen --no-sync python scripts/ci/ionic_jv_timing.py
-          --repetitions "$IONIC_JV_DIAGNOSTIC_REPETITIONS"
-          --output-dir "${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}/uncensored"
+          IONIC_JV_MEASURE_CURVE_64S: ${{ inputs.ionic_jv_measure_curve_64s }}
+        run: |
+          measurement_args=()
+          if [ "$IONIC_JV_MEASURE_CURVE_64S" = "true" ]; then
+            measurement_args+=(--diagnostic-curve-64)
+          fi
+          uv run --frozen --no-sync python scripts/ci/ionic_jv_timing.py \
+            --repetitions "$IONIC_JV_DIAGNOSTIC_REPETITIONS" \
+            --output-dir "${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}/uncensored" \
+            "${measurement_args[@]}"
       - name: Upload every diagnostic attempt
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

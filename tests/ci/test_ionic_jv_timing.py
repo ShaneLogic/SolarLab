@@ -40,7 +40,8 @@ def test_numerical_or_process_failure_cannot_disappear_from_uncensored_percentil
 
 
 @pytest.mark.parametrize("first_code", [0, 1])
-def test_timing_runs_every_fresh_child_without_a_whole_job_timeout(tmp_path, monkeypatch, first_code):
+@pytest.mark.parametrize("curve_measurement", [False, True])
+def test_timing_runs_every_fresh_child_without_a_whole_job_timeout(tmp_path, monkeypatch, first_code, curve_measurement):
     calls = []
 
     def run(command, **kwargs):
@@ -48,7 +49,8 @@ def test_timing_runs_every_fresh_child_without_a_whole_job_timeout(tmp_path, mon
         assert command[1:4] == ["-m", "scripts.ci.ionic_jv_timing", "--single"]
         assert "timeout" not in kwargs
         assert kwargs["env"]["OPENBLAS_NUM_THREADS"] == "1"
-        directory = Path(command[-1])
+        assert ("--diagnostic-curve-64" in command) is curve_measurement
+        directory = Path(command[4])
         code = first_code if len(calls) == 1 else 0
         data = row(10., ceiling=128., status="failed" if code else "passed")["measurement"]
         (directory / "Timing.json").write_text(json.dumps(data))
@@ -56,10 +58,15 @@ def test_timing_runs_every_fresh_child_without_a_whole_job_timeout(tmp_path, mon
 
     monkeypatch.setattr(timing.subprocess, "run", run)
     output = tmp_path / "timing"
-    assert timing.main(["--repetitions", "3", "--output-dir", str(output)]) == first_code
-    assert len(calls) == len({command[-1] for command, _ in calls}) == 3
+    arguments = ["--repetitions", "3", "--output-dir", str(output)]
+    if curve_measurement:
+        arguments.append("--diagnostic-curve-64")
+    assert timing.main(arguments) == first_code
+    assert len(calls) == len({command[4] for command, _ in calls}) == 3
     summary = json.loads((output / "Summary.json").read_text())
     assert summary["requested"] == 3 and summary["completed"] == 3 - first_code
+    if curve_measurement:
+        assert summary["recommended_wall_seconds"] is None and summary["recommendation_status"] == "measurement_only"
     assert len(list(output.glob("attempt_*/Timing.json"))) == 3
 
 

@@ -105,6 +105,12 @@ def test_every_root_test_file_has_an_ordinary_ci_job_or_reasoned_exclusion():
     assert report["duplicate_invocations"] == {}, report
     assert report["conflicting_exclusions"] == [], report
     assert {selection.job for selection in selections} >= {"static", "core", "packages", "backend", "frontend"}
+    for path, job in (
+        ("tests/ci/test_ionic_jv_curve_measurement.py", "static"),
+        ("tests/runtime/test_ionic_jv_curve_measurement.py", "backend"),
+    ):
+        assert report["assignments"][path] == [job], report
+        assert path not in exclusions["files"]
 
 
 def test_guard_detects_new_unassigned_directory_and_frontend_marker_gap(tmp_path):

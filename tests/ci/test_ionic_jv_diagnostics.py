@@ -17,9 +17,17 @@ def test_workflow_diagnostics_are_manual_and_keep_both_python_versions():
     inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
     assert inputs["run_ionic_jv_diagnostics"]["default"] is False
     assert inputs["ionic_jv_diagnostic_repetitions"]["default"] == 20
+    assert inputs["ionic_jv_measure_curve_64s"]["default"] is False
+    assert inputs["ionic_jv_measure_curve_64s"]["type"] == "boolean"
     timing, = [step for step in job["steps"] if "scripts/ci/ionic_jv_timing.py" in step.get("run", "")]
     assert timing["if"] == "always()"
     assert timing["env"]["IONIC_JV_DIAGNOSTIC_REPETITIONS"] == "${{ inputs.ionic_jv_diagnostic_repetitions }}"
+    assert timing["env"]["IONIC_JV_MEASURE_CURVE_64S"] == "${{ inputs.ionic_jv_measure_curve_64s }}"
+    assert 'if [ "$IONIC_JV_MEASURE_CURVE_64S" = "true" ]' in timing["run"]
+    assert "measurement_args+=(--diagnostic-curve-64)" in timing["run"]
+    http, = [step for step in job["steps"] if "scripts/ci/ionic_jv_diagnostics.py" in step.get("run", "")]
+    assert "IONIC_JV_MEASURE_CURVE_64S" not in http["env"]
+    assert "--diagnostic-curve-64" not in http["run"]
     assert 'ionic-jv-diagnostics-${{ matrix.python }}/uncensored' in timing["run"]
     upload, = [step for step in job["steps"] if "actions/upload-artifact@" in step.get("uses", "")]
     assert upload["if"] == "always()"
