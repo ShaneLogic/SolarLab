@@ -80,6 +80,13 @@ def timeout_sample(*args, **kwargs):
     raise subprocess.TimeoutExpired(["ps", "-axo", "pid=,ppid=,lstart=,rss="], 0.5)
 
 
+def controlled_sample(pids, **kwargs):
+    """Known OS input for retry-policy tests; the supervisor and child stay real."""
+    return {pid: {"pid": pid, "ppid": os.getppid() if pid == os.getpid() else os.getpid(),
+        "start_lstart": "Fri Oct 30 00:00:00 2026", "start_precision": "seconds", "rss_bytes": 1024}
+        for pid in pids}
+
+
 def test_early_resource_stop_is_reported_without_masking_the_test_failure(tmp_path, monkeypatch):
     original = execution._process_info
 
@@ -140,18 +147,42 @@ def test_repeated_sampler_timeout_commits_one_terminal_and_ends_live_sse(tmp_pat
             assert client.get(url, headers={"Last-Event-ID": str(terminal[0]["sequence"])}).status_code == 204
 
 
-@pytest.mark.parametrize("misses", [1, 2])
-def test_bounded_missing_samples_retry_before_launch_and_recover(tmp_path, monkeypatch, misses):
+@pytest.mark.parametrize("misses,native_miss", [
+    pytest.param(1, None, id="1"),
+    pytest.param(2, None, id="2"),
+    pytest.param(1, "before-launch", id="native-before-launch"),
+    pytest.param(1, "after-launch", id="native-after-launch"),
+])
+def test_bounded_missing_samples_retry_before_launch_and_recover(tmp_path, monkeypatch, misses, native_miss):
     original_sample = execution._process_info
     calls = []
+    natural_misses = []
     launched_after = []
     original_start = execution.ProcessSupervisor._start
+
+    def native_timeout(argv, **kwargs):
+        # Exercise the real _process_info exception path at its subprocess seam.
+        assert argv == ["ps", "-axo", "pid=,ppid=,lstart=,rss="]
+        assert kwargs["timeout"] == 0.5
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
 
     def sample(*args, **kwargs):
         calls.append(True)
         if len(calls) <= misses:
             timeout_sample()
-        return original_sample(*args, **kwargs)
+        if (native_miss is not None and not natural_misses
+                and bool(launched_after) == (native_miss == "after-launch")):
+            try:
+                with monkeypatch.context() as fault:
+                    fault.setattr(worker_module.subprocess, "run", native_timeout)
+                    original_sample(*args, **kwargs)
+            except subprocess.TimeoutExpired:
+                natural_misses.append(len(calls))
+                raise
+            pytest.fail("the real sampler did not propagate the forced native timeout")
+        # A real ps call here could add a third consecutive miss after the two
+        # scripted misses, legitimately exhausting the production retry bound.
+        return controlled_sample(*args, **kwargs)
 
     def start(pool, job):
         launched_after.append(len(calls))
@@ -162,15 +193,26 @@ def test_bounded_missing_samples_retry_before_launch_and_recover(tmp_path, monke
     with runtime(tmp_path) as (store, pool):
         handle = submit(pool, "recovers")
         directory = ready(pool, handle)
-        assert launched_after == [misses + 1]
+        with pool._condition:
+            assert len(launched_after) == 1
+            before_launch = sum(call < launched_after[0] for call in natural_misses)
+            assert launched_after == [misses + before_launch + 1]
         (directory / "release").touch()
         value = fixtures.assert_reaped(pool.wait(handle, WAIT_SECONDS))
         assert value["store_state"] == "succeeded" and value["signals"] == []
         observation = pool.accounting()["rss_observation"]
-        assert observation["missing_samples_total"] == misses
+        assert len(natural_misses) == int(native_miss is not None)  # Exactly zero or one; never unbounded.
+        if natural_misses:
+            assert (natural_misses[0] < launched_after[0]) == (native_miss == "before-launch")
+        assert observation["missing_samples_total"] == misses + len(natural_misses)
         assert observation["consecutive_missing_samples"] == 0
         assert observation["missing_since_monotonic"] is None
         assert len(fixtures.terminal_events(store, handle.run_id)) == 1
+        (tmp_path / "SamplerAccounting.json").write_text(json.dumps({
+            "injected_misses": misses, "native_timeout_phase": native_miss,
+            "native_timeout_calls": natural_misses, "launch_calls": launched_after,
+            "missing_samples_total": observation["missing_samples_total"],
+        }, indent=2))
 
 
 @pytest.mark.parametrize("kind", ["empty", "unavailable", "failed-command"])
@@ -201,11 +243,11 @@ def test_elapsed_measurement_bound_cannot_be_reset_by_a_late_sample(tmp_path, mo
     with runtime(tmp_path, fatal=True) as (store, pool):
         handle = submit(pool, "gap")
         ready(pool, handle)
-        original = execution._process_info
 
         def late(*args, **kwargs):
             pool._rss_missing_since = time.monotonic() - execution._RSS_MAX_GAP_SECONDS - 0.01
-            return original(*args, **kwargs)
+            # This branch must deliver a late success, not an incidental ps timeout.
+            return controlled_sample(*args, **kwargs)
 
         with pool._condition:
             if late_success:
@@ -406,7 +448,6 @@ def test_recovered_sample_still_enforces_the_unchanged_shared_rss_budget(tmp_pat
     with runtime(tmp_path) as (store, pool):
         handle = submit(pool, "rss-limit")
         ready(pool, handle)
-        original = execution._process_info
         count = 0
 
         def sample(pids, **kwargs):
@@ -414,11 +455,15 @@ def test_recovered_sample_still_enforces_the_unchanged_shared_rss_budget(tmp_pat
             count += 1
             if count <= 2:
                 timeout_sample()
-            found = original(pids, **kwargs)
+            found = controlled_sample(pids, **kwargs)
             found[pids[0]]["rss_bytes"] = 768 * 1024**2 + 1
             return found
 
         with pool._condition:
+            # Start the scripted burst from a successful sample, so a setup
+            # miss cannot consume its retry allowance before the fault is armed.
+            monkeypatch.setattr(execution, "_process_info", controlled_sample)
+            pool._sample()
             monkeypatch.setattr(execution, "_process_info", sample)
             pool._condition.notify_all()
         receipt = fixtures.assert_reaped(pool.wait(handle, WAIT_SECONDS))
