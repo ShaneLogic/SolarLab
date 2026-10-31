@@ -474,7 +474,10 @@ def test_coverage_shards_upload_runtime_evidence_for_success_and_failure():
     uploaded = upload["with"]["path"].rstrip("/")
     assert uploaded == "${{ runner.temp }}/coverage-result"
     assert '--out "$RUNNER_TEMP/coverage-result"' in run["run"]
-    assert run["env"]["SOLARLAB_ROOT_RUNTIME_EVIDENCE"] == uploaded + "/runtime-evidence/${{ matrix.id }}"
+    assert run["env"]["SCHEDULED_RUNTIME_EVIDENCE_DIR"] == (
+        "${{ startsWith(matrix.id, 'coverage-root-backend') && "
+        "format('{0}/coverage-result/runtime-evidence/{1}', runner.temp, matrix.id) || '' }}"
+    )
     assert "if" not in run and upload["if"] == "always()"
     assert upload["with"]["name"] == "coverage-data-${{ matrix.id }}"
 

@@ -69,7 +69,7 @@ def preserve_runtime_evidence(root: Path, store_name: str, label: str,
             value["events"] = store.events(limit=1000)
     except Exception as error:
         value["store_read_error"] = f"{type(error).__name__}: {error}"
-    output = Path(os.environ.get("SOLARLAB_ROOT_RUNTIME_EVIDENCE", str(root)))
+    output = Path(os.environ.get("SCHEDULED_RUNTIME_EVIDENCE_DIR") or str(root))
     path = output / (label + ".json")
     value["evidence_path"] = str(path)
     text = json.dumps(value, indent=2, allow_nan=False)
