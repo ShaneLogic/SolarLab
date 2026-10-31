@@ -36,7 +36,8 @@ from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_sta
 from solarlab.solvers.time.assembled_storage import AssembledStorage1D
 from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, step_accounting
 from solarlab.solvers.time.bdf import Assessment, BDFEvent, BDFOptions, BDFStep, HistoryPoint, solve_bdf
-from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, _events, bdf_accounting
+from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, bdf_accounting
+from solarlab.experiments.bdf import _events
 from support.equation_provenance import counted, one_ulp_residual
 
 

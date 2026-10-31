@@ -6,7 +6,8 @@ from examples.research_1d.transient import controls
 from solarlab.solvers.nonlinear.newton import NewtonSettings
 from solarlab.solvers.nonlinear.problem import ResidualScaling, SolveBudget, StepControl
 from solarlab.solvers.time.bdf import Assessment, BDFEvent, BDFOptions, BDFStep, HistoryPoint, solve_bdf
-from solarlab.solvers.time.bdf_1d import BDFDrive, _events
+from solarlab.solvers.time.bdf_1d import BDFDrive
+from solarlab.experiments.bdf import _events
 
 
 def test_algebraic_residual_signed_zero_is_preserved():

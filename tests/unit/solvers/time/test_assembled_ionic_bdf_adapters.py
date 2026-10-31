@@ -37,7 +37,7 @@ from solarlab.solvers.time.assembled_ionic_backward_euler import (
 from solarlab.solvers.time.assembled_ionic_bdf import assembled_ionic_bdf_accounting, assembled_ionic_bdf_seed
 from solarlab.solvers.time.assembled_storage import AssembledIonicStorage1D
 from solarlab.solvers.time.bdf import BDFOptions, BDFStep, HistoryPoint
-from solarlab.solvers.time.bdf_1d import solve_electronic_bdf, solve_ionic_bdf
+from solarlab.experiments.bdf import solve_electronic_bdf, solve_ionic_bdf
 
 CASES = ("ionic_dual37", "ionic_shared37", "ionic_shared_mixed37", "ionic_shared_full37",
          "multiple_positive", "multiple_independent", "multiple_shared", "multiple_mixed")

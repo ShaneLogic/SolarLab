@@ -9,9 +9,8 @@ No experiment selection or production default is changed by this module.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass
 import math
-import time
 from typing import Any, TypeAlias, cast
 
 import numpy as np
@@ -21,24 +20,18 @@ from solarlab.equations.assembly.ionic_1d import AssembledIonic1DProblem, Assemb
 from solarlab.equations.dc_1d import DC1DProblem, State1D
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, IonicState1D
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonicState1D
-from solarlab.experiments import ionic_transient, multiple_ionic_transient
-from solarlab.experiments.ionic_transient import IonicTransientInitial, IonicTransientOptions
-from solarlab.experiments.multiple_ionic_transient import MultipleIonicTransientInitial
-from solarlab.experiments.transient import TransientProtocol
 from solarlab.physics.electrostatics import contact_displacement
-from solarlab.solvers.nonlinear.problem import GateOutcome, Vector
+from solarlab.solvers.nonlinear.problem import Vector
 from solarlab.solvers.time.assembled_ionic_backward_euler import (
     AssembledIonicBackwardEuler1DStep, AssembledMultipleIonicBackwardEuler1DStep,
 )
 from solarlab.solvers.time.assembled_storage import AssembledIonicStorage1D
 from solarlab.solvers.time.backward_euler import BackwardEuler1DStep
-from solarlab.solvers.time.bdf import Assessment, BDFEvent, BDFOptions, BDFResult, BDFStep, HistoryPoint, solve_bdf
-from solarlab.solvers.time.bdf_1d import BDFDrive
+from solarlab.solvers.time.bdf import BDFStep
 from solarlab.solvers.time.ionic_backward_euler import IonicBackwardEuler1DStep, ionic_step_accounting
 from solarlab.solvers.time.multiple_ionic_backward_euler import MultipleIonicBackwardEuler1DStep, multiple_ionic_step_accounting
 
-__all__ = ["assembled_ionic_bdf_accounting", "assembled_ionic_bdf_seed",
-           "solve_assembled_ionic_bdf", "solve_assembled_multiple_ionic_bdf"]
+__all__ = ["assembled_ionic_bdf_accounting", "assembled_ionic_bdf_seed"]
 
 IonicDevice: TypeAlias = CompiledIonicDevice1D | CompiledMultipleIonicDevice1D
 IonicState: TypeAlias = IonicState1D | MultipleIonicState1D
@@ -260,110 +253,3 @@ def assembled_ionic_bdf_accounting(step: BDFStep, u: Vector) -> dict[str, Any]:
         data["rounded_ion_inventory_rate_m2_s"] = rounded_rate[positive]
         data["ion_inventory_readback_error_m2_s"] = rate[positive] - rounded_rate[positive]
     return data
-
-
-def _events(source: BDFDrive, settings: Any, factory: Any, controls: IonicTransientOptions) -> tuple[BDFEvent, ...]:
-    def restart(old: Any, new: Any, u: Vector) -> tuple[Vector, Assessment]:
-        be = _be(BDFStep(new, (HistoryPoint(0.0, u, old.storage(u), old),), 1.0, 1))
-        right = (be.initial_coordinates("previous", voltage_lift=True)
-                 if isinstance(be, AssembledIonicBackwardEuler1DStep) else be.initial_coordinates())
-        tangent = new.storage_tangent(right)
-        algebraic = np.asarray(abs(tangent).sum(axis=1)).ravel() == 0
-        residual = new.residual(right)
-        value = float(np.max(abs(residual[algebraic] * settings.scaling.row_weights[algebraic]), initial=0.0))
-        change = new.physical_increment(right, old, u)
-        relative = float(np.max(abs(change) / np.maximum(abs(old.physical_storage(u)), 1.0)))
-        return right, Assessment({"physical_inventory_change": change, "relative_inventory_change": relative},
-            (GateOutcome("restart_algebraic_rows", value <= 1, value, 1.0),
-             GateOutcome("restart_frozen_physical_inventory", relative <= controls.electronic.contact_log_tolerance,
-                         relative, controls.electronic.contact_log_tolerance)))
-    return tuple(BDFEvent(float(t), restart, "voltage_generation_protocol_jump") for t, left, right in
-                 zip(source.times_s, source.left_values, source.right_values) if not np.array_equal(left, right)) + tuple(
-        BDFEvent(t, restart, "drive_slope_discontinuity") for t in source.slope_breakpoints_s)
-
-
-def _solve(
-    device: IonicDevice, admitted: IonicState, initial: IonicTransientInitial | MultipleIonicTransientInitial,
-    protocol: TransientProtocol, options: IonicTransientOptions, bdf_options: BDFOptions,
-    source: BDFDrive, adaptive_max_steps: int | None, checks: Any, started: float,
-) -> BDFResult:
-    if len(protocol.times_s) - 1 > options.electronic.max_steps:
-        raise ValueError("requested timepoints exceed max_steps sample admission")
-    if adaptive_max_steps is not None and (type(adaptive_max_steps) is not int or adaptive_max_steps < 1):
-        raise ValueError("adaptive_max_steps must be an explicit positive integer")
-    work = min(bdf_options.max_steps, options.electronic.max_steps if adaptive_max_steps is None else adaptive_max_steps)
-    if source.values(float(protocol.times_s[0]), "left") != (admitted.voltage_V, initial.generation_scale):
-        raise ValueError("BDF drive must begin at the original admitted ionic state")
-    multiple = isinstance(device, CompiledMultipleIonicDevice1D)
-    settings, norm = (multiple_ionic_transient._settings(cast(CompiledMultipleIonicDevice1D, device), options) if multiple
-                      else ionic_transient._newton_settings(cast(CompiledIonicDevice1D, device), options))
-    original_problem = (AssembledMultipleIonic1DProblem(device, admitted.voltage_V, initial.generation_scale)
-                        if isinstance(device, CompiledMultipleIonicDevice1D)
-                        else AssembledIonic1DProblem(device, admitted.voltage_V, initial.generation_scale))
-    def factory(t: float, side: str) -> AssembledIonicStorage1D:
-        voltage, generation = source.values(t, side)
-        return AssembledIonicStorage1D(original_problem.at(voltage, generation))
-    def assessment(step: BDFStep, u: Vector) -> Assessment:
-        data = assembled_ionic_bdf_accounting(step, u)
-        finite = ionic_transient._finite_accounting(data)
-        value = norm(settings.scaling.row_weights * step.residual(u)) if finite else math.inf
-        gates = [GateOutcome("finite_original_accounting", finite, 0.0 if finite else math.inf, 0.0),
-                 GateOutcome("all_original_dynamic_rows", value <= 1, value, 1.0)]
-        if multiple:
-            for name, domain in data["domains"].items():
-                for species, values in domain["species"].items():
-                    value = float(values["balance_l1_m2_s"])
-                    gates.append(GateOutcome(name + "." + species + ".all_native_balances",
-                        value <= options.ion_balance_tolerance_m2_s, value, options.ion_balance_tolerance_m2_s))
-            limit = initial.steady_controls.electronic.current_spread_tolerance_A_m2
-            for key in ("maxwell_spread_A_m2", "maxwell_identity_error_A_m2"):
-                value = float(np.max(abs(np.asarray(data[key]))))
-                gates.append(GateOutcome(key, value <= limit, value, limit))
-        return Assessment(data, tuple(gates))
-    admission_wall = time.monotonic() - started
-    remaining = min(options.electronic.wall_s, bdf_options.wall_s) - admission_wall
-    if remaining <= 0:
-        raise TimeoutError("BDF whole-history budget exhausted during original initial admission")
-    result = solve_bdf(factory, admitted.u, (float(protocol.times_s[0]), float(protocol.times_s[-1])),
-        options=replace(bdf_options, max_steps=work, wall_s=remaining), settings=lambda step: settings,
-        convergence_norm=norm, assess=assessment, seed=assembled_ionic_bdf_seed,
-        breakpoints_s=tuple(float(t) for t in source.times_s[1:-1]),
-        events=_events(source, settings, factory, options), output_times_s=protocol.times_s)
-    return replace(result, wall_s=time.monotonic() - started, controls={**result.controls,
-        "method": "assembled_ionic_physical_storage_bdf12", "compiled_identity": device.identity,
-        "physical_controls": asdict(options), "initial_source_sha256": initial.source_sha256,
-        "initial_checks": checks, "drive": asdict(source), "initial_admission_wall_s": admission_wall,
-        "adapter_adaptive_max_steps": adaptive_max_steps, "adapter_sample_interval_limit": options.electronic.max_steps})
-
-
-def solve_assembled_ionic_bdf(
-    device: CompiledIonicDevice1D, initial: IonicTransientInitial, protocol: TransientProtocol, *,
-    options: IonicTransientOptions, bdf_options: BDFOptions, drive: BDFDrive | None = None,
-    adaptive_max_steps: int | None = None,
-) -> BDFResult:
-    """Single-domain positive/dual/shared-site scope, with original admission."""
-    started = time.monotonic()
-    admitted, generation, checks = ionic_transient._admit_evidence(
-        device, initial.evidence_json, initial.source_sha256, initial.steady_controls)
-    if not ionic_transient._same_state(initial.state, admitted) or initial.generation_scale != generation:
-        raise ValueError("ionic initial disagrees with the original pinned evidence")
-    return _solve(device, admitted, initial, protocol, options, bdf_options,
-                  BDFDrive.from_protocol(protocol) if drive is None else drive, adaptive_max_steps, checks, started)
-
-
-def solve_assembled_multiple_ionic_bdf(
-    device: CompiledMultipleIonicDevice1D, initial: MultipleIonicTransientInitial, protocol: TransientProtocol, *,
-    options: IonicTransientOptions, bdf_options: BDFOptions, drive: BDFDrive | None = None,
-    adaptive_max_steps: int | None = None,
-) -> BDFResult:
-    """Multiple-domain scope with independent domain/species balances and gates."""
-    started = time.monotonic()
-    admitted, generation, checks = multiple_ionic_transient._admit(
-        device, initial.evidence_json, initial.source_sha256, initial.steady_controls)
-    if not multiple_ionic_transient._same_record(
-        multiple_ionic_transient._decode(multiple_ionic_transient._encode(admitted)),
-        multiple_ionic_transient._decode(multiple_ionic_transient._encode(initial.state)),
-    ) or initial.generation_scale != generation:
-        raise ValueError("multiple-domain initial disagrees with the original pinned evidence")
-    return _solve(device, admitted, initial, protocol, options, bdf_options,
-                  BDFDrive.from_protocol(protocol) if drive is None else drive, adaptive_max_steps, checks, started)

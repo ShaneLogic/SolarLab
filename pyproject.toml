@@ -253,6 +253,12 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Solvers do not depend on experiment orchestration"
+type = "forbidden"
+source_modules = ["solarlab.solvers"]
+forbidden_modules = ["solarlab.experiments"]
+
+[[tool.importlinter.contracts]]
 name = "Shared contracts do not import implementation layers"
 type = "layers"
 containers = ["solarlab"]

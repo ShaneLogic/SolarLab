@@ -36,7 +36,7 @@ def published(tmp_path_factory):
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
     from solarlab.solvers.time.bdf import BDFOptions
     from solarlab.solvers.time.bdf_1d import BDFDrive
-    from solarlab.solvers.time import bdf_1d
+    from solarlab.experiments import bdf as bdf_backend
     from support.equation_provenance import counted
     from support.provenance import checked_provenance_owner
 
@@ -68,7 +68,7 @@ def published(tmp_path_factory):
                 active_drive = BDFDrive(active_protocol.times_s, np.array(left), np.array(right))
             with checked_provenance_owner(), counted() as observed, pytest.MonkeyPatch.context() as patch:
                 if name.startswith("restart-"):
-                    native_events = bdf_1d._events
+                    native_events = bdf_backend._events
 
                     def rejecting_events(*args):
                         events = native_events(*args)
@@ -82,7 +82,7 @@ def published(tmp_path_factory):
 
                         return (replace(events[0], restart=reject), *events[1:])
 
-                    patch.setattr(bdf_1d, "_events", rejecting_events)
+                    patch.setattr(bdf_backend, "_events", rejecting_events)
                 capture = run_transient_for_publication(compiled, initial, active_protocol,
                     options=options, initial_options=initial_options, method="bdf", bdf_options=requested,
                     bdf_drive=active_drive)

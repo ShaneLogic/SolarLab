@@ -305,7 +305,8 @@ def compiled_device():
 def test_real_adapter_scope_only_admits_complete_fixed_voltage_dark_jump_BDF1(compiled_device, mode):
     from solarlab.equations.dc_1d import DC1DProblem
     from solarlab.solvers.time.bdf import BDFStep, HistoryPoint
-    from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, _generation_density_context
+    from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D
+    from solarlab.experiments.bdf import _generation_density_context
     values = np.array([[0.0, 0.0], [0.0, 0.0], [0.0, 1.0]])
     right = values.copy()
     right[1, 1] = 1.0

@@ -184,7 +184,7 @@ The full physical secant already includes reference-voltage changes, so no
 additional voltage-rate storage term is added.
 """
     if method == "bdf":
-        from solarlab.solvers.time.bdf_1d import solve_electronic_bdf
+        from solarlab.experiments.bdf import solve_electronic_bdf
         if bdf_options is None:
             raise ValueError("BDF selection requires explicit BDFOptions")
         with equation_implementation(selected_implementation(operator="BDFStep:DC1DProblem")):

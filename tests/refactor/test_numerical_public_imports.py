@@ -6,9 +6,9 @@ serialization and experiment occurrences from AssemblyMigrationInventoryV1
 remain explicit exceptions. Public symbols merely aliased privately are not
 part of that historical count; promoted module-level APIs may not keep aliases.
 
-The two temporary steady helper exceptions are now retired. Five additional
-BDF-to-experiment imports already present at f0c1027f are listed separately;
-their providers are outside the numerical roots. The reviewed 141-entry
+The two temporary steady helper exceptions are now retired. The five BDF
+admission imports already present at f0c1027f have moved to experiment-only
+orchestration and are listed separately. The reviewed 141-entry
 configuration/registry/experiment ledger remains unchanged. Method calls have
 a separate exact ledger for owned callers and unrelated same-name methods.
 """
@@ -89,8 +89,8 @@ KNOWN_LATER_IMPORTS: tuple[ExceptionGroup, ...] = (
 )
 
 BDF_EXPERIMENT_IMPORTS: tuple[ExceptionGroup, ...] = (
-    ('solarlab.solvers.time.bdf_1d', 'solarlab.experiments.jv.operating_points', ('_verify_point',)),
-    ('solarlab.solvers.time.bdf_1d', 'solarlab.experiments.ionic_transient', ('_admit_evidence', '_finite_accounting', '_newton_settings', '_same_state')),
+    ('solarlab.experiments.bdf', 'solarlab.experiments.jv.operating_points', ('_verify_point',)),
+    ('solarlab.experiments.bdf', 'solarlab.experiments.ionic_transient', ('_admit_evidence', '_finite_accounting', '_newton_settings', '_same_state')),
 )
 
 

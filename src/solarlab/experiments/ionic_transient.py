@@ -294,7 +294,7 @@ NumPy/SciPy calls are not preempted. Initial-only steady checks never gate the
 time steps, and all dynamic ion continuity rows remain in residual and J.
 """
     if method == "bdf":
-        from solarlab.solvers.time.bdf_1d import solve_ionic_bdf
+        from solarlab.experiments.bdf import solve_ionic_bdf
         if bdf_options is None:
             raise ValueError("BDF selection requires explicit BDFOptions")
         with equation_implementation(selected_implementation(operator="BDFStep:Ionic1DProblem")):

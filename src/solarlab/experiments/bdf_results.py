@@ -633,7 +633,7 @@ def run_bdf_for_publication(
     _require(type(drive) is BDFDrive, "BDF publication requires the actual drive")
     nodes = np.frombuffer(compiled.nodes_m.tobytes(), dtype=compiled.nodes_m.dtype).reshape(compiled.nodes_m.shape)
     implementation = {"problem": "solarlab.equations." + ("ionic_1d." if ionic else "dc_1d.") + operator,
-        "time_adapter": "solarlab.solvers.time.bdf_1d." + ("solve_ionic_bdf" if ionic else "solve_electronic_bdf"),
+        "time_adapter": "solarlab.experiments.bdf." + ("solve_ionic_bdf" if ionic else "solve_electronic_bdf"),
         "kind": "original", "unified_assembler": False, "provenance_binding": binding}
     request = _decode(_encode({
         "method": "bdf", "bdf_options": asdict(bdf_options), "physical_controls": asdict(options),

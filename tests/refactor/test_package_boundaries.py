@@ -249,6 +249,8 @@ def create_package(root: Path, name: str) -> Path:
     ("solarlab.physics", "solarlab.equations", True),
     ("solarlab.solvers", "solarlab.device", False),
     ("solarlab.solvers", "solarlab.device", True),
+    ("solarlab.solvers", "solarlab.experiments", False),
+    ("solarlab.solvers", "solarlab.experiments", True),
     ("solarlab.solvers", "solarlab.experiments.two_dimensional", False),
     ("solarlab.mesh", "solarlab.experiments.two_dimensional", False),
     ("solarlab.mesh", "solarlab.solvers", False),
@@ -277,3 +279,37 @@ def test_actual_linter_rejects_current_and_future_upward_dependencies(
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert "broken" in result.stdout.lower(), result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("source", [
+    "import solarlab.experiments.transient\n",
+    "def solve():\n    from solarlab.experiments.transient import TransientOptions\n",
+])
+def test_solver_experiment_contract_rejects_global_and_function_local_imports(tmp_path, source):
+    for package in PACKAGES:
+        shutil.copytree(ROOT / "src" / package, tmp_path / package)
+    (tmp_path / "solarlab/solvers/p03_probe.py").write_text(source)
+    result = subprocess.run(
+        [str(Path(sys.executable).with_name("lint-imports")), "--config",
+         str(ROOT / "pyproject.toml"), "--no-cache"],
+        cwd=tmp_path, env=dict(os.environ, PYTHONPATH=str(tmp_path), PYTHONDONTWRITEBYTECODE="1"),
+        text=True, capture_output=True, timeout=45,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Solvers do not depend on experiment orchestration" in result.stdout
+    assert "broken" in result.stdout.lower(), result.stdout + result.stderr
+
+
+def test_solver_experiment_contract_allows_experiments_to_use_solver_adapters(tmp_path):
+    for package in PACKAGES:
+        shutil.copytree(ROOT / "src" / package, tmp_path / package)
+    (tmp_path / "solarlab/experiments/p03_probe.py").write_text(
+        "from solarlab.solvers.time.bdf_1d import BDFDrive\n")
+    result = subprocess.run(
+        [str(Path(sys.executable).with_name("lint-imports")), "--config",
+         str(ROOT / "pyproject.toml"), "--no-cache"],
+        cwd=tmp_path, env=dict(os.environ, PYTHONPATH=str(tmp_path), PYTHONDONTWRITEBYTECODE="1"),
+        text=True, capture_output=True, timeout=45,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Solvers do not depend on experiment orchestration" in result.stdout
