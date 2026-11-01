@@ -134,6 +134,43 @@ def test_integration_coverage_retains_each_file_once_in_its_own_shard():
     assert sum(row["count"] for row in rows) == 5
 
 
+def test_coverage_watchdog_designation_names_only_dedicated_legacy_files():
+    assert scheduled.LEGACY_COVERAGE_NODE_SECONDS == {
+        "tests/integration/test_interface_flux_balance.py": 1200,
+    }
+    for path, seconds in scheduled.LEGACY_COVERAGE_NODE_SECONDS.items():
+        assert (scheduled.SUITES["legacy"] / path).is_file()
+        assert not (scheduled.SUITES["root"] / path).exists()
+        assert Path(path).parent.as_posix() in scheduled.FILE_COVERAGE_SHARDS
+        assert seconds == scheduled.slow_node_seconds("legacy", path)
+        assert (3 + 1) * seconds == 80 * 60  # Three nodes and collection; step is 110 min.
+
+
+def test_coverage_watchdog_preserves_every_other_plan_byte_and_all_node_ids(monkeypatch):
+    path = "tests/integration/test_interface_flux_balance.py"
+    data = inventory()
+    data["legacy"]["items"].extend(item(path, f"test_{i}") for i in range(3))
+    data["legacy"]["items"].append(item(path, "test_slow", ("slow",)))
+    data["root"]["items"].append(item(path))  # A same-named root file is never designated.
+    current = scheduled.build_shards(data)
+    with monkeypatch.context() as patch:
+        patch.setattr(scheduled, "LEGACY_COVERAGE_NODE_SECONDS", {})
+        previous = scheduled.build_shards(data)
+    designated = next(row for row in current["coverage"]
+                      if row["id"] == "coverage-legacy-integration-interface_flux_balance")
+    assert designated.pop("node_wall_seconds") == 1200
+    assert json.dumps(current, sort_keys=True) == json.dumps(previous, sort_keys=True)
+
+
+def test_coverage_watchdog_refuses_shared_files_and_growth_beyond_step_margin():
+    path = "tests/integration/test_interface_flux_balance.py"
+    with pytest.raises(ValueError, match="dedicated legacy file"):
+        scheduled.make_shard("coverage", "legacy", [path, "tests/other.py"], "not slow", [item(path)])
+    with pytest.raises(ValueError, match="exceed 90 minutes"):
+        scheduled.make_shard("coverage", "legacy", [path], "not slow",
+                             [item(path, f"test_{i}") for i in range(4)])
+
+
 def test_cigs_slow_file_is_split_by_function_with_parameters_kept_together():
     path = "tests/regression/test_grading_cigs_notch.py"
     data = {"legacy": {"items": [
@@ -394,8 +431,10 @@ def test_slow_watchdog_records_timeout_failure_and_continues_to_next_case(tmp_pa
              "markers": "slow", "ignored": [], "node_wall_seconds": 5}
     monkeypatch.setattr(scheduled, "SUITES", {"legacy": tmp_path})
     original_watchdog = scheduled.run_with_watchdog
+    commands = []
 
     def interrupted_receipt(command, **kwargs):
+        commands.append(command)
         value = original_watchdog(command, **kwargs)
         if value["timeout"]:
             with (Path(kwargs["log"]).parent / "tests.jsonl").open("a") as stream:
@@ -412,12 +451,225 @@ def test_slow_watchdog_records_timeout_failure_and_continues_to_next_case(tmp_pa
     ]
     assert len(data["node_outcomes"][0]["receipt_errors"]) == 1
     assert data["status"] == "completed" and data["exit_code"] == 1
+    # The designated coverage stack dump never reaches slow shards.
+    assert len(commands) == 3 and not any("faulthandler" in part for c in commands for part in c)
+    assert "stack_dump_seconds" not in result["watchdog"]
     timeout = next(r for r in data["reports"] if r["outcome"] == "timeout")
     assert timeout["wasxfail"] is None and timeout["when"] == "watchdog"
     xml = ET.parse(out / "junit.xml")
     assert len(xml.findall(".//testcase")) == 2
     assert len(xml.findall(".//failure[@type='timeout']")) == 1
     assert not xml.findall(".//skipped")
+
+
+@pytest.mark.parametrize("interruption", ["timeout", "hard_exit"])
+def test_designated_coverage_watchdog_closes_timeout_and_keeps_later_subprocess_data(
+    tmp_path, monkeypatch, interruption,
+):
+    from coverage import CoverageData
+
+    path = "tests/integration/test_interface_flux_balance.py"
+    suite = tmp_path / "perovskite-sim"
+    test = suite / path
+    test.parent.mkdir(parents=True)
+    (suite / "pytest.ini").write_text("[pytest]\n")
+    probe = tmp_path / "src/solarlab/probe.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("def parent():\n    return 11\ndef child():\n    return 23\n"
+                     "if __name__ == '__main__':\n    assert child() == 23\n")
+    stop = "time.sleep(600)" if interruption == "timeout" else "os._exit(0)"
+    test.write_text(
+        "import os, runpy, subprocess, sys, time, pytest\n"
+        "@pytest.fixture(scope='module')\ndef blocked():\n"
+        f"    {stop}\n"
+        "def test_first(blocked):\n    pytest.fail('blocked setup returned')\n"
+        "def test_second():\n"
+        f"    assert runpy.run_path({str(probe)!r})['parent']() == 11\n"
+        f"    subprocess.run([sys.executable, {str(probe)!r}], check=True)\n"
+    )
+    shard = scheduled.build_shards({"legacy": {"items": [
+        item(path, "test_first"), item(path, "test_second"),
+    ]}})["coverage"][0]
+    assert shard["node_wall_seconds"] == 1200
+    # Local synthetic deadline, never the production table. The passing node
+    # took up to 4.7 s on an oversubscribed host, so 30 s keeps a wide margin.
+    shard["node_wall_seconds"] = 30
+    monkeypatch.setattr(scheduled, "ROOT", tmp_path)
+    monkeypatch.setattr(scheduled, "SUITES", {"legacy": suite})
+    monkeypatch.setattr(scheduled, "commit", lambda: "frozen")
+    monkeypatch.setattr(scheduled, "verify_installation", lambda: {"synthetic": {"files_verified": 1}})
+    (tmp_path / "uv.lock").write_text("locked")
+    plan = tmp_path / "plan.json"
+    scheduled.write(plan, {"commit": "frozen", "lock_sha256": scheduled.sha256(tmp_path / "uv.lock"),
+                           "selected_shards": {"coverage": [shard]}})
+    out = tmp_path / "out"
+    assert scheduled.run_shard(SimpleNamespace(plan=plan, kind="coverage", shard=shard["id"], out=out)) == 1
+    result = scheduled.read(out / "result.json")
+    assert result["status"] == "failed" and result["exit_code"] == 1
+    assert result["receipt_complete"] is (interruption == "timeout")
+    assert result["not_started_nodeids"] == []
+    assert result["incomplete_nodeids"] == ([] if interruption == "timeout" else [shard["nodeids"][0]])
+    assert result["coverage_data"] and result["subprocess_coverage"]
+    assert "patch = subprocess" in (out / "coverage.ini").read_text()
+    data = scheduled.read(out / "tests.json")
+    first = "timeout" if interruption == "timeout" else "failed"
+    assert data["status"] == "completed" and data["exit_code"] == 1
+    assert [(row["nodeid"], row["outcome"]) for row in data["node_outcomes"]] == [
+        (shard["nodeids"][0], first), (shard["nodeids"][1], "passed"),
+    ]
+    assert any(row["when"] == "watchdog" and row["outcome"] == first for row in data["reports"])
+    journal = [json.loads(line) for line in (out / "tests.jsonl").read_text().splitlines()]
+    assert [row["nodeid"] for row in journal if row["event"] == "start"] == shard["nodeids"]
+    assert [row["outcome"] for row in journal if row["event"] == "outcome"] == [first, "passed"]
+    xml = ET.parse(out / "junit.xml")
+    assert len(xml.findall(".//testcase")) == 2
+    assert len(xml.findall(f".//failure[@type='{first}']")) == 1
+    assert not xml.findall(".//skipped")
+    parent_data, child_data = set(), set()
+    for filename in out.glob("coverage.data.*"):
+        coverage = CoverageData(basename=str(filename))
+        coverage.read()
+        lines = coverage.lines(str(probe)) or []
+        if 2 in lines:
+            parent_data.add(filename)
+        if 4 in lines:
+            child_data.add(filename)
+    assert parent_data and child_data and parent_data.isdisjoint(child_data)
+    assert scheduled.read(out / "nodes/0001/tests.json")["execution_complete"]
+    assert all(not p.read_text() for p in out.rglob("*.recorder-errors.jsonl"))
+    assert result["watchdog"]["stack_dump_seconds"] == 15
+    if interruption == "timeout":
+        dump = (out / "nodes/0000/pytest.log").read_text()
+        assert "Timeout (0:00:15)!" in dump and "in blocked" in dump
+
+
+def _watchdog_receipt_tree(out, rows, items=None, child_cases=1):
+    """Write the files run_slow_nodes leaves for a timeout and a completed node."""
+    suites = ET.Element("testsuites")
+    aggregate = {"items": [{"nodeid": nodeid} for nodeid in items or [r[0] for r in rows]],
+                 "collection_reports": [], "reports": [], "node_outcomes": [],
+                 "status": "completed", "exit_code": 1, "seconds": 1.0}
+    journal = []
+    for index, (nodeid, outcome) in enumerate(rows):
+        node = out / "nodes" / f"{index:04d}"
+        node.mkdir(parents=True)
+        timeout = outcome == "timeout"
+        row = {"nodeid": nodeid, "outcome": outcome, "receipt_errors": [],
+               "returncode": -15 if timeout else int(outcome == "failed"),
+               "timeout": timeout, "seconds": 2.0}
+        if timeout:
+            aggregate["reports"].append(scheduled.watchdog_failure(
+                suites, nodeid, "timeout", 2.0, "Scheduled node exceeded its wall cap"))
+        else:
+            reports = [{"nodeid": nodeid, "when": phase,
+                        "outcome": "failed" if outcome == "failed" and phase != "setup" else "passed"}
+                       for phase in ("setup", "call", "teardown")]
+            scheduled.write(node / "tests.json", {
+                "items": [{"nodeid": nodeid}], "reports": reports, "status": "completed",
+                "exit_code": row["returncode"], "collection_complete": True,
+                "execution_complete": True, "recorder_errors": [], "started_nodeids": [nodeid]})
+            (node / "tests.jsonl").write_text("".join(
+                json.dumps({"event": "report", **report}) + "\n" for report in reports))
+            child = ET.Element("testsuite", name="pytest")
+            for _ in range(child_cases):
+                ET.SubElement(child, "testcase", classname=nodeid.partition("::")[0],
+                              name=nodeid.partition("::")[2])
+            ET.ElementTree(child).write(node / "junit.xml")
+            suites.append(child)
+            aggregate["reports"].extend(reports)
+        aggregate["node_outcomes"].append(row)
+        journal += [{"event": "start", "nodeid": nodeid}, {"event": "outcome", **row}]
+    return aggregate, journal, suites
+
+
+def _write_watchdog_receipt_tree(out, aggregate, journal, suites):
+    scheduled.write(out / "tests.json", aggregate)
+    (out / "tests.jsonl").write_text("".join(json.dumps(row) + "\n" for row in journal))
+    ET.ElementTree(suites).write(out / "junit.xml")
+
+
+@pytest.mark.parametrize("corruption", [
+    None, "teardown-error-case", "function-count", "status", "exit-code", "passing-timeout",
+    "outcome-order", "duplicate-start", "journal-outcome", "extra-testcase",
+    "duplicate-timeout-label", "unlabelled-timeout", "mislabelled-timeout", "empty-child-junit",
+    "missing-child-junit", "unparseable-child-junit", "child-receipt-errors", "child-missing-phase",
+    "never-started",
+])
+def test_watchdog_coverage_receipt_rejects_false_completeness(tmp_path, corruption):
+    first = "tests/integration/test_interface_flux_balance.py::test_first"
+    second = "tests/integration/test_interface_flux_balance.py::test_second"
+    rows = [(first, "timeout"), (second, "failed" if corruption == "teardown-error-case" else "passed")]
+    items, expected, exit_code = None, [first, second], 1
+    if corruption == "outcome-order":
+        rows, items = rows[::-1], [first, second]
+    if corruption == "never-started":
+        expected = items = [first, second, second + "_late"]
+    cases = {"teardown-error-case": 2, "empty-child-junit": 0}.get(corruption, 1)
+    aggregate, journal, suites = _watchdog_receipt_tree(tmp_path, rows, items, child_cases=cases)
+    outcome_rows = [row for row in journal if row["event"] == "outcome"]
+    if corruption == "function-count":
+        expected = [first]
+    elif corruption == "status":
+        aggregate["status"] = "running"
+    elif corruption == "exit-code":
+        exit_code = 2
+    elif corruption == "passing-timeout":
+        aggregate["exit_code"] = exit_code = 0
+    elif corruption == "duplicate-start":
+        journal.insert(0, {"event": "start", "nodeid": first})
+    elif corruption == "journal-outcome":
+        outcome_rows[1]["seconds"] = 3.0
+    elif corruption == "extra-testcase":
+        ET.SubElement(suites[0], "testcase", classname="extra", name="case")
+    elif corruption == "duplicate-timeout-label":
+        aggregate["reports"].append(dict(aggregate["reports"][0]))
+    elif corruption == "unlabelled-timeout":
+        aggregate["reports"] = [r for r in aggregate["reports"] if r["when"] != "watchdog"]
+    elif corruption == "mislabelled-timeout":
+        aggregate["reports"][0]["outcome"] = "failed"
+    elif corruption == "missing-child-junit":
+        (tmp_path / "nodes/0001/junit.xml").unlink()
+    elif corruption == "unparseable-child-junit":
+        (tmp_path / "nodes/0001/junit.xml").write_text("<testsuite><testcase")
+    elif corruption == "child-receipt-errors":
+        aggregate["node_outcomes"][1]["receipt_errors"] = outcome_rows[1]["receipt_errors"] = ["torn"]
+    elif corruption == "child-missing-phase":
+        child = scheduled.read(tmp_path / "nodes/0001/tests.json")
+        child["reports"].pop()
+        scheduled.write(tmp_path / "nodes/0001/tests.json", child)
+        (tmp_path / "nodes/0001/tests.jsonl").write_text("")
+    _write_watchdog_receipt_tree(tmp_path, aggregate, journal, suites)
+    result = scheduled._watchdog_coverage_receipt(tmp_path, expected, exit_code)
+    if corruption in (None, "teardown-error-case"):
+        # A failed call plus a teardown error yields two testcases for one node.
+        assert result["receipt_complete"] and result["receipt_errors"] == []
+    else:
+        assert not result["receipt_complete"] and result["receipt_errors"]
+    if corruption == "never-started":
+        assert result["not_started_nodeids"] == [second + "_late"]
+
+
+def test_incomplete_watchdog_coverage_receipt_fails_a_shard_whose_runner_exited_zero(
+    tmp_path, monkeypatch,
+):
+    path = "tests/integration/test_interface_flux_balance.py"
+    shard = scheduled.build_shards({"legacy": {"items": [item(path)]}})["coverage"][0]
+    monkeypatch.setattr(scheduled, "ROOT", tmp_path)
+    monkeypatch.setattr(scheduled, "SUITES", {"legacy": tmp_path})
+    monkeypatch.setattr(scheduled, "commit", lambda: "frozen")
+    monkeypatch.setattr(scheduled, "verify_installation", lambda: {"synthetic": {"files_verified": 1}})
+    monkeypatch.setattr(scheduled, "run_slow_nodes", lambda *args, **kwargs: 0)
+    (tmp_path / "uv.lock").write_text("locked")
+    plan = tmp_path / "plan.json"
+    scheduled.write(plan, {"commit": "frozen", "lock_sha256": scheduled.sha256(tmp_path / "uv.lock"),
+                           "selected_shards": {"coverage": [shard]}})
+    out = tmp_path / "out"
+    (out).mkdir()
+    (out / "pytest.log").write_text("")
+    assert scheduled.run_shard(SimpleNamespace(plan=plan, kind="coverage", shard=shard["id"], out=out)) == 1
+    result = scheduled.read(out / "result.json")
+    assert result["status"] == "failed" and not result["receipt_complete"]
+    assert result["not_started_nodeids"] == shard["nodeids"]
 
 
 def test_slow_preflight_refuses_count_drift_before_any_node_body(tmp_path, monkeypatch):

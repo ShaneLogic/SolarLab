@@ -90,6 +90,13 @@ FUNCTION_SHARDS = {
 # 110 min in run 40986149015. Its slowest completed file took 11.5 min: retain
 # module fixtures within each file and leave ample headroom between files.
 FILE_COVERAGE_SHARDS = {"tests/integration"}
+# This file stalled twice at the 110-minute step limit (runs 41239577644 and
+# 41266788155). Its shared ladder also exhausts the slow sibling's 1200 s cap.
+# Three default nodes plus one collection preflight use at most 80 minutes at
+# that cap, leaving 30 minutes for termination, receipts and step overhead.
+LEGACY_COVERAGE_NODE_SECONDS = {
+    "tests/integration/test_interface_flux_balance.py": 1200,
+}
 # Target 24 slow cases per ordinary shard, but never split a parameterized
 # function. A function above this target runs alone; this is not a test limit.
 MAX_SLOW_NODES = 24
@@ -518,6 +525,16 @@ def make_shard(kind: str, suite: str, paths: Sequence[str], markers: str,
     }
     if kind == "slow":
         shard["node_wall_seconds"] = max(slow_node_seconds(suite, item["path"]) for item in items)
+    elif kind == "coverage" and suite == "legacy":
+        designated = [path for path in paths if path in LEGACY_COVERAGE_NODE_SECONDS]
+        if designated:
+            if len(paths) != 1:
+                raise ValueError("watchdog coverage requires a dedicated legacy file shard")
+            seconds = LEGACY_COVERAGE_NODE_SECONDS[designated[0]]
+            # Refuse future growth that would consume the step's safety margin.
+            if (len(items) + 1) * seconds > 90 * 60:
+                raise ValueError("coverage watchdog nodes and collection exceed 90 minutes")
+            shard["node_wall_seconds"] = seconds
     return shard
 
 
@@ -748,11 +765,16 @@ def watchdog_failure(suites: ET.Element, nodeid: str, outcome: str, seconds: flo
 
 
 def run_slow_nodes(shard: dict[str, Any], out: Path, env: dict[str, str],
-                   result: dict[str, Any]) -> int:
+                   result: dict[str, Any], *, node_runner: Sequence[str] | None = None) -> int:
     """Verify function counts, then run each worker-local case under a watchdog."""
     seconds = shard["node_wall_seconds"]
     cwd = SUITES[shard["suite"]]
     runner = [sys.executable, str(Path(__file__).resolve())]
+    execution_runner = runner if node_runner is None else node_runner
+    # A designated coverage node dumps every thread's stack before its kill,
+    # so a stalled legacy fixture leaves the stall's location in its log.
+    dump_seconds = None if node_runner is None else max(seconds - 60, seconds / 2)
+    stack_dump = [] if dump_seconds is None else ["-o", f"faulthandler_timeout={dump_seconds:g}"]
     selection = [*shard["paths"], "-m", shard["markers"], "-q", "-ra", "-p", "no:cacheprovider"]
     for ignored in shard["ignored"]:
         selection += ["--ignore", ignored]
@@ -780,8 +802,11 @@ def run_slow_nodes(shard: dict[str, Any], out: Path, env: dict[str, str],
         "items": inventory["items"], "collection_reports": inventory["collection_reports"],
         "reports": [], "node_outcomes": [], "status": "running",
     }
-    result["watchdog"] = {"node_wall_seconds": seconds, "scope": "scheduled slow only",
+    scope = "scheduled slow only" if node_runner is None else "designated legacy coverage file"
+    result["watchdog"] = {"node_wall_seconds": seconds, "scope": scope,
                           "isolation": "one process per locally collected case; shared fixtures recreated"}
+    if dump_seconds is not None:
+        result["watchdog"]["stack_dump_seconds"] = dump_seconds
     write(out / "result.json", result)
     failed = False
     started = time.monotonic()
@@ -794,9 +819,9 @@ def run_slow_nodes(shard: dict[str, Any], out: Path, env: dict[str, str],
             journal.write(json.dumps({"event": "start", "nodeid": nodeid}) + "\n")
             journal.flush()
             executed = run_with_watchdog(
-                [*runner, "_pytest", "--out", str(node_out / "tests.json"),
+                [*execution_runner, "_pytest", "--out", str(node_out / "tests.json"),
                  "--expected", str(node_out / "expected.json"), "--", nodeid,
-                 "-m", shard["markers"], "-q", "-ra", "-p", "no:cacheprovider",
+                 "-m", shard["markers"], "-q", "-ra", "-p", "no:cacheprovider", *stack_dump,
                  "--junitxml=" + str(node_out / "junit.xml")],
                 cwd=cwd, env=env, log=node_out / "pytest.log", seconds=seconds,
             )
@@ -908,6 +933,80 @@ def _coverage_receipt(out: Path, expected: list[str], exit_code: int) -> dict[st
             "pytest_process_exit_code": exit_code}
 
 
+def _watchdog_coverage_receipt(out: Path, expected: list[str], exit_code: int) -> dict[str, Any]:
+    """A parent timeout closes a node; every other node still needs its full receipt."""
+    errors: list[str] = []
+    nodeids = expected
+    started: set[str] = set()
+    closed: set[str] = set()
+    try:
+        aggregate = read(out / "tests.json")
+        local = [item["nodeid"] for item in aggregate["items"]]
+        if function_counts(local) != function_counts(expected):
+            errors.append("planned versus collected function counts differ")
+        else:
+            nodeids = local
+        if aggregate.get("status") != "completed" or aggregate.get("exit_code") != exit_code:
+            errors.append("missing or inconsistent final watchdog status/exit code")
+        outcomes = aggregate.get("node_outcomes", [])
+        if [row["nodeid"] for row in outcomes] != local:
+            errors.append("missing or inconsistent watchdog node outcomes")
+        journal = [json.loads(line) for line in (out / "tests.jsonl").read_text().splitlines()]
+        starts = [row["nodeid"] for row in journal if row.get("event") == "start"]
+        started.update(starts)
+        if Counter(starts) != Counter(local):
+            errors.append("missing or duplicate watchdog journal starts")
+        terminal_rows = [{key: value for key, value in row.items() if key != "event"}
+                         for row in journal if row.get("event") == "outcome"]
+        if terminal_rows != outcomes:
+            errors.append("watchdog journal outcomes differ from the aggregate receipt")
+        cases = ET.parse(out / "junit.xml").findall(".//testcase")
+        merged = 0
+        for index, row in enumerate(outcomes):
+            nodeid = row["nodeid"]
+            node = out / "nodes" / f"{index:04d}"
+            labelled = [report for report in aggregate["reports"]
+                        if report["nodeid"] == nodeid and report["when"] == "watchdog"]
+            if labelled:
+                merged += 1
+            else:
+                # pytest may write two testcases for one node: a failed call
+                # and a teardown error. Count the child's own JUnit instead.
+                try:
+                    count = len(ET.parse(node / "junit.xml").findall(".//testcase"))
+                except (OSError, ET.ParseError):
+                    count = 0
+                merged += count
+                if not count:
+                    errors.append(nodeid + ": child JUnit has no testcase")
+            if row["timeout"] and row["outcome"] == "timeout":
+                failures = [case for case in cases
+                            if case.get("classname", "") + "::" + case.get("name", "") == nodeid
+                            and case.find("failure[@type='timeout']") is not None]
+                if (len(labelled) == len(failures) == 1 and labelled[0]["outcome"] == "timeout"
+                        and exit_code != 0):
+                    closed.add(nodeid)
+                else:
+                    errors.append(nodeid + ": incomplete timeout receipt or passing timeout")
+            else:
+                receipt = _coverage_receipt(node, [nodeid], row["returncode"])
+                if receipt["receipt_complete"] and not row["receipt_errors"]:
+                    closed.add(nodeid)
+                else:
+                    errors.append(nodeid + ": incomplete child receipt")
+        if len(cases) != merged:
+            errors.append("watchdog JUnit testcases differ from the node receipts")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, ET.ParseError) as exc:
+        errors.append("watchdog receipt: " + str(exc))
+    missing = [nodeid for nodeid in nodeids if nodeid not in started]
+    incomplete = [nodeid for nodeid in nodeids if nodeid in started and nodeid not in closed]
+    if missing or incomplete:
+        errors.append("missing complete outcomes for planned nodes")
+    return {"receipt_complete": not errors, "receipt_errors": errors,
+            "not_started_nodeids": missing, "incomplete_nodeids": incomplete,
+            "watchdog_exit_code": exit_code}
+
+
 def run_shard(args: argparse.Namespace) -> int:
     value = read(args.plan)
     if value["commit"] != commit() or value["lock_sha256"] != sha256(ROOT / "uv.lock"):
@@ -946,6 +1045,7 @@ def run_shard(args: argparse.Namespace) -> int:
         env["COVERAGE_FILE"] = str(out / "coverage.data")
         command += ["-m", "coverage", "run", "--rcfile=" + str(config),
                     "--parallel-mode", "--context=" + shard["id"]]
+    node_runner = [*command, str(Path(__file__).resolve())]
     command += [
         str(Path(__file__).resolve()), "_pytest", "--out", str(out / "tests.json"),
         "--expected", str(out / "expected.json"), "--", *pytest_args,
@@ -954,11 +1054,15 @@ def run_shard(args: argparse.Namespace) -> int:
     if args.kind == "slow":
         returncode = run_slow_nodes(shard, out, env, result)
     else:
-        with (out / "pytest.log").open("w") as log:
-            executed = subprocess.run(command, cwd=SUITES[shard["suite"]], env=env,
-                                      stdout=log, stderr=subprocess.STDOUT, check=False)
-        returncode = executed.returncode
-        receipt = _coverage_receipt(out, shard["nodeids"], returncode)
+        if "node_wall_seconds" in shard:
+            returncode = run_slow_nodes(shard, out, env, result, node_runner=node_runner)
+            receipt = _watchdog_coverage_receipt(out, shard["nodeids"], returncode)
+        else:
+            with (out / "pytest.log").open("w") as log:
+                executed = subprocess.run(command, cwd=SUITES[shard["suite"]], env=env,
+                                          stdout=log, stderr=subprocess.STDOUT, check=False)
+            returncode = executed.returncode
+            receipt = _coverage_receipt(out, shard["nodeids"], returncode)
         result.update(receipt)
         if not receipt["receipt_complete"]:
             returncode = returncode or 1
