@@ -89,9 +89,9 @@ from pathlib import Path  # noqa: E402
 import pytest  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def finish_background_jobs(monkeypatch):
-    """Finish this test's real jobs before its patched inputs are restored."""
+    """Opt-in cleanup; backend conftests enable it before patched inputs expire."""
     from backend.jobs import JobRegistry
 
     submitted = []
@@ -123,7 +123,7 @@ def all_presets_dir(tmp_path_factory):
 
 
 @pytest.fixture
-def serve_all_presets(monkeypatch, all_presets_dir):
+def serve_all_presets(monkeypatch, all_presets_dir, finish_background_jobs):
     import backend.main as backend_main
     import backend.user_configs as user_configs
 

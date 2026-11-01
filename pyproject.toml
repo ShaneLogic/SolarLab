@@ -1,0 +1,269 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solarlab"
+version = "0.1.0"
+description = "SolarLab simulation platform and staged public package architecture"
+requires-python = ">=3.11"
+dependencies = [
+    # Keep the observed numerical environment on 3.12+, with a separately
+    # tested 3.11 branch instead of silently raising the supported minimum.
+    "numpy==2.3.5; python_version < '3.12'",
+    "numpy==2.5.3; python_version >= '3.12'",
+    "scipy==1.16.3; python_version < '3.12'",
+    "scipy==1.18.1; python_version >= '3.12'",
+    "pyyaml==6.0.3",
+    "matplotlib==3.11.2",
+    "threadpoolctl==3.6.0",
+    # Strict editable configuration DTOs are part of the new core package.
+    "pydantic==2.13.5",
+]
+
+[project.optional-dependencies]
+server = ["fastapi==0.141.1", "uvicorn==0.52.4", "pydantic==2.13.5"]
+# Import support for the existing optional Celery entry point. Broker/worker
+# execution is separate from the in-process JobRegistry used by the API.
+queue = ["celery[redis]==5.5.3"]
+research = ["openpyxl>=3.1", "pymupdf>=1.24"]
+ida = ["scikit-sundae==1.1.3"]
+# Optional rigorous Arb observer arithmetic; installed explicitly in core CI.
+arb = ["python-flint==0.8.0"]
+dev = [
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "httpx==0.28.1",
+    "jsonschema==4.26.0",
+    "ruff>=0.15.20",
+    "mypy>=1.18",
+    "import-linter>=2.5",
+]
+notebook = ["jupyterlab>=4.0"]
+
+[tool.uv]
+# Preserve the observed transitive baseline as well as the direct pins above.
+# contourpy 1.4 requires 3.12; uv selects a compatible release on Python 3.11.
+constraint-dependencies = [
+    "annotated-doc==0.0.5",
+    "annotated-types==0.8.0",
+    "anyio==4.15.1",
+    "certifi==2026.7.22",
+    "click==8.5.0",
+    "contourpy==1.4.0; python_version >= '3.12'",
+    "coverage==7.16.0",
+    "cycler==0.12.1",
+    "fonttools==4.65.0",
+    "h11==0.16.0",
+    "httpcore==1.0.9",
+    "idna==3.19",
+    "iniconfig==2.3.0",
+    "kiwisolver==1.5.1",
+    "packaging==26.3",
+    "pillow==12.3.0",
+    "pluggy==1.6.0",
+    "pydantic-core==2.46.5",
+    "pygments==2.21.0",
+    "pyparsing==3.3.2",
+    "python-dateutil==2.9.0.post0",
+    "six==1.17.0",
+    "starlette==1.6.0",
+    "typing-extensions==4.16.0",
+    "typing-inspection==0.4.4",
+]
+# The pinned optional IDA wheel supports Python <3.15. This limits the
+# reproducible lock, without changing the package's existing >=3.11 minimum.
+environments = ["python_version < '3.15'"]
+exclude-newer = "2026-10-05T08:33:47Z"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.11"
+follow_imports = "skip"
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -m 'not slow'"
+markers = [
+    "slow: marks tests as slow (run with -m slow)",
+    "requires_clean_core: binds the running core to committed source; skips on changed bound Python files",
+    "platform_bound: consumes captured numeric fixtures; only frozen-output comparisons use the capture guard, portable metadata and live parity still run",
+    "frontend: Python/TypeScript client contracts executed by the frontend CI job",
+    "regression: physical-sanity regression tests (V_oc / J_sc / FF envelopes, parity gates)",
+    "validation: physics trend validation against literature windows (V_oc vs Eg, FF vs mobility, etc.)",
+]
+
+# Transitional P03-01 build: one legacy source tree, explicitly mapped beside
+# the three new packages. P09-01 excludes the legacy engine from the release;
+# P09-03 retires its source only after every consumer has migrated.
+[tool.hatch.build]
+reproducible = true
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/*.pyo", "**/.DS_Store"]
+
+[tool.hatch.build.targets.wheel]
+only-include = [
+    "src/solarlab",
+    "src/solarlab_research",
+    "src/solarlab_server",
+    "perovskite-sim/perovskite_sim",
+]
+sources = ["src", "perovskite-sim"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    ".gitignore",
+    "pyproject.toml",
+    "uv.lock",
+    "examples/research_1d",
+    "examples/research_2d",
+    "tests/integration/test_research_1d_workflow.py",
+    "src/solarlab",
+    "src/solarlab_research",
+    "src/solarlab_server",
+    "perovskite-sim/perovskite_sim",
+    "perovskite-sim/pyproject.toml",
+    "perovskite-sim/uv.lock",
+    "tests/refactor/test_package_preparation.py",
+    "tests/refactor/test_configuration_preparation.py",
+    "tests/refactor/test_registry_preparation.py",
+    "tests/refactor/test_device_configuration_preparation.py",
+    "tests/refactor/test_complex_configuration_preparation.py",
+    "tests/refactor/test_structured_registry_preparation.py",
+    "tests/refactor/test_execution_identity_preparation.py",
+    "tests/refactor/test_execution_manifest.py",
+    "tests/refactor/test_release_bundle.py",
+    "tests/refactor/test_binding_identity.py",
+    "tests/refactor/test_registry_mapping.py",
+    "tests/refactor/test_registry_migration.py",
+    "tests/refactor/test_jv_protocol_preparation.py",
+    "tests/refactor/test_sweep_preparation.py",
+    "tests/refactor/fixtures/jv_reference_requests.json",
+    "tests/refactor/test_behavior_context.py",
+    "tests/refactor/test_configuration_schema_export.py",
+    "tests/refactor/test_configuration_input_types.py",
+    "tests/refactor/test_package_boundaries.py",
+    "tests/refactor/test_experiment_registry_startup.py",
+    "tests/refactor/test_input_domain_closure.py",
+    "tests/refactor/test_legacy_behavior_execution.py",
+    "tests/refactor/test_legacy_execution_context.py",
+    "tests/refactor/test_effective_behavior_identity.py",
+    "tests/refactor/test_configuration_migration.py",
+    "tests/refactor/legacy_driver_observer.py",
+    "tests/refactor/fixtures/r1_common_state_preparation.json",
+    "tests/refactor/fixtures/r1_pair_common_state_preparation.json",
+    "tests/refactor/fixtures/r1_execution_policy.json",
+    "perovskite-sim/tests/fixtures/OneDimensionalMechanismR1ReferenceBindingV1.json",
+    "perovskite-sim/tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
+    "perovskite-sim/reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json",
+    "reproducibility/RefactorTransitionBoundariesV1.json",
+    "scripts/generate_configuration_schema.py",
+    "web/src",
+    "web/tests",
+    "web/public",
+    "web/scripts",
+    "web/package.json",
+    "web/package-lock.json",
+    "web/index.html",
+    "web/tsconfig.json",
+    "web/vite.config.ts",
+    "web/vitest.config.ts",
+    "web/Dockerfile",
+    "web/.gitignore",
+    "perovskite-sim/tests/fixtures/IonDiffusivityFigureReference.json",
+    "perovskite-sim/tests/fixtures/configs/cigs_graded_optics.yaml",
+    "perovskite-sim/tests/fixtures/configs/wkb_resolved_electron_barrier.yaml",
+    "perovskite-sim/tests/fixtures/configs/nip_MAPbI3.yaml",
+    "perovskite-sim/tests/fixtures/configs/tandem_lin2019.yaml",
+    "perovskite-sim/tests/fixtures/configs/nip_wideGap_FACs_1p77.yaml",
+    "perovskite-sim/tests/fixtures/configs/nip_SnPb_1p22.yaml",
+    "perovskite-sim/configs/scaps_mirror_v2.yaml",
+    "tests/runtime/test_run_store.py",
+    "tests/runtime/test_execution.py",
+    "tests/runtime/execution_workers.py",
+    "tests/runtime/runtime_evidence.py",
+    "tests/runtime/test_event_service.py",
+    "tests/runtime/test_configuration_schema_service.py",
+    "tests/runtime/test_configuration_preview.py",
+]
+
+[tool.importlinter]
+root_packages = ["solarlab", "solarlab_research", "solarlab_server"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Core has no companion or legacy dependency"
+type = "forbidden"
+source_modules = ["solarlab"]
+forbidden_modules = [
+    "solarlab_research", "solarlab_server", "perovskite_sim", "backend",
+]
+
+[[tool.importlinter.contracts]]
+name = "Companion packages are independent"
+type = "independence"
+modules = ["solarlab_research", "solarlab_server"]
+
+[[tool.importlinter.contracts]]
+name = "Material data does not import higher configuration or device layers"
+type = "forbidden"
+source_modules = ["solarlab.materials"]
+forbidden_modules = ["solarlab.config", "solarlab.device", "solarlab.physics", "solarlab.experiments"]
+
+[[tool.importlinter.contracts]]
+name = "Units do not depend on model or input data"
+type = "forbidden"
+source_modules = ["solarlab.units"]
+forbidden_modules = ["solarlab.materials", "solarlab.config", "solarlab.device", "solarlab.physics", "solarlab.experiments"]
+
+[[tool.importlinter.contracts]]
+name = "Physics declarations do not import device assembly or experiments"
+type = "forbidden"
+source_modules = ["solarlab.physics"]
+forbidden_modules = ["solarlab.config", "solarlab.device", "solarlab.experiments"]
+
+# Parenthesized layers may be absent while WS3 creates its packages. They are
+# enforced as soon as they exist; tests create each future layer and exercise
+# direct and indirect violations without adding placeholder production modules.
+[[tool.importlinter.contracts]]
+name = "Physics does not depend on equation assembly"
+type = "layers"
+layers = ["(solarlab.equations)", "solarlab.physics"]
+
+[[tool.importlinter.contracts]]
+name = "Solvers do not depend on device assembly"
+type = "layers"
+layers = ["solarlab.device", "(solarlab.solvers)"]
+
+[[tool.importlinter.contracts]]
+name = "Low-level geometry stays below solvers and spatial experiments"
+type = "layers"
+layers = [
+    "solarlab.experiments.two_dimensional",
+    "(solarlab.solvers)",
+    "(solarlab.discretization)",
+    "(solarlab.mesh)",
+]
+
+[[tool.importlinter.contracts]]
+name = "Solvers do not depend on experiment orchestration"
+type = "forbidden"
+source_modules = ["solarlab.solvers"]
+forbidden_modules = ["solarlab.experiments"]
+
+[[tool.importlinter.contracts]]
+name = "Shared contracts do not import implementation layers"
+type = "layers"
+containers = ["solarlab"]
+layers = [
+    "config : device : materials : reproducibility : units : physics : experiments : sweeps : (io) : (mesh) : (discretization) : (equations) : (solvers)",
+    "(contracts)",
+]

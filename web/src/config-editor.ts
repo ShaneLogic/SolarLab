@@ -1,0 +1,989 @@
+import type {
+  BuiltInPotentialMode,
+  DeviceConfig,
+  InterfaceDefectFields,
+  LayerConfig,
+  LayerRole,
+  SimulationModeName,
+} from './types'
+import { isLayerRole } from './types'
+import { isFieldVisible } from './workstation/tier-gating'
+import { numberInputAttributes, readNumberInput } from './number-input'
+import {
+  readBulkDefectEditor,
+  renderBulkDefectEditor,
+  wireBulkDefectEditors,
+} from './editors/bulk-defects'
+import { escapeHtml } from './editors/inputs'
+
+const MODE_OPTIONS: ReadonlyArray<{ value: SimulationModeName; label: string }> = [
+  { value: 'full', label: 'Full (constitutive extensions)' },
+  { value: 'fast', label: 'Fast (optoelectronic)' },
+  { value: 'legacy', label: 'Legacy (isothermal baseline)' },
+]
+
+const BUILT_IN_POTENTIAL_OPTIONS: ReadonlyArray<{
+  value: BuiltInPotentialMode
+  label: string
+}> = [
+  { value: 'semiconductor_work_function', label: 'Semiconductor work functions' },
+  { value: 'metal_work_function', label: 'Explicit metal work functions' },
+  { value: 'legacy_manual', label: 'Legacy manual override' },
+]
+
+function isModeName(v: unknown): v is SimulationModeName {
+  return v === 'full' || v === 'fast' || v === 'legacy'
+}
+
+function isBuiltInPotentialMode(v: unknown): v is BuiltInPotentialMode {
+  return v === 'legacy_manual'
+    || v === 'semiconductor_work_function'
+    || v === 'metal_work_function'
+}
+
+// Discriminator for per-layer field rendering. Most parameters are numeric;
+// optical_material is a select populated from the backend's n,k CSV scan, and
+// incoherent is a boolean checkbox (thick substrate Fresnel handling in TMM).
+type FieldKind = 'numeric' | 'numeric-optional' | 'select' | 'select-optical-material' | 'boolean'
+
+interface FieldDef {
+  key: keyof LayerConfig
+  label: string
+  kind: FieldKind
+  unit?: string
+  /** Hover tooltip — short physical-meaning explainer. */
+  tooltip?: string
+  /** Placeholder hint for an empty numeric input — used to convey the
+   *  "0.0 / disabled" sentinel for opt-in physics fields. */
+  placeholder?: string
+  /** Option list for ``kind: 'select'`` (generic string-enum dropdown). */
+  options?: ReadonlyArray<string>
+}
+
+// Groups of parameters for a single layer. Grouping makes long forms scannable.
+interface ParamGroup {
+  title: string
+  fields: FieldDef[]
+  /** When true, render the group inside a collapsed-by-default
+   *  ``<details>`` so the form stays scannable. Used by the
+   *  "Advanced 2D Physics" group (FULL-tier-only μ(E) fields). */
+  collapsed?: boolean
+}
+
+const LAYER_GROUPS: ParamGroup[] = [
+  {
+    title: 'Geometry & Electrostatics',
+    fields: [
+      { key: 'thickness', label: 'Thickness', kind: 'numeric', unit: 'm' },
+      { key: 'eps_r', label: '<i>ε</i><sub>r</sub>', kind: 'numeric', unit: '' },
+      { key: 'chi', label: '<i>χ</i>', kind: 'numeric', unit: 'eV' },
+      { key: 'Eg', label: '<i>E</i><sub>g</sub>', kind: 'numeric', unit: 'eV' },
+    ],
+  },
+  {
+    title: 'Transport',
+    fields: [
+      { key: 'mu_n', label: '<i>μ</i><sub>n</sub>', kind: 'numeric', unit: 'm²/(V·s)' },
+      { key: 'mu_p', label: '<i>μ</i><sub>p</sub>', kind: 'numeric', unit: 'm²/(V·s)' },
+      { key: 'ni', label: '<i>n</i><sub>i</sub>', kind: 'numeric', unit: 'm⁻³' },
+      {
+        key: 'Nc300', label: '<i>N</i><sub>C,300</sub>', kind: 'numeric-optional', unit: 'm⁻³',
+        placeholder: 'required for semiconductor ΔW',
+        tooltip: 'Effective conduction-band density of states at 300 K.',
+      },
+      {
+        key: 'Nv300', label: '<i>N</i><sub>V,300</sub>', kind: 'numeric-optional', unit: 'm⁻³',
+        placeholder: 'required for semiconductor ΔW',
+        tooltip: 'Effective valence-band density of states at 300 K.',
+      },
+      { key: 'N_D', label: '<i>N</i><sub>D</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'N_A', label: '<i>N</i><sub>A</sub>', kind: 'numeric', unit: 'm⁻³' },
+    ],
+  },
+  {
+    title: 'Recombination',
+    fields: [
+      { key: 'tau_n', label: '<i>τ</i><sub>n</sub>', kind: 'numeric', unit: 's' },
+      { key: 'tau_p', label: '<i>τ</i><sub>p</sub>', kind: 'numeric', unit: 's' },
+      { key: 'n1', label: '<i>n</i><sub>1</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'p1', label: '<i>p</i><sub>1</sub>', kind: 'numeric', unit: 'm⁻³' },
+      { key: 'B_rad', label: '<i>B</i><sub>rad</sub>', kind: 'numeric', unit: 'm³/s' },
+      { key: 'C_n', label: '<i>C</i><sub>n</sub>', kind: 'numeric', unit: 'm⁶/s' },
+      { key: 'C_p', label: '<i>C</i><sub>p</sub>', kind: 'numeric', unit: 'm⁶/s' },
+    ],
+  },
+  {
+    title: 'Ions & Optics',
+    fields: [
+      {
+        key: 'D_ion', label: '<i>D</i><sub>c</sub>', kind: 'numeric', unit: 'm²/s',
+        tooltip: 'Diffusion coefficient of the positive mobile ionic species c at 300 K. Positive-ion migration requires both D_c > 0 and an available positive-ion population. Set to 0 to freeze this species.',
+      },
+      {
+        key: 'P0', label: '<i>c</i><sub>0</sub>', kind: 'numeric', unit: 'm⁻³',
+        tooltip: 'Fixed negative countercharge density, expressed as an equivalent number concentration. Its Poisson contribution is -q*c0. Neutral initialization separately sets c_init = c0 before preconditioning; later c evolves while c0 stays fixed. Changing this input changes both the background and the initial mobile population. 1e18 cm^-3 = 1e24 m^-3.',
+      },
+      {
+        key: 'P_lim', label: '<i>c</i><sub>lim</sub>', kind: 'numeric', unit: 'm⁻³',
+        tooltip: 'Finite-site concentration scale for positive-ion crowding. Single-species occupancy is c/c_lim; shared-site occupancy is (c + a)/c_lim. For a common site reservoir, use c_lim = a_lim and c₀ + a₀ < c_lim. This is a site-density scale, not the initial ion concentration.',
+      },
+      {
+        key: 'D_ion_neg', label: '<i>D</i><sub>a</sub>',
+        kind: 'numeric-optional', unit: 'm²/s', placeholder: 'empty — single species',
+        tooltip: 'Diffusion coefficient of the negative mobile ionic species a at 300 K. Its drift is reversed relative to c. Set D_a > 0 and a₀ > 0 to include mobile negative ions. Leave empty for single-species transport. Runs in Fast and Full tiers; Legacy forces it off.',
+      },
+      {
+        key: 'P0_neg', label: '<i>a</i><sub>0</sub>',
+        kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — none',
+        tooltip: 'Fixed positive countercharge density for the negative-ion species, expressed as an equivalent number concentration. Its Poisson contribution is +q*a0. Neutral initialization separately sets a_init = a0 before preconditioning; later a evolves while a0 stays fixed. Changing this input changes both values. a0 need not equal c0; negative-ion transport also requires D_a > 0 in Fast or Full.',
+      },
+      {
+        key: 'P_lim_neg', label: '<i>a</i><sub>lim</sub>',
+        kind: 'numeric-optional', unit: 'm⁻³', placeholder: 'empty — 1e30 (no limit)',
+        tooltip: 'Finite-site concentration scale for negative-ion crowding. Independent-site occupancy is a/a_lim; shared-site occupancy is (c + a)/a_lim. For a common site reservoir, set a_lim = c_lim. Leaving it empty gives 1e30, making crowding negligible at ordinary ion concentrations.',
+      },
+      {
+        key: 'E_a_ion', label: '<i>E</i><sub>a,ion</sub>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: 'empty — 0.58',
+        tooltip: 'Arrhenius activation energy for the ionic diffusivity: D_c(T) = D_c,300·exp[−E_a/k_B·(1/T − 1/300)], with the same scaling for D_a. One activation energy covers both species. An explicit 0 removes the temperature dependence. Applies in Fast and Full; Legacy pins T to 300 K and ignores it.',
+      },
+      { key: 'alpha', label: '<i>α</i>', kind: 'numeric', unit: 'm⁻¹' },
+      { key: 'optical_material', label: 'Optical material', kind: 'select-optical-material' },
+      { key: 'incoherent', label: 'Incoherent layer', kind: 'boolean' },
+    ],
+  },
+  // Stage B(c.2) field-dependent mobility μ(E). Hidden under FAST/LEGACY
+  // by tier-gating.ts (FULL only). Collapsed by default; sentinel "0"
+  // disables the corresponding model on this layer.
+  {
+    title: 'Advanced 2D Physics — Field-dependent mobility μ(E)',
+    collapsed: true,
+    fields: [
+      {
+        key: 'v_sat_n', label: '<i>v</i><sub>sat</sub><sup>n</sup>',
+        kind: 'numeric', unit: 'm/s', placeholder: '0 — disabled',
+        tooltip: 'Caughey-Thomas saturation velocity for electrons. Caps drift mobility under high field. Typical perovskite ~1e5 m/s. Set 0 to disable.',
+      },
+      {
+        key: 'v_sat_p', label: '<i>v</i><sub>sat</sub><sup>p</sup>',
+        kind: 'numeric', unit: 'm/s', placeholder: '0 — disabled',
+        tooltip: 'Caughey-Thomas saturation velocity for holes. Set 0 to disable.',
+      },
+      {
+        key: 'ct_beta_n', label: '<i>β</i><sup>n</sup>',
+        kind: 'numeric', unit: '', placeholder: '2.0',
+        tooltip: 'Caughey-Thomas exponent for electrons. β=2 (Canali silicon-electron form) is the safe default; β=1 (Thornber form) for silicon holes. Only meaningful when v_sat is non-zero.',
+      },
+      {
+        key: 'ct_beta_p', label: '<i>β</i><sup>p</sup>',
+        kind: 'numeric', unit: '', placeholder: '2.0',
+        tooltip: 'Caughey-Thomas exponent for holes. Only meaningful when v_sat is non-zero.',
+      },
+      {
+        key: 'pf_gamma_n', label: '<i>γ</i><sub>PF</sub><sup>n</sup>',
+        kind: 'numeric', unit: '(V/m)^-0.5', placeholder: '0 — disabled',
+        tooltip: 'Poole-Frenkel coefficient for electrons. Field-assisted hopping; typical disordered HTL ~3e-4 (V/m)^-0.5. Set 0 to disable.',
+      },
+      {
+        key: 'pf_gamma_p', label: '<i>γ</i><sub>PF</sub><sup>p</sup>',
+        kind: 'numeric', unit: '(V/m)^-0.5', placeholder: '0 — disabled',
+        tooltip: 'Poole-Frenkel coefficient for holes. Set 0 to disable.',
+      },
+    ],
+  },
+  // Continuous bandgap grading. FULL-tier-only (tier-gating GRADING_KEYS);
+  // takes effect only when the device "Bandgap grading" flag is on AND the
+  // layer sets a back endpoint. The front endpoints are the scalar χ / E_g
+  // in the Geometry group; these are the back-face endpoints + profile.
+  // Empty Eg_back/chi_back → uniform layer (numeric-optional omits the key).
+  {
+    title: 'Bandgap grading (front = χ / E_g above)',
+    collapsed: true,
+    fields: [
+      {
+        key: 'Eg_back', label: '<i>E</i><sub>g</sub><sup>back</sup>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: 'uniform',
+        tooltip: 'Band gap at the back face. Set (with the device Bandgap-grading flag) to grade E_g front→back via the SCAPS material law. Empty = uniform layer.',
+      },
+      {
+        key: 'chi_back', label: '<i>χ</i><sup>back</sup>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: 'uniform',
+        tooltip: 'Electron affinity at the back face. chi_back < chi raises E_C toward the back (electron back-surface field). Empty = uniform.',
+      },
+      {
+        key: 'grading_profile', label: 'profile', kind: 'select',
+        options: ['linear', 'parabolic', 'exponential'],
+        tooltip: 'Composition profile y(x): linear, parabolic, or exponential (notch).',
+      },
+      {
+        key: 'grading_direction', label: 'direction', kind: 'select',
+        options: ['front_to_back', 'back_to_front'],
+        tooltip: 'Which face the grade runs toward (back_to_front flips y).',
+      },
+      {
+        key: 'grading_bowing', label: '<i>b</i>',
+        kind: 'numeric-optional', unit: 'eV', placeholder: '0',
+        tooltip: 'Alloy bowing in E_g(y) = (1-y)·E_front + y·E_back − b·y(1-y). 0 = linear.',
+      },
+      {
+        key: 'grading_char_length', label: '<i>L</i><sub>grade</sub>',
+        kind: 'numeric-optional', unit: 'm', placeholder: 'linear',
+        tooltip: 'Characteristic length for the exponential (notch) profile. Unused for linear/parabolic.',
+      },
+      {
+        key: 'grading_N_mult', label: '<i>N</i><sub>mult</sub>',
+        kind: 'numeric-optional', unit: '', placeholder: '1',
+        tooltip: 'Mesh refinement factor for this layer — raise (2–4) for steep notches.',
+      },
+    ],
+  },
+]
+
+// Module-level cache for optical-material option list. Populated once per
+// mount via setOpticalMaterialOptions() — see device-panel.ts. If the fetch
+// fails the cache stays empty and the dropdown simply has no options beyond
+// the "(none — Beer-Lambert)" sentinel.
+let opticalMaterialOptions: ReadonlyArray<string> = []
+
+export function setOpticalMaterialOptions(options: ReadonlyArray<string>): void {
+  opticalMaterialOptions = [...options]
+}
+
+interface NumAttrOpts {
+  /** Hint shown when the input is empty — used for "0 / disabled" sentinels. */
+  placeholder?: string
+  /** Native HTML5 tooltip surfaced on hover. */
+  title?: string
+}
+
+function numAttr(id: string, value: unknown, opts?: NumAttrOpts): string {
+  const placeholderAttr = opts?.placeholder ? ` placeholder="${escapeHtml(opts.placeholder)}"` : ''
+  const titleAttr = opts?.title ? ` title="${escapeHtml(opts.title)}"` : ''
+  return `<input type="text" class="num-input" id="${id}" ${numberInputAttributes(value)} spellcheck="false"${placeholderAttr}${titleAttr}>`
+}
+
+function renderOpticalMaterialSelect(layerIdx: number, currentValue: string | null | undefined): string {
+  const id = `layer-${layerIdx}-optical_material`
+  const selectedNone = currentValue == null || currentValue === '' ? ' selected' : ''
+  const opts = [`<option value=""${selectedNone}>(none — Beer-Lambert)</option>`]
+    .concat(
+      opticalMaterialOptions.map(m => {
+        const safe = escapeHtml(m)
+        const sel = currentValue === m ? ' selected' : ''
+        return `<option value="${safe}"${sel}>${safe}</option>`
+      }),
+    )
+    .join('')
+  return `<select class="num-input" id="${id}" data-layer="${layerIdx}" data-field="optical_material">${opts}</select>`
+}
+
+function renderIncoherentCheckbox(layerIdx: number, currentValue: boolean | undefined): string {
+  const id = `layer-${layerIdx}-incoherent`
+  const checked = currentValue ? ' checked' : ''
+  return `<input type="checkbox" id="${id}" data-layer="${layerIdx}" data-field="incoherent"${checked}>`
+}
+
+function renderField(layer: LayerConfig, idx: number, f: FieldDef): string {
+  const id = `layer-${idx}-${String(f.key)}`
+  const unit = f.unit ? `<span class="unit">${f.unit}</span>` : ''
+  let control: string
+  switch (f.kind) {
+    case 'numeric':
+    case 'numeric-optional':
+      // Same control; the kinds differ only on READ — 'numeric-optional'
+      // treats an empty input as "absent" (omits the key) rather than 0.
+      control = numAttr(id, layer[f.key] as number | undefined, {
+        placeholder: f.placeholder,
+        title: f.tooltip,
+      })
+      break
+    case 'select': {
+      const cur = (layer[f.key] as string | undefined) ?? (f.options?.[0] ?? '')
+      const opts = (f.options ?? [])
+        .map(o => `<option value="${escapeHtml(o)}"${cur === o ? ' selected' : ''}>${escapeHtml(o)}</option>`)
+        .join('')
+      control = `<select class="num-input" id="${id}">${opts}</select>`
+      break
+    }
+    case 'select-optical-material':
+      control = renderOpticalMaterialSelect(idx, layer.optical_material)
+      break
+    case 'boolean':
+      control = renderIncoherentCheckbox(idx, layer.incoherent)
+      break
+  }
+  const labelTitle = f.tooltip ? ` title="${escapeHtml(f.tooltip)}"` : ''
+  return `
+        <label class="param"${labelTitle}>
+          <span class="param-label"><span class="sym">${f.label}</span>${unit}</span>
+          ${control}
+        </label>`
+}
+
+function isVisibleField(f: FieldDef, tier: SimulationModeName | undefined): boolean {
+  if (!tier) return true
+  return isFieldVisible(String(f.key), tier)
+}
+
+function renderLayer(
+  layer: LayerConfig,
+  idx: number,
+  tier?: SimulationModeName,
+  forceOpen: boolean = false,
+  bandGradingActive: boolean = false,
+): string {
+  const groups = LAYER_GROUPS.map(group => {
+    const visibleFields = group.fields.filter(f => isVisibleField(f, tier))
+    if (visibleFields.length === 0) return ''
+    const rows = visibleFields.map(f => renderField(layer, idx, f)).join('')
+    if (group.collapsed) {
+      return `
+      <details class="param-group">
+        <summary><h5>${group.title}</h5></summary>
+        <div class="param-grid">${rows}</div>
+      </details>`
+    }
+    return `
+      <div class="param-group">
+        <h5>${group.title}</h5>
+        <div class="param-grid">${rows}</div>
+      </div>`
+  }).join('')
+  const bulkDefects = !tier || tier === 'full'
+    ? renderBulkDefectEditor(layer, idx, bandGradingActive)
+    : ''
+
+  const openAttr = (forceOpen || idx === 0) ? 'open' : ''
+  return `
+    <details class="param-card" ${openAttr}>
+      <summary>
+        <span class="layer-index">${idx + 1}</span>
+        <input type="text" class="layer-name" id="layer-${idx}-name" value="${escapeHtml(layer.name)}" spellcheck="false">
+        <select class="layer-role" id="layer-${idx}-role">
+          <option value="substrate" ${layer.role === 'substrate' ? 'selected' : ''}>substrate</option>
+          <option value="front_contact" ${layer.role === 'front_contact' ? 'selected' : ''}>front contact</option>
+          <option value="ETL" ${layer.role === 'ETL' ? 'selected' : ''}>ETL</option>
+          <option value="absorber" ${layer.role === 'absorber' ? 'selected' : ''}>absorber</option>
+          <option value="HTL" ${layer.role === 'HTL' ? 'selected' : ''}>HTL</option>
+          <option value="back_contact" ${layer.role === 'back_contact' ? 'selected' : ''}>back contact</option>
+        </select>
+      </summary>
+      <div class="param-card-body">${groups}${bulkDefects}</div>
+    </details>`
+}
+
+function renderInterfaces(config: DeviceConfig): string {
+  const n = Math.max(0, config.layers.length - 1)
+  const rows: string[] = []
+  for (let i = 0; i < n; i++) {
+    const pair = config.device.interfaces?.[i] ?? [0, 0]
+    const left = config.layers[i]?.name ?? `layer ${i + 1}`
+    const right = config.layers[i + 1]?.name ?? `layer ${i + 2}`
+    rows.push(`
+      <div class="iface-row">
+        <span class="iface-label">${escapeHtml(left)} / ${escapeHtml(right)}</span>
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>v</i><sub>n</sub></span><span class="unit">m/s</span></span>
+          ${numAttr(`iface-${i}-vn`, pair[0])}
+        </label>
+        <label class="param">
+          <span class="param-label"><span class="sym"><i>v</i><sub>p</sub></span><span class="unit">m/s</span></span>
+          ${numAttr(`iface-${i}-vp`, pair[1])}
+        </label>
+      </div>`)
+  }
+  if (!rows.length) return ''
+  return `
+    <div class="param-group">
+      <h5>Interface Recombination (SRV)</h5>
+      <div class="iface-list">${rows.join('')}</div>
+    </div>`
+}
+
+/**
+ * FULL-tier-only Stage B(c.1) Robin / selective-contacts panel. Maps the
+ * four ``DeviceConfig.device.S_{n,p}_{left,right}`` fields to UI labels
+ * "Top contact" / "Bottom contact" — matches the
+ * y-axis convention exposed by the workstation 2D pane and
+ * ``MaterialArrays2D.S_{n,p}_{top,bot}``. The YAML keys remain the
+ * original 1D names (``S_n_left`` etc.) for backwards compatibility with
+ * the 1D Phase 3.3 hook; this is a UI-only relabel for the 2D mental
+ * model. Empty input retains the device's resolved contact setting;
+ * an explicit ``0`` blocks exchange. Positive values are finite exchange
+ * velocities; their fixed-concentration limit is device-dependent.
+ */
+function renderRobinContacts(config: DeviceConfig): string {
+  const d = config.device
+  const help = '<p class="param-help">Outer-contact exchange velocities. Empty: device contact setting; <code>0</code>: blocking; positive: finite exchange. <strong>Top</strong>: y=0; <strong>Bottom</strong>: y=L. The fixed-concentration limit depends on the device.</p>'
+  return `
+      <details class="param-group">
+        <summary><h5>Advanced 2D Physics — Robin contacts (B(c.1))</h5></summary>
+        ${help}
+        <div class="param-grid">
+          <label class="param" title="Top electron exchange velocity (S_n_left). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>n</sub><sup>top</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-n-top', d.S_n_left, { placeholder: 'Device default', title: 'Top electron exchange velocity (S_n_left)' })}
+          </label>
+          <label class="param" title="Top hole exchange velocity (S_p_left). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>p</sub><sup>top</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-p-top', d.S_p_left, { placeholder: 'Device default', title: 'Top hole exchange velocity (S_p_left)' })}
+          </label>
+          <label class="param" title="Bottom electron exchange velocity (S_n_right). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>n</sub><sup>bot</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-n-bot', d.S_n_right, { placeholder: 'Device default', title: 'Bottom electron exchange velocity (S_n_right)' })}
+          </label>
+          <label class="param" title="Bottom hole exchange velocity (S_p_right). Empty uses the resolved device contact; 0 blocks exchange; positive values specify finite exchange.">
+            <span class="param-label"><span class="sym"><i>S</i><sub>p</sub><sup>bot</sup></span><span class="unit">m/s</span></span>
+            ${numAttr('dev-S-p-bot', d.S_p_right, { placeholder: 'Device default', title: 'Bottom hole exchange velocity (S_p_right)' })}
+          </label>
+        </div>
+      </details>`
+}
+
+/**
+ * FULL-tier-only SCAPS-validation physics panel (device-level). Surfaces the
+ * five flags the YAML loader and ``stack_from_dict`` both parse — DOS band
+ * potentials, flat-band contacts, interface-plane closure / projection, and
+ * the heterointerface bulk-Auger de-spike fraction — so a user loading a
+ * parity preset (e.g. scaps_mirror_v2) can see and round-trip them instead
+ * of having them silently stripped at the inline-device boundary.
+ */
+function renderScapsPhysics(config: DeviceConfig): string {
+  const d = config.device
+  const help = '<p class="param-help">SCAPS-validation physics (device-level). <strong>DOS band potentials</strong> adds the V<sub>T</sub>·ln(N<sub>C</sub>/N<sub>V</sub>) quasi-Fermi step at DOS-contrast heterojunctions (closes the V<sub>oc</sub> gap; needs per-layer N<sub>C</sub>/N<sub>V</sub>). <strong>Flat-band contacts</strong> uses SCAPS finite-S metal contacts. <strong>Interface-plane closure / projection</strong> evaluate interface recombination on the band-bending-suppressed plane. <strong>De-spike f</strong> blends the heterointerface-node density toward the neighbour geometric mean in the bulk Auger rate (0 = off, 0.53 = SCAPS-emulation).</p>'
+  const cb = (
+    id: string, label: string, on: boolean, title: string, disabled = false,
+  ): string => `
+          <label class="param" title="${title}">
+            <span class="param-label">${label}</span>
+            <input type="checkbox" id="${id}"${on ? ' checked' : ''}${disabled ? ' disabled' : ''}>
+          </label>`
+  // jv_sweep.py:940 gates shared-site behind the diffusion-only steric form:
+  //   shared = ion_steric_diffusion_only and ion_steric_shared_site and ...
+  // With the whole-flux form selected the box has no effect, so it is disabled
+  // and says so rather than silently doing nothing. The backend default is
+  // true, so only an explicit false disables it.
+  const stericDiffusionOnly = d.ion_steric_diffusion_only ?? true
+  const sharedSiteTitle = stericDiffusionOnly
+    ? 'With two mobile species, shared-site crowding uses θ_c = (c + a)/c_lim and θ_a = (c + a)/a_lim. For one common reservoir, set c_lim = a_lim. When unchecked, the occupancies are c/c_lim and a/a_lim instead (YAML ion_steric_shared_site; backend default true).'
+    : 'No effect while ion_steric_diffusion_only is off: the whole-flux steric form does not consult the shared-site assumption (jv_sweep.py). Re-enable ion_steric_diffusion_only in the YAML to use this. The stored value is preserved.'
+  return `
+      <details class="param-group">
+        <summary><h5>SCAPS comparison controls</h5></summary>
+        ${help}
+        <div class="param-grid">
+          ${cb('dev-dos', 'DOS band potentials', d.dos_band_potentials ?? true, 'V_T·ln(DOS) quasi-Fermi step (YAML dos_band_potentials)')}
+          ${cb('dev-flatband', 'Flat-band contacts', !!d.flat_band_contacts, 'SCAPS finite-S metal contacts (YAML flat_band_contacts)')}
+          ${cb('dev-iface-closure', 'Interface-plane closure', !!d.interface_plane_closure, 'QSS plane-density interface SRH, recombination-only; trap electrostatic charge is parked (YAML interface_plane_closure)')}
+          ${cb('dev-iface-proj', 'Interface-plane projection', !!d.interface_plane_projection, 'phi-projected interface densities (YAML interface_plane_projection)')}
+          <label class="param" title="Calibrated heterointerface bulk-Auger de-spike scaffold (YAML het_recomb_despike). 0 = off; 0.53 = SCAPS comparison lane.">
+            <span class="param-label"><span class="sym">de-spike <i>f</i></span></span>
+            ${numAttr('dev-despike', d.het_recomb_despike, { placeholder: '0 — off', title: 'het_recomb_despike (0 = off, 0.53 = SCAPS-emulation)' })}
+          </label>
+          ${cb('dev-ion-shared-site', 'Ions share one lattice site', d.ion_steric_shared_site ?? true, sharedSiteTitle, !stericDiffusionOnly)}
+          ${cb('dev-band-grading', 'Bandgap grading', !!d.band_grading, 'Electrical chi/Eg grading. An explicit graded_optics CIGS block may use the same composition coordinate for n,k (YAML band_grading).')}
+          ${cb('dev-iface-tunnel', 'Interface tunnelling (TFE)', !!d.interface_tunneling, 'Intra-band thermionic-field-emission through CB/VB spikes — static Padovani-Stratton enhancement of A* at TE-capped faces (YAML interface_tunneling).')}
+          <label class="param" title="Tunnelling effective mass relative to the free-electron mass (YAML tunnel_mass_eff). Only used when Interface tunnelling is on.">
+            <span class="param-label"><span class="sym"><i>m</i><sub>tun</sub>/<i>m</i><sub>e</sub></span></span>
+            ${numAttr('dev-tunnel-mass', d.tunnel_mass_eff, { placeholder: '0.2', title: 'tunnel_mass_eff (relative to m_e; default 0.2)' })}
+          </label>
+        </div>
+      </details>`
+}
+
+/**
+ * Phase E1.8 — FULL-tier-only per-heterointerface SCAPS defect panel.
+ * Collapsed ``<details>`` placed below the Robin contacts panel; one row per
+ * internal interface of ``config.layers`` — FULL-layer aligned, so a
+ * substrate-prefixed stack gets a leading glass|HTL row rather than starting
+ * at HTL/absorber. Row labels come from the adjacent layer names, so they
+ * stay correct either way. Each row exposes the 5 SCAPS fields
+ * (σ_n, σ_p, N_t areal, v_th, E_t below CB) typed ``number | null`` —
+ * empty input is the "absent" sentinel (round-trips as ``null``).
+ * Mirrors the YAML schema parsed by ``scaps_compat/loader.py`` and the
+ * backend ``stack_from_dict`` plumbing.
+ */
+function renderInterfaceDefects(config: DeviceConfig): string {
+  const n = Math.max(0, config.layers.length - 1)
+  if (n === 0) return ''
+  const help = '<p class="param-help">SCAPS-style per-heterointerface SRH defect. Each row contributes ``σ·v_th·N_t`` surface velocities to <code>DeviceStack.interfaces[k]</code> and an <code>InterfaceDefect(E_t_eV)</code> entry to <code>DeviceStack.interface_defects[k]</code>. Empty fields = absent (no defect on this interface). Calibration ratio between SCAPS direct N_t and SolarLab effective N_t is ~10⁻⁴ for PVK/ETL.</p>'
+  const rows: string[] = []
+  for (let i = 0; i < n; i++) {
+    const defect = config.device.interface_defects?.[i] ?? null
+    const left = config.layers[i]?.name ?? `layer ${i + 1}`
+    const right = config.layers[i + 1]?.name ?? `layer ${i + 2}`
+    rows.push(`
+      <div class="iface-row">
+        <span class="iface-label">${escapeHtml(left)} / ${escapeHtml(right)}</span>
+        <label class="param" title="Electron capture cross-section [cm²]">
+          <span class="param-label"><span class="sym">σ<sub>n</sub></span><span class="unit">cm²</span></span>
+          ${numAttr(`idef-${i}-sigma-n`, defect?.sigma_n_cm2, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Hole capture cross-section [cm²]">
+          <span class="param-label"><span class="sym">σ<sub>p</sub></span><span class="unit">cm²</span></span>
+          ${numAttr(`idef-${i}-sigma-p`, defect?.sigma_p_cm2, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Areal trap density at the interface plane [cm⁻²]">
+          <span class="param-label"><span class="sym"><i>N</i><sub>t</sub></span><span class="unit">cm⁻²</span></span>
+          ${numAttr(`idef-${i}-N-t`, defect?.N_t_cm2, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Thermal velocity (typically 1e7 cm/s) [cm/s]">
+          <span class="param-label"><span class="sym"><i>v</i><sub>th</sub></span><span class="unit">cm/s</span></span>
+          ${numAttr(`idef-${i}-v-th`, defect?.v_th_cm_s, { placeholder: '— disabled' })}
+        </label>
+        <label class="param" title="Trap energy referenced as E_C(reference side) − E_t [eV]; reference is the absorber if exactly one adjacent layer is an absorber, else the lower-Eg side.">
+          <span class="param-label"><span class="sym"><i>E</i><sub>t</sub></span><span class="unit">eV</span></span>
+          ${numAttr(`idef-${i}-E-t`, defect?.E_t_eV_below_cb, { placeholder: '— disabled' })}
+        </label>
+      </div>`)
+  }
+  return `
+      <details class="param-group">
+        <summary><h5>Interface Defects (FULL only) — Phase E1.5</h5></summary>
+        ${help}
+        <div class="iface-list">${rows.join('')}</div>
+      </details>`
+}
+
+function renderModeOptions(current: SimulationModeName): string {
+  return MODE_OPTIONS
+    .map(o => `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`)
+    .join('')
+}
+
+function inferredBuiltInPotentialMode(config: DeviceConfig): BuiltInPotentialMode {
+  const explicit = config.device.built_in_potential_mode
+  if (isBuiltInPotentialMode(explicit)) return explicit
+  // Mirror the backend parser exactly. Any old manual key denotes an
+  // un-migrated compatibility payload, including the historical case where
+  // flat_band_contacts implicitly selected the band-derived Poisson value.
+  // A genuinely new payload with no manual key starts on the fail-closed
+  // semiconductor-work-function path.
+  if (config.device.V_bi !== undefined || config.device.V_bi_override !== undefined) {
+    return 'legacy_manual'
+  }
+  return 'semiconductor_work_function'
+}
+
+function renderBuiltInPotentialOptions(current: BuiltInPotentialMode): string {
+  return BUILT_IN_POTENTIAL_OPTIONS
+    .map(o => `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`)
+    .join('')
+}
+
+export function renderDeviceEditor(
+  container: HTMLElement,
+  config: DeviceConfig,
+  tier?: SimulationModeName,
+  selectedLayerIdx?: number,
+  includeDeviceSettings = false,
+): void {
+  const singleLayer = selectedLayerIdx != null && tier === 'full'
+  const showDeviceSettings = !singleLayer || includeDeviceSettings
+  const layerHtml = singleLayer
+    ? renderLayer(
+      config.layers[selectedLayerIdx!], selectedLayerIdx!, tier, true, !!config.device.band_grading,
+    )
+    : config.layers.map((layer, idx) => (
+      renderLayer(layer, idx, tier, false, !!config.device.band_grading)
+    )).join('')
+  const currentMode: SimulationModeName = isModeName(config.device.mode) ? config.device.mode : 'full'
+  const builtInPotentialMode = inferredBuiltInPotentialMode(config)
+  const manualVbi = config.device.V_bi_override ?? config.device.V_bi ?? 1.1
+  const currentT = config.device.T ?? 300
+  const showT = !tier || isFieldVisible('T', tier)
+  const tField = showT ? `
+          <label class="param">
+            <span class="param-label"><span class="sym"><i>T</i></span><span class="unit">K</span></span>
+            ${numAttr('dev-T', currentT)}
+          </label>` : ''
+  const deviceGroup = !showDeviceSettings ? '' : `
+      <div class="param-group">
+        <h5>Device</h5>
+        <div class="param-grid">
+          <label class="param">
+            <span class="param-label"><span class="sym">Mode</span></span>
+            <select class="num-input" id="dev-mode">${renderModeOptions(currentMode)}</select>
+          </label>${tField}
+          <label class="param" title="Select the physical source of the Poisson built-in potential">
+            <span class="param-label"><span class="sym">Built-in potential</span></span>
+            <select class="num-input" id="dev-vbi-mode">${renderBuiltInPotentialOptions(builtInPotentialMode)}</select>
+          </label>
+          <label class="param" data-vbi-mode="legacy_manual">
+            <span class="param-label"><span class="sym"><i>V</i><sub>bi</sub> override</span><span class="unit">V</span></span>
+            ${numAttr('dev-Vbi', manualVbi, { title: 'Compatibility-only positive magnitude' })}
+          </label>
+          <label class="param" data-vbi-mode="metal_work_function">
+            <span class="param-label"><span class="sym"><i>W</i><sub>left</sub></span><span class="unit">eV</span></span>
+            ${numAttr('dev-W-left', config.device.work_function_left_eV, { title: 'Left metal work function below vacuum' })}
+          </label>
+          <label class="param" data-vbi-mode="metal_work_function">
+            <span class="param-label"><span class="sym"><i>W</i><sub>right</sub></span><span class="unit">eV</span></span>
+            ${numAttr('dev-W-right', config.device.work_function_right_eV, { title: 'Right metal work function below vacuum' })}
+          </label>
+          <label class="param">
+            <span class="param-label"><span class="sym"><i>Φ</i></span><span class="unit">m⁻²·s⁻¹</span></span>
+            ${numAttr('dev-Phi', config.device.Phi)}
+          </label>
+        </div>
+      </div>`
+  const interfacesHtml = singleLayer ? '' : renderInterfaces(config)
+  // Stage B(c.1) Robin contacts panel — FULL-tier-only because the
+  // ``use_selective_contacts`` flag is off in LEGACY/FAST (mode.py:54-86).
+  // The full device pane provides an explicitly device-wide disclosure even
+  // while its layer editor is focused on one selected layer.
+  const robinHtml = showDeviceSettings && tier === 'full' ? renderRobinContacts(config) : ''
+  // Phase E1.8 — interface defects panel placed below Robin contacts.
+  // FULL-tier-gated (matches the underlying ``InterfaceDefect`` solver
+  // hook from Phase E1.5). Hidden in single-layer drill-down because
+  // the panel is device-level.
+  const interfaceDefectsHtml =
+    !singleLayer && tier === 'full' ? renderInterfaceDefects(config) : ''
+  // SCAPS-validation physics panel — FULL-tier-only and device-level, same
+  // gating as Robin contacts. Hidden panels round-trip as a no-op because
+  // readDeviceEditor falls back to original.device.* when the inputs are
+  // absent (and single-layer drill-down returns original.device verbatim).
+  const scapsHtml = !singleLayer && tier === 'full' ? renderScapsPhysics(config) : ''
+  const deviceHtml = `${deviceGroup}${robinHtml}${scapsHtml}${interfaceDefectsHtml}${interfacesHtml}`
+  container.innerHTML = `
+    <div class="editor">
+      ${singleLayer && includeDeviceSettings
+        ? `<details class="device-settings"><summary>Device settings</summary>${deviceHtml}</details>`
+        : deviceHtml}
+      <div class="layer-list">${layerHtml}</div>
+    </div>`
+  const potentialSelect = container.querySelector<HTMLSelectElement>('#dev-vbi-mode')
+  const syncPotentialFields = (): void => {
+    const selected = potentialSelect?.value
+    container.querySelectorAll<HTMLElement>('[data-vbi-mode]').forEach(field => {
+      field.hidden = field.dataset.vbiMode !== selected
+    })
+  }
+  potentialSelect?.addEventListener('change', syncPotentialFields)
+  syncPotentialFields()
+  wireBulkDefectEditors(container, config)
+}
+
+function parseNum(id: string, fallback: number): number {
+  const el = document.getElementById(id) as HTMLInputElement | null
+  if (!el) return fallback
+  const v = readNumberInput(el)
+  return Number.isFinite(v) ? v : fallback
+}
+
+/**
+ * Like ``parseNum`` but the empty-string case is a meaningful sentinel
+ * (``null`` = "absent / disabled") rather than a fallback. Used for the
+ * Stage B(c.1) Robin S fields where the backend distinguishes
+ * ``None`` (Dirichlet ohmic), ``0`` (Neumann blocking), and a positive
+ * finite value (Robin). When the input element does not exist (e.g.
+ * because the panel is hidden under a non-FULL tier), the original
+ * value is preserved verbatim — including ``undefined``, which is the
+ * "field never set on this preset" state.
+ */
+function parseNumOrNull(
+  id: string,
+  fallback: number | null | undefined,
+): number | null | undefined {
+  const el = document.getElementById(id) as HTMLInputElement | null
+  if (!el) return fallback
+  const raw = el.value.trim()
+  if (raw === '') return null
+  const v = readNumberInput(el)
+  return Number.isFinite(v) ? v : fallback
+}
+
+function parseText(id: string, fallback: string): string {
+  const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null
+  return el?.value ?? fallback
+}
+
+function parseRole(id: string, fallback: LayerRole): LayerRole {
+  const el = document.getElementById(id) as HTMLSelectElement | null
+  const v = el?.value
+  return isLayerRole(v) ? v : fallback
+}
+
+function parseOpticalMaterial(layerIdx: number, fallback: string | null | undefined): string | null {
+  const el = document.getElementById(`layer-${layerIdx}-optical_material`) as HTMLSelectElement | null
+  if (!el) return fallback ?? null
+  const v = el.value
+  return v === '' ? null : v
+}
+
+function parseCheckbox(id: string, fallback: boolean): boolean {
+  const el = document.getElementById(id) as HTMLInputElement | null
+  if (!el) return fallback
+  return el.checked
+}
+
+export function readDeviceEditor(
+  original: DeviceConfig,
+  selectedLayerIdx?: number,
+): DeviceConfig {
+  const singleLayer = selectedLayerIdx != null
+  const layers: LayerConfig[] = original.layers.map((layer, idx) => {
+    if (singleLayer && idx !== selectedLayerIdx) {
+      return layer
+    }
+    const next: LayerConfig = { ...layer }
+    next.name = parseText(`layer-${idx}-name`, layer.name)
+    next.role = parseRole(`layer-${idx}-role`, layer.role)
+    for (const group of LAYER_GROUPS) {
+      for (const f of group.fields) {
+        const id = `layer-${idx}-${String(f.key)}`
+        switch (f.kind) {
+          case 'numeric': {
+            const original_v = (layer[f.key] as number | undefined) ?? 0
+            ;(next as unknown as Record<string, number>)[f.key as string] = parseNum(id, original_v)
+            break
+          }
+          case 'numeric-optional': {
+            // Empty input → null → omit the key (absent / disabled sentinel),
+            // so an empty Eg_back/chi_back keeps the layer ungraded rather
+            // than coercing to 0 (which would mis-mark it graded).
+            const val = parseNumOrNull(id, (layer[f.key] as number | undefined) ?? null)
+            const rec = next as unknown as Record<string, unknown>
+            if (val === null || val === undefined) delete rec[f.key as string]
+            else rec[f.key as string] = val
+            break
+          }
+          case 'select': {
+            const cur = (layer[f.key] as string | undefined) ?? (f.options?.[0] ?? '')
+            ;(next as unknown as Record<string, string>)[f.key as string] = parseText(id, cur)
+            break
+          }
+          case 'select-optical-material': {
+            next.optical_material = parseOpticalMaterial(idx, layer.optical_material)
+            break
+          }
+          case 'boolean': {
+            next.incoherent = parseCheckbox(id, layer.incoherent ?? false)
+            break
+          }
+        }
+      }
+    }
+    // Keep ungraded layers clean: with no back endpoint the layer is not
+    // graded, so strip any stray grading-spec keys (the 'select' reads always
+    // emit a profile/direction default) — leaves the payload bit-identical to
+    // a layer that never had grading fields.
+    if (next.Eg_back == null && next.chi_back == null) {
+      const g = next as unknown as Record<string, unknown>
+      delete g.grading_profile
+      delete g.grading_direction
+      delete g.grading_bowing
+      delete g.grading_char_length
+      delete g.grading_N_mult
+    }
+    const bandGradingActive = parseCheckbox(
+      'dev-band-grading',
+      !!original.device.band_grading,
+    )
+    return readBulkDefectEditor(next, idx, bandGradingActive)
+  })
+
+  if (singleLayer && !document.getElementById('dev-mode')) {
+    return { ...original, layers }
+  }
+
+  const interfaces: Array<[number, number]> = []
+  for (let i = 0; i < layers.length - 1; i++) {
+    const existing = original.device.interfaces?.[i] ?? [0, 0]
+    interfaces.push([
+      parseNum(`iface-${i}-vn`, existing[0]),
+      parseNum(`iface-${i}-vp`, existing[1]),
+    ])
+  }
+  // Phase E1.8 — read interface defects panel. Each slot is "absent"
+  // (null in the round-trip payload) iff EVERY field is empty input;
+  // a fully-populated slot serialises into an ``InterfaceDefectFields``
+  // object for backend ``stack_from_dict``. Mixed half-populated slots
+  // are not allowed by contract (backend rejects), so the reader
+  // collapses them to null to surface the user's intent cleanly.
+  const interface_defects: Array<InterfaceDefectFields | null> = []
+  for (let i = 0; i < layers.length - 1; i++) {
+    const existing = original.device.interface_defects?.[i] ?? null
+    const coreFields: InterfaceDefectFields = {
+      sigma_n_cm2: parseNumOrNull(`idef-${i}-sigma-n`, existing?.sigma_n_cm2 ?? null) ?? null,
+      sigma_p_cm2: parseNumOrNull(`idef-${i}-sigma-p`, existing?.sigma_p_cm2 ?? null) ?? null,
+      N_t_cm2: parseNumOrNull(`idef-${i}-N-t`, existing?.N_t_cm2 ?? null) ?? null,
+      v_th_cm_s: parseNumOrNull(`idef-${i}-v-th`, existing?.v_th_cm_s ?? null) ?? null,
+      E_t_eV_below_cb: parseNumOrNull(`idef-${i}-E-t`, existing?.E_t_eV_below_cb ?? null) ?? null,
+    }
+    const allNull = Object.values(coreFields).every(v => v == null)
+    if (allNull) {
+      interface_defects.push(null)
+      continue
+    }
+    const parsed: InterfaceDefectFields = {
+      ...coreFields,
+      ...(existing?.calibration_factor !== undefined
+        ? { calibration_factor: existing.calibration_factor }
+        : {}),
+      ...(existing?.iface_state_calibration_factor !== undefined
+        ? { iface_state_calibration_factor: existing.iface_state_calibration_factor }
+        : {}),
+    }
+    interface_defects.push(parsed)
+  }
+  const anyDefectPopulated = interface_defects.some(d => d != null)
+  const interfaceDefectsField = anyDefectPopulated
+    ? { interface_defects }
+    : (original.device.interface_defects !== undefined
+      ? { interface_defects }
+      : {})
+  // SCAPS-validation physics flags. Read only when the FULL-tier panel is
+  // rendered; otherwise parseCheckbox / parseNumOrNull fall back to the
+  // original value so a non-FULL round-trip preserves them verbatim. Most
+  // flags are spread in only when truthy / non-zero so non-SCAPS configs
+  // keep a clean payload. DOS band potentials is different: its backend
+  // default is ON, so an unchecked box must serialize an explicit ``false``.
+  const scapsPhysicsField: Record<string, boolean | number> = {}
+  const dosBandPotentials = parseCheckbox(
+    'dev-dos', original.device.dos_band_potentials ?? true,
+  )
+  if (!dosBandPotentials) {
+    scapsPhysicsField.dos_band_potentials = false
+  } else if (original.device.dos_band_potentials !== undefined) {
+    scapsPhysicsField.dos_band_potentials = true
+  }
+  if (parseCheckbox('dev-flatband', !!original.device.flat_band_contacts))
+    scapsPhysicsField.flat_band_contacts = true
+  if (parseCheckbox('dev-iface-closure', !!original.device.interface_plane_closure))
+    scapsPhysicsField.interface_plane_closure = true
+  if (parseCheckbox('dev-iface-proj', !!original.device.interface_plane_projection))
+    scapsPhysicsField.interface_plane_projection = true
+  const despike = parseNumOrNull('dev-despike', original.device.het_recomb_despike ?? null)
+  if (typeof despike === 'number' && despike !== 0)
+    scapsPhysicsField.het_recomb_despike = despike
+  // Shared-site is a physical assumption with a backend default of TRUE, so —
+  // like dos_band_potentials — an unchecked box has to serialise an explicit
+  // false rather than simply being omitted.
+  // When the box is disabled (diffusion-only steric form off) it carries no
+  // user intent, so the stored value wins — reading the DOM there would let a
+  // rendered default overwrite what the config actually said.
+  const sharedSiteBox = document.getElementById('dev-ion-shared-site')
+  const sharedSite = (sharedSiteBox instanceof HTMLInputElement && sharedSiteBox.disabled)
+    ? (original.device.ion_steric_shared_site ?? true)
+    : parseCheckbox('dev-ion-shared-site', original.device.ion_steric_shared_site ?? true)
+  if (!sharedSite) {
+    scapsPhysicsField.ion_steric_shared_site = false
+  } else if (original.device.ion_steric_shared_site !== undefined) {
+    scapsPhysicsField.ion_steric_shared_site = true
+  }
+  if (parseCheckbox('dev-band-grading', !!original.device.band_grading))
+    scapsPhysicsField.band_grading = true
+  if (parseCheckbox('dev-iface-tunnel', !!original.device.interface_tunneling)) {
+    scapsPhysicsField.interface_tunneling = true
+    const tmass = parseNumOrNull('dev-tunnel-mass', original.device.tunnel_mass_eff ?? null)
+    if (typeof tmass === 'number') scapsPhysicsField.tunnel_mass_eff = tmass
+  }
+  const rawMode = parseText('dev-mode', original.device.mode ?? 'full')
+  const mode: SimulationModeName = isModeName(rawMode) ? rawMode : 'full'
+  const rawPotentialMode = parseText(
+    'dev-vbi-mode', inferredBuiltInPotentialMode(original),
+  )
+  const potentialMode: BuiltInPotentialMode = isBuiltInPotentialMode(rawPotentialMode)
+    ? rawPotentialMode
+    : inferredBuiltInPotentialMode(original)
+  const builtInPotentialField: Partial<DeviceConfig['device']> = {}
+  if (potentialMode === 'legacy_manual') {
+    const value = parseNum(
+      'dev-Vbi', original.device.V_bi_override ?? original.device.V_bi ?? 1.1,
+    )
+    if (
+      original.device.built_in_potential_mode === undefined
+      && original.device.V_bi_override === undefined
+      && original.device.V_bi !== undefined
+    ) {
+      // Preserve old benchmark payloads until they are deliberately migrated.
+      builtInPotentialField.V_bi = value
+    } else {
+      builtInPotentialField.built_in_potential_mode = 'legacy_manual'
+      builtInPotentialField.V_bi_override = value
+    }
+  } else if (potentialMode === 'semiconductor_work_function') {
+    builtInPotentialField.built_in_potential_mode = potentialMode
+  } else {
+    builtInPotentialField.built_in_potential_mode = potentialMode
+    const left = parseNumOrNull(
+      'dev-W-left', original.device.work_function_left_eV ?? null,
+    )
+    const right = parseNumOrNull(
+      'dev-W-right', original.device.work_function_right_eV ?? null,
+    )
+    if (typeof left === 'number') builtInPotentialField.work_function_left_eV = left
+    if (typeof right === 'number') builtInPotentialField.work_function_right_eV = right
+  }
+  const T = parseNum('dev-T', original.device.T ?? 300)
+  const hiddenPhysicsKeys = [
+    'te_physical_norm',
+    'ion_steric_diffusion_only',
+    'flat_band_metal_contacts',
+    'contact_phi_B_eV',
+    'interface_two_sided',
+    'interface_shared_occupancy',
+    'interface_plane_generation',
+    'jv_solver_policy',
+    'interface_charge_closure',
+    'interface_charge_rebaseline_acknowledged',
+    'graded_optics',
+  ] as const
+  const hiddenPhysicsField: Record<string, boolean | number | string> = {}
+  for (const key of hiddenPhysicsKeys) {
+    const value = original.device[key]
+    if (value !== undefined) hiddenPhysicsField[key] = value
+  }
+  // Structured device-level physics the editor renders no control for. Kept
+  // separate from `hiddenPhysicsField` because that map is deliberately typed
+  // to scalars, and widening it to admit a nested object would let any future
+  // key through unchecked.
+  //
+  // Dropping this one is not cosmetic: `wkb_tunnelling_intraband_spike.yaml`
+  // is offered in the preset dropdown, and without the passthrough a Run on
+  // it silently produced a tunnelling-free J-V. With it, the backend's
+  // capability guard refuses instead - the channels are certified only on the
+  // guarded QF/DC lane, not on the driver this pane runs - which is the
+  // honest answer.
+  const structuredPhysicsField: Pick<
+    DeviceConfig['device'], 'tunnelling_channels'
+  > = {}
+  if (original.device.tunnelling_channels !== undefined) {
+    structuredPhysicsField.tunnelling_channels =
+      original.device.tunnelling_channels
+  }
+  return {
+    ...(original.simulation_hints === undefined
+      ? {}
+      : { simulation_hints: original.simulation_hints }),
+    ...(original.electrical_grid === undefined
+      ? {}
+      : { electrical_grid: original.electrical_grid }),
+    device: {
+      ...builtInPotentialField,
+      Phi: parseNum('dev-Phi', original.device.Phi),
+      interfaces,
+      T,
+      mode,
+      // Stage B(c.1) Robin contacts. Read by ID matching the renderRobin-
+      // Contacts panel; when the panel is not rendered (non-FULL tier or
+      // single-layer drill-down) ``parseNumOrNull`` returns the
+      // ``original.device.S_*`` value, so a round-trip through readDevice-
+      // Editor in those modes is a no-op.
+      S_n_left: parseNumOrNull('dev-S-n-top', original.device.S_n_left),
+      S_p_left: parseNumOrNull('dev-S-p-top', original.device.S_p_left),
+      S_n_right: parseNumOrNull('dev-S-n-bot', original.device.S_n_right),
+      S_p_right: parseNumOrNull('dev-S-p-bot', original.device.S_p_right),
+      // Phase E1.8 — spread the interface_defects field conditionally
+      // so absent → still absent (no spurious null array in the payload
+      // for presets that pre-date E1.5 or for non-FULL tier round-trips
+      // where the panel is hidden).
+      ...interfaceDefectsField,
+      ...hiddenPhysicsField,
+      ...structuredPhysicsField,
+      ...scapsPhysicsField,
+    },
+    layers,
+  }
+}

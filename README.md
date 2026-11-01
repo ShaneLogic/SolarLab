@@ -47,6 +47,31 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 
 ## Overview
 
+**New-core development on `devel`:** the [1D research workflow](examples/research_1d/README.md)
+runs configuration, a real Poisson/drift-diffusion assembly, the new steady
+Newton solver, J–V, parameter sweeps and lossless result reading. It includes
+an executable local recombination-model extension, direct solved Voc brackets,
+and bounded steady J–V jobs through the shared process supervisor. The new core
+also has explicit voltage/generation transients, saved-result HTTP/browser access,
+and coupled positive, independent dual-ion and shared-site steady/time examples.
+Ionic small-signal examples distinguish mobile and frozen responses about the same
+saved operating state. A complete illuminated ionic J–V command reports sampled
+photovoltaic metrics, and two separated blocking ion domains share one electronic
+steady/transient/AC system. Explicit neutral bulk defects support unequal physical
+DOS, and smooth CT velocity saturation is bound into DC and small-signal response.
+Explicit coherent spectral optics also supplies control-volume generation and photon budgets.
+The [2D research workflow](examples/research_2d/README.md) now assembles a connected
+lateral/stack grid and solves the full coupled dark and illuminated steady system,
+with explicit geometry, physical balances and saved-result reading. Its bounded
+examples use fixed carrier reservoirs and zero-flux lateral boundaries. Neutral
+grain regions mix SRH rates by their exact control-volume overlap. The uniform
+steady workflow also runs in an owned child process, preserving complete results
+and genuine failed attempts for solver-free reading from a local RunStore.
+These are bounded working cases; mesh/time/voltage-grid
+scientific acceptance and the remaining refactor are in progress. The broader application features
+described below include the existing `perovskite_sim` engine and do not imply
+that those capabilities have migrated to the new core.
+
 **SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver, with an experimental two-dimensional extension for lateral microstructure studies, backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
 
 It reproduces the main thin-film characterisation experiments from a single device definition, grouped into four families:
@@ -168,7 +193,6 @@ SolarLab/
     perovskite_sim/                Python models, physics, discretization,
                                   solvers, experiments, 2D, and screening
     backend/                      FastAPI API and SSE job dispatch
-    frontend/                     Vite/TypeScript/Plotly/GoldenLayout UI
     configs/                      Three shipped research YAMLs
     tests/fixtures/configs/       Historical/test-only device definitions
     reproducibility/              Schema, benchmark matrix, hashes, baselines
@@ -177,6 +201,7 @@ SolarLab/
     tests/                        Unit, integration, regression, validation
     notebooks/                    Exploratory workflows
     pyproject.toml                Core package and test dependencies
+  web/                            Vite/TypeScript/Plotly/GoldenLayout UI
   scripts/                        Repository support utilities
   docker-compose.yml              Backend/frontend development stack
   CLAUDE.md                       Repository guidance and archive location
@@ -222,8 +247,9 @@ The editable core package installs NumPy, SciPy, PyYAML, Matplotlib, and the sel
 ### 3. Install frontend dependencies
 
 ```bash
-cd frontend
+cd ../web
 npm ci
+cd ../perovskite-sim
 ```
 
 ### 4. Verify the install
@@ -267,7 +293,7 @@ You should get JSON listing the shipped presets.
 In a second terminal:
 
 ```bash
-cd perovskite-sim/frontend
+cd web
 npm run dev
 ```
 
@@ -526,6 +552,18 @@ and reproduction commands live under
 [`perovskite-sim/reproducibility/`](perovskite-sim/reproducibility/README.md);
 the full interpretation is in the
 2026-08-11 manual (distributed separately).
+
+### Historical R1 failure evidence
+
+The V53 baseline at source `12869a4f90d6d08af2d24af902838d8a4d5c00c4`
+saved 309 of the 3727 required rows, including the initial state. Its next
+finite step, 309, failed the original nonlinear residual gate; the saved
+prefix does not qualify the full 100 s window or admit the compensated run.
+Step 183's earlier successful correction remains a separate regression.
+The [bound 183/309 witness](tests/fixtures/refactor/R1FailureWitnessV1.json)
+preserves both inputs and their original preparation/source identities.
+The [saved-state diagnostic](scripts/benchmarks/diagnose_r1_saved_failure.py)
+supports bounded reconstruction without restarting the trajectory.
 
 <p align="center">
   <img src="docs/figures/CsiQfConvergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">

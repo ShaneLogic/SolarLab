@@ -1,0 +1,1176 @@
+{
+  "schema": "solarlab.public-api-policy.v1",
+  "version": 1,
+  "core_root_exports": [],
+  "scope": "Closed public symbols for configuration, companion consumers, ion-free classical 1D DC and process studies, fixed/finite-rate and bounded selective-contact small signal and explicit voltage/generation transients with durable readback, plus bounded positive, independent dual-ion and shared-site assembly, steady/time solving and mobile/frozen small signal, and bounded fixed-reservoir 2D steady process/HTTP execution; listing is API permission, not full scientific qualification.",
+  "declared_exports": {
+    "solarlab": [],
+    "solarlab.config": [],
+    "solarlab.config.behavior": [
+      "BehaviorContext",
+      "CapturedPreparation",
+      "behavior_source_requirements",
+      "inspect_historical_behavior",
+      "inspect_r1_material_behavior"
+    ],
+    "solarlab.config.device_import": [
+      "import_standard_device"
+    ],
+    "solarlab.config.device_inputs": [
+      "DeviceInput",
+      "FullLayerInput",
+      "NamedMaterialInput",
+      "TandemInput"
+    ],
+    "solarlab.config.identity": [
+      "ModelInputs",
+      "IdentityInputs",
+      "Identity",
+      "BuildSource",
+      "RuntimeEnvironment",
+      "ExecutionDescription",
+      "ExecutionEngine",
+      "input_identity",
+      "physics_identity",
+      "execution_identity",
+      "CACHE_LAYERS",
+      "ExecutionManifest",
+      "execution_manifest",
+      "verify_execution_manifest",
+      "CacheLayerIdentity",
+      "ColdPointBinding",
+      "cold_point_binding"
+    ],
+    "solarlab.config.inputs": [
+      "LayerInput"
+    ],
+    "solarlab.config.legacy_defaults": [
+      "read_legacy_default_catalog"
+    ],
+    "solarlab.config.legacy_execution": [
+      "LegacyExecutionContext",
+      "R1ExecutionContext",
+      "r1_execution_source_requirements"
+    ],
+    "solarlab.config.legacy_wire": [
+      "LEGACY_WIRE_VERSION",
+      "LegacyWire",
+      "prepare_legacy_wire"
+    ],
+    "solarlab.config.migration": [
+      "CONFIGURATION_VERSION",
+      "ConfigurationMigration",
+      "migrate_configuration",
+      "read_configuration_v2",
+      "prepare_v2_legacy_wire"
+    ],
+    "solarlab.config.model_parameters": [
+      "layer_parameter_source",
+      "device_topology",
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source",
+      "resolve_structured_edit"
+    ],
+    "solarlab.config.resolve": [
+      "load_template_library",
+      "load_layer_input",
+      "layer_input_mapping",
+      "resolve_layer",
+      "resolve_layers"
+    ],
+    "solarlab.config.resolve_device": [
+      "resolve_device",
+      "resolve_tandem"
+    ],
+    "solarlab.config.scaps_input": [
+      "import_scaps_device"
+    ],
+    "solarlab.config.schema": [
+      "export_configuration_schema",
+      "configuration_schema_representation"
+    ],
+    "solarlab.config.structured_parameters": [
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source",
+      "resolve_structured_edit",
+      "device_topology"
+    ],
+    "solarlab.config.tandem_input": [
+      "import_tandem"
+    ],
+    "solarlab.config.yaml": [
+      "load_yaml_mapping"
+    ],
+    "solarlab.contracts.persistence": [
+      "PersistenceReader",
+      "PersistencePort"
+    ],
+    "solarlab.device": [],
+    "solarlab.device.defaults": [
+      "DefaultCatalog"
+    ],
+    "solarlab.device.layer": [
+      "ResolvedLayer",
+      "ResolvedMaterial",
+      "ValueOrigin"
+    ],
+    "solarlab.device.resolved": [
+      "PreparedMaterial",
+      "PreparedLayer",
+      "PreparedDefect",
+      "PreparedMultivalentDefect",
+      "PreparedInterface",
+      "PreparedDevice",
+      "PreparedTandem"
+    ],
+    "solarlab.experiments.bdf_results": [
+      "CapturedBDFRun",
+      "run_bdf_for_publication",
+      "publish_bdf_result",
+      "read_bdf_result",
+      "read_bdf_packet"
+    ],
+    "solarlab.experiments.registry": [
+      "ExperimentDefinition",
+      "ExperimentPreflight",
+      "ExperimentRegistry"
+    ],
+    "solarlab.experiments.two_dimensional.preparation": [
+      "PreparedSpatialExperiment",
+      "prepare_spatial_experiment"
+    ],
+    "solarlab.materials": [],
+    "solarlab.materials.full_parameters": [
+      "ParameterFieldsInput",
+      "StructuredInput",
+      "StableId",
+      "Nonempty",
+      "FullParameterInput",
+      "quantity_field",
+      "LAYER_OWNED_PARAMETERS",
+      "full_parameter_items"
+    ],
+    "solarlab.materials.library": [
+      "LayerTemplate",
+      "MaterialLibrary",
+      "validated_parameters"
+    ],
+    "solarlab.materials.parameter_schema": [
+      "parameter_names",
+      "parameter_schema",
+      "parameter_values"
+    ],
+    "solarlab.materials.parameters": [
+      "EditableInput",
+      "LayerValuesInput",
+      "Scalar",
+      "parameter_units"
+    ],
+    "solarlab.materials.resources": [
+      "ResourceTable",
+      "ResourceLibrary"
+    ],
+    "solarlab.materials.source": [
+      "SourceDocument"
+    ],
+    "solarlab.physics.presets": [
+      "HistoricalDisable",
+      "NamedPreset",
+      "PresetSelection",
+      "select_preset"
+    ],
+    "solarlab.physics.registry": [
+      "CapabilityContext",
+      "CapabilityRule",
+      "EvidenceRef",
+      "ModelDefinition",
+      "ModelRef",
+      "ModelRegistry",
+      "OwnedVariable",
+      "Requirement",
+      "Scope",
+      "StructuredSchema",
+      "StructuredData",
+      "StructuredParameters",
+      "StructuredAuthority",
+      "metadata_digest",
+      "metadata_value"
+    ],
+    "solarlab.physics.selection": [
+      "ModelChoice",
+      "ParameterSource",
+      "SelectedModel",
+      "Selection",
+      "Topology",
+      "select_models",
+      "validate_selection"
+    ],
+    "solarlab.physics.semantic_projection": [
+      "SemanticProjection"
+    ],
+    "solarlab.reproducibility": [
+      "MigrationRegistry",
+      "load_registry",
+      "validate_registry_pair",
+      "SourceRef",
+      "SourceSet",
+      "read_sources"
+    ],
+    "solarlab.reproducibility.configuration_migration": [
+      "ConfigurationMigrationPlan",
+      "prepare_configuration_migration",
+      "prepare_registered_configuration_v2",
+      "read_selected_configuration_v2",
+      "load_selected_configuration_v2",
+      "publish_configuration_migration"
+    ],
+    "solarlab.units": [
+      "UNIT_SCHEMA_VERSION",
+      "QuantityError",
+      "normalize_quantity",
+      "supported_units"
+    ],
+    "solarlab.reproducibility.release": [
+      "ReleaseFile",
+      "ReleaseBundle",
+      "snapshot_release_bundle",
+      "write_release_bundle",
+      "read_release_bundle",
+      "verify_release_installation"
+    ],
+    "solarlab.reproducibility.registry_mapping": [
+      "RegistryMapping",
+      "prepare_registry_mapping",
+      "read_registry_mapping"
+    ],
+    "solarlab.device.compile_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "compile_device_1d",
+      "unsupported"
+    ],
+    "solarlab.equations": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D"
+    ],
+    "solarlab.equations.dc_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D",
+      "quasi_fermi_potential_tangents"
+    ],
+    "solarlab.equations.implementation": [
+      "ASSEMBLED",
+      "BINDING_SCHEMA",
+      "ENVIRONMENT",
+      "IMPLEMENTATIONS",
+      "LEGACY",
+      "DCProblem",
+      "ProvenanceBinding",
+      "equation_implementation",
+      "implementation_source_modules",
+      "observation_binding",
+      "provenance_binding",
+      "selected_implementation",
+      "selection_setting",
+      "substage_binding",
+      "use_assembled",
+      "verify_selection"
+    ],
+    "solarlab.solvers.nonlinear.steady_1d": [
+      "SteadyOptions",
+      "SteadyState1D",
+      "SteadyStateError",
+      "solve_equilibrium",
+      "solve_steady_state",
+      "physical_gates",
+      "density_basin_seed"
+    ],
+    "solarlab.solvers.nonlinear.production": [
+      "HISTORICAL_MAX_ROW_V1",
+      "POISSON_CONTACT_BALANCE_V1",
+      "production_convergence_norm",
+      "production_coordinates",
+      "production_residual_scaling",
+      "production_steady_problem",
+      "production_steady_linearization"
+    ],
+    "solarlab.experiments.jv.operating_points": [
+      "DirectVocError",
+      "DirectVocResult",
+      "VocBracketError",
+      "VocFailure",
+      "solve_direct_voc"
+    ],
+    "solarlab.physics.ions": [
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "WHOLE_FLUX_STERIC_V1",
+      "IonFaceFluxJacobian",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric",
+      "shared_site_densities",
+      "shared_site_fractions",
+      "shifted_logistic_density",
+      "single_site_density"
+    ],
+    "solarlab.physics.ions.migration": [
+      "WHOLE_FLUX_STERIC_V1",
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "IonFaceFluxJacobian",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg"
+    ],
+    "solarlab.physics.ions.finite_site": [
+      "single_site_density",
+      "shifted_logistic_density",
+      "shared_site_fractions",
+      "shared_site_densities"
+    ],
+    "solarlab.experiments.jv.worker": [
+      "SteadyJVProtocol",
+      "SteadyJVJob",
+      "prepare_steady_jv_job",
+      "steady_jv_worker_binding",
+      "read_steady_jv_job",
+      "run_steady_jv_worker",
+      "steady_jv_identity_inputs",
+      "validate_steady_jv_scope"
+    ],
+    "solarlab.solvers.linear": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.solvers.linear.frequency_domain": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.experiments.impedance": [
+      "SmallSignalResult1D",
+      "voltage_reference_direction",
+      "solve_impedance"
+    ],
+    "solarlab.sweeps.steady_worker": [
+      "SteadySweepJobs",
+      "prepare_steady_sweep_jobs",
+      "read_steady_sweep_jobs"
+    ],
+    "solarlab.solvers.time": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting"
+    ],
+    "solarlab.solvers.time.backward_euler": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting",
+      "storage_mask"
+    ],
+    "solarlab.experiments.transient": [
+      "TransientProtocol",
+      "TransientOptions",
+      "TransientAttempt",
+      "TransientResult1D",
+      "solve_transient"
+    ],
+    "solarlab.device.compile_ionic_1d": [
+      "CompiledIonicDevice1D",
+      "compile_ionic_device_1d",
+      "ION_INPUTS"
+    ],
+    "solarlab.equations.ionic_1d": [
+      "CompiledIonicDevice1D",
+      "Ionic1DProblem",
+      "IonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.ionic_1d": [
+      "ConstrainedIonic1DProblem",
+      "IonicSteadyOptions",
+      "IonicSteadyResult",
+      "solve_ionic_steady_state",
+      "ionic_steady_control_record",
+      "checks",
+      "diagnostics"
+    ],
+    "solarlab.experiments.transient_results": [
+      "CapturedTransientRun",
+      "run_transient_for_publication",
+      "publish_transient_result",
+      "read_transient_result",
+      "transient_result_payload"
+    ],
+    "solarlab.experiments.transient_worker": [
+      "TransientJob",
+      "prepare_transient_job",
+      "transient_worker_binding",
+      "run_transient_worker",
+      "read_transient_job",
+      "transient_identity_inputs"
+    ],
+    "solarlab.solvers.time.ionic_backward_euler": [
+      "IonicBackwardEuler1DStep",
+      "finite_site_secant_m3",
+      "inventory_m2",
+      "step_accounting",
+      "ionic_step_accounting"
+    ],
+    "solarlab.experiments.ionic_transient": [
+      "IonicTransientInitial",
+      "IonicTransientOptions",
+      "IonicTransientAttempt",
+      "IonicTransientResult",
+      "load_ionic_steady_initial",
+      "solve_ionic_transient"
+    ],
+    "solarlab.solvers.nonlinear.problem": [
+      "CallableProblem",
+      "GateOutcome",
+      "Matrix",
+      "PhysicalGate",
+      "ResidualScaling",
+      "SolveBudget",
+      "SteadyProblem",
+      "StepControl",
+      "Vector",
+      "state_digest"
+    ],
+    "solarlab.equations.ionic_small_signal": [
+      "IonicACSystem",
+      "IonicSmallSignal1D",
+      "build_ionic_small_signal",
+      "frequency_voltage"
+    ],
+    "solarlab.experiments.ionic_impedance": [
+      "IonicImpedanceOptions",
+      "IonicImpedanceAttempt",
+      "IonicImpedanceResult",
+      "solve_ionic_impedance",
+      "write_ionic_impedance_result",
+      "read_ionic_impedance_result"
+    ],
+    "solarlab.equations.ionic_closure": [
+      "ion_mobility_partition",
+      "declared_immobile_profiles",
+      "immobile_profile_binding",
+      "ionic_closure_residual",
+      "ionic_closure_jacobian"
+    ],
+    "solarlab.experiments.jv.ionic_steady": [
+      "IonicSteadyJVOptions",
+      "IonicSteadyJVAttempt",
+      "IonicSteadyJVResult",
+      "run_ionic_steady_jv",
+      "write_ionic_steady_jv",
+      "read_ionic_steady_jv"
+    ],
+    "solarlab.experiments.ionic_transient_worker": [
+      "IonicTransientJob",
+      "prepare_ionic_transient_job",
+      "ionic_transient_worker_binding",
+      "run_ionic_transient_worker",
+      "read_ionic_transient_job",
+      "ionic_transient_identity_inputs"
+    ],
+    "solarlab.experiments.ionic_transient_results": [
+      "ionic_initial_document",
+      "ionic_transient_payload",
+      "validate_ionic_history"
+    ],
+    "solarlab.experiments.ionic_initialization": [
+      "IonicInitializationOptions",
+      "IonicInitializationResult",
+      "IonicDensitySeedArtifact",
+      "load_ionic_density_seed",
+      "initialize_ionic_steady_state",
+      "write_ionic_initialization",
+      "read_ionic_initialization"
+    ],
+    "solarlab.device.compile_multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "compile_multiple_ionic_device_1d"
+    ],
+    "solarlab.equations.multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "MultipleIonic1DProblem",
+      "MultipleIonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.multiple_ionic_1d": [
+      "ConstrainedMultipleIonic1DProblem",
+      "MultipleIonicSteadyResult",
+      "multiple_ionic_diagnostics",
+      "multiple_ionic_checks",
+      "solve_multiple_ionic_steady_state"
+    ],
+    "solarlab.solvers.time.multiple_ionic_backward_euler": [
+      "MultipleIonicBackwardEuler1DStep",
+      "multiple_ionic_step_accounting"
+    ],
+    "solarlab.experiments.multiple_ionic_transient": [
+      "MultipleIonicTransientInitial",
+      "MultipleIonicTransientAttempt",
+      "MultipleIonicTransientResult",
+      "load_multiple_ionic_steady_initial",
+      "solve_multiple_ionic_transient",
+      "write_multiple_ionic_transient",
+      "read_multiple_ionic_transient"
+    ],
+    "solarlab.experiments.jv.ionic_worker": [
+      "IonicJVProtocol",
+      "IonicJVInitial",
+      "IonicJVJob",
+      "prepare_ionic_jv_job",
+      "ionic_jv_worker_binding",
+      "run_ionic_jv_worker",
+      "read_ionic_jv_job",
+      "ionic_jv_identity_inputs",
+      "REGISTERED_WALL_SECONDS"
+    ],
+    "solarlab.experiments.two_dimensional.steady_worker": [
+      "INITIAL_POLICY",
+      "REQUEST_SCHEMA",
+      "RESULT_SCHEMA",
+      "Steady2DProtocol",
+      "Steady2DJob",
+      "prepare_steady_2d_job",
+      "steady_2d_worker_binding",
+      "run_steady_2d_worker",
+      "read_steady_2d_job"
+    ],
+    "solarlab.experiments.two_dimensional.steady_results": [
+      "steady_2d_payload",
+      "read_steady_2d_job"
+    ],
+    "solarlab.solvers.nonlinear.steady_2d": [
+      "Steady2DOptions",
+      "Steady2DResult",
+      "solve_steady_state_2d",
+      "checks",
+      "diagnostics",
+      "scope",
+      "sources"
+    ]
+  },
+  "public_imports": {
+    "solarlab": [],
+    "solarlab.config": [],
+    "solarlab.config.behavior": [
+      "BehaviorContext",
+      "CapturedPreparation",
+      "behavior_source_requirements",
+      "inspect_historical_behavior",
+      "inspect_r1_material_behavior"
+    ],
+    "solarlab.config.device_import": [
+      "import_standard_device"
+    ],
+    "solarlab.config.device_inputs": [
+      "DeviceInput",
+      "FullLayerInput",
+      "NamedMaterialInput",
+      "TandemInput"
+    ],
+    "solarlab.config.identity": [
+      "BuildSource",
+      "CACHE_LAYERS",
+      "CacheLayerIdentity",
+      "ColdPointBinding",
+      "ExecutionDescription",
+      "ExecutionEngine",
+      "ExecutionManifest",
+      "Identity",
+      "IdentityInputs",
+      "ModelInputs",
+      "RuntimeEnvironment",
+      "cold_point_binding",
+      "execution_identity",
+      "execution_manifest",
+      "input_identity",
+      "physics_identity",
+      "verify_execution_manifest"
+    ],
+    "solarlab.config.inputs": [
+      "LayerInput"
+    ],
+    "solarlab.config.legacy_defaults": [
+      "read_legacy_default_catalog"
+    ],
+    "solarlab.config.legacy_execution": [
+      "LegacyExecutionContext",
+      "R1ExecutionContext",
+      "r1_execution_source_requirements"
+    ],
+    "solarlab.config.legacy_wire": [
+      "LEGACY_WIRE_VERSION",
+      "LegacyWire",
+      "prepare_legacy_wire"
+    ],
+    "solarlab.config.migration": [
+      "CONFIGURATION_VERSION",
+      "ConfigurationMigration",
+      "migrate_configuration",
+      "prepare_v2_legacy_wire",
+      "read_configuration_v2"
+    ],
+    "solarlab.config.model_parameters": [
+      "device_topology",
+      "layer_parameter_source",
+      "resolve_structured_edit",
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source"
+    ],
+    "solarlab.config.resolve": [
+      "layer_input_mapping",
+      "load_layer_input",
+      "load_template_library",
+      "resolve_layer",
+      "resolve_layers"
+    ],
+    "solarlab.config.resolve_device": [
+      "resolve_device",
+      "resolve_tandem"
+    ],
+    "solarlab.config.scaps_input": [
+      "import_scaps_device"
+    ],
+    "solarlab.config.schema": [
+      "configuration_schema_representation",
+      "export_configuration_schema"
+    ],
+    "solarlab.config.structured_parameters": [
+      "device_topology",
+      "resolve_structured_edit",
+      "structured_parameter_source",
+      "structured_parameter_sources",
+      "update_structured_source"
+    ],
+    "solarlab.config.tandem_input": [
+      "import_tandem"
+    ],
+    "solarlab.config.yaml": [
+      "load_yaml_mapping"
+    ],
+    "solarlab.contracts.persistence": [
+      "PersistenceReader"
+    ],
+    "solarlab.device": [],
+    "solarlab.device.defaults": [
+      "DefaultCatalog"
+    ],
+    "solarlab.device.inputs": [
+      "DeviceInput",
+      "TandemInput"
+    ],
+    "solarlab.device.layer": [
+      "ResolvedLayer",
+      "ResolvedMaterial",
+      "ValueOrigin"
+    ],
+    "solarlab.device.resolved": [
+      "PreparedDefect",
+      "PreparedDevice",
+      "PreparedInterface",
+      "PreparedLayer",
+      "PreparedMaterial",
+      "PreparedMultivalentDefect",
+      "PreparedTandem"
+    ],
+    "solarlab.experiments.inputs": [
+      "invalid"
+    ],
+    "solarlab.experiments.jv.inputs": [
+      "JVExperimentInput"
+    ],
+    "solarlab.experiments.jv.preparation": [
+      "PreparedJVExperiment",
+      "consume_jv_manifest",
+      "prepare_jv_experiment"
+    ],
+    "solarlab.experiments.registry": [
+      "ExperimentDefinition",
+      "ExperimentPreflight",
+      "ExperimentRegistry"
+    ],
+    "solarlab.experiments.two_dimensional.inputs": [
+      "SpatialExperimentInput",
+      "JV2DInput"
+    ],
+    "solarlab.experiments.two_dimensional.preparation": [
+      "PreparedSpatialExperiment",
+      "prepare_spatial_experiment"
+    ],
+    "solarlab.io.artifacts": [
+      "ArtifactIntegrityError",
+      "bytes_artifact"
+    ],
+    "solarlab.io.run_store": [
+      "RunStore",
+      "StateConflict"
+    ],
+    "solarlab.materials": [],
+    "solarlab.materials.full_parameters": [
+      "FullParameterInput",
+      "LAYER_OWNED_PARAMETERS",
+      "Nonempty",
+      "ParameterFieldsInput",
+      "StableId",
+      "StructuredInput",
+      "full_parameter_items",
+      "quantity_field"
+    ],
+    "solarlab.materials.library": [
+      "LayerTemplate",
+      "MaterialLibrary",
+      "validated_parameters"
+    ],
+    "solarlab.materials.parameter_schema": [
+      "parameter_names",
+      "parameter_schema",
+      "parameter_values"
+    ],
+    "solarlab.materials.parameters": [
+      "EditableInput",
+      "LayerValuesInput",
+      "Scalar",
+      "parameter_units"
+    ],
+    "solarlab.materials.resources": [
+      "ResourceLibrary",
+      "ResourceTable"
+    ],
+    "solarlab.materials.source": [
+      "SourceDocument"
+    ],
+    "solarlab.physics.presets": [
+      "HistoricalDisable",
+      "NamedPreset",
+      "PresetSelection",
+      "select_preset"
+    ],
+    "solarlab.physics.registry": [
+      "CapabilityContext",
+      "CapabilityRule",
+      "EvidenceRef",
+      "ModelDefinition",
+      "ModelRef",
+      "ModelRegistry",
+      "OwnedVariable",
+      "Requirement",
+      "Scope",
+      "StructuredAuthority",
+      "StructuredData",
+      "StructuredParameters",
+      "StructuredSchema",
+      "metadata_digest",
+      "metadata_value"
+    ],
+    "solarlab.physics.selection": [
+      "ModelChoice",
+      "ParameterSource",
+      "SelectedModel",
+      "Selection",
+      "Topology",
+      "select_models",
+      "validate_selection"
+    ],
+    "solarlab.physics.semantic_projection": [
+      "SemanticProjection"
+    ],
+    "solarlab.reproducibility": [
+      "MigrationRegistry",
+      "SourceRef",
+      "SourceSet",
+      "load_registry",
+      "read_sources",
+      "validate_registry_pair"
+    ],
+    "solarlab.reproducibility.configuration_migration": [
+      "ConfigurationMigrationPlan",
+      "load_selected_configuration_v2",
+      "prepare_configuration_migration",
+      "prepare_registered_configuration_v2",
+      "publish_configuration_migration",
+      "read_selected_configuration_v2"
+    ],
+    "solarlab.sweeps.inputs": [
+      "SweepInput"
+    ],
+    "solarlab.sweeps.preparation": [
+      "PreparedSweep",
+      "prepare_sweep"
+    ],
+    "solarlab.sweeps.reference": [
+      "SweepReference"
+    ],
+    "solarlab.units": [
+      "QuantityError",
+      "UNIT_SCHEMA_VERSION",
+      "normalize_quantity",
+      "supported_units"
+    ],
+    "solarlab.reproducibility.release": [
+      "ReleaseBundle",
+      "ReleaseFile",
+      "read_release_bundle",
+      "snapshot_release_bundle",
+      "verify_release_installation",
+      "write_release_bundle"
+    ],
+    "solarlab.reproducibility.registry_mapping": [
+      "RegistryMapping",
+      "prepare_registry_mapping",
+      "read_registry_mapping"
+    ],
+    "solarlab.experiments.worker": [
+      "ManifestBinding",
+      "ResourceLimits",
+      "WorkerBinding",
+      "WorkerContext",
+      "WorkerRequest",
+      "WorkerResult",
+      "RunSpec"
+    ],
+    "solarlab.experiments.execution": [
+      "JobHandle",
+      "ProcessSupervisor",
+      "QueueFull"
+    ],
+    "solarlab.experiments.protocol": [
+      "protocol_schema",
+      "working_point_schema"
+    ],
+    "solarlab.experiments.results": [
+      "array_schema",
+      "result_schema"
+    ],
+    "solarlab.device.compile_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "compile_device_1d"
+    ],
+    "solarlab.equations": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D"
+    ],
+    "solarlab.equations.dc_1d": [
+      "CapabilityError",
+      "CompiledDevice1D",
+      "DC1DProblem",
+      "LocalRecombinationModel",
+      "State1D"
+    ],
+    "solarlab.solvers.nonlinear.steady_1d": [
+      "SteadyOptions",
+      "SteadyState1D",
+      "SteadyStateError",
+      "solve_equilibrium",
+      "solve_steady_state"
+    ],
+    "solarlab.solvers.nonlinear.production": [
+      "production_coordinates",
+      "production_residual_scaling",
+      "production_steady_linearization",
+      "production_steady_problem",
+      "HISTORICAL_MAX_ROW_V1",
+      "POISSON_CONTACT_BALANCE_V1",
+      "production_convergence_norm"
+    ],
+    "solarlab.experiments.jv.steady": [
+      "SteadyJVMetrics",
+      "SteadyJVResult",
+      "steady_jv_metrics",
+      "run_steady_jv",
+      "publish_steady_jv",
+      "read_steady_jv",
+      "steady_jv_payload"
+    ],
+    "solarlab.sweeps.steady": [
+      "SteadySweepPoint",
+      "run_prepared_steady_sweep"
+    ],
+    "solarlab.experiments.jv.operating_points": [
+      "DirectVocError",
+      "DirectVocResult",
+      "VocBracketError",
+      "VocFailure",
+      "solve_direct_voc"
+    ],
+    "solarlab.physics.ions": [
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "IonFaceFluxJacobian",
+      "WHOLE_FLUX_STERIC_V1",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric",
+      "shared_site_densities",
+      "shared_site_fractions",
+      "shifted_logistic_density",
+      "single_site_density"
+    ],
+    "solarlab.physics.ions.migration": [
+      "DIFFUSION_ONLY_STERIC_V1",
+      "HISTORICAL_OCCUPANCY_CLIP",
+      "HISTORICAL_STERIC_FLOOR",
+      "IonFaceFluxJacobian",
+      "WHOLE_FLUX_STERIC_V1",
+      "ion_continuity_rhs",
+      "ion_continuity_rhs_neg",
+      "ion_face_flux",
+      "ion_face_flux_jacobian",
+      "ion_flux_steric"
+    ],
+    "solarlab.physics.ions.finite_site": [
+      "shared_site_densities",
+      "shared_site_fractions",
+      "shifted_logistic_density",
+      "single_site_density"
+    ],
+    "solarlab.experiments.jv.worker": [
+      "SteadyJVProtocol",
+      "SteadyJVJob",
+      "prepare_steady_jv_job",
+      "steady_jv_worker_binding",
+      "read_steady_jv_job",
+      "run_steady_jv_worker",
+      "steady_jv_identity_inputs",
+      "validate_steady_jv_scope"
+    ],
+    "solarlab.solvers.linear": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.solvers.linear.frequency_domain": [
+      "FrequencyOptions",
+      "FrequencySolution",
+      "FrequencySolveError",
+      "solve_frequency_systems"
+    ],
+    "solarlab.experiments.impedance": [
+      "SmallSignalResult1D",
+      "voltage_reference_direction",
+      "solve_impedance"
+    ],
+    "solarlab.sweeps.steady_worker": [
+      "SteadySweepJobs",
+      "prepare_steady_sweep_jobs",
+      "read_steady_sweep_jobs"
+    ],
+    "solarlab.solvers.time": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting"
+    ],
+    "solarlab.solvers.time.backward_euler": [
+      "BackwardEuler1DStep",
+      "inventory_m2",
+      "step_accounting"
+    ],
+    "solarlab.experiments.transient": [
+      "TransientProtocol",
+      "TransientOptions",
+      "TransientAttempt",
+      "TransientResult1D",
+      "solve_transient"
+    ],
+    "solarlab.device.compile_ionic_1d": [
+      "CompiledIonicDevice1D",
+      "compile_ionic_device_1d"
+    ],
+    "solarlab.equations.ionic_1d": [
+      "CompiledIonicDevice1D",
+      "Ionic1DProblem",
+      "IonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.ionic_1d": [
+      "ConstrainedIonic1DProblem",
+      "IonicSteadyOptions",
+      "IonicSteadyResult",
+      "solve_ionic_steady_state",
+      "ionic_steady_control_record"
+    ],
+    "solarlab.experiments.transient_results": [
+      "CapturedTransientRun",
+      "run_transient_for_publication",
+      "publish_transient_result",
+      "read_transient_result",
+      "transient_result_payload"
+    ],
+    "solarlab.experiments.transient_worker": [
+      "TransientJob",
+      "prepare_transient_job",
+      "transient_worker_binding",
+      "run_transient_worker",
+      "read_transient_job",
+      "transient_identity_inputs"
+    ],
+    "solarlab.solvers.time.ionic_backward_euler": [
+      "IonicBackwardEuler1DStep",
+      "finite_site_secant_m3",
+      "inventory_m2",
+      "step_accounting",
+      "ionic_step_accounting"
+    ],
+    "solarlab.experiments.ionic_transient": [
+      "IonicTransientInitial",
+      "IonicTransientOptions",
+      "IonicTransientAttempt",
+      "IonicTransientResult",
+      "load_ionic_steady_initial",
+      "solve_ionic_transient"
+    ],
+    "solarlab.solvers.nonlinear.problem": [
+      "SolveBudget"
+    ],
+    "solarlab.equations.ionic_small_signal": [
+      "IonicACSystem",
+      "IonicSmallSignal1D",
+      "build_ionic_small_signal"
+    ],
+    "solarlab.experiments.ionic_impedance": [
+      "IonicImpedanceOptions",
+      "IonicImpedanceAttempt",
+      "IonicImpedanceResult",
+      "solve_ionic_impedance",
+      "write_ionic_impedance_result",
+      "read_ionic_impedance_result"
+    ],
+    "solarlab.equations.ionic_closure": [
+      "ion_mobility_partition",
+      "declared_immobile_profiles",
+      "immobile_profile_binding",
+      "ionic_closure_residual",
+      "ionic_closure_jacobian"
+    ],
+    "solarlab.experiments.jv.ionic_steady": [
+      "IonicSteadyJVOptions",
+      "IonicSteadyJVAttempt",
+      "IonicSteadyJVResult",
+      "run_ionic_steady_jv",
+      "write_ionic_steady_jv",
+      "read_ionic_steady_jv"
+    ],
+    "solarlab.experiments.ionic_transient_worker": [
+      "IonicTransientJob",
+      "prepare_ionic_transient_job",
+      "ionic_transient_worker_binding",
+      "run_ionic_transient_worker",
+      "read_ionic_transient_job",
+      "ionic_transient_identity_inputs"
+    ],
+    "solarlab.experiments.ionic_transient_results": [
+      "ionic_initial_document",
+      "ionic_transient_payload",
+      "validate_ionic_history"
+    ],
+    "solarlab.experiments.ionic_initialization": [
+      "IonicInitializationOptions",
+      "IonicInitializationResult",
+      "IonicDensitySeedArtifact",
+      "load_ionic_density_seed",
+      "initialize_ionic_steady_state",
+      "write_ionic_initialization",
+      "read_ionic_initialization"
+    ],
+    "solarlab.device.compile_multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "compile_multiple_ionic_device_1d"
+    ],
+    "solarlab.equations.multiple_ionic_1d": [
+      "CompiledMultipleIonicDevice1D",
+      "MultipleIonic1DProblem",
+      "MultipleIonicState1D"
+    ],
+    "solarlab.solvers.nonlinear.multiple_ionic_1d": [
+      "ConstrainedMultipleIonic1DProblem",
+      "MultipleIonicSteadyResult",
+      "multiple_ionic_diagnostics",
+      "multiple_ionic_checks",
+      "solve_multiple_ionic_steady_state"
+    ],
+    "solarlab.solvers.time.multiple_ionic_backward_euler": [
+      "MultipleIonicBackwardEuler1DStep",
+      "multiple_ionic_step_accounting"
+    ],
+    "solarlab.experiments.multiple_ionic_transient": [
+      "MultipleIonicTransientInitial",
+      "MultipleIonicTransientAttempt",
+      "MultipleIonicTransientResult",
+      "load_multiple_ionic_steady_initial",
+      "solve_multiple_ionic_transient",
+      "write_multiple_ionic_transient",
+      "read_multiple_ionic_transient"
+    ],
+    "solarlab.experiments.jv.ionic_worker": [
+      "IonicJVProtocol",
+      "IonicJVInitial",
+      "IonicJVJob",
+      "prepare_ionic_jv_job",
+      "ionic_jv_worker_binding",
+      "run_ionic_jv_worker",
+      "read_ionic_jv_job",
+      "ionic_jv_identity_inputs",
+      "REGISTERED_WALL_SECONDS"
+    ],
+    "solarlab.experiments.jv.ionic_results": [
+      "ionic_jv_payload"
+    ],
+    "solarlab.experiments.two_dimensional.steady_worker": [
+      "INITIAL_POLICY",
+      "REQUEST_SCHEMA",
+      "RESULT_SCHEMA",
+      "Steady2DProtocol",
+      "Steady2DJob",
+      "prepare_steady_2d_job",
+      "steady_2d_worker_binding",
+      "run_steady_2d_worker",
+      "read_steady_2d_job"
+    ],
+    "solarlab.experiments.two_dimensional.steady_results": [
+      "steady_2d_payload",
+      "read_steady_2d_job"
+    ],
+    "solarlab.solvers.nonlinear.steady_2d": [
+      "Steady2DOptions",
+      "Steady2DResult",
+      "solve_steady_state_2d"
+    ]
+  },
+  "checked_consumers": [
+    "solarlab_server",
+    "solarlab_research"
+  ],
+  "future_contracts": {
+    "owner": "WS3",
+    "namespace": "solarlab.contracts",
+    "rule": "Low-level protocols only; implementation and export list come from WS3, not placeholder source from WS2."
+  }
+}

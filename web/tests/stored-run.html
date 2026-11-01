@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stored-run infrastructure fixture</title>
+    <link rel="icon" href="/favicon.svg">
+    <link rel="stylesheet" href="/src/style.css">
+  </head>
+  <body>
+    <main style="max-width: 960px; margin: 24px auto; padding: 16px">
+      <h2>RunStore infrastructure fixture</h2>
+      <p>This page exercises stored records and transport only; it does not run a solar simulation.</p>
+      <button class="btn btn-ghost" id="reopen">Reopen stored result</button>
+      <div id="stored-run"></div>
+    </main>
+    <script type="module">
+      import { mountStoredRunPanel } from '/src/panels/stored-run.ts'
+      const query = new URLSearchParams(location.search)
+      const selection = Object.freeze({ endpoint: query.get('endpoint'), storeId: query.get('store'),
+        runId: query.get('run'), attemptId: query.get('attempt') })
+      const root = document.querySelector('#stored-run')
+      const fixture = { panel: mountStoredRunPanel(root, selection), selection }
+      document.querySelector('#reopen').addEventListener('click', () => {
+        fixture.panel.dispose()
+        fixture.panel = mountStoredRunPanel(root, selection)
+      })
+      window.storedRunFixture = fixture
+    </script>
+  </body>
+</html>

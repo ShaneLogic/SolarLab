@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuration preview infrastructure fixture</title>
+    <link rel="stylesheet" href="/src/style.css">
+  </head>
+  <body>
+    <main style="max-width: 1040px; margin: 24px auto; padding: 16px">
+      <h2>Configuration editor</h2>
+      <p>Select a supplied configuration, edit its draft, and apply it to inspect resolved values and field origins.</p>
+      <div class="actions" style="flex-wrap: wrap">
+        <label for="fixture">Configuration</label>
+        <select id="fixture" aria-label="Configuration"></select>
+        <button class="btn btn-ghost" id="preview">Preview configuration</button>
+        <button class="btn btn-ghost" id="reopen">Reopen applied preview</button>
+      </div>
+      <p id="fixture-error" class="status error" role="alert"></p>
+      <div id="device-editor"></div>
+      <div id="configuration-preview"></div>
+    </main>
+    <script type="module">
+      // @ts-check
+      import { mountConfigurationPreviewPanel } from '../src/panels/configuration-preview.ts'
+      import { mountDeviceEditor } from '../src/editors/device-editor.ts'
+      /** @typedef {import('../src/panels/configuration-preview').ConfigurationPreviewSelection & {name: string}} Choice */
+      /** @typedef {import('../src/editors/device-edits').EditorInput} EditorInput */
+      /** @param {string} id */
+      function node(id) {
+        const result = document.getElementById(id)
+        if (!result) throw new Error(`Missing page element ${id}`)
+        return result
+      }
+      try {
+        const response = await fetch('/fixture-inputs')
+        if (!response.ok) throw new Error(`Configurations: HTTP ${response.status}`)
+        const choices = /** @type {Choice[]} */ (await response.json())
+        const select = /** @type {HTMLSelectElement} */ (node('fixture'))
+        for (const choice of choices) select.add(new Option(choice.name, choice.name))
+        let current = structuredClone(choices[0])
+        const selection = () => structuredClone(current)
+        const previewRoot = node('configuration-preview')
+        const fixture = {
+          panel: mountConfigurationPreviewPanel(previewRoot, selection()),
+          editor: mountDeviceEditor(node('device-editor'), { input: current.input, onApply: apply }),
+          selection,
+        }
+        /** @param {EditorInput} input */
+        function apply(input) {
+          const legacyWire = 'legacyWire' in current ? current.legacyWire : undefined
+          current = input.schema_version === 'solarlab.device-preparation.v1'
+            ? { name: current.name, endpoint: current.endpoint, kind: 'device', input, legacyWire }
+            : { name: current.name, endpoint: current.endpoint, kind: 'tandem', input, legacyWire }
+          void fixture.panel.select(selection())
+        }
+        node('preview').addEventListener('click', () => { fixture.editor.apply() })
+        node('reopen').addEventListener('click', () => {
+          fixture.panel.dispose()
+          fixture.panel = mountConfigurationPreviewPanel(previewRoot, selection())
+        })
+        select.addEventListener('change', () => {
+          const choice = choices.find(item => item.name === select.value)
+          if (!choice) return
+          current = structuredClone(choice)
+          fixture.editor.setInput(current.input)
+          void fixture.panel.select(selection())
+        })
+        window.addEventListener('pagehide', () => { fixture.editor.dispose(); fixture.panel.dispose() }, { once: true })
+        Reflect.set(window, 'configurationPreviewFixture', fixture)
+      } catch (error) { node('fixture-error').textContent = String(error) }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,296 @@
+[
+  {
+    "id": "S0.N16.base",
+    "label": "S0",
+    "axis": "base",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 51,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 2e-08,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "S0.N32.mesh32",
+    "label": "S0",
+    "axis": "mesh32",
+    "intervals": 32,
+    "nodes": 33,
+    "expected_coordinate_count": 99,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 2e-08,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "S0.N64.mesh64",
+    "label": "S0",
+    "axis": "mesh64",
+    "intervals": 64,
+    "nodes": 65,
+    "expected_coordinate_count": 195,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 2e-08,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "S0.N16.tolerance_middle",
+    "label": "S0",
+    "axis": "tolerance_middle",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 51,
+    "basis_rtol": 1e-05,
+    "basis_component_atol": 1e-09,
+    "max_step_s": 2e-08,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "S0.N16.tolerance_tight",
+    "label": "S0",
+    "axis": "tolerance_tight",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 51,
+    "basis_rtol": 1e-06,
+    "basis_component_atol": 1e-10,
+    "max_step_s": 2e-08,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "S0.N16.step_middle",
+    "label": "S0",
+    "axis": "step_middle",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 51,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 1e-08,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "S0.N16.step_tight",
+    "label": "S0",
+    "axis": "step_tight",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 51,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 5e-09,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "B.N16.base",
+    "label": "B",
+    "axis": "base",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 85,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 0.02,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "B.N32.mesh32",
+    "label": "B",
+    "axis": "mesh32",
+    "intervals": 32,
+    "nodes": 33,
+    "expected_coordinate_count": 165,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 0.02,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "B.N64.mesh64",
+    "label": "B",
+    "axis": "mesh64",
+    "intervals": 64,
+    "nodes": 65,
+    "expected_coordinate_count": 325,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 0.02,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "B.N16.tolerance_middle",
+    "label": "B",
+    "axis": "tolerance_middle",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 85,
+    "basis_rtol": 1e-05,
+    "basis_component_atol": 1e-09,
+    "max_step_s": 0.02,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "B.N16.tolerance_tight",
+    "label": "B",
+    "axis": "tolerance_tight",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 85,
+    "basis_rtol": 1e-06,
+    "basis_component_atol": 1e-10,
+    "max_step_s": 0.02,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "B.N16.step_middle",
+    "label": "B",
+    "axis": "step_middle",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 85,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 0.01,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  },
+  {
+    "id": "B.N16.step_tight",
+    "label": "B",
+    "axis": "step_tight",
+    "intervals": 16,
+    "nodes": 17,
+    "expected_coordinate_count": 85,
+    "basis_rtol": 0.0001,
+    "basis_component_atol": 1e-08,
+    "max_step_s": 0.005,
+    "max_order": 5,
+    "effective_native_request": null,
+    "native_runnable": false,
+    "blockers": [
+      "NATIVE_SCOPE_N8",
+      "FRESH_MESH_AND_INITIALIZATION",
+      "ERROR_WEIGHT_AND_POLICY_GENERALIZATION",
+      "SOURCE_REVIEW_AND_ROOT_ADMISSION"
+    ],
+    "physical_delta": "Same source material, geometry extent, contacts, optical words and full protocol; mesh-dependent arrays/maps/weights/initial-record identities must be regenerated and bound. No new arrays are claimed here."
+  }
+]

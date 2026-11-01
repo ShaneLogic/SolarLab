@@ -1,0 +1,190 @@
+"""Source-bound model projections for identity preparation, never cache grants.
+
+Both rules retain all physical model values, including temperature exponents.
+The only reduced rule removes the documentary display label from a pinned
+declaration/selection API. There is no caller-defined field exclusion list or
+pointwise-value equivalence flag.
+This module depends on model declarations, not devices, solvers or config.
+"""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass
+import json
+from typing import Any
+
+from solarlab.materials.source import SourceDocument
+from solarlab.physics.registry import ModelDefinition, ModelRef, metadata_value
+from solarlab.physics.selection import SelectedModel
+
+__all__ = ["SemanticProjection"]
+
+_DISPLAY_LABEL_EVIDENCE = {
+    "src/solarlab/physics/registry.py": "b22c15eae2fbcc64aaef9aa8230b07d794b26caa30fc7818e6c23c77230cce1e",
+    "src/solarlab/physics/selection.py": "2fcfd5279feba3d35de577772371ee3a5cc60b17d7b8ebbe765d939e9475198b",
+}
+
+
+def _project_historical_physics(physical: dict[str, Any], inspection: dict[str, Any]) -> dict[str, Any]:
+    """The fixed v1 behavior rule, called with a validated historical context.
+
+    Only the source-proven effective settings replace declarations. Everything
+    else remains conservative: this is not a caller-defined exclusion list or
+    a claim of model/solver qualification. Driver protocol, preparation and
+    numerical import switches belong to the complete execution context.
+    """
+    expected = {"mode_ceiling", "switches", "switch_scope", "interface_state_requested", "interface_state_count",
+                "interface_state_shared_occupancy_if_enabled", "interfaces", "contacts", "ions", "ion_flux_label",
+                "te", "optics", "electrostatics", "import_time_policy", "runtime_interface_requests", "preparation"}
+    if set(inspection) != expected:
+        raise ValueError("historical inspection changed; a new semantic projection is required")
+    result = deepcopy(physical)
+    result["domain"] = "prepared-historical-device-1d.v2"
+    result["settings"].update(inspection["switches"])
+    effective_contacts = []
+    for contact in inspection["contacts"]:
+        target = next(row for row in result["contacts"] if row["side"] == contact["side"])
+        target["S_" + contact["carrier"]] = contact["effective_S_m_s"]
+        effective_contacts.append({key: contact[key] for key in ("side", "carrier", "effective_S_m_s", "condition")})
+    incoherence = []
+    for row in inspection["optics"]["incoherence"]:
+        layer = next(item for item in result["layers"] if item["id"] == row["layer"])
+        value = row["historical_loader_value"]
+        if "incoherent" in layer["remaining_effective_parameters"]:
+            layer["remaining_effective_parameters"]["incoherent"] = value
+        for model in result["models"]:
+            if model["scope"] == {"kind": "layer", "ids": [row["layer"]]} and "incoherent" in model["effective_values"]:
+                model["effective_values"]["incoherent"] = value
+        incoherence.append({"layer": row["layer"], "effective": value})
+    optical = inspection["optics"]
+    result["effective_behavior"] = {
+        "projection": "historical-driver-effective.v1",
+        **{key: deepcopy(inspection[key]) for key in ("mode_ceiling", "switches", "te", "interfaces", "ions",
+            "ion_flux_label", "electrostatics", "interface_state_requested", "interface_state_shared_occupancy_if_enabled")},
+        "contacts": effective_contacts,
+        "optics": {**{key: optical[key] for key in ("generation", "uniform_generation_m3_s", "recycling")},
+                   "incoherence": incoherence},
+        "runtime_interface_requests": {key: inspection["runtime_interface_requests"][key] for key in ("qss", "allow_generation")},
+        "QSS_velocity_m_s": inspection["import_time_policy"]["QSS_velocity_effective_m_s"],
+    }
+    return result
+
+
+def _project_r1_physics(
+    physical: dict[str, Any], material: dict[str, Any], *, ceilings: dict[str, Any], switches: dict[str, bool],
+    controls: dict[str, int], reference: dict[str, Any],
+) -> dict[str, Any]:
+    """Fixed R1 model/charge reference; complete history stays in execution.
+
+    Pair and binary64 representations implement the same declared physics.
+    Their seed, high/low words and source bytes are retained by the caller's
+    complete R1 execution context, never projected into one rounded state.
+    """
+    if set(reference) != {"f_ref", "geometry", "maximum_difference", "microscopic_documents", "reference_intervals",
+                          "rungs", "schema", "scope", "sha256", "stack_sha256"} or reference["schema"] != "ReferenceBindingV1":
+        raise ValueError("R1 reference changed; a new semantic projection is required")
+    result = deepcopy(physical)
+    result["domain"] = "prepared-historical-device-1d.v2"
+    result["settings"].update(switches)
+    result["settings"]["interface_charge_closure"] = material["material_interface_charge_closure"]
+    overrides = dict(material["material_overrides"])
+    # This controls acceptance of an inner solve, not a physical coefficient.
+    overrides.pop("iface_qss_allow_inexact_inner")
+    environment = material["environment_effective_snapshot"]
+    result["effective_behavior"] = {
+        "projection": "historical-r1-effective.v1", "mode_ceiling": deepcopy(ceilings),
+        "switches": dict(switches), "geometry": material["physical_geometry"],
+        "material_interface_charge_closure": material["material_interface_charge_closure"],
+        "material_overrides": overrides, "ions": deepcopy(material["ions"]),
+        "active_populations": dict(controls),
+        "charge_reference": {key: deepcopy(reference[key]) for key in ("f_ref", "geometry", "microscopic_documents", "scope")},
+        "QSS_velocity_m_s": material["import_time_policy"]["QSS_velocity_effective_m_s"],
+        "runtime_interface_requests": {"qss": environment["SOLARLAB_IFACE_QSS"] == "1",
+                                       "allow_generation": environment["SOLARLAB_IFACE_ALLOW_GEN"] == "1"},
+    }
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticProjection:
+    """One model/version and actual immutable source documents.
+
+    ``all_values_v1`` binds the complete declared model and effective values.
+    ``without_display_label_v1`` removes only ModelDefinition.label, which the
+    pinned selector never forwards to SelectedModel or uses to bind values.
+    A changed proof source needs review, not an automatic fallback. Equality
+    of a physical value at one temperature never permits omitting its exponent.
+    """
+
+    model: ModelRef
+    rule: str
+    sources: tuple[SourceDocument, ...]
+    projection_evidence: tuple[SourceDocument, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model, ModelRef) or self.rule not in {"all_values_v1", "without_display_label_v1"}:
+            raise ValueError("unknown model-owned semantic projection")
+        sources = tuple(self.sources)
+        if not sources or any(type(item) is not SourceDocument for item in sources):
+            raise ValueError("semantic projection requires actual immutable source bytes")
+        if len({item.id for item in sources}) != len(sources):
+            raise ValueError("duplicate semantic source ID")
+        object.__setattr__(self, "sources", tuple(sorted(sources, key=lambda item: item.id)))
+        proof = tuple(self.projection_evidence)
+        if any(type(item) is not SourceDocument for item in proof) or len({item.id for item in proof}) != len(proof):
+            raise ValueError("invalid/duplicate documentary projection evidence")
+        if self.rule == "without_display_label_v1":
+            if {item.id: item.sha256 for item in proof} != _DISPLAY_LABEL_EVIDENCE:
+                raise ValueError("display-label projection requires the exact audited declaration and selector sources")
+        elif proof:
+            raise ValueError("lossless model projection has no documentary omission proof")
+        object.__setattr__(self, "projection_evidence", tuple(sorted(proof, key=lambda item: item.id)))
+
+    def _evidence(self, definition: ModelDefinition) -> list[dict[str, str]]:
+        evidence = [item for item in definition.capability.evidence if item.kind == "source"]
+        documents = {item.id: item for item in self.sources}
+        if not evidence or set(documents) != {item.id.partition("#")[0] for item in evidence}:
+            raise ValueError("model source evidence must exactly match supplied source documents")
+        for item in evidence:
+            if documents[item.id.partition("#")[0]].sha256 != item.sha256:
+                raise ValueError("model semantic source bytes disagree with the registry evidence")
+        return [{"id": item.id, "sha256": item.sha256} for item in self.sources]
+
+    def project(
+        self, definition: ModelDefinition, instance: SelectedModel,
+    ) -> tuple[dict[str, Any], tuple[str, ...]]:
+        """Return a fresh declaration and the layer parameters it accounts for.
+
+        The configuration producer retains every other effective layer value.
+        Thus a narrow reduction here cannot silently drop unrelated parameters.
+        """
+        if definition.ref != self.model or instance.model != self.model:
+            raise ValueError("model/projection semantic-version mismatch")
+        sources = self._evidence(definition)
+        declaration = metadata_value(definition)
+        if instance.structured is None:
+            values: Any = dict(instance.parameters)
+            if set(values) != set(definition.parameters):
+                raise ValueError("projection requires the complete declared parameter set")
+            claimed = tuple(definition.parameters)
+        else:
+            data = instance.structured.data
+            reference = json.loads(data.resolved_reference_json)
+            if definition.structured_schema != data.schema:
+                raise ValueError("structured projection schema mismatch")
+            values = {
+                "normalized_supplied": json.loads(data.normalized_json),
+                "resolved": reference["projection"], "context": reference["context"],
+            }
+            claimed = ()
+        if self.rule == "without_display_label_v1":
+            declaration.pop("label")
+        return {
+            "model": declaration, "rule": self.rule, "sources": sources,
+            "instance_id": instance.id, "scope": metadata_value(instance.scope),
+            "owned_variables": metadata_value(instance.owned_variables),
+            "read_variables": list(instance.read_variables),
+            "effective_values": values,
+            "projection_evidence": [{"id": item.id, "sha256": item.sha256} for item in self.projection_evidence],
+        }, claimed

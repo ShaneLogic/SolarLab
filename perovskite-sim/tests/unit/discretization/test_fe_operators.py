@@ -1,5 +1,11 @@
+import json
+import math
+from fractions import Fraction
+from pathlib import Path
+
 import numpy as np
 import pytest
+from perovskite_sim.constants import Q
 from perovskite_sim.discretization.fe_operators import (
     bernoulli,
     bernoulli_derivative,
@@ -10,6 +16,32 @@ from perovskite_sim.discretization.fe_operators import (
     sg_fluxes_p,
     sg_fluxes_p_jacobian,
 )
+
+
+def _sg_rational(value):
+    return Fraction(int(value["numerator"]), int(value["denominator"]))
+
+
+def _assert_sg_action(coefficients, case):
+    """Apply the frozen requirement without assuming an exp/expm1 error theorem."""
+    face = case["face"]
+    direction = [float.fromhex(value) for value in case["direction_binary64_hex"]]
+    # This schedule is two binary64 products followed by one binary64 addition.
+    left = float(coefficients[face, face]) * direction[face]
+    right = float(coefficients[face, face + 1]) * direction[face + 1]
+    observed = left + right
+    label = (case["carrier"], face, case["name"])
+    assert math.isfinite(observed), label
+    if case["classification"] == "exact_zero":
+        assert observed == 0.0, label
+    else:
+        target = case["reference_action"]
+        midpoint = (_sg_rational(target["lower"]) + _sg_rational(target["upper"])) / 2
+        error = abs(Fraction.from_float(observed) - midpoint)
+        # Weak/out-of-box actions retain their own absolute allowance, not a floor.
+        assert error <= _sg_rational(case["conditional_absolute_allowance_A_m2"]), (
+            label, observed.hex(), error
+        )
 
 
 def test_bernoulli_at_zero():
@@ -72,6 +104,18 @@ def test_vector_sg_face_jacobian_matches_independent_finite_difference(
     dx = np.array([8.0e-9, 2.3e-8])
     diffusion = np.array([2.0e-6, 7.0e-5])
     thermal_voltage = 0.0257
+    reference = json.loads(
+        (Path(__file__).parents[2] / "fixtures" / "sg_action_reference_v1.json")
+        .read_text(encoding="utf-8")
+    )
+    assert {
+        "phi": [float(value).hex() for value in phi],
+        "density": [float(value).hex() for value in density],
+        "dx": [float(value).hex() for value in dx],
+        "diffusion": [float(value).hex() for value in diffusion],
+        "thermal_voltage": thermal_voltage.hex(),
+        "Q": Q.hex(),
+    } == reference["fixture"]["binary64_hex"]
     local = jacobian_function(
         phi,
         density,
@@ -96,12 +140,18 @@ def test_vector_sg_face_jacobian_matches_independent_finite_difference(
 
     density_difference = np.empty_like(expected_density)
     potential_difference = np.empty_like(expected_potential)
+    perturbations = {"density": [], "potential": []}
     for node in range(density.size):
         density_step = density[node] * 1.0e-6
         density_plus = density.copy()
         density_minus = density.copy()
         density_plus[node] += density_step
         density_minus[node] -= density_step
+        perturbations["density"].append(
+            tuple(float(value).hex() for value in (
+                density_step, density_plus[node], density_minus[node]
+            ))
+        )
         density_difference[:, node] = (
             flux_function(
                 phi,
@@ -124,6 +174,11 @@ def test_vector_sg_face_jacobian_matches_independent_finite_difference(
         potential_minus = phi.copy()
         potential_plus[node] += potential_step
         potential_minus[node] -= potential_step
+        perturbations["potential"].append(
+            tuple(float(value).hex() for value in (
+                potential_step, potential_plus[node], potential_minus[node]
+            ))
+        )
         potential_difference[:, node] = (
             flux_function(
                 potential_plus,
@@ -147,18 +202,31 @@ def test_vector_sg_face_jacobian_matches_independent_finite_difference(
         rtol=0.0,
         atol=0.0,
     )
-    np.testing.assert_allclose(
-        density_difference,
-        expected_density,
-        rtol=3.0e-7,
-        atol=float(np.max(np.abs(expected_density))) * 1.0e-9,
-    )
-    np.testing.assert_allclose(
-        potential_difference,
-        expected_potential,
-        rtol=3.0e-7,
-        atol=float(np.max(np.abs(expected_potential))) * 1.0e-9,
-    )
+    carrier = "n" if flux_function is sg_fluxes_n else "p"
+    jacobians = {"density": expected_density, "potential": expected_potential}
+    differences = {"density": density_difference, "potential": potential_difference}
+    for case in reference["finite_difference_decomposition"]:
+        if case["carrier"] != carrier:
+            continue
+        block, face, node = case["block"], case["face"], case["node"]
+        observed = float(differences[block][face, node])
+        coefficient = float(jacobians[block][face, node])
+        label = (carrier, block, face, node)
+        assert math.isfinite(observed) and math.isfinite(coefficient), label
+        if case["exact_zero"]:
+            assert observed == coefficient == 0.0, label
+        else:
+            assert perturbations[block][node] == tuple(case[key] for key in (
+                "step_binary64_hex", "plus_binary64_hex", "minus_binary64_hex"
+            )), label
+            # Subtract exact dyadics; a rounded float difference is not the error.
+            error = abs(Fraction.from_float(observed) - Fraction.from_float(coefficient))
+            assert error <= _sg_rational(case["conditional_comparison_allowance"]), (
+                label, observed.hex(), coefficient.hex(), error
+            )
+    for case in reference["signed_actions"]:
+        if case["carrier"] == carrier:
+            _assert_sg_action(jacobians[case["block"]], case)
 
 
 def test_sg_flux_n_equilibrium():

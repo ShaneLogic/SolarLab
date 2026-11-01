@@ -23,12 +23,12 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: perovskite-sim/frontend/Dockerfile
+      dockerfile: web/Dockerfile
     image: solarlab-frontend:dev
     environment:
       VITE_API_BASE: http://127.0.0.1:8002
     volumes:
-      - ./perovskite-sim/frontend:/app
+      - ./web:/app
       - frontend_node_modules:/app/node_modules
     ports:
       - "5173:5173"

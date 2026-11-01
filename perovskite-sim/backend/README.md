@@ -1,7 +1,7 @@
 # Backend — FastAPI HTTP API
 
 Thin FastAPI wrapper around the `perovskite_sim` library. The frontend at
-`perovskite-sim/frontend/` talks to this service over HTTP + Server-Sent
+`web/` at the repository root talks to this service over HTTP + Server-Sent
 Events. For the full project overview, physics, and UI guide see the
 [root README](../../README.md).
 

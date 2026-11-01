@@ -1,0 +1,384 @@
+name: Refactor checks
+
+on:
+  push:
+    branches: [devel]
+  pull_request:
+    branches: [main, devel]
+  workflow_dispatch:
+    inputs:
+      run_coverage:
+        description: Run coverage on the bounded core smoke selection
+        type: boolean
+        default: false
+      run_slow:
+        description: Run the existing dark p-n junction regression only
+        type: boolean
+        default: false
+      run_ionic_jv_diagnostics:
+        description: Repeat the real ionic J-V HTTP module and retain native evidence
+        type: boolean
+        default: false
+      ionic_jv_diagnostic_repetitions:
+        description: Positive integer repeat count for each diagnostic Python version
+        type: number
+        default: 20
+      ionic_jv_measure_curve_64s:
+        description: Measure only the direct diagnostic curve with a 64s ceiling; no limit recommendation
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refactor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: perovskite-sim
+
+env:
+  UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-refactor
+  PYTHONDONTWRITEBYTECODE: "1"
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  VECLIB_MAXIMUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  BLIS_NUM_THREADS: "1"
+
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv lock --check
+      - run: uv sync --frozen --extra dev
+      # Scope grows with the refactor. Do not reformat the legacy numerical tree.
+      - name: Lint new files and the touched shared fixture
+        run: >-
+          uv run --frozen --no-sync ruff check --config pyproject.toml
+          tests/conftest.py tests/unit/test_pytest_isolation.py
+          tests/unit/backend/conftest.py tests/integration/backend/conftest.py
+          ../scripts/benchmarks/probe_ida_binding.py
+          ../scripts/benchmarks/g2_route_launcher.py ../tests/numerical_contracts/test_g2_route_launcher.py
+      - name: Format check for new files
+        run: >-
+          uv run --frozen --no-sync ruff format --check --config pyproject.toml
+          tests/unit/test_pytest_isolation.py tests/unit/backend/conftest.py
+          tests/integration/backend/conftest.py ../scripts/benchmarks/probe_ida_binding.py
+      - name: Type check new files
+        run: >-
+          uv run --frozen --no-sync mypy
+          tests/unit/test_pytest_isolation.py tests/unit/backend/conftest.py
+          tests/integration/backend/conftest.py ../scripts/benchmarks/probe_ida_binding.py
+
+      - name: Guard root test discovery and explicit exclusions
+        working-directory: .
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -s -p no:cacheprovider
+          tests/ci --junitxml=${{ runner.temp }}/test-discovery.xml
+
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .
+    env:
+      PYTEST_CI_JOB: core
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen --extra dev --extra arb --extra ida
+      - name: Existing coinstalled legacy kernel smoke
+        working-directory: perovskite-sim
+        run: >-
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q -p no:cacheprovider
+          tests/unit/test_pytest_isolation.py::test_core_pytest_does_not_import_backend
+          tests/unit/test_blas_marker_selection.py
+          tests/unit/physics/test_dynamic_storage.py
+          tests/unit/discretization/test_fe_operators.py
+      # Test-local prerequisites and strict xfails are documented in
+      # tests/ci/exclusions.json; no failure is hidden with -k or --deselect.
+      - name: Discover all root kernels and numerical contracts
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/unit tests/numerical_contracts tests/independent
+          -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/core-${{ matrix.python }}.xml
+
+  packages:
+    runs-on: ubuntu-24.04
+    # Package/refactor checks run about 8 min plus 1.5 min runtime pools.
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The release-bundle test compares the build commit with HEAD^.
+          fetch-depth: 2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv lock --check
+      - run: uv sync --frozen --extra dev --extra server --no-editable
+      - name: Discover all root integration and package tests
+        env:
+          PYTEST_CI_JOB: packages
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/integration tests/refactor -m 'not slow and not frontend'
+          --durations=20 --junitxml=${{ runner.temp }}/packages-${{ matrix.python }}.xml
+      - name: Check typed configuration, registry and runtime preparation
+        run: |
+          uv run --frozen --no-sync ruff check --no-cache src scripts/generate_configuration_schema.py tests/refactor/test_configuration_schema_export.py tests/refactor/test_configuration_input_types.py tests/refactor/test_configuration_preparation.py tests/refactor/test_registry_preparation.py tests/refactor/test_device_configuration_preparation.py tests/refactor/test_complex_configuration_preparation.py tests/refactor/test_structured_registry_preparation.py tests/refactor/test_execution_identity_preparation.py tests/refactor/test_behavior_context.py tests/refactor/test_experiment_registry_startup.py tests/refactor/test_input_domain_closure.py tests/refactor/test_legacy_behavior_execution.py tests/refactor/test_legacy_execution_context.py tests/refactor/legacy_driver_observer.py tests/refactor/test_effective_behavior_identity.py tests/refactor/test_configuration_migration.py tests/refactor/test_execution_manifest.py tests/refactor/test_release_bundle.py tests/refactor/test_binding_identity.py tests/refactor/test_registry_mapping.py tests/runtime/test_run_store.py tests/runtime/test_execution.py tests/runtime/test_legacy_engine.py tests/runtime/legacy_fixtures.py tests/runtime/execution_workers.py tests/runtime/test_event_service.py tests/runtime/test_configuration_schema_service.py tests/runtime/test_configuration_preview.py tests/unit/contracts tests/unit/mesh tests/unit/discretization tests/unit/physics/electrostatics tests/unit/physics/statistics tests/unit/physics/contacts tests/unit/physics/transport tests/unit/physics/band_structure tests/unit/physics/field_mobility
+          uv run --frozen --no-sync mypy --cache-dir /dev/null src/solarlab src/solarlab_server
+      - name: Check generated configuration schema
+        run: uv run --frozen --no-sync python scripts/generate_configuration_schema.py --check
+      - name: Installed package imports and resources outside the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -I -B - <<'PY'
+          import importlib.metadata
+          import importlib.resources
+          import pathlib
+          import sys
+          import solarlab
+          import solarlab_research
+          import solarlab_server
+          from solarlab.config import behavior
+          from solarlab_server.app import create_app
+          from perovskite_sim.models.parameters import MaterialParams
+
+          prefix = pathlib.Path(sys.prefix).resolve()
+          for module in (solarlab, solarlab_research, solarlab_server):
+              assert pathlib.Path(module.__file__).resolve().is_relative_to(prefix)
+              assert importlib.resources.files(module).joinpath("py.typed").is_file()
+          assert MaterialParams.__module__ == "perovskite_sim.models.parameters"
+          assert create_app.__module__ == "solarlab_server.app"
+          assert pathlib.Path(behavior.__file__).resolve().is_relative_to(prefix)
+          assert importlib.metadata.version("solarlab") == "0.1.0"
+          PY
+
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTEST_CI_JOB: backend
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen --extra dev --extra server
+      - name: Job cleanup, mocked dispatch and API rejection paths
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -p no:cacheprovider
+          tests/unit/test_pytest_isolation.py::test_backend_cleanup_precedes_monkeypatch_undo
+          tests/unit/backend/test_jobs.py tests/unit/backend/test_progress.py
+          tests/unit/backend/test_twod_microstructure_preflight.py
+          tests/unit/backend/test_experiment_protocol_api.py
+          tests/integration/backend/test_twod_configs_api.py
+
+      - name: Install the locked root service and runtime dependencies
+        working-directory: .
+        run: uv sync --frozen --extra dev --extra server --no-editable
+      - name: Discover all root runtime and HTTP tests
+        working-directory: .
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime --ignore tests/runtime/test_scan_execution.py
+          --ignore tests/runtime/test_supervisor_control_failure.py
+          -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/backend-${{ matrix.python }}.xml
+      # Separate process: pool RSS includes pytest and its process family.
+      # The discovery guard verifies this group and bulk ignore together.
+      - name: Isolated scan execution pool contracts
+        working-directory: .
+        env:
+          PYTEST_CI_ISOLATED_GROUP: scan_execution
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime/test_scan_execution.py -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/backend-scan-${{ matrix.python }}.xml
+      - name: Isolated supervisor control and recovery contracts
+        working-directory: .
+        env:
+          PYTEST_CI_ISOLATED_GROUP: supervisor_control_failure
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime/test_supervisor_control_failure.py -m 'not slow and not frontend' --durations=20
+          --junitxml=${{ runner.temp }}/backend-control-${{ matrix.python }}.xml
+
+  ionic-jv-diagnostics:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ionic_jv_diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.16", "3.13.15"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen --extra dev --extra server --no-editable
+      - name: Repeat ionic J-V HTTP diagnostics
+        env:
+          IONIC_JV_DIAGNOSTIC_REPETITIONS: ${{ inputs.ionic_jv_diagnostic_repetitions }}
+        run: >-
+          uv run --frozen --no-sync python scripts/ci/ionic_jv_diagnostics.py
+          --repetitions "$IONIC_JV_DIAGNOSTIC_REPETITIONS"
+          --output-dir "${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}"
+      - name: Uncensored direct ionic J-V child timings
+        if: always()
+        env:
+          IONIC_JV_DIAGNOSTIC_REPETITIONS: ${{ inputs.ionic_jv_diagnostic_repetitions }}
+          IONIC_JV_MEASURE_CURVE_64S: ${{ inputs.ionic_jv_measure_curve_64s }}
+        run: |
+          measurement_args=()
+          if [ "$IONIC_JV_MEASURE_CURVE_64S" = "true" ]; then
+            measurement_args+=(--diagnostic-curve-64)
+          fi
+          uv run --frozen --no-sync python scripts/ci/ionic_jv_timing.py \
+            --repetitions "$IONIC_JV_DIAGNOSTIC_REPETITIONS" \
+            --output-dir "${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}/uncensored" \
+            "${measurement_args[@]}"
+      - name: Upload every diagnostic attempt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ionic-jv-diagnostics-${{ matrix.python }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ionic-jv-diagnostics-${{ matrix.python }}/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14
+
+  binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --all-extras
+      - name: Optional research, notebook and legacy queue imports
+        run: >-
+          uv run --frozen --no-sync python -c
+          "import openpyxl, fitz, jupyterlab, backend.celery_app"
+      - name: Tiny analytic IDA binding probes
+        run: >-
+          uv run --frozen --no-sync python ../scripts/benchmarks/probe_ida_binding.py
+          --output "$RUNNER_TEMP/BindingCapabilitiesV1.json"
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTEST_CI_JOB: frontend
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - name: Install locked Python schema and service dependencies
+        working-directory: .
+        run: uv sync --frozen --extra dev --extra server --no-editable
+      - name: Discover Python and TypeScript browser contracts
+        working-directory: .
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/refactor tests/runtime --ignore tests/runtime/test_run_client_contract.py
+          -m 'not slow and frontend' --durations=20
+          --junitxml=${{ runner.temp }}/frontend-python.xml
+      # Do not import the whole numerical suite into the client's RSS budget.
+      - name: Isolated stored-run client pool contracts
+        working-directory: .
+        env:
+          PYTEST_CI_ISOLATED_GROUP: run_client
+        run: >-
+          uv run --frozen --no-sync python -m pytest -q -ra -p no:cacheprovider
+          tests/runtime/test_run_client_contract.py -m 'not slow and frontend' --durations=20
+          --junitxml=${{ runner.temp }}/frontend-run-client.xml
+      - run: SOLARLAB_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python" npm run test:run
+      - run: npm run build
+
+  coverage:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --extra dev
+      # Coverage stays outside the default pytest addopts and numerical lanes.
+      - run: >-
+          uv run --frozen --no-sync python -m pytest -q
+          --cov=perovskite_sim.physics.dynamic_storage
+          --cov=perovskite_sim.discretization.fe_operators --cov-report=term-missing
+          tests/unit/physics/test_dynamic_storage.py
+          tests/unit/discretization/test_fe_operators.py
+
+  slow:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_slow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.12.13"
+          python-version: "3.13.15"
+      - run: uv sync --frozen --extra dev
+      # One bounded existing regression. Full slow suites and qualified
+      # SCAPS/HI/R1 long-window campaigns require separately scheduled runs.
+      - run: >-
+          uv run --frozen --no-sync python -m pytest -q -m slow
+          tests/regression/test_pn_junction_analytic.py

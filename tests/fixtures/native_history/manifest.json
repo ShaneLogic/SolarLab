@@ -1,0 +1,45 @@
+{
+  "prefix": {
+    "path": "prefix.jsonl.gz",
+    "encoding": "gzip",
+    "stored_sha256": "d200a7a57252b379c0e9d4e9b140db6a2e955855c244ece005a5805e174e4b65",
+    "sha256": "5f29191563a01dd9c5a6c16a7120715a8d41d953ca18edaddeb7b54f659cfde1"
+  },
+  "accepted": {
+    "path": "accepted.jsonl",
+    "sha256": "f338f0d037c060e171da0e0b3a6bf8f43b088d52f810c98595aa7512d64e1a26"
+  },
+  "live": {
+    "path": "prefix.jsonl.gz",
+    "remove_suffix_bytes": 10,
+    "sha256": "9054e7308d53a2b76b5263dda7310ff487003054036b1d27a9462fbb3569f6ee"
+  },
+  "final": {
+    "path": "prefix.jsonl.gz",
+    "sha256": "d200a7a57252b379c0e9d4e9b140db6a2e955855c244ece005a5805e174e4b65"
+  },
+  "reader": {
+    "path": "reader.txt",
+    "sha256": "2f50bc23c31f9806078331182ebbd7ccf5ab1b304dc1fb48de9d8fa8efd40553",
+    "fragment": true,
+    "original_source_sha256": "80fef7b4e37b1a5306af41048b9e909e73b4fee59b36dfe2636d69194e2ce977",
+    "original_statement_lines": [
+      38,
+      45
+    ]
+  },
+  "provenance": {
+    "source_attempt": "NativeAttempt04/S0NeutralPublicDeviceV1",
+    "source_execution_head": "13e5af2aefa40c7009195de46ece379096ed9a09",
+    "whole_history_sha256": "b48ffd00868ff649654ec13461e26e2a1b60c41955f71ffa77dd98e3e4286da9",
+    "prefix_original_range": [
+      0,
+      225421
+    ],
+    "accepted_original_range": [
+      265737573,
+      265776676
+    ],
+    "scope": "Exact format/reader fixture from an incomplete failed attempt; concatenated excerpts are not a continuous trajectory or scientific qualification."
+  }
+}

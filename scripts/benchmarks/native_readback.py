@@ -1,0 +1,3241 @@
+"""Strict, bounded readback of a completed voltage-lift native history.
+
+This is artifact verification, not a replay or a new scientific qualification.
+Only the current record, two endpoints and one interval's sample pointers are
+retained. The caller owns source admission, process cleanup, archive publication
+and the whole-process wall/RSS/output limits; the deadline here is the same
+absolute ``time.perf_counter()`` deadline, not an additional timeout allowance.
+"""
+from __future__ import annotations
+
+from collections import Counter
+from fractions import Fraction
+import hashlib
+import json
+import math
+from pathlib import Path
+import struct
+import time
+import zlib
+
+from scripts.benchmarks.native_history import (
+    HistoryReader, configure_integer_io, decode_integer_values, encode_integer_values, integer_io_observed,
+)
+
+
+class HistoryVerificationError(ValueError):
+    """A bounded diagnostic, with the offending record and logical offset."""
+
+    def __init__(self, code: str, record_index: int = 0, logical_offset: int = 0):
+        self.code = code[:160]
+        self.record_index = record_index
+        self.logical_offset = logical_offset
+        super().__init__(f"{self.code} (record={record_index}, offset={logical_offset})")
+
+
+def _require(condition, code):
+    if not condition:
+        raise HistoryVerificationError(code)
+
+
+def _digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                                     allow_nan=False).encode()).hexdigest()
+
+
+def _hex(value):
+    _require(type(value) is str, "hex_word_type")
+    number = float.fromhex(value)
+    _require(math.isfinite(number) and number.hex() == value, "noncanonical_or_nonfinite_hex")
+    return number
+
+
+def _vector(value, size):
+    _require(type(value) in (list, tuple) and len(value) == size, "vector_shape")
+    return value
+
+
+def _hex_vector(value, size):
+    return tuple(_hex(item) for item in _vector(value, size))
+
+
+def _word_bytes(value, size):
+    return struct.pack(f"<{size}d", *_hex_vector(value, size))
+
+
+def _buffer(value, size):
+    _require(type(value) is bytes and len(value) == 8 * size, "native_buffer_shape")
+    values = struct.unpack(f"<{size}d", value)
+    _require(all(math.isfinite(v) for v in values), "native_buffer_nonfinite")
+    return values
+
+
+def _pairs(pairs):
+    obj = {}
+    for key, value in pairs:
+        _require(key not in obj, "duplicate_json_key")
+        obj[key] = value
+    return obj
+
+
+def _constant(_):
+    raise HistoryVerificationError("nonfinite_json_constant")
+
+
+def _finite(value):
+    value = float(value)
+    _require(math.isfinite(value), "nonfinite_json_number")
+    return value
+
+
+def _decode(value, depth=0):
+    """Validate reserved tags without importing the numerical packet reader."""
+    _require(depth <= 64, "json_nesting_limit")
+    if type(value) is list:
+        return [_decode(v, depth + 1) for v in value]
+    if type(value) is not dict:
+        return value
+    tags = set(value) & {"tuple", "rational", "bytes_hex", "binary64"}
+    if tags:
+        _require(len(tags) == len(value) == 1, "ambiguous_observation_tag")
+        key = next(iter(tags))
+        data = value[key]
+        if key == "tuple":
+            _require(type(data) is list, "tuple_tag_type")
+            return tuple(_decode(v, depth + 1) for v in data)
+        if key == "binary64":
+            return _hex(data)
+        if key == "bytes_hex":
+            _require(type(data) is str, "bytes_tag_type")
+            binary = bytes.fromhex(data)
+            _require(binary.hex() == data, "noncanonical_bytes_tag")
+            return binary
+        _require(type(data) is list and len(data) == 2
+                 and all(type(v) is int for v in data) and data[1] > 0,
+                 "rational_tag_shape")
+        result = Fraction(*data)
+        _require([result.numerator, result.denominator] == data, "noncanonical_rational_tag")
+        return result
+    return {key: _decode(item, depth + 1) for key, item in value.items()}
+
+
+def _json(data, integer_io_policy=None):
+    integer_io_observed(integer_io_policy)
+    result = json.loads(data.decode("utf-8"), object_pairs_hook=_pairs,
+                        parse_constant=_constant, parse_float=_finite)
+    result = decode_integer_values(result, integer_io_policy)
+    _require(type(result) is dict, "json_object_required")
+    _decode(result)  # Validate every tag, including fields outside the projections below.
+    return result
+
+
+def _read_json(path, limit, checkpoint, integer_io_policy=None):
+    checkpoint()
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    checkpoint()
+    _require(len(data) <= limit, "metadata_byte_limit")
+    return _json(data, integer_io_policy)
+
+
+def _nonnegative(values, size):
+    values = _vector(values, size)
+    _require(all(type(v) is Fraction and v >= 0 for v in values), "nonnegative_rational_vector")
+    return tuple(values)
+
+
+def _enclosures(values, size):
+    converted = []
+    for value in _vector(values, size):
+        _require(type(value) is dict and set(value) == {"center", "absolute_error_bound"}, "enclosure_structure")
+        item = {}
+        # Enclosure.payload uses untagged numerator/denominator lists. These
+        # are distinct from observation_record's tagged standalone Fractions.
+        for key, pair in value.items():
+            _require(type(pair) is list and len(pair) == 2 and all(type(v) is int for v in pair)
+                     and pair[1] > 0, "enclosure_rational_pair")
+            rational = Fraction(*pair)
+            _require([rational.numerator, rational.denominator] == pair, "enclosure_noncanonical_pair")
+            item[key] = rational
+        _require(item["absolute_error_bound"] >= 0, "enclosure_negative_radius")
+        converted.append(item)
+    return tuple(converted)
+
+
+def _word_pair(value, size):
+    _require(type(value) is dict and set(value) == {"high_hex", "low_hex"}, "double_word_shape")
+    high = _hex_vector(value["high_hex"], size)
+    low = _hex_vector(value["low_hex"], size)
+    return tuple(Fraction(a) + Fraction(b) for a, b in zip(high, low))
+
+
+def _snapshot_digest(value):
+    def tagged(item):
+        if type(item) is dict:
+            return ["mapping", [[key, tagged(item[key])] for key in sorted(item)]]
+        if type(item) is tuple:
+            return ["tuple", [tagged(part) for part in item]]
+        if type(item) is bytes:
+            return ["bytes", item.hex()]
+        if type(item) is float:
+            return ["binary64", item.hex()]
+        _require(type(item) in (str, int, bool, type(None)), "native_packet_type")
+        return [type(item).__name__, item]
+    return _digest(tagged(value))
+
+
+_STAMP_NAMES = ("IDAGetNumSteps", "IDAGetCurrentTime", "IDAGetLastStep",
+                "IDAGetLastOrder", "IDAGetCurrentStep", "IDAGetCurrentOrder")
+_COUNTERS = ("num_steps", "residual_evals", "linear_setups", "error_test_fails",
+             "nonlinear_iters", "nonlinear_conv_fails", "jacobian_evals")
+_LEDGERS = ("raw_polynomial", "same_state_affine_tangent")
+
+
+def _statuses(value, names):
+    _require(type(value) is tuple and len(value) == len(names)
+             and all(type(row) is tuple and len(row) == 2 and row[0] == name
+                     and type(row[1]) is int and row[1] == 0
+                     for row, name in zip(value, names)), "native_getter_status")
+
+
+def _stamp(stamp):
+    _require(all(type(stamp[k]) is int for k in ("nsteps", "kused", "kk"))
+             and all(type(stamp[k]) is float and math.isfinite(stamp[k])
+                     for k in ("tn", "hused", "hh")), "native_stamp_type")
+    _statuses(stamp["statuses"], _STAMP_NAMES)
+    return tuple(stamp[k] for k in ("nsteps", "tn", "hused", "kused", "hh", "kk"))
+
+
+def _native_packet(packet, policy, size):
+    """Structural/word checks from the maintained native packet contract.
+
+    No polynomials or models are constructed. The frame identity is recomputed
+    from all packet fields, including the native provenance and low-level bytes.
+    """
+    p = _decode(packet)
+    _require(p["schema"] == "sksundae.ida.accepted-step-observation.v1"
+             and p["dtype"] == "<f8" and p["shape"] == (size,), "native_packet_schema")
+    binding, header = policy["binding_identity"], policy["header_sha256"]
+    source = p["binding"]["source"]
+    _require(type(source) is tuple and len(source) == 8
+             and hashlib.sha256(repr(source).encode()).hexdigest() == binding
+             and p["binding"]["identity"] == binding and source[0] == p["schema"]
+             and source[1] == "scikit-sundae=1.1.3" and source[5] == header,
+             "native_binding_identity")
+    before = p["native_before"]
+    _require(_stamp(before) == _stamp(p["native_after"]), "native_stamp_changed")
+    owner, generation, q = p["owner"], p["generation"], before["kused"]
+    _require(type(owner) is str and bool(owner) and type(generation) is int and generation >= 1
+             and 1 <= q <= 5 and before["nsteps"] >= 1 and before["hused"] > 0,
+             "native_owner_or_order")
+    key = (binding, owner, generation, before["nsteps"], before["tn"].hex(),
+           before["hused"].hex(), q, before["hh"].hex(), before["kk"])
+    _require(p["step_key"] == key, "native_step_key")
+    previous, endpoint = p["predecessor"], p["endpoint"]
+    for point, steps in ((previous, before["nsteps"] - 1), (endpoint, before["nsteps"])):
+        _require(point["owner"] == owner and point["generation"] == generation
+                 and point["nsteps"] == steps and type(point["internal_t"]) is float
+                 and type(point["output_t"]) is float
+                 and point["internal_t"].hex() == point["output_t"].hex()
+                 and type(point["native_status"]) is int and point["native_status"] in (0, 1),
+                 "native_endpoint_context")
+        _buffer(point["raw_y"], size)
+        _buffer(point["raw_yp"], size)
+        expected = (owner, generation, steps, point["internal_t"].hex(), point["output_t"].hex(),
+                    hashlib.sha256(point["raw_y"] + point["raw_yp"]).hexdigest())
+        _require(point["identity"] == expected, "native_endpoint_identity")
+    _require(previous["internal_t"] < endpoint["internal_t"] == before["tn"]
+             and p["raw_y"] == endpoint["raw_y"] and p["raw_yp"] == endpoint["raw_yp"]
+             and p["native_left_terms"] == (before["tn"], -before["hused"])
+             and p["clock_gap_terms"] == (before["tn"], -before["hused"], -previous["internal_t"]),
+             "native_endpoint_or_clock")
+    basis = p["basis"]
+    _require(basis["kind"] == "ida75_phi_psi_copy_v1" and basis["dtype"] == "<f8"
+             and basis["phi_shape"] == (q + 1, size) and basis["psi_shape"] == (q,)
+             and type(basis["status"]) is int and basis["status"] == 0
+             and basis["source_header_sha256"] == header and basis["source_config_sha256"] == source[6]
+             and basis["build_identity"] == binding and type(basis["uround"]) is float
+             and 0 < basis["uround"] < 1, "native_basis_binding")
+    _buffer(basis["phi"], (q + 1) * size)
+    _require(all(v != 0 for v in _buffer(basis["psi"], q)), "native_zero_psi")
+    pred = p["predecessor_dky"]
+    statuses = _vector(pred["statuses"], 2)
+    _require(pred["query_t"] == previous["internal_t"]
+             and pred["query_t_hex"] == previous["internal_t"].hex() and pred["orders"] == (0, 1)
+             and all(type(v) is int for v in statuses) and type(pred["native_eligible"]) is bool
+             and pred["native_eligible"] == all(v == 0 for v in statuses)
+             and _stamp(pred["step_before"]) == _stamp(before)
+             and _stamp(pred["step_after"]) == _stamp(before), "native_predecessor_getters")
+    for code, buffer in zip(statuses, _vector(pred["buffers"], 2)):
+        if code == 0:
+            _buffer(buffer, size)
+        else:
+            _require(buffer is None, "failed_getter_buffer")
+    for buffer in _vector(p["dky"], q + 1):
+        _buffer(buffer, size)
+    _buffer(p["estimated_local_errors"], size)
+    _require(all(v > 0 for v in _buffer(p["error_weights"], size)), "native_error_weights")
+    _statuses(p["vector_statuses"], tuple(f"IDAGetDky[{k}]" for k in range(q + 1))
+              + ("IDAGetErrWeights", "IDAGetEstLocalErrors"))
+    return p, _snapshot_digest(p)
+
+
+class _Rows:
+    def __init__(self, reader, max_records, checkpoint):
+        self.reader, self.max_records, self.checkpoint = reader, max_records, checkpoint
+        self.count = self.offset = self.crc = 0
+        self.hash = hashlib.sha256()
+        self.counts = Counter()
+        self.last = None
+
+    def take(self, kind=None, *, eof=False):
+        self.checkpoint()
+        try:
+            line = next(self.reader)
+        except StopIteration:
+            _require(eof, "history_premature_eof")
+            return None
+        self.offset = self.reader.logical_bytes - len(line)
+        self.count += 1
+        _require(self.count <= self.max_records, "record_count_limit")
+        _require(line.endswith(b"\n") and line.count(b"\n") == 1, "partial_or_multiline_record")
+        row = _json(line, getattr(self.reader, "integer_io_policy", None))
+        self.hash.update(line)
+        self.crc = zlib.crc32(line, self.crc)
+        self.checkpoint()
+        _require(type(row.get("kind")) is str, "record_kind_required")
+        self.counts[row["kind"]] += 1
+        _require(not eof, "surplus_history_record")
+        _require(kind is None or row["kind"] == kind, "record_order_expected_" + str(kind))
+        self.last = {"history_byte_offset_after_record": self.reader.logical_bytes,
+                     "kind": row["kind"], "record_sha256": row.get("record_sha256"),
+                     "history_encoding": "gzip"}
+        return row
+
+
+def qualification_coordinate_count(request):
+    """New fixed case contract only; imports no producer, model or solver."""
+    from scripts.benchmarks.qualification_policy import check_initialized_request
+    try:
+        return check_initialized_request(request)
+    except (ValueError, KeyError, TypeError, OverflowError) as error:
+        raise HistoryVerificationError("qualification_request_binding") from error
+
+
+def segment_startup_controls(request, segment):
+    """Independently bind the selected hold step, without producer imports."""
+    controls = dict(request["controls"])
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import validate_request, segment_startup_policy
+        validate_request(request)
+        _require(segment in request["segments"], "physical_startup_segment")
+        if "segment_startup_policy" in request:
+            policy = request["segment_startup_policy"]
+            expected = segment_startup_policy(request, policy.get("overrides"))
+            _require(policy == expected, "physical_startup_binding")
+            controls.update(expected["overrides"].get(segment["id"], {}))
+        return controls
+    _require("segment_startup_overrides" not in request, "segment_startup_unbound_override")
+    qualified = "qualification_policy" in request
+    size = qualification_coordinate_count(request) if qualified else 45
+    if "segment_startup_policy" not in request:
+        return controls
+    exponents = {1024: 10, 65536: 16}
+    kappa = request.get("time_weight_policy", {}).get("kappa")
+    policy = request["segment_startup_policy"]
+    _require(type(policy) is dict, "segment_startup_policy_binding")
+    overrides = policy.get("overrides")
+    _require(type(overrides) is dict and set(overrides) == {"slow_state_hold"}
+             and type(overrides["slow_state_hold"]) is dict
+             and set(overrides["slow_state_hold"]) == {"first_step"}, "segment_startup_policy_binding")
+    value = overrides["slow_state_hold"]["first_step"]
+    _require(type(value) in (int, float) and value in (0, 2.0**-32) and math.copysign(1, value) == 1,
+             "segment_startup_policy_binding")
+    expected = {
+        "schema": "solarlab.voltage-lift-segment-startup.v1",
+        "ancestor_request_sha256": request["prior_request_sha256"],
+        "base_controls_sha256": _digest(controls),
+        "segments_sha256": _digest(request["segments"]),
+        "time_weight_policy_sha256": _digest(request.get("time_weight_policy")),
+        "overrides": {"slow_state_hold": {"first_step": float(value)}},
+        "application": "fresh_segment_initialization_before_first_solve",
+    }
+    if qualified:
+        expected.update(schema="solarlab.voltage-lift-segment-startup.v2",
+                        qualification_policy_sha256=_digest(request["qualification_policy"]))
+    _require(type(policy) is dict and _digest(policy) == _digest(expected)
+             and request["case_id"] == "DynamicAcceptorIonPublicDeviceV1"
+             and [s["id"] for s in request["segments"]] == [
+                 "dark_equilibrium_hold", "voltage_ramp", "slow_state_hold"]
+             and segment in request["segments"]
+             and controls.get("first_step") == 7.8125e-7
+             and len(controls.get("atol", [])) == size
+             and type(kappa) is int and kappa in exponents
+             and controls.get("nonlin_conv_coef") == math.ldexp(1e-8, exponents[kappa])
+             and controls.get("nonlin_guard") == "first-correction-wrms-v1"
+             and controls.get("nonlin_trace_capacity") == 4096,
+             "segment_startup_policy_binding")
+    if segment["id"] == "slow_state_hold":
+        controls["first_step"] = float(value)
+    return controls
+
+
+class SegmentStartupCheck:
+    """Bounded constructor/native-stat association, also usable on failed runs.
+
+    Constructor words are source evidence, not a native requested-step getter.
+    h0u independently checks explicit steps and records automatic selection;
+    it cannot prove which automatic-start algorithm was executed.
+    """
+    def __init__(self, request):
+        self.request = request
+        self.enabled = "segment_startup_policy" in request
+        self.expected = [segment_startup_controls(request, s) for s in request["segments"]]
+        self.contexts = []
+
+    def consume(self, row):
+        kind = row.get("kind")
+        if kind == "voltage_lift_initialization_controls":
+            ordinal = len(self.contexts) + 1
+            _require(self.enabled and ordinal <= len(self.expected), "segment_startup_unexpected_constructor")
+            segment = self.request["segments"][ordinal - 1]
+            controls = self.expected[ordinal - 1]
+            _require(row["request_sha256"] == _digest(self.request)
+                     and row["map_identity"] == self.request["map_identity"]
+                     and row["segment_id"] == segment["id"]
+                     and row["segment_sha256"] == _digest(segment)
+                     and type(row["logical_initialization_index"]) is int
+                     and row["logical_initialization_index"] == ordinal
+                     and row["segment_startup_policy_sha256"] == _digest(self.request["segment_startup_policy"])
+                     and _digest(row["constructor_controls"]) == row["constructor_controls_sha256"] == _digest(controls)
+                     and row["requested_first_step_hex"] == float(controls["first_step"]).hex(),
+                     "segment_startup_constructor_binding")
+            self.contexts.append({"ordinal": ordinal, "segment_id": segment["id"],
+                "constructor_record_sha256": _digest(row), "controls_sha256": _digest(controls),
+                "requested_first_step_hex": row["requested_first_step_hex"],
+                "native_owner": None, "actual_initial_step_hex": None, "accepted_steps": 0,
+                "first_return_record_sha256": None})
+        elif self.enabled and kind == "native_statistics":
+            ordinal = row["logical_initialization_index"]
+            _require(type(ordinal) is int and ordinal == len(self.contexts) and ordinal > 0,
+                     "segment_startup_missing_constructor")
+            context, raw = self.contexts[-1], row["raw_statistics"]
+            _require(row["segment_id"] == context["segment_id"], "segment_startup_statistics_segment")
+            owner = [raw["observation_owner"], raw["observation_generation"]]
+            if row["phase"] == "initialization_return":
+                _require(context["native_owner"] is None and raw["num_steps"] == 0,
+                         "segment_startup_initialization_sequence")
+                context["native_owner"] = owner
+            else:
+                _require(context["native_owner"] == owner, "segment_startup_native_owner")
+            if row["phase"] in ("after_onestep", "onestep_exception"):
+                h0, count = raw["initial_step"], raw["num_steps"]
+                _require(type(count) is int and count >= context["accepted_steps"],
+                         "segment_startup_step_count")
+                if count > 0:
+                    _require(type(h0) is float and math.isfinite(h0) and h0 > 0,
+                             "segment_startup_actual_initial_step")
+                    requested = self.expected[ordinal - 1]["first_step"]
+                    _require(requested == 0 or h0.hex() == float(requested).hex(),
+                             "segment_startup_explicit_step_not_applied")
+                    _require(context["actual_initial_step_hex"] in (None, h0.hex()),
+                             "segment_startup_actual_step_changed")
+                    context["actual_initial_step_hex"] = h0.hex()
+                if context["first_return_record_sha256"] is None:
+                    context["first_return_record_sha256"] = _digest(row)
+                    context["first_return_steps"] = count
+                    context["raw_first_return_initial_step"] = h0
+                context["accepted_steps"] = count
+
+    def finish(self, *, complete):
+        if self.enabled and complete:
+            _require(len(self.contexts) == len(self.expected)
+                     and all(c["native_owner"] is not None and c["accepted_steps"] > 0
+                             and c["actual_initial_step_hex"] is not None for c in self.contexts),
+                     "segment_startup_incomplete_application")
+        return {"enabled": self.enabled, "initializations": self.contexts,
+                "native_requested_first_step_getter": "unavailable",
+                "scope": "source-bound constructor kwargs and actual IDAGetIntegratorStats h0u; no accuracy qualification"}
+
+
+_CHARGE_ROWS = ("device", "left_metal", "right_metal")
+_CHARGE_CHANNELS = tuple(f"{ledger}.{row}.{kind}" for ledger in _LEDGERS
+                         for row in _CHARGE_ROWS for kind in ("total", "reference"))
+_CHARGE_LOCAL_FIELDS = ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C",
+                        "error_components_C", "signed_saved_defect_C", "interval_total_bound_C",
+                        "interval_reference_error_C", "original_charge_budget_C", "original_reference_share_C")
+
+
+def _exact_ratio(value):
+    _require(type(value) is list and len(value) == 2 and all(type(v) is int for v in value)
+             and value[1] > 0 and max(abs(v).bit_length() for v in value) <= 131072,
+             "partition_rational_pair")
+    result = Fraction(*value)
+    _require([result.numerator, result.denominator] == value, "partition_noncanonical_ratio")
+    return result
+
+
+class _ChargeRefinement:
+    """Independent certificate arithmetic; no observer or accumulator imports.
+
+    Moment enclosures remain source-bound evidence, not a new evaluation of the
+    physical integrand. Twelve dyadic prefixes persist across every segment.
+    """
+
+    quantum = Fraction(1, 1 << 120)
+    maximum_terms = 200000
+    maximum_bits = 65675
+
+    def __init__(self, request, source_identity):
+        self.request, self.source_identity = request, source_identity
+        policy = request["interval_observation"]
+        base = {k: v for k, v in policy.items() if k not in ("charge_refinement", "parent_policy_sha256")}
+        base["schema"] = "solarlab.interval-observation-policy.v1"
+        static = {
+            "arithmetic": {"python_flint": "0.8.0", "bits": 256, "evaluations": 2048, "depth": 16},
+            "quadrature_error_allocation": "charge_C/12 * actual_interval/full_protocol / 32 per integral",
+            "sampling": "original requested and 8/16/32 times, explicitly declared polynomial reconstruction",
+            "history": "actual accepted predecessor/endpoint plus source-owned immutable phi/psi/Dky and error metadata",
+            "qualification": "represented numerical path only; original independent time/state/space refinements remain pending",
+        }
+        if "physical_tolerance_policy" in request:
+            from scripts.benchmarks.physical_tolerance import physical_charge_policy, CHARGE_ALLOCATION
+            static.update(physical_charge=physical_charge_policy(request),
+                          quadrature_error_allocation=CHARGE_ALLOCATION)
+        expected_keys = {"schema", "map_identity", "protocol_sha256", "controls_sha256", "budgets_sha256",
+                         "sampling_sha256", "binding_identity", "header_sha256", "backend_modules", *static}
+        _require(policy.get("schema") == "solarlab.interval-observation-policy.v2"
+                 and set(base) == expected_keys and all(_digest(base[k]) == _digest(v) for k, v in static.items())
+                 and policy.get("parent_policy_sha256") == _digest(base), "charge_refinement_parent_policy")
+        slack = self.maximum_terms * self.quantum
+        constants = {"schema": "solarlab.nonnegative-upper-sum.v1", "quantum_bits": 120,
+                     "max_terms": self.maximum_terms, "max_increment_bits": 65536,
+                     "max_evidence_bytes": 8 * 1024 * 1024,
+                     "max_slack_per_channel": [slack.numerator, slack.denominator],
+                     "channel_ids": list(_CHARGE_CHANNELS)}
+        _require(_digest(policy.get("charge_refinement")) == _digest({
+            "name": "fixed4-upper120-v1", "partition_cells": 4, "upper_sum": constants,
+            "prefix_semantics": "exact signed local evidence; non-resetting upward dyadic upper bounds; original gates"})
+            and type(request["budgets"]["native_steps"]) is int
+            and request["budgets"]["native_steps"] == self.maximum_terms, "charge_refinement_constants")
+        self.policy_id = _digest({"schema": constants["schema"], "source_identity": source_identity,
+            "channels": [{"id": name, "unit": "C", "increment":
+                "interval_total_bound_C" if name.endswith(".total") else "interval_reference_error_C",
+                "role": "nonnegative_upper_bound"} for name in _CHARGE_CHANNELS],
+            "quantum_bits": 120, "max_terms": self.maximum_terms,
+            "max_slack_per_channel_hex": [hex(slack.numerator), hex(slack.denominator)],
+            "max_increment_bits": 65536, "max_evidence_bytes": 8 * 1024 * 1024})
+        self.index = 0
+        self.numerators = self.rounded = (0,) * 12
+
+    def _absolute_bound(self, payload, left, right, allocation, calls, call_range):
+        _require(type(payload) is dict and set(payload) == {
+            "upper", "method", "squared_integral", "numerical_excess_bound", "is_integral_value_estimate"}
+            and payload["method"] == "Cauchy-Schwarz from a certified squared integral"
+            and payload["is_integral_value_estimate"] is False, "partition_bound_structure")
+        upper, excess = _exact_ratio(payload["upper"]), _exact_ratio(payload["numerical_excess_bound"])
+        moment = _enclosures([payload["squared_integral"]], 1)[0]
+        center, radius = moment["center"], moment["absolute_error_bound"]
+        _require(type(call_range) is tuple and len(call_range) == 2
+                 and all(type(v) is int for v in call_range)
+                 and self.call_end <= call_range[0] < call_range[1] <= len(calls), "partition_call_range")
+        self.call_end = call_range[1]
+        receipts = calls[call_range[0]:call_range[1]]
+        _require(receipts[0] == {"evaluations": 1, "purpose": "full-real-interval-precheck", "working_bits": 512}
+                 and type(receipts[0]["evaluations"]) is int and type(receipts[0]["working_bits"]) is int,
+                 "partition_real_precheck")
+        _require(right > left and allocation > 0 and upper >= 0 and 0 <= excess <= allocation
+                 and center + radius >= 0, "partition_moment_bounds")
+        if len(receipts) == 1:
+            _require(upper == center == radius == excess == 0, "partition_zero_range_certificate")
+        else:
+            _require(len(receipts) == 2 and excess == allocation, "partition_moment_receipts")
+            receipt = receipts[1]
+            goal = allocation ** 2 / (8 * (right - left))
+            _require(receipt.get("purpose") == "L2-moment" and receipt.get("working_bits") == 512
+                     and type(receipt.get("working_bits")) is int
+                     and receipt.get("absolute_integrand") is False
+                     and type(receipt.get("evaluations")) is int and 0 < receipt["evaluations"] <= 2047
+                     and _exact_ratio(receipt["actual_error"]) == radius
+                     and _exact_ratio(receipt["requested_error"]) == goal and radius <= goal,
+                     "partition_moment_radius")
+        square = (right - left) * (center + radius)
+        _require(upper ** 2 >= square and max(Fraction(0), upper - allocation / 2) ** 2 <= square,
+                 "partition_outward_root")
+        return upper
+
+    def partition(self, evidence, calls, path_identity):
+        part = evidence["terminal_partition"]
+        _require(type(part) is dict and set(part) == {"schema", "path_identity", "normalized_interval",
+            "cells_per_port", "ports", "endpoint_carrier_L1_upper_C", "body_L1_upper_C"}
+            and part["schema"] == "solarlab.terminal-partition.v1" and part["path_identity"] == path_identity
+            and type(part["cells_per_port"]) is int and part["cells_per_port"] == 4, "partition_identity")
+        clock = evidence["clock"]
+        before, now, h = (_exact_ratio(clock[k]) for k in ("predecessor", "tn", "hused"))
+        _require(now > before and h > 0, "partition_clock")
+        first, last = before, now
+        if "observation_subinterval" in evidence:
+            sub = evidence["observation_subinterval"]
+            first, last = sub["left"], sub["right"]
+            _require(self.request.get("diagnostic_interval") is not None and before == first < last < now
+                     and sub == {"left": first, "right": last, "native_clock_unchanged": True,
+                                 "accepted_native_step": False, "completed_prefix_mutated": False},
+                     "partial_prefix_clock_provenance")
+        left, right = (first-now)/h, (last-now)/h
+        _require(part["normalized_interval"] == (left, right), "partition_clock_coverage")
+        charge_budget = (Fraction(self.request["interval_observation"]["physical_charge"]["budget_C"])
+                         if "physical_tolerance_policy" in self.request else Fraction(self.request["budgets"]["charge_C"]))
+        allocation = charge_budget / 12 * (last-first)
+        normalization = (_hex(self.request["original_full_protocol_end_hex"])
+                         if "diagnostic_interval" in self.request else self.request["segments"][-1]["end"])
+        allocation /= Fraction(normalization) * 32
+        ports = _vector(part["ports"], 2)
+        originals = _vector(evidence["raw_tangent_L1_current_bounds"], 2)
+        self.call_end = 0
+        retained = []
+        for index, port in enumerate(ports):
+            name = _CHARGE_ROWS[index + 1]
+            _require(type(port) is dict and set(port) == {"port", "integrand_identity", "absolute_error_C",
+                "original", "original_call_range", "cells", "partition_upper_C", "retained_upper_C"}
+                and port["port"] == name and port["integrand_identity"] == _digest({
+                    "schema": "solarlab.terminal-departure.v1", "path_identity": path_identity, "port": name,
+                    "formula": "hused*(endpoint_carrier_rate+raw_metal-tangent_metal_polynomial-tangent_metal_flux)"})
+                and type(port["absolute_error_C"]) is Fraction and port["absolute_error_C"] == allocation
+                and port["original"] == originals[index], "partition_port_binding")
+            original = self._absolute_bound(port["original"], left, right, allocation, calls, port["original_call_range"])
+            total = Fraction(0)
+            for j, cell in enumerate(_vector(port["cells"], 4)):
+                a, b = left + (right - left) * Fraction(j, 4), left + (right - left) * Fraction(j + 1, 4)
+                _require(type(cell) is dict and set(cell) == {"left", "right", "allocation_C", "bound", "call_range"}
+                         and type(cell["left"]) is Fraction and type(cell["right"]) is Fraction
+                         and (cell["left"], cell["right"]) == (a, b)
+                         and type(cell["allocation_C"]) is Fraction and cell["allocation_C"] == allocation / 4,
+                         "partition_cell_clock_or_allocation")
+                total += self._absolute_bound(cell["bound"], a, b, allocation / 4, calls, cell["call_range"])
+            values = _nonnegative((port["partition_upper_C"], port["retained_upper_C"]), 2)
+            _require(values == (total, min(original, total)), "partition_upper_selection")
+            retained.append(values[1])
+        carrier = _nonnegative(part["endpoint_carrier_L1_upper_C"], 2)
+        body, = _nonnegative((part["body_L1_upper_C"],), 1)
+        inputs = evidence["input_error"]
+        gap_inputs = tuple(a + b for a, b in zip(inputs["raw_charge_integral_error_C"],
+                                                inputs["tangent_charge_integral_error_C"]))
+        expected = (body, retained[0] + carrier[0], retained[1] + carrier[1])
+        _require(evidence["ledgers"]["raw_polynomial"]["error_components_C"]["raw_tangent_departure"]
+                 == tuple(a + b for a, b in zip(expected, gap_inputs))
+                 and evidence["ledgers"]["same_state_affine_tangent"]["error_components_C"]["raw_tangent_departure"]
+                 == (Fraction(0),) * 3, "partition_charge_debits")
+
+    def step(self, raw_observation, evidence, interval_index):
+        cert = evidence["upper_sum"]
+        _require(type(cert) is dict and set(cert) == {"schema", "policy_sha256", "source_identity", "channel_ids",
+            "index", "interval_sha256", "upper_numerators", "rounded_terms", "slack_upper_bounds"}
+            and cert["schema"] == "solarlab.nonnegative-upper-step.v1" and cert["policy_sha256"] == self.policy_id
+            and cert["source_identity"] == self.source_identity and cert["channel_ids"] == _CHARGE_CHANNELS
+            and type(cert["index"]) is int and cert["index"] == self.index + 1 == interval_index
+            and cert["index"] <= self.maximum_terms, "charge_upper_identity_or_index")
+        # Select already serialized local fields before decoded enclosures are
+        # converted for arithmetic. Re-tagging those conversions changes bytes.
+        selected = {"schema": "solarlab.native-charge-local-evidence.v1", "source_identity": self.source_identity,
+                    "frame_identity": raw_observation["frame_identity"], "path_identity": raw_observation["path_identity"],
+                    "clock": raw_observation["clock"],
+                    "ledgers": {k: {f: raw_observation["ledgers"][k][f] for f in _CHARGE_LOCAL_FIELDS} for k in _LEDGERS}}
+        encoded = encode_integer_values(selected, {"max_integer_bits": 65536})
+        signed = json.dumps(encoded, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        _require(0 < len(signed) <= 8 * 1024 * 1024 and hashlib.sha256(signed).hexdigest() == cert["interval_sha256"],
+                 "charge_upper_local_evidence")
+        values = tuple(evidence["ledgers"][key][field][row] for key in _LEDGERS for row in range(3)
+                       for field in ("interval_total_bound_C", "interval_reference_error_C"))
+        _nonnegative(values, 12)
+        numerators, rounded, slack = (tuple(_vector(cert[k], 12)) for k in
+                                      ("upper_numerators", "rounded_terms", "slack_upper_bounds"))
+        received = []
+        for j, value in enumerate(values):
+            n, events = numerators[j], rounded[j]
+            _require(max(value.numerator.bit_length(), value.denominator.bit_length()) <= 65536
+                     and type(n) is int and n >= 0 and n.bit_length() <= self.maximum_bits
+                     and type(events) is int and 0 <= events <= cert["index"], "charge_upper_integer_limits")
+            lower = self.numerators[j] * self.quantum + value
+            upper = n * self.quantum
+            _require(lower <= upper < lower + self.quantum, "charge_upper_recurrence")
+            _require(events == self.rounded[j] + int(upper > lower)
+                     and type(slack[j]) is Fraction and slack[j] == events * self.quantum
+                     and slack[j] <= self.maximum_terms * self.quantum, "charge_upper_rounding_slack")
+            received.append(upper)
+        return cert["index"], numerators, rounded, tuple(received)
+
+    def commit(self, step):
+        self.index, self.numerators, self.rounded = step[:3]
+
+    def summary(self):
+        return {"schema": "solarlab.native-upper-prefix-state.v1", "policy_sha256": self.policy_id,
+                "source_identity": self.source_identity, "channel_ids": _CHARGE_CHANNELS, "index": self.index,
+                "upper_numerators": self.numerators, "rounded_terms": self.rounded,
+                "slack_upper_bounds": tuple(n * self.quantum for n in self.rounded)}
+
+
+def _frame_input_parent(request):
+    """Check immutable failed-file binding without importing its producer."""
+    parent = request.get("frame_input_parent")
+    _require(type(parent) is dict and set(parent) == {"request_json", "native_result_json", "first_failure_json"}
+             and all(type(v) is str and len(v.encode()) <= 1024*1024 for v in parent.values()),
+             "frame_input_parent_evidence")
+    try:
+        old, result, failure = (json.loads(parent[k]) for k in ("request_json", "native_result_json", "first_failure_json"))
+    except (TypeError, ValueError) as error:
+        raise HistoryVerificationError("frame_input_parent_evidence") from error
+    _require(all(type(v) is dict for v in (old, result, failure)), "frame_input_parent_evidence")
+    old_id = _digest(old)
+    _require(old.get("schema") == "solarlab.voltage-lift-native-request.v1" and "frame_input_policy" not in old
+             and "segment_frame_policy" in old and result.get("request_sha256") == old_id
+             and result.get("complete_protocol") is False and result.get("reason") == "primitive_expansion_capacity_exceeded"
+             and failure.get("kind") == "first_callback_failure"
+             and _digest(failure.get("failure")) == _digest(result.get("first_failure")), "frame_input_parent_failure_binding")
+    control_refinement = same_physical_profile = None
+    old_controls, controls = old.get("controls"), request.get("controls")
+    old_policy, policy = old.get("time_weight_policy"), request.get("time_weight_policy")
+    comparison_controls = old_controls
+    if "physical_tolerance_policy" in request:
+        from scripts.benchmarks.physical_tolerance import validate_request
+        physical = validate_request(request)
+        _require(type(old_controls) is dict, "frame_input_physical_parent_profile")
+        if "physical_tolerance_policy" in old:
+            old_physical = validate_request(old)
+            for supplied, expected in ((old, old_physical), (request, physical)):
+                _require(all(_digest(supplied[key]) == _digest(expected)
+                             for key in ("physical_tolerance_policy", "weight_certificate")),
+                         "frame_input_same_physical_raw_policy")
+            _require(_digest(old_physical) == _digest(physical), "frame_input_same_physical_policy")
+            for key in ("budgets", "observation_policy", "quadrature_uncertainty_scope",
+                        "observation_policy_authority", "projection_policy",
+                        "full_word_consumer_qualification", "history_policy",
+                        "startup_step_policy", "segment_startup_policy", "reference_refresh_policy"):
+                _require((key in request) == (key in old)
+                         and _digest(request.get(key)) == _digest(old.get(key)),
+                         "frame_input_same_physical_setting:"+key)
+            _require(type(request["voltage_lift_map"].get("mapped_input_words")) is int,
+                     "frame_input_parent_map_profile")
+            same_physical_profile = {"schema": "solarlab.frame-input-same-physical-profile.v1",
+                "physical_tolerance_policy_sha256": _digest(physical),
+                "controls_sha256": _digest(controls), "raw_parent_words": 4,
+                "mapped_input_words": 12, "physical_controls_changed": False,
+                "old_parent_failure_retained": True}
+        else:
+            comparison_controls = controls
+            control_refinement = {"schema": "solarlab.frame-input-physical-control.v1",
+                "old_failed_request_sha256": old_id, "old_controls_sha256": _digest(old_controls),
+                "controls_sha256": _digest(controls), "physical_tolerance_policy_sha256": _digest(physical),
+                "old_parent_failure_retained": True, "effective_nonlinear_equivalence": False}
+    elif _digest(controls) != _digest(old_controls) or (type(policy) is dict and policy.get("kappa") == 65536):
+        valid = (type(old_controls) is dict and type(controls) is dict
+                 and type(old_policy) is dict and type(policy) is dict
+                 and old_policy.get("schema") == policy.get("schema") == "solarlab.voltage-lift-time-weights.v1"
+                 and type(old_policy.get("kappa")) is int and old_policy["kappa"] == 1024
+                 and type(policy.get("kappa")) is int and policy["kappa"] == 65536)
+        if not valid:
+            raise HistoryVerificationError("frame_input_parent_time_controls")
+        keys = ("rtol", "atol", "nonlin_conv_coef")
+        if (old_policy.get("values") != {k: old_controls.get(k) for k in keys}
+                or policy.get("values") != {k: controls.get(k) for k in keys}
+                or policy.get("parent_values") != old_policy.get("parent_values")
+                or old_policy.get("ancestor_request_sha256") != old.get("prior_request_sha256")
+                or policy.get("ancestor_request_sha256") != request.get("prior_request_sha256")
+                or type(old_policy.get("parent_values")) is not dict
+                or set(old_policy["parent_values"]) != set(keys)
+                or old_policy.get("parent_controls_sha256") != _digest(dict(old_controls, **old_policy["parent_values"]))
+                or policy.get("parent_controls_sha256") != _digest(dict(controls, **policy["parent_values"]))):
+            raise HistoryVerificationError("frame_input_parent_time_policy")
+        expected_values = {}
+        for key in keys:
+            before = old_controls[key] if key == "atol" else [old_controls[key]]
+            after = controls[key] if key == "atol" else [controls[key]]
+            parent_values = old_policy["parent_values"][key] if key == "atol" else [old_policy["parent_values"][key]]
+            size = 45 if key == "atol" else 1
+            if (type(before) is not list or type(after) is not list or type(parent_values) is not list
+                    or len(before) != size or len(after) != size or len(parent_values) != size
+                    or any(type(v) is not float or not math.isfinite(v) or v < float.fromhex("0x1p-1022")
+                           for v in before + after + parent_values)):
+                raise HistoryVerificationError("frame_input_parent_time_normal")
+            scale = Fraction(64) if key == "nonlin_conv_coef" else Fraction(1, 64)
+            parent_scale = Fraction(1024) if key == "nonlin_conv_coef" else Fraction(1, 1024)
+            if any(Fraction(b) != Fraction(a)*scale or Fraction(a) != Fraction(p)*parent_scale
+                   for p, a, b in zip(parent_values, before, after, strict=True)):
+                raise HistoryVerificationError("frame_input_parent_time_scaling")
+            expected_values[key] = after if key == "atol" else after[0]
+        old_certificate, certificate = old.get("weight_certificate"), request.get("weight_certificate")
+        if type(old_certificate) is not dict or type(certificate) is not dict:
+            raise HistoryVerificationError("frame_input_parent_time_certificate")
+        expected_policy = dict(old_policy, kappa=65536, values=expected_values,
+            parent_weight_certificate_sha256=certificate.get("parent_weight_certificate_sha256"),
+            exact_parameter_scaling="rtol/atol ldexp(-16); nonlin_conv_coef ldexp(+16); positive normal binary64",
+            norm_comparison="same-state denominators divide by65536; exact WRMS and epcon/epsNewt/toldel/m0-direct thresholds multiply by65536")
+        if (_digest(policy) != _digest(expected_policy)
+                or old_certificate.get("time_weight_policy_sha256") != _digest(old_policy)
+                or certificate.get("time_weight_policy_sha256") != _digest(policy)
+                or any(certificate.get(k) != controls[k] for k in ("rtol", "atol"))):
+            raise HistoryVerificationError("frame_input_parent_time_certificate")
+        comparison_controls = dict(old_controls, **expected_values)
+        control_refinement = {
+            "schema": "solarlab.frame-input-time-control.v1", "factor": 64,
+            "old_kappa": 1024, "kappa": 65536,
+            "old_controls_sha256": _digest(old_controls), "controls_sha256": _digest(controls),
+            "old_time_weight_policy_sha256": _digest(old_policy), "time_weight_policy_sha256": _digest(policy),
+            "scaling": "exact rtol/atol /64; nonlin_conv_coef *64; positive normal binary64",
+            "physical_gates_changed": False}
+    for key in ("case_id", "prior_request_sha256", "controls", "previous_controls", "segments",
+                "observation_times", "quadrature", "original_budgets", "mandatory", "physical_domain_policy"):
+        _require(key in request and _digest(request[key]) == _digest(comparison_controls if key == "controls" else old.get(key)), "frame_input_parent_science_changed:"+key)
+    mapping, old_map = dict(request["voltage_lift_map"]), dict(old["voltage_lift_map"])
+    _require(mapping.pop("mapped_input_profile", None) == "frame-input-expansion12-v1"
+             and mapping.pop("mapped_input_words", None) == 12, "frame_input_parent_map_profile")
+    mapping.pop("physical_model"); old_map.pop("physical_model")
+    _require(_digest(mapping) == _digest(old_map), "frame_input_parent_map_changed")
+    current_packet, old_packet = (json.loads(json.dumps(v)) for v in (request["numeric_packet"], old["numeric_packet"]))
+    for packet in (current_packet, old_packet):
+        packet["definition"].pop("source_path", None)
+        packet.pop("definition_identity", None)
+    _require(_digest(current_packet) == _digest(old_packet), "frame_input_parent_physics_changed")
+    result = {"request_sha256": old_id, **{
+        key.removesuffix("_json")+"_file_sha256": hashlib.sha256(value.encode()).hexdigest()
+        for key, value in parent.items()}}
+    if control_refinement is not None:
+        result["control_refinement"] = control_refinement
+    if same_physical_profile is not None:
+        result["same_physical_profile"] = same_physical_profile
+    return result
+
+
+def _qualified_frame_input_context_check(request):
+    """Bind the qualified arithmetic profile without a fabricated failed run."""
+    from scripts.benchmarks.qualification_policy import check_applied_ceiling
+
+    outputs = {"z0", "zdot0", "actual_initial_identity", "initial_preparation",
+               "preparation_context_sha256", "initial_segment_frame", "interval_observation",
+               "frame_input_policy"}
+    context = {k: v for k, v in request.items() if k not in outputs}
+    if "frame_input_parent" in request or "qualification_policy" not in request:
+        raise HistoryVerificationError("qualified_frame_input_authority")
+    try:
+        size = check_applied_ceiling(context)
+    except (ValueError, KeyError, TypeError, OverflowError) as error:
+        raise HistoryVerificationError("qualified_frame_input_context") from error
+    policy, packet, mapping = request["qualification_policy"], request["numeric_packet"], request["voltage_lift_map"]
+    lift = [[0.0.hex(), 0.0.hex()] for _ in range(size)]
+    lo, hi = packet["variable_offsets"]["phi_V"]
+    for i, x in enumerate(packet["x_m"], lo):
+        lift[i][0] = (-x/packet["definition"]["length"]).hex()
+    first = request["segments"][0]
+    references = [float(first["voltage"][0]).hex(), float(first["photons"][0]).hex()]
+    if (_digest(mapping) != request["map_identity"]
+            or mapping.get("mapped_input_profile") != "frame-input-expansion12-v1"
+            or mapping.get("mapped_input_words") != 12
+            or mapping.get("columns_hex") != [float(v).hex() for v in packet["column_scaling"]]
+            or mapping.get("rows_hex") != [float(v).hex() for v in packet["row_scaling"]]
+            or mapping.get("lift_hex") != lift or mapping.get("reference_inputs_hex") != references
+            or mapping.get("physical_reference") != packet.get("initial_identity")
+            or mapping.get("layout") != packet.get("layout_identity")
+            or "segment_frame" in mapping or hi-lo != policy["nodes"]
+            or not isinstance(mapping.get("physical_model"), str)
+            or len(mapping["physical_model"]) != 64):
+        raise HistoryVerificationError("qualified_frame_input_map")
+    return {"authority": "original-two-case-qualified-request",
+            "qualification_policy_sha256": _digest(policy),
+            "origin_sha256": _digest(policy["origin"]),
+            "prepared_inputs_sha256": _digest(context),
+            "numeric_packet_sha256": _digest(packet),
+            "definition_identity": packet["definition_identity"],
+            "physical_model_identity": mapping["physical_model"],
+            "physical_reference_identity": mapping["physical_reference"],
+            "layout_identity": mapping["layout"],
+            "weight_certificate_sha256": _digest(request["weight_certificate"])}
+
+
+def diagnostic_accuracy_policy(parent):
+    """One exact factor-64 experiment after the recorded factor-1024 parent.
+
+    This certificate changes internal denominators, not the retained physical
+    acceptance certificate. It certifies same-state scaling only, never equal
+    rounded decisions, nonlinear histories or global errors.
+    """
+    controls, ancestry = parent["controls"], parent.get("time_weight_policy", {})
+    proof = parent["weight_certificate"]
+    keys = ("rtol", "atol", "nonlin_conv_coef")
+    _require(ancestry.get("schema") == "solarlab.voltage-lift-time-weights.v1"
+             and type(ancestry.get("kappa")) is int and ancestry["kappa"] == 1024
+             and ancestry.get("values") == {k: controls[k] for k in keys}
+             and proof.get("time_weight_policy_sha256") == _digest(ancestry)
+             and proof.get("rtol") == controls["rtol"] and proof.get("atol") == controls["atol"]
+             and controls.get("nonlin_conv_coef") == 1.024e-5
+             and controls.get("nonlin_guard") == "first-correction-wrms-v1"
+             and controls.get("nonlin_trace_capacity") == 4096,
+             "accuracy_original_1024_ancestry")
+    values = {}
+    for key, shift in (("rtol", -6), ("atol", -6), ("nonlin_conv_coef", 6)):
+        old = _vector(controls[key], 45) if key == "atol" else [controls[key]]
+        before = (_vector(ancestry["parent_values"][key], 45) if key == "atol"
+                  else [ancestry["parent_values"][key]])
+        new = []
+        for a, original in zip(old, before):
+            _require(type(a) is float and type(original) is float
+                     and math.isfinite(a) and math.isfinite(original)
+                     and a >= float.fromhex("0x1p-1022") and original > 0,
+                     "accuracy_positive_normal_controls")
+            factor = Fraction(64) if shift > 0 else Fraction(1, 64)
+            previous_factor = Fraction(1024) if shift > 0 else Fraction(1, 1024)
+            _require(Fraction(a) == Fraction(original)*previous_factor,
+                     "accuracy_original_1024_scaling")
+            b = math.ldexp(a, shift)
+            _require(math.isfinite(b) and b >= float.fromhex("0x1p-1022")
+                     and Fraction(b) == Fraction(a)*factor, "accuracy_exact_normal_scaling")
+            new.append(b)
+        values[key] = new if key == "atol" else new[0]
+    return {"schema": "solarlab.native-internal-accuracy.v1", "factor": 64,
+            "parent_factor": 1024, "cumulative_factor": 65536,
+            "parent_request_sha256": _digest(parent),
+            "parent_controls_sha256": _digest(controls),
+            "parent_time_weight_policy_sha256": _digest(ancestry),
+            "original_weight_certificate_sha256": _digest(proof), "values": values,
+            "application": "fresh_saved_seed_initialization_only",
+            "external_acceptance_changed": False,
+            "same_state_exact_nonlinear_threshold_preserved": True,
+            "rounded_decisions_or_adaptive_path_equal": False,
+            "global_error_certified": False}
+
+
+def diagnostic_accuracy_fine_ceiling(maximum):
+    """Largest representable positive power of two <= exact maximum/2."""
+    _require(type(maximum) is float and math.isfinite(maximum) and maximum > 0,
+             "accuracy_positive_coarse_step")
+    _, exponent = math.frexp(maximum)
+    selected = math.ldexp(1.0, exponent-2)
+    _require(selected > 0 and Fraction(selected) <= Fraction(maximum)/2
+             < 2*Fraction(selected), "accuracy_representable_dyadic_ceiling")
+    return selected
+
+
+def _accuracy_metadata(item, name):
+    _require(type(item) is dict and set(item) == {"path", "bytes", "sha256"}
+             and type(item["bytes"]) is int and 0 < item["bytes"] <= 16*1024*1024,
+             "accuracy_metadata_pin:"+name)
+    with Path(item["path"]).open("rb") as stream:
+        data = stream.read(item["bytes"]+1)
+    _require(len(data) == item["bytes"] and hashlib.sha256(data).hexdigest() == item["sha256"],
+             "accuracy_metadata_changed:"+name)
+    return json.loads(data, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_finite)
+
+
+def diagnostic_accuracy_coarse_basis(selection, descriptor):
+    """Bound a future independently accepted *new* coarse, never old Coarse03."""
+    coarse = _accuracy_metadata(selection["coarse_child_request"], "coarse_request")
+    acceptance = _accuracy_metadata(selection["coarse_acceptance"], "coarse_acceptance")
+    result = _accuracy_metadata(selection["coarse_readback"], "coarse_readback")
+    _require(coarse["diagnostic_interval"]["schema"] == "solarlab.native-interval-descriptor.v3"
+             and coarse["diagnostic_interval"].get("accuracy_case") == "coarse"
+             and coarse["diagnostic_interval"]["time_accuracy_policy"] == descriptor["time_accuracy_policy"]
+             and coarse["diagnostic_interval"]["GateSpec"] == descriptor["GateSpec"],
+             "accuracy_new_coarse_same_policy")
+    diagnostic_interval_binding(coarse)
+    _require(acceptance.get("schema") == "solarlab.native-accuracy-coarse-acceptance.v1"
+             and acceptance.get("authority") == "Root" and acceptance.get("accepted") is True
+             and acceptance.get("operation_id") == "NativeAccuracyCoarse01"
+             and acceptance.get("child_request") == selection["coarse_child_request"]
+             and acceptance.get("readback") == selection["coarse_readback"]
+             and acceptance.get("GateSpec") == descriptor["GateSpec"], "accuracy_coarse_acceptance")
+    review = _accuracy_metadata(acceptance["independent_review"], "coarse_independent_review")
+    outcome = _accuracy_metadata(acceptance["complete_return"], "coarse_complete_return")
+    operation = _accuracy_metadata(acceptance["operation_request"], "coarse_operation_request")
+    _require(review.get("accepted") is True and review.get("independent") is True
+             and review.get("readback") == selection["coarse_readback"]
+             and review.get("complete_return") == acceptance["complete_return"]
+             and outcome.get("schema") == "solarlab.native-interval-root-tool-return.v1"
+             and outcome.get("passed") is True and outcome.get("within_total") is True
+             and outcome.get("active_tool_session") is None
+             and outcome.get("request_sha256") == acceptance["operation_request"]["sha256"]
+             and outcome.get("readback", {}).get("accepted") is True
+             and outcome["readback"]["checks"].get("owned_process_group_closed") is True
+             and operation.get("operation_id") == "NativeAccuracyCoarse01"
+             and operation.get("child_request") == selection["coarse_child_request"],
+             "accuracy_independent_complete_coarse")
+    _require(result.get("verified") is True and result.get("complete_diagnostic_window") is True
+             and result.get("complete_protocol") is False and result.get("request_sha256") == _digest(coarse)
+             and len(result.get("common_clocks", [])) == 5,
+             "accuracy_complete_coarse_readback")
+    grid = result["diagnostic_grid"]
+    _require(type(grid) is list and 0 < len(grid) <= coarse["diagnostic_limits"]["accepted_intervals"],
+             "accuracy_bounded_coarse_grid")
+    coverage = result["coverage"]
+    _require(coverage.get("intervals") == len(grid) and coverage.get("ports") == 2
+             and coverage.get("physical_word_layers") == 12, "accuracy_coarse_coverage")
+    window = coarse["diagnostic_interval"]["window"]
+    previous = _hex(window["start_hex"])
+    owner = (grid[0]["owner"], grid[0]["generation"])
+    for index, row in enumerate(grid, 1):
+        left, right = _hex(row["left_hex"]), _hex(row["right_hex"])
+        _require(left == previous < right <= _hex(window["end_hex"])
+                 and type(row["step"]) is int and row["step"] == index
+                 and (row["owner"], row["generation"]) == owner, "accuracy_coarse_grid_gap")
+        previous = right
+    _require(previous == _hex(window["end_hex"]), "accuracy_incomplete_coarse_grid")
+    steps = [_hex(row["hused_hex"]) for row in grid]
+    _require(all(0 < h <= coarse["controls"]["max_step"] for h in steps)
+             and selection["observed_coarse_max_step_hex"] == max(steps).hex(),
+             "accuracy_observed_coarse_maximum")
+    return diagnostic_accuracy_fine_ceiling(max(steps))
+
+
+def diagnostic_interval_binding(request):
+    """Read bounded saved metadata for the explicit diagnostic child contract.
+
+    This is shared metadata validation, with no model or native imports. The
+    normal reader still independently checks every physical word and gate.
+    The original full-protocol schema cannot opt into this path accidentally.
+    """
+    descriptor = request.get("diagnostic_interval")
+    _require(request.get("schema") == "solarlab.native-interval-child-request.v1"
+             and type(descriptor) is dict
+             and descriptor.get("schema") in ("solarlab.native-interval-descriptor.v1",
+                                               "solarlab.native-interval-descriptor.v2",
+                                               "solarlab.native-interval-descriptor.v3"),
+             "diagnostic_interval_descriptor")
+    accuracy = descriptor["schema"] == "solarlab.native-interval-descriptor.v3"
+    _require(not any(k in request for k in ("time_accuracy_policy", "accuracy_case"))
+             and (accuracy or not any(k in descriptor for k in ("time_accuracy_policy", "accuracy_case"))),
+             "accuracy_unbound_policy")
+
+    def bound(name):
+        item = descriptor[name]
+        _require(type(item) is dict and set(item) == {"path", "bytes", "sha256"}
+                 and type(item["bytes"]) is int and 0 < item["bytes"] <= 2*1024*1024,
+                 "diagnostic_metadata_pin")
+        with Path(item["path"]).open("rb") as stream:
+            data = stream.read(item["bytes"]+1)
+        _require(len(data) == item["bytes"] and hashlib.sha256(data).hexdigest() == item["sha256"],
+                 "diagnostic_metadata_changed:"+name)
+        return json.loads(data, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_finite)
+
+    parent, accepted, restore, gates = (bound(k) for k in
+        ("parent_request", "accepted_transfer", "saved_restore", "GateSpec"))
+    _require(parent.get("schema") == "solarlab.voltage-lift-native-request.v1"
+             and "diagnostic_interval" not in parent
+             and parent.get("frame_input_policy", {}).get("profile") == "frame-input-expansion12-v1"
+             and not any(k in request for k in ("frame_input_parent", "qualification_policy", "qualification_ancestor")),
+             "diagnostic_original_parent_schema")
+    point = restore["Point"]
+    _require(point["sha256"] == _digest(point["payload"])
+             and point["payload"]["identity"] == restore["base_Point_identity"] == accepted["Point_identity"]
+             == request.get("starting_Point_identity") == gates["base_Point_identity"]
+             and point["payload"]["layout"] == parent["numeric_packet"]["layout_identity"]
+             and accepted["physical_reference_identity"] == parent["voltage_lift_map"]["physical_reference"]
+             and accepted["physical_source_identity"] == parent["voltage_lift_map"]["physical_model"]
+             and accepted["original_native_history_recovered"] is False
+             and restore["original_native_authority_restored"] is False,
+             "diagnostic_complete_saved_Point")
+    _require(len(request["segments"]) == 1, "diagnostic_single_window")
+    segment, window = request["segments"][0], descriptor["window"]
+    start, end = _hex(window["start_hex"]), _hex(window["end_hex"])
+    hold = next((s for s in parent["segments"] if s["id"] == "slow_state_hold"), None)
+    _require(hold is not None and hold["start"] <= start < end <= hold["end"]
+             and start == _hex(point["payload"]["time"]) == _hex(accepted["frame"]["t0_hex"])
+             and segment == {"id": window["segment_id"], "start": start, "end": end,
+                             "voltage": hold["voltage"], "photons": hold["photons"]}
+             and all(v[0] == v[1] for v in (hold["voltage"], hold["photons"])),
+             "diagnostic_window_or_forcing")
+    clocks = [float(Fraction(start)+i*(Fraction(end)-Fraction(start))/4) for i in range(5)]
+    _require(all(Fraction(t) == Fraction(start)+i*(Fraction(end)-Fraction(start))/4
+                 for i, t in enumerate(clocks))
+             and window["common_clocks_hex"] == [t.hex() for t in clocks]
+             and request["observation_times"] == {segment["id"]: clocks}
+             and [row["hex"] for row in gates["common_clocks"]] == window["common_clocks_hex"],
+             "diagnostic_common_clocks")
+    controls = dict(parent["controls"])
+    controls.update(parent["segment_startup_policy"]["overrides"][hold["id"]])
+    choices = _hex_vector(window["maximum_step_choices_hex"], 2)
+    selected = _hex(window["selected_max_step_hex"])
+    _require(window["maximum_step_choices_hex"] == [gates["refinement"]["coarse_max_step_hex"],
+                                                     gates["refinement"]["fine_max_step_hex"]]
+             and 0 < min(choices) and max(choices) == 2*min(choices) <= controls["max_step"]
+             and controls["first_step"].hex() == window["first_step_hex"],
+             "diagnostic_step_controls")
+    if accuracy:
+        policy = diagnostic_accuracy_policy(parent)
+        _require(type(descriptor.get("time_accuracy_policy")) is dict
+                 and _digest(descriptor["time_accuracy_policy"]) == _digest(policy)
+                 and descriptor.get("accuracy_case") in ("coarse", "fine"), "accuracy_policy_binding")
+        controls.update(policy["values"])
+        if descriptor["accuracy_case"] == "coarse":
+            _require(selected == max(choices) and "refinement_selection" not in descriptor,
+                     "accuracy_original_coarse_ceiling")
+        else:
+            selection = bound("refinement_selection")
+            _require(selection.get("schema") == "solarlab.native-accuracy-refinement.v1"
+                     and selection.get("authority") == "Root" and selection.get("accepted") is True
+                     and selection.get("case") == "fine" and selection.get("GateSpec") == descriptor["GateSpec"]
+                     and selection.get("base_Point_identity") == gates["base_Point_identity"]
+                     and selection.get("window_start_hex") == window["start_hex"]
+                     and selection.get("window_end_hex") == window["end_hex"]
+                     and selection.get("selected_max_step_hex") == selected.hex()
+                     and selection.get("effective_refinement_required") is True
+                     and selection.get("original_scientific_thresholds_unchanged") is True,
+                     "accuracy_fine_selection_binding")
+            _require(selected == diagnostic_accuracy_coarse_basis(selection, descriptor),
+                     "accuracy_largest_dyadic_half_coarse")
+    elif descriptor["schema"] == "solarlab.native-interval-descriptor.v1":
+        _require(selected in choices and "refinement_selection" not in descriptor,
+                 "diagnostic_step_controls")
+    else:
+        # A stronger fine ceiling is a separately frozen numerical selection.
+        # Keep the original GateSpec and coarse request identities unchanged.
+        selection = bound("refinement_selection")
+        coarse_max = _hex(selection["observed_coarse_max_step_hex"])
+        _require(selection.get("schema") == "solarlab.native-interval-refinement.v1"
+                 and selection.get("authority") == "Root" and selection.get("accepted") is True
+                 and selection.get("case") == "fine"
+                 and selection["GateSpec"] == descriptor["GateSpec"]
+                 and selection["base_Point_identity"] == gates["base_Point_identity"]
+                 and selection["window_start_hex"] == window["start_hex"]
+                 and selection["window_end_hex"] == window["end_hex"]
+                 and selection["original_fine_max_step_hex"] == gates["refinement"]["fine_max_step_hex"]
+                 and selection["selected_max_step_hex"] == window["selected_max_step_hex"]
+                 and selection.get("effective_refinement_required") is True
+                 and selection.get("original_scientific_thresholds_unchanged") is True
+                 and 0 < selected < min(choices) and selected < coarse_max <= max(choices),
+                 "diagnostic_explicit_refinement_selection")
+    controls["max_step"] = selected
+    _require(request["controls"] == controls and "segment_startup_policy" not in request,
+             "diagnostic_only_declared_control_delta")
+    if accuracy:
+        _require(_digest(request["controls"]) == _digest(controls), "accuracy_exact_control_encoding")
+    for key in ("case_id", "numeric_packet", "previous_controls", "weight_certificate", "budgets",
+                "original_budgets", "quadrature", "physical_domain_policy"):
+        _require(request[key] == parent[key], "diagnostic_physics_or_gate_changed:"+key)
+    _require(request["prior_request_sha256"] == _digest(parent)
+             and request["original_full_protocol_end_hex"] == float(parent["segments"][-1]["end"]).hex()
+             == gates["charge"]["original_full_protocol_end_hex"], "diagnostic_original_normalization")
+    old_map, new_map = dict(parent["voltage_lift_map"]), dict(request["voltage_lift_map"])
+    accepted_map = dict(accepted["map"])
+    _require(accepted_map.pop("segment_frame", None) == accepted["frame"]
+             and accepted["frame"]["parent_map_identity"] == _digest(old_map),
+             "diagnostic_accepted_parent_map_identity")
+    for name in ("raw_coordinate_meaning", "physical_coordinate_meaning"):
+        accepted_map[name] = old_map[name]
+    _require(accepted_map == old_map, "diagnostic_accepted_unframed_map_body")
+    old_map.pop("physical_model")
+    source = new_map.pop("physical_model")
+    _require(old_map == new_map and request["map_identity"] == _digest(request["voltage_lift_map"])
+             and type(source) is str and len(source) == 64
+             and request["source_rebinding"]["physical_model_identity"] == source,
+             "diagnostic_physical_map_changed")
+    kernel = request["source_rebinding"]["numeric_kernel"]
+    _require(Path(kernel["path"]).stat().st_size == kernel["bytes"] <= 2*1024*1024
+             and hashlib.sha256(Path(kernel["path"]).read_bytes()).hexdigest() == kernel["sha256"],
+             "diagnostic_numeric_source_changed")
+    n = len(controls["atol"])
+    _require(n == len(request["z0"]) == len(request["zdot0"]) == accepted["frame"]["size"] == 45
+             and request["z0"] == [0.0]*n
+             and [float(v).hex() for v in request["zdot0"]] == restore["raw_v_hex"]
+             == accepted["public_return"]["raw_rate_hex"]
+             and accepted["public_return"]["raw_state_hex"] == [0.0.hex()]*n,
+             "diagnostic_initial_raw_words")
+    for name in ("physical_state_words_hex", "physical_rate_words_hex"):
+        for word in _vector(accepted[name], 12):
+            _hex_vector(word, n)
+    _require(accepted["inputs_hex"] == point["payload"]["inputs"]
+             and accepted["input_rates_hex"] == restore["input_rates_hex"] == [0.0.hex(), 0.0.hex()]
+             and request["center_once"] is True and request["in_window_reinitializations"] == 0
+             and request["old_B_prefix_credit"] is False
+             and request["original_native_Point_authority_restored"] is False,
+             "diagnostic_seed_input_or_history")
+    summary = {"schema": "solarlab.native-interval-context.v1", "descriptor_sha256": _digest(descriptor),
+        "parent_request_sha256": _digest(parent), "saved_Point_sha256": point["sha256"],
+        "seed_Point_identity": accepted["Point_identity"], "window": window,
+        "source_rebinding": request["source_rebinding"], "GateSpec": descriptor["GateSpec"]}
+    return {"parent": parent, "accepted": accepted, "restore": restore, "summary": summary}
+
+
+def frame_input_word_count(request):
+    """Independent request/profile check; raw native anchors always stay four."""
+    _require(not any(k in request for k in ("frame_input_profile", "frame_input_words", "mapped_input_profile")),
+             "frame_input_unbound_option")
+    if "frame_input_policy" not in request:
+        _require("frame_input_parent" not in request
+                 and not any(k in request.get("voltage_lift_map", {}) for k in ("mapped_input_profile", "mapped_input_words")),
+                 "frame_input_unbound_parent_or_map")
+        return 4
+    _require("segment_frame_policy" in request, "frame_input_requires_segment_frame")
+    diagnostic = "diagnostic_interval" in request
+    qualified = "qualification_policy" in request
+    authority = ({"diagnostic_context": diagnostic_interval_binding(request)["summary"]} if diagnostic else
+                 {"qualified_context": _qualified_frame_input_context_check(request)} if qualified
+                 else {"failed_parent": _frame_input_parent(request)})
+    expected = {"schema": "solarlab.frame-input-policy.v3" if diagnostic else
+                         "solarlab.frame-input-policy.v2" if qualified else "solarlab.frame-input-policy.v1",
+                "profile": "frame-input-expansion12-v1", **authority,
+                "ancestor_request_sha256": request["prior_request_sha256"],
+                "parent_map_identity": request["map_identity"],
+                "segment_frame_policy_sha256": _digest(request["segment_frame_policy"]),
+                "controls_sha256": _digest(request["controls"]), "segments_sha256": _digest(request["segments"]),
+                "sampling_sha256": _digest((request["observation_times"], request["quadrature"])),
+                "mapped_input_words": 12, "raw_parent_words": 4,
+                "bound": "four-parent-words_times_column_plus_voltage_and_reference_DD_products",
+                "physical_gates_changed": False}
+    _require(type(request["frame_input_policy"]) is dict
+             and _digest(request["frame_input_policy"]) == _digest(expected), "frame_input_policy_binding")
+    return 12
+
+
+def _frame_word_values(words, size, *, count=4):
+    _require(type(count) is int and count in (4, 12), "frame_input_word_count")
+    layers = tuple(_hex_vector(w, size) for w in _vector(words, count))
+    values = tuple(sum((Fraction(w[i]) for w in layers), Fraction(0)) for i in range(size))
+    for i, value in enumerate(values):
+        for word in layers:
+            rounded = float(value)
+            _require(rounded == word[i], "segment_frame_noncanonical_words")
+            value -= Fraction(rounded)
+        _require(value == 0, "segment_frame_word_capacity")
+    return values
+
+
+def reference_refresh_policy(request):
+    """Independently bind the one-refresh policy without importing its producer."""
+    from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+    continuing = validate_certificate_policy(request) is not None
+    policy = request.get("reference_refresh_policy")
+    if policy is None:
+        return None
+    _require(type(policy) is dict, "reference_refresh_policy_type")
+    when = _hex(policy["time_hex"])
+    segment = request["segments"][-1]
+    _require(segment["start"] < when < segment["end"] and "diagnostic_interval" not in request
+             and "segment_frame_policy" in request and request["controls"].get("calc_initcond") is None
+             and request["voltage_lift_map"].get("mapped_input_profile") == "frame-input-expansion12-v1",
+             "reference_refresh_scope")
+    expected = {"schema": ("solarlab.reference-state-transfer-policy.v2" if continuing else
+                           "solarlab.accepted-reference-refresh-policy.v1"), "time_hex": when.hex(),
+        "physical_segment_ordinal": len(request["segments"]), "segment_sha256": _digest(segment), "max_refreshes": 1,
+        "parent_map_identity": request["map_identity"], "controls_sha256": _digest(request["controls"]),
+        "budgets_sha256": _digest(request["budgets"]), "segments_sha256": _digest(request["segments"]),
+        "sampling_sha256": _digest((request["observation_times"], request["quadrature"])),
+        "trigger": ("exact_domain_safe_native_endpoint" if continuing else "exact_fully_accepted_native_endpoint"),
+        **({"certificate_failure_policy_sha256": _digest(request["certificate_failure_policy"])} if continuing else {}),
+        "native_api": "init_step",
+        "same_owner_generation_increment": 1, "preserve_original_segment_inputs": True,
+        "discard_native_multistep_history": True, "restored_seed_prefix_credit": False}
+    _require(policy == expected, "reference_refresh_policy_binding")
+    return policy
+
+
+def _reference_refresh_point(record, history, request):
+    """Check the fixed-reference Point codec against already consumed history.
+
+    This is deliberately limited to the refresh policy's affine v6 authority
+    and its original zero-primitive v3 reference. No Point, model, numerical
+    provider or producer validator is imported. Field projections use exact
+    dyadic sums followed by the codec's two binary64 words; they are not new
+    physical evaluations. The consumed Point identity binds the complete
+    transition, including its previous authority and every predecessor word.
+    """
+    packet = request["numeric_packet"]
+    reference = packet["initial_reference"]
+    root = reference["payload"]
+    layout = packet["layout_identity"]
+    size = len(request["controls"]["atol"])
+    offsets = packet["variable_offsets"]
+    _require(type(offsets) is dict and set(offsets) == set(root["fields"])
+             and layout == request["voltage_lift_map"]["layout"] == root["layout"],
+             "reference_refresh_Point_layout")
+    for bounds in offsets.values():
+        _require(type(bounds) is list and len(bounds) == 2
+                 and all(type(v) is int for v in bounds) and 0 <= bounds[0] < bounds[1] <= size,
+                 "reference_refresh_Point_offsets")
+    names = sorted(offsets, key=lambda name: offsets[name][0])
+    cursor, shapes = 0, {}
+    for name in names:
+        start, stop = offsets[name]
+        shape = root["fields"][name]["shape"]
+        _require(start == cursor and type(shape) is list
+                 and all(type(v) is int and v > 0 for v in shape) and math.prod(shape) == stop-start,
+                 "reference_refresh_Point_field_layout")
+        cursor, shapes[name] = stop, shape
+    _require(cursor == size, "reference_refresh_Point_layout_coverage")
+
+    def primitive(value, shape):
+        _require(type(value) is dict and set(value) == {"shape", "precision", "words"}
+                 and type(value["shape"]) is list and all(type(v) is int for v in value["shape"])
+                 and value["shape"] == shape
+                 and value["precision"] in {"input-expansion4-v1", "frame-input-expansion12-v1"},
+                 "reference_refresh_Point_primitive_schema")
+        count = 12 if value["precision"] == "frame-input-expansion12-v1" else 4
+        values = _frame_word_values(value["words"], math.prod(shape), count=count)
+        # The codec normalizes primitive zero signs, unlike retained Point
+        # input words. Compare canonical strings here, not float equality.
+        remaining = list(values)
+        for layer in value["words"]:
+            for i, word in enumerate(layer):
+                rounded = float(remaining[i])
+                _require(word == rounded.hex(), "reference_refresh_Point_primitive_encoding")
+                remaining[i] -= Fraction(rounded)
+        return values
+
+    def projection(anchor, values, shape):
+        _require(type(anchor) is dict and set(anchor) == {"shape", "high", "low"}
+                 and anchor["shape"] == shape, "reference_refresh_Point_field_schema")
+        high, low = (_hex_vector(anchor[key], math.prod(shape)) for key in ("high", "low"))
+        result = {"shape": shape, "high": [], "low": []}
+        for a, b, value in zip(high, low, values):
+            s = a+b
+            z = s-a
+            _require(s == a and (a-(s-z))+(b-z) == b
+                     and (a == 0 or 2.**-970 <= abs(a) <= 2.**970),
+                     "reference_refresh_Point_anchor_normalization")
+            total = Fraction(a)+Fraction(b)+value
+            hi = float(total)
+            lo = float(total-Fraction(hi))
+            # The final DD constructor normalizes its two rounded words.
+            summed = hi+lo
+            z = summed-hi
+            remainder = (hi-(summed-z))+(lo-z)
+            _require(math.isfinite(summed) and math.isfinite(remainder)
+                     and (summed == 0 or 2.**-970 <= abs(summed) <= 2.**970),
+                     "reference_refresh_Point_projection_range")
+            result["high"].append(summed.hex())
+            result["low"].append(remainder.hex())
+        return result
+
+    point_keys = {"schema", "layout", "coordinate_reference", "identity", "time", "y", "inputs",
+                  "fields", "authority_identity", "authority", "field_role"}
+    authority_keys = {"schema", "layout", "map", "version", "modes", "parameters", "anchor", "primitives",
+                      "time", "inputs", "coordinates", "reference", "composition_policy", "transition"}
+    modes = {name: "linear" for name in names}
+    map_id = _digest({"layout": layout, "name": "relative-fields", "version": 1,
+                      "modes": modes, "parameters": {}})
+
+    def check_point(encoded, expected_authority):
+        _require(type(encoded) is dict and set(encoded) == {"payload", "sha256"},
+                 "reference_refresh_Point_outer_schema")
+        p = encoded["payload"]
+        _require(type(p) is dict and set(p) == point_keys and p["schema"] == "solarlab.precision-point.v2"
+                 and p["layout"] == layout and p["field_role"] == "projection"
+                 and _digest(p["authority"]) == _digest(expected_authority) and set(p["fields"]) == set(names)
+                 and encoded["sha256"] == _digest(p), "reference_refresh_Point_codec")
+        a = p["authority"]
+        aid = _digest(a)
+        _require(p["authority_identity"] == aid and p["time"] == a["time"]
+                 and p["inputs"] == a["inputs"] and p["y"] == a["coordinates"]
+                 and p["coordinate_reference"] == a["reference"], "reference_refresh_Point_authority")
+        digest = hashlib.sha256(repr((_hex(p["time"]), p["coordinate_reference"], layout)).encode())
+        digest.update(aid.encode())
+        digest.update(_word_bytes(p["y"], size)+_word_bytes(p["inputs"], 2))
+        for name in names:
+            shape = shapes[name]
+            values = primitive(a["primitives"][name], shape)
+            _require(_digest(p["fields"][name]) == _digest(projection(a["anchor"][name], values, shape)),
+                     "reference_refresh_Point_field_projection")
+            # MappedArray identities retain authority and the complete field
+            # selection, not the rounded projection bytes.
+            count = math.prod(shape)
+            digest.update(name.encode()+b"authority-field-v1:"+aid.encode()+name.encode()
+                          +repr(tuple(shape)).encode()+struct.pack(f"{count}n", *range(count)))
+        _require(p["identity"] == digest.hexdigest(), "reference_refresh_Point_full_identity")
+
+    base = root["authority"]
+    _require(type(base) is dict and set(base) == authority_keys and set(base["anchor"]) == set(names),
+             "reference_refresh_Point_reference_schema")
+    zero = {name: {"shape": shapes[name], "precision": "input-expansion4-v1",
+                   "words": [[0.0.hex()] * math.prod(shapes[name]) for _ in range(4)]} for name in names}
+    expected_base = {"schema": "solarlab.state-authority.v3", "layout": layout, "map": "relative-fields",
+        "version": 1, "modes": modes, "parameters": {}, "anchor": base["anchor"], "primitives": zero,
+        "time": root["time"], "inputs": root["inputs"], "coordinates": [0.0.hex()]*size,
+        "reference": f"relative:{map_id}:initial", "composition_policy": "exact-four-word-primitives-v1",
+        "transition": None}
+    check_point(reference, expected_base)
+    _require(root["identity"] == request["voltage_lift_map"]["physical_reference"],
+             "reference_refresh_Point_reference_identity")
+
+    p = record["payload"]
+    authority = p["authority"]
+    _require(type(authority) is dict and set(authority) == authority_keys | {"coordinate_contract"},
+             "reference_refresh_Point_authority_schema")
+    transition = authority["transition"]
+    _require(type(transition) is dict and set(transition) == {
+        "previous_authority", "previous_point", "previous_primitives", "local_primitives"}
+        and transition["previous_point"] == history["predecessor_identity"]
+        and type(transition["previous_authority"]) is str and len(transition["previous_authority"]) == 64
+        and all(v in "0123456789abcdef" for v in transition["previous_authority"])
+        and set(transition["previous_primitives"]) == set(transition["local_primitives"]) == set(names),
+        "reference_refresh_Point_predecessor")
+    _frame_word_values(history["physical_cumulative_words_hex"], size, count=12)
+    current = {}
+    for name in names:
+        start, stop = offsets[name]
+        current[name] = {"shape": shapes[name], "precision": "frame-input-expansion12-v1",
+                         "words": [layer[start:stop] for layer in history["physical_cumulative_words_hex"]]}
+        previous = transition["previous_primitives"][name]
+        primitive(previous, shapes[name])
+        _require(_digest(transition["local_primitives"][name]) == _digest({"shape": shapes[name],
+            "precision": "frame-input12-endpoint-difference-v1", "current": current[name], "previous": previous}),
+            "reference_refresh_Point_paired_transition")
+    expected = dict(expected_base, schema="solarlab.state-authority.v6", primitives=current,
+        time=history["time_hex"], inputs=history["inputs_hex"], coordinates=history["physical_cumulative_words_hex"][0],
+        reference=f"affine-trial:{map_id}:{root['identity']}",
+        composition_policy="frame-input12-endpoints-paired-transition-v1", transition=transition,
+        coordinate_contract={"kind": "fixed-reference-affine-v1", "solver_projection": "first-word", "reference": reference})
+    check_point(record, expected)
+    _require(p["identity"] == history["point_identity"], "reference_refresh_Point_history_identity")
+
+
+def physical_weight_state(value, request, frame, segment, *, owner, generation, initial=False):
+    """Independent rational reconstruction of actual callback SI weights."""
+    from scripts.benchmarks.physical_tolerance import weight_option
+    option = weight_option(request, frame, segment)
+    n = option["size"]
+    words = lambda row: _word_bytes(row, len(row))
+    _require(type(value) is dict and value["schema"] == "sksundae.ida.physical-affine-weight-state.v1"
+             and type(value["generation"]) is int and value["generation"] > 0
+             and type(value["size"]) is int and type(value["setter_status"]) is int
+             and value["frame_identity"] == option["frame_identity"] and value["profile_identity"] == option["profile_identity"]
+             and value["owner"] == owner and value["generation"] == generation and value["size"] == n
+             and value["installed"] is True and value["setter"] == "IDAWFtolerances" and value["setter_status"] == 0
+             and value["t0_hex"] == option["t0_hex"] and value["rtol_hex"] == option["rtol_hex"]
+             and value["weight_rounding"] == option["weight_rounding"]
+             and value["q0_words"] == tuple(words(w) for w in option["q0_words_hex"])
+             and value["v0_words"] == tuple(words(w) for w in option["v0_words_hex"])
+             and value["atol"] == words(option["atol_physical_hex"]) and value["scale"] == words(option["scale_hex"])
+             and value["reference_words"] == b"".join(words(w) for w in option["reference_words_hex"])
+             and value["lift"] == b"".join(words(w) for w in option["lift_hex"])
+             and value["protocol_start_hex"] == option["protocol_start_hex"]
+             and value["protocol_end_hex"] == option["protocol_end_hex"]
+             and all(value[k] == tuple(_hex(v) for v in option[key]) for k,key in (
+                 ("inputs_start","inputs_start_hex"),("inputs_end","inputs_end_hex"),
+                 ("input_rates","input_rates_hex"),("reference_inputs","reference_inputs_hex"))), "physical_weight_actual_context")
+    _require(type(value["callback_calls"]) is int and value["callback_calls"] >= 0, "physical_weight_calls")
+    if initial:
+        _require(value["callback_calls"] == 0 and value["callback_status"] is None
+                 and all(value[k] is None for k in ("basis_time_hex","basis_u","rounded_physical","computed_weights")), "physical_weight_initial_cache")
+    elif value["callback_calls"]:
+        _require(type(value["callback_status"]) is int and value["callback_status"] == 0
+                 and value["failure_component"] is None, "physical_weight_callback_failure")
+        t = _hex(value["basis_time_hex"]); lo,hi = _hex(option["protocol_start_hex"]),_hex(option["protocol_end_hex"])
+        _require(lo <= t <= hi, "physical_weight_basis_time")
+        first,last,rates = (tuple(_hex(v) for v in option[k]) for k in ("inputs_start_hex","inputs_end_hex","input_rates_hex"))
+        inputs = first if t == lo else last if t == hi else tuple(a+v*(t-lo) for a,v in zip(first,rates))
+        q0,v0 = (_frame_word_values(option[k],n) for k in ("q0_words_hex","v0_words_hex"))
+        raw = _buffer(value["basis_u"],n); dt = Fraction(t)-Fraction(_hex(option["t0_hex"]))
+        roots = tuple(sum((Fraction(_hex(w[i])) for w in option["reference_words_hex"]),Fraction(0)) for i in range(n))
+        scale = tuple(_hex(v) for v in option["scale_hex"]); a = tuple(_hex(v) for v in option["atol_physical_hex"])
+        ref = tuple(_hex(v) for v in option["reference_inputs_hex"]); r = _hex(option["rtol_hex"])
+        physical = tuple(float(roots[i]+Fraction(scale[i])*(q0[i]+dt*v0[i]+Fraction(raw[i]))+
+                         sum((Fraction(_hex(option["lift_hex"][i][j]))*(Fraction(inputs[j])-Fraction(ref[j])) for j in range(2)),Fraction(0)))
+                         for i in range(n))
+        expected = tuple(s/(r*abs(x)+b) for s,x,b in zip(scale,physical,a))
+        _require(_buffer(value["rounded_physical"],n) == physical and _buffer(value["computed_weights"],n) == expected
+                 and all(math.isfinite(w) and w > 0 for w in expected), "physical_weight_metric")
+    return value
+
+
+class SegmentFrameCheck:
+    """Independent dyadic frame/weight checks; no model or native imports."""
+
+    def __init__(self, request):
+        self.request, self.request_id = request, _digest(request)
+        self.enabled = "segment_frame_policy" in request
+        self.input_words = frame_input_word_count(request)
+        self.size = len(request.get("z0", ()))
+        self.base = request["voltage_lift_map"]
+        self.active = self.current_map = self.latest_weights = None
+        self.prior_phi0 = None
+        self.frames, self.polynomials = [], 0
+        self.polynomial_hash = hashlib.sha256()
+        self.refresh_policy = reference_refresh_policy(request)
+        self.refreshes = []
+        _require(not any(k in request for k in ("segment_frame", "frame_overrides", "parent_weight_frame", "physical_weight_frame")),
+                 "segment_frame_unbound_option")
+        if not self.enabled:
+            _require("initial_segment_frame" not in request, "segment_frame_unbound_initialization")
+            return
+        self.size = len(request["controls"]["atol"])
+        expected = {"schema": "solarlab.segment-frame-policy.v1", "name": "fixed-affine-state-rate-v1",
+                    "ancestor_request_sha256": request["prior_request_sha256"],
+                    "parent_map_identity": request["map_identity"],
+                    "controls_sha256": _digest(request["controls"]), "segments_sha256": _digest(request["segments"]),
+                    "sampling_sha256": _digest((request["observation_times"], request["quadrature"])),
+                    "weight_certificate_sha256": _digest(request["weight_certificate"]),
+                    "segment_startup_policy_sha256": _digest(request.get("segment_startup_policy")),
+                    "qualification_policy_sha256": _digest(request.get("qualification_policy")),
+                    "application": "one_fixed_live_origin_at_each_existing_fresh_segment_initialization",
+                    "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
+                    "requested_first_steps_unchanged": True, "actual_automatic_first_step_parity_claimed": False}
+        _require(type(request["segment_frame_policy"]) is dict
+                 and _digest(request["segment_frame_policy"]) == _digest(expected), "segment_frame_policy_binding")
+
+    def parent(self, frame, when, raw, *, rate=False):
+        q0 = _frame_word_values(frame["q0_words_hex"], self.size)
+        v0 = _frame_word_values(frame["v0_words_hex"], self.size)
+        if rate:
+            return tuple(v+Fraction(u) for v, u in zip(v0, raw))
+        dt = Fraction(when)-Fraction(_hex(frame["t0_hex"]))
+        return tuple(q+dt*v+Fraction(u) for q, v, u in zip(q0, v0, raw))
+
+    def physical(self, parent, inputs, *, rate=False):
+        columns = _hex_vector(self.base["columns_hex"], self.size)
+        lift = tuple(_hex_vector(row, 2) for row in _vector(self.base["lift_hex"], self.size))
+        ref = _hex_vector(self.base["reference_inputs_hex"], 2)
+        return tuple(Fraction(s)*q+sum((Fraction(row[j])*(Fraction(inputs[j])-
+                     (0 if rate else Fraction(ref[j]))) for j in range(2)), Fraction(0))
+                     for s, q, row in zip(columns, parent, lift))
+
+    def begin(self, record, segment, ordinal, predecessor, previous_history=None):
+        _require(self.enabled and record["kind"] == "voltage_lift_segment_frame"
+                 and record["record_sha256"] == _digest({k: v for k, v in record.items() if k != "record_sha256"})
+                 and record["request_sha256"] == self.request_id
+                 and record["parent_map_identity"] == self.request["map_identity"], "segment_frame_record_binding")
+        if "diagnostic_interval" in self.request:
+            return self.begin_diagnostic(record, segment, ordinal, predecessor, previous_history)
+        frame, parent, seed = record["frame"], record["parent_input"], record["preparation_frame"]
+        _require(frame["schema"] == "solarlab.segment-affine-frame.v1" and _digest(frame) == record["frame_identity"]
+                 and frame["parent_map_identity"] == self.request["map_identity"] and frame["size"] == self.size
+                 and frame["segment_sha256"] == _digest(segment)
+                 and frame["logical_initialization_index"] == ordinal and type(frame["logical_initialization_index"]) is int
+                 and frame["predecessor_identity"] == predecessor
+                 and _hex(frame["t0_hex"]) == segment["start"]
+                 and frame["law"] == "q=Q0+(t-t0)*V0+u;qdot=V0+udot"
+                 and frame["weight_rounding"] == "RN-exact-parent-q_then-unfused-SV-v1", "segment_frame_anchor_binding")
+        expected_map = dict(self.base, segment_frame=frame,
+            raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+            physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        if self.input_words == 12:
+            expected_map.update(mapped_input_profile="frame-input-expansion12-v1", mapped_input_words=12)
+        _require(record["map"] == expected_map and record["map_identity"] == _digest(expected_map),
+                 "segment_frame_map_binding")
+        q0 = _frame_word_values(frame["q0_words_hex"], self.size)
+        v0 = _frame_word_values(frame["v0_words_hex"], self.size)
+        _require(parent["record_sha256"] == _digest({k: v for k, v in parent.items() if k != "record_sha256"})
+                 and frame["parent_input_sha256"] == parent["record_sha256"]
+                 and parent["predecessor_identity"] == predecessor and parent["request_sha256"] == self.request_id
+                 and parent["segment_sha256"] == _digest(segment) and parent["time_hex"] == frame["t0_hex"]
+                 and parent["state_changed"] is False and parent["native_initialization_performed"] is False,
+                 "segment_frame_parent_initializer")
+        zero = ["0x0.0p+0"]*self.size
+        _require(record["native_initial_z_hex"] == record["native_initial_zdot_hex"] == zero
+                 and parent["raw_z_hex"] == zero
+                 and frame["v0_words_hex"] == [parent["raw_zdot_hex"], zero, zero, zero]
+                 and record["ancestry"] == {"request_sha256": self.request_id,
+                    "parent_map_identity": self.request["map_identity"], "predecessor_identity": predecessor,
+                    "q0_words_hex": frame["q0_words_hex"]}
+                 and seed == dict(frame, v0_words_hex=[zero]*4, parent_input_sha256=_digest(record["ancestry"])),
+                 "segment_frame_supplied_words")
+        if previous_history is None:
+            _require(ordinal == 1 and all(v == 0 for v in q0), "segment_frame_original_initial_state")
+        else:
+            _require(self.active is not None and q0 == self.parent(self.active, segment["start"],
+                     _hex_vector(previous_history["raw_solver_z_hex"], self.size)), "segment_frame_live_handoff")
+            _require(record["physical_handoff_words_hex"] == previous_history["physical_cumulative_words_hex"],
+                     "segment_frame_physical_handoff_words")
+        inputs = (segment["voltage"][0], segment["photons"][0])
+        rates = tuple((values[1]-values[0])/(segment["end"]-segment["start"])
+                      for values in (segment["voltage"], segment["photons"]))
+        _require(_hex_vector(parent["inputs_hex"], 2) == inputs
+                 and _hex_vector(parent["input_rates_hex"], 2) == rates
+                 and _frame_word_values(record["physical_handoff_words_hex"], self.size, count=self.input_words) == self.physical(q0, inputs)
+                 and _frame_word_values(record["physical_rate_handoff_words_hex"], self.size, count=self.input_words) == self.physical(v0, rates, rate=True)
+                 and record["physical_rate_handoff_words_hex"] == parent["mapped_physical_rate_words_hex"],
+                 "segment_frame_right_sided_physical_map")
+        self.active, self.current_map, self.segment = frame, expected_map, segment
+        self.prior_phi0 = _word_bytes(zero, self.size)
+        self.frames.append({"frame_identity": record["frame_identity"], "map_identity": record["map_identity"],
+                            "ordinal": ordinal, "weight_packets": 0})
+        return expected_map
+
+    def begin_diagnostic(self, record, segment, ordinal, predecessor, previous_history):
+        """A complete externally saved seed, distinct from a cold reference."""
+        data = diagnostic_interval_binding(self.request)
+        accepted, restore = data["accepted"], data["restore"]
+        frame, proof = record["frame"], record["parent_input"]
+        ancestry = {"schema": "solarlab.native-interval-live-seed.v1", "request_sha256": self.request_id,
+                    "descriptor_sha256": _digest(self.request["diagnostic_interval"]),
+                    "parent_map_identity": self.request["map_identity"], "predecessor_identity": predecessor,
+                    "q0_words_hex": accepted["frame"]["q0_words_hex"],
+                    "v0_words_hex": accepted["frame"]["v0_words_hex"]}
+        expected_frame = dict(accepted["frame"], parent_map_identity=self.request["map_identity"],
+            segment_sha256=_digest(segment), logical_initialization_index=1,
+            predecessor_identity=predecessor, parent_input_sha256=_digest(ancestry))
+        expected_map = dict(self.base, segment_frame=expected_frame,
+            raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+            physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        _require(record["initialization_mode"] == "diagnostic_saved_seed" and ordinal == 1
+                 and previous_history is None and predecessor == accepted["Point_identity"]
+                 and frame == expected_frame and record["frame_identity"] == _digest(frame)
+                 and record["ancestry"] == ancestry and record["map"] == expected_map
+                 and record["map_identity"] == _digest(expected_map)
+                 and record["native_initialization_performed"] is False,
+                 "diagnostic_frame_ancestry")
+        _require(proof["schema"] == "solarlab.voltage-lift-diagnostic-input.v1"
+                 and proof["record_sha256"] == _digest({k: v for k, v in proof.items() if k != "record_sha256"})
+                 and proof["request_sha256"] == self.request_id and proof["map_identity"] == _digest(expected_map)
+                 and proof["predecessor_identity"] == proof["point_identity"] == predecessor
+                 and proof["Point"] == restore["Point"] and proof["time_hex"] == frame["t0_hex"]
+                 and proof["segment_sha256"] == _digest(segment)
+                 and all(proof[k] is False for k in ("state_changed", "tangent_preparation_performed",
+                           "native_initialization_performed", "original_native_authority_restored")),
+                 "diagnostic_initial_Point_proof")
+        zero = [0.0.hex()]*self.size
+        raw_rate = restore["raw_v_hex"]
+        _require(record["native_initial_z_hex"] == proof["raw_z_hex"] == zero
+                 and record["native_initial_zdot_hex"] == proof["raw_zdot_hex"] == raw_rate
+                 and proof["inputs_hex"] == accepted["inputs_hex"]
+                 and proof["input_rates_hex"] == accepted["input_rates_hex"]
+                 and record["physical_handoff_words_hex"] == accepted["physical_state_words_hex"]
+                 and record["physical_rate_handoff_words_hex"] == proof["mapped_physical_rate_words_hex"]
+                 == accepted["physical_rate_words_hex"], "diagnostic_all_saved_words")
+        state = self.parent(frame, segment["start"], (0.0,)*self.size)
+        rate = self.parent(frame, segment["start"], _hex_vector(raw_rate, self.size), rate=True)
+        _require(_frame_word_values(accepted["physical_state_words_hex"], self.size, count=12)
+                 == self.physical(state, _hex_vector(accepted["inputs_hex"], 2))
+                 and _frame_word_values(accepted["physical_rate_words_hex"], self.size, count=12)
+                 == self.physical(rate, _hex_vector(accepted["input_rates_hex"], 2), rate=True),
+                 "diagnostic_independent_physical_transfer")
+        self.active, self.current_map, self.segment = frame, expected_map, segment
+        self.prior_phi0 = _word_bytes(zero, self.size)
+        self.frames.append({"frame_identity": record["frame_identity"], "map_identity": record["map_identity"],
+                            "ordinal": 1, "weight_packets": 0, "initialization_mode": "diagnostic_saved_seed"})
+        return expected_map
+
+    def constructor(self, row):
+        frame = self.active
+        expected = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": _digest(frame),
+                    **{k: frame[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
+        weight_key, hash_key = "parent_weight_frame", "parent_weight_frame_sha256"
+        if "physical_tolerance_policy" in self.request:
+            from scripts.benchmarks.physical_tolerance import weight_option
+            expected = weight_option(self.request, frame, self.segment)
+            weight_key, hash_key = "physical_weight_frame", "weight_option_sha256"
+        _require(row[weight_key] == expected and row[hash_key] == _digest(expected)
+                 and row["segment_frame_policy_sha256"] == _digest(self.request["segment_frame_policy"])
+                 and row["request_sha256"] == self.request_id and row["map_identity"] == self.request["map_identity"]
+                 and row["segment_sha256"] == self.active["segment_sha256"]
+                 and row["logical_initialization_index"] == self.active["logical_initialization_index"]
+                 and row["constructor_controls"] == segment_startup_controls(self.request, self.segment)
+                 and row["constructor_controls_sha256"] == _digest(row["constructor_controls"]),
+                 "segment_frame_constructor_weight_binding")
+
+    def prepare_refresh(self, record, segment, ordinal, sample, interval, domain, certificate, ledger):
+        """Require the already verified acceptance and exact dyadic transfer."""
+        policy, h = self.refresh_policy, sample["history"]
+        continuing = "certificate_failure_policy" in self.request
+        proof_key = "state_transfer" if continuing else "acceptance"
+        _require(policy is not None and not self.refreshes and record["phase"] == "prepared"
+                 and record["schema"] == ("solarlab.reference-state-transfer.v2" if continuing else "solarlab.accepted-reference-handoff.v1")
+                 and record["kind"] == "voltage_lift_numeric_handoff"
+                 and record["record_sha256"] == _digest({k: v for k, v in record.items() if k != "record_sha256"})
+                 and record["request_sha256"] == self.request_id and record["policy_sha256"] == _digest(policy)
+                 and record["physical_segment_ordinal"] == ordinal == policy["physical_segment_ordinal"]
+                 and record["segment_sha256"] == _digest(segment) == policy["segment_sha256"]
+                 and record["new_epoch"] is None and record["state_or_rate_projected"] is False
+                 and record["native_multistep_history_discarded"] is True, "reference_refresh_record")
+        if continuing:
+            # Every saved copy must agree with the reader-owned summary,
+            # including JSON types: 0/0.0 are not a boolean false verdict.
+            saved_ledger = _decode(record["ledger"])
+            _require(type(record.get(proof_key)) is dict and type(saved_ledger) is dict,
+                     "reference_refresh_scientific_progress_type")
+            for progress in (interval.get("scientific_progress"),
+                             record[proof_key].get("scientific_progress"),
+                             saved_ledger.get("scientific_progress")):
+                _require(type(progress) is dict and type(progress.get("passed")) is bool,
+                         "reference_refresh_scientific_progress_type")
+                _require(_digest(progress) == _digest(ledger["scientific_progress"]),
+                         "reference_refresh_scientific_progress")
+        accepted = {"schema": ("solarlab.numeric-reference-transfer-evidence.v2" if continuing else
+                               "solarlab.full-interval-refresh-acceptance.v1"), "request_sha256": self.request_id,
+            **({"scientific_progress": ledger["scientific_progress"]} if continuing else {}),
+            "point_identity": h["point_identity"], "time_hex": h["time_hex"],
+            "sample_record_sha256": sample["record_sha256"], "history_sha256": _digest(h),
+            "interval_record_sha256": _digest(interval), "domain_record_sha256": _digest(domain),
+            "current_certificate_sha256": _digest(certificate), "state_checks_sha256": _digest(sample["state_checks"]),
+            "coefficient_frame_identity": interval["coefficient_frame_identity"]}
+        observed = _decode(interval["observation"])
+        charge_passed = (observed["physical_charge"]["passed"] is True
+                         and observed["physical_charge"]["prefix"]["passed"] is True
+                         if "physical_tolerance_policy" in self.request and interval["kind"] != "voltage_lift_interval_deferred"
+                         else observed.get("passed") is True)
+        proof_matches = (_digest(record[proof_key]) == _digest(accepted) if continuing else record[proof_key] == accepted)
+        _require(proof_matches
+                 and (continuing or sample["state_checks"]["passed"] is True and charge_passed
+                      and _decode(domain["evidence"])["passed"] is True
+                      and _decode(certificate["evidence"])["passed"] is True)
+                 and certificate["sample_record_sha256"] == sample["record_sha256"]
+                 and interval["right"]["record_sha256"] == sample["record_sha256"]
+                 and _decode(record["ledger"]) == ledger and record["ledger_sha256"] == _digest(record["ledger"]),
+                 "reference_refresh_full_acceptance_or_ledger")
+        if continuing:
+            _require("acceptance" not in record and "acceptance_sha256" not in record["transfer"],
+                     "reference_refresh_not_scientific_acceptance")
+        t = record["transfer"]; old, new = t["old_frame"], t["new_frame"]
+        _require(old == self.active and t["old_map"] == self.current_map
+                 and t["old_frame_identity"] == _digest(old) and t["old_map_identity"] == _digest(self.current_map)
+                 and t["time_hex"] == h["time_hex"] == policy["time_hex"]
+                 and t["point_identity"] == h["point_identity"]
+                 and t["inputs_hex"] == h["inputs_hex"]
+                 and t["state_transfer_sha256" if continuing else "acceptance_sha256"] == _digest(accepted),
+                 "reference_refresh_original_Point")
+        try:
+            _reference_refresh_point(t["Point"], h, self.request)
+        except HistoryVerificationError:
+            raise
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise HistoryVerificationError("reference_refresh_Point_malformed_codec") from error
+        self.sample(h)
+        zero = [0.0.hex()]*self.size
+        _require(t["old_raw_state_hex"] == h["raw_solver_z_hex"] and t["old_raw_rate_hex"] == h["raw_solver_zdot_hex"]
+                 and t["new_raw_state_hex"] == t["new_raw_rate_hex"] == zero
+                 and t["physical_state_words_hex"] == h["physical_cumulative_words_hex"]
+                 and t["physical_rate_words_hex"] == h["physical_rate_words_hex"]
+                 and t["input_rates_hex"] == h["input_rates_hex"], "reference_refresh_exact_words")
+        when = _hex(t["time_hex"])
+        rates = tuple((v[1]-v[0])/(segment["end"]-segment["start"]) for v in (segment["voltage"], segment["photons"]))
+        inputs = tuple(v[0]+rate*(when-segment["start"]) for v, rate in zip((segment["voltage"], segment["photons"]), rates))
+        _require(t["inputs_hex"] == [float(v).hex() for v in inputs]
+                 and t["input_rates_hex"] == [float(v).hex() for v in rates], "reference_refresh_original_input_function")
+        expected_frame = dict(old, t0_hex=t["time_hex"], predecessor_identity=h["point_identity"],
+            logical_initialization_index=old["logical_initialization_index"]+1,
+            parent_input_sha256=_digest(accepted), q0_words_hex=new["q0_words_hex"], v0_words_hex=new["v0_words_hex"])
+        expected_map = dict(self.current_map, segment_frame=expected_frame)
+        _require(new == expected_frame and t["new_frame_identity"] == _digest(new)
+                 and t["new_map"] == expected_map and t["new_map_identity"] == _digest(expected_map)
+                 and t["old_numeric_initialization_ordinal"] == old["logical_initialization_index"]
+                 and t["new_numeric_initialization_ordinal"] == new["logical_initialization_index"], "reference_refresh_new_frame")
+        q = self.parent(old, when, _hex_vector(t["old_raw_state_hex"], self.size))
+        v = self.parent(old, when, _hex_vector(t["old_raw_rate_hex"], self.size), rate=True)
+        _require(q == _frame_word_values(new["q0_words_hex"], self.size)
+                 and v == _frame_word_values(new["v0_words_hex"], self.size)
+                 and self.physical(q, inputs) == _frame_word_values(t["physical_state_words_hex"], self.size, count=12)
+                 and self.physical(v, rates, rate=True) == _frame_word_values(t["physical_rate_words_hex"], self.size, count=12),
+                 "reference_refresh_independent_parent_composition")
+        raw_words = b"".join(_word_bytes(w, self.size) for w in t["physical_rate_words_hex"])
+        rate_id = hashlib.sha256(repr(("physical-rate-view-v1", h["point_identity"], self.base["layout"],
+            self.base["physical_model"], t["new_map_identity"], "mapped-coordinate-rate")).encode())
+        rate_id.update(b"frame-input-expansion12-v1:"+repr((self.size,)).encode()+raw_words+raw_words)
+        rate_id.update(_word_bytes(t["input_rates_hex"], 2)+_word_bytes(zero, self.size)*2)
+        _require(rate_id.hexdigest() == t["new_rate_identity"], "reference_refresh_rate_identity")
+        self.active, self.current_map = new, expected_map
+        self.latest_weights, self.prior_phi0 = None, _word_bytes(zero, self.size)
+        self.frames.append({"frame_identity": t["new_frame_identity"], "map_identity": t["new_map_identity"],
+            "ordinal": new["logical_initialization_index"], "physical_segment_ordinal": ordinal,
+            "weight_packets": 0, "initialization_mode": "accepted_numeric_refresh"})
+        return expected_map
+
+    def complete_refresh(self, prepared, complete, statistics):
+        _require(complete["record_sha256"] == _digest({k: v for k, v in complete.items() if k != "record_sha256"})
+                 and complete["phase"] == "complete" and complete["prepared_sha256"] == prepared["record_sha256"]
+                 and all(_digest(complete[k]) == _digest(v) for k, v in prepared.items()
+                         if k not in {"phase", "new_epoch", "record_sha256"})
+                 and complete["statistics_sha256"] == _digest(statistics) and complete["public_api"] == "init_step",
+                 "reference_refresh_completion_binding")
+        old, new, raw = prepared["old_epoch"], complete["new_epoch"], statistics["raw_statistics"]
+        before = complete["before_statistics"]["raw_statistics"]
+        epoch_fields = ("observation_owner", "observation_generation", "num_steps", "current_time")
+        _require(_digest({k: before[k] for k in epoch_fields}) == _digest({
+                    "observation_owner": old["owner"], "observation_generation": old["generation"],
+                    "num_steps": old["nsteps"], "current_time": _hex(self.active["t0_hex"])})
+                 and _digest(new) == _digest({"owner": old["owner"], "generation": old["generation"]+1, "nsteps": 0})
+                 and _digest({k: raw[k] for k in epoch_fields}) == _digest({
+                    "observation_owner": new["owner"], "observation_generation": new["generation"],
+                    "num_steps": 0, "current_time": _hex(self.active["t0_hex"])}),
+                 "reference_refresh_actual_generation")
+        expected_weights = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": _digest(self.active),
+            **{k: self.active[k] for k in ("t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding")}}
+        weight_key = "parent_weight_frame"
+        if "physical_tolerance_policy" in self.request:
+            from scripts.benchmarks.physical_tolerance import weight_option
+            expected_weights = weight_option(self.request, self.active, self.segment)
+            weight_key = "physical_weight_frame"
+        _require(_digest(complete[weight_key]) == _digest(expected_weights)
+                 and _digest(complete["initialization_return"]) == _digest({
+                    "time_hex": self.active["t0_hex"], "success": True,
+                    "raw_z_hex": [0.0.hex()]*self.size, "raw_zdot_hex": [0.0.hex()]*self.size}),
+                 "reference_refresh_public_initialization_words")
+        expected_binding = _digest({"adapter": _digest({"map": _digest(self.current_map),
+            "partial_frame": "raw-z,raw-zdot,inputs,input-rates,time-v1"}),
+            "request": self.request_id, "segment": _digest(self.segment)})
+        _require(complete["callback_binding_identity"] == expected_binding, "reference_refresh_callback_binding")
+        self.refreshes.append({"handoff_sha256": complete["record_sha256"], "old_epoch": old, "new_epoch": new,
+            "actual_initial_step_hex": None, "first_return_statistics_sha256": None})
+
+    def refresh_work(self, row):
+        raw = row["raw_statistics"]
+        if row["phase"] in {"after_onestep", "onestep_exception"} and self.refreshes:
+            entry = self.refreshes[-1]
+            if raw["num_steps"] > 0:
+                h0 = raw["initial_step"]
+                requested = segment_startup_controls(self.request, self.segment)["first_step"]
+                _require(type(h0) is float and math.isfinite(h0) and h0 > 0
+                         and (requested == 0 or h0.hex() == float(requested).hex())
+                         and entry["actual_initial_step_hex"] in (None, h0.hex()), "reference_refresh_actual_startup")
+                entry["actual_initial_step_hex"] = h0.hex()
+            if entry["first_return_statistics_sha256"] is None:
+                entry["first_return_statistics_sha256"] = _digest(row)
+                entry["first_return_statistics"] = raw
+
+    def weight_state(self, value, *, owner, generation, initial=False):
+        value = _decode(value)
+        frame, controls = self.active, self.request["controls"]
+        if "physical_tolerance_policy" in self.request:
+            value = physical_weight_state(value, self.request, frame, self.segment,
+                                          owner=owner, generation=generation, initial=initial)
+            self.latest_weights = value
+            return value
+        _require(type(value) is dict and value["schema"] == "sksundae.ida.parent-affine-weight-state.v1"
+                 and value["frame_identity"] == _digest(frame) and value["owner"] == owner
+                 and value["generation"] == generation and value["size"] == self.size
+                 and value["installed"] is True and value["setter"] == "IDAWFtolerances" and value["setter_status"] == 0
+                 and value["t0_hex"] == frame["t0_hex"] and _hex(value["rtol_hex"]) == controls["rtol"]
+                 and _buffer(value["atol"], self.size) == tuple(controls["atol"])
+                 and value["q0_words"] == tuple(_word_bytes(w, self.size) for w in frame["q0_words_hex"])
+                 and value["v0_words"] == tuple(_word_bytes(w, self.size) for w in frame["v0_words_hex"])
+                 and value["weight_rounding"] == frame["weight_rounding"] and value["raw_tolerance_getter"] is False,
+                 "segment_frame_actual_weight_context")
+        _require(type(value["callback_calls"]) is int and value["callback_calls"] >= 0, "segment_frame_weight_calls")
+        if initial:
+            _require(value["callback_calls"] == 0 and value["callback_status"] is None
+                     and all(value[k] is None for k in ("basis_time_hex", "basis_u", "rounded_parent", "computed_weights")),
+                     "segment_frame_unobserved_initial_weights")
+        elif value["callback_calls"]:
+            _require(value["callback_status"] == 0 and value["failure_component"] is None,
+                     "segment_frame_weight_callback_failure")
+            parent = self.parent(frame, _hex(value["basis_time_hex"]), _buffer(value["basis_u"], self.size))
+            rounded = tuple(float(v) for v in parent)
+            expected = tuple(1.0/(controls["rtol"]*abs(v)+a) for v, a in zip(rounded, controls["atol"]))
+            _require(_buffer(value["rounded_parent"], self.size) == rounded
+                     and _buffer(value["computed_weights"], self.size) == expected
+                     and all(math.isfinite(v) and v > 0 for v in expected), "segment_frame_parent_weight_metric")
+        self.latest_weights = value
+        return value
+
+    def sample(self, history):
+        _require(history["segment_frame_identity"] == _digest(self.active), "segment_frame_sample_identity")
+        if self.input_words == 12:
+            _require(history.get("mapped_input_profile") == "frame-input-expansion12-v1"
+                     and history.get("mapped_input_words") == 12, "frame_input_history_profile")
+        else:
+            _require("mapped_input_profile" not in history and "mapped_input_words" not in history,
+                     "frame_input_unbound_history_profile")
+        t = _hex(history["time_hex"])
+        parent = self.parent
+        if getattr(parent, "__func__", None) is SegmentFrameCheck.parent:
+            # Reuse only within this sample. Keep raw-state, Q0, V0, time,
+            # then raw-rate validation in the same order as the two calls.
+            raw = _hex_vector(history["raw_solver_z_hex"], self.size)
+            q0 = _frame_word_values(self.active["q0_words_hex"], self.size)
+            v0 = _frame_word_values(self.active["v0_words_hex"], self.size)
+            dt = Fraction(t)-Fraction(_hex(self.active["t0_hex"]))
+            q = tuple(q+dt*v+Fraction(u) for q, v, u in zip(q0, v0, raw))
+            raw_rate = _hex_vector(history["raw_solver_zdot_hex"], self.size)
+            v = tuple(v+Fraction(u) for v, u in zip(v0, raw_rate))
+        else:
+            # Preserve existing instance/subclass overrides of the public path.
+            q = parent(self.active, t, _hex_vector(history["raw_solver_z_hex"], self.size))
+            v = self.parent(self.active, t, _hex_vector(history["raw_solver_zdot_hex"], self.size), rate=True)
+        _require(_frame_word_values(history["physical_cumulative_words_hex"], self.size, count=self.input_words) ==
+                 self.physical(q, _hex_vector(history["inputs_hex"], 2))
+                 and _frame_word_values(history["physical_rate_words_hex"], self.size, count=self.input_words) ==
+                 self.physical(v, _hex_vector(history["input_rates_hex"], 2), rate=True), "segment_frame_sample_physical_words")
+
+    def packet(self, packet):
+        previous_receipt = self.latest_weights
+        value = self.weight_state(packet.get("parent_weight_state"), owner=packet["owner"], generation=packet["generation"])
+        _require(value["callback_calls"] > 0 and value["build_identity"] == packet["binding"]["identity"]
+                 and value["basis_u"] == self.prior_phi0
+                 and _hex(value["basis_time_hex"]) == packet["predecessor"]["internal_t"]
+                 and value["computed_weights"] == packet["error_weights"]
+                 and (previous_receipt is None or value == previous_receipt), "segment_frame_operative_weight_basis")
+        self.frames[-1]["weight_packets"] += 1
+        n, order = self.size, packet["native_before"]["kused"]
+        phi = _buffer(packet["basis"]["phi"], n*(order+1))
+        psi = tuple(map(Fraction, _buffer(packet["basis"]["psi"], order)))
+        h, tn = Fraction(packet["native_before"]["hused"]), Fraction(packet["native_before"]["tn"])
+        result = [[Fraction(phi[i])]+[Fraction(0)]*order for i in range(n)]
+        basis = [Fraction(1)]
+        for j in range(1, order+1):
+            factor = Fraction(0) if j == 1 else psi[j-2]
+            product = [Fraction(0)]*(len(basis)+1)
+            for k, v in enumerate(basis):
+                product[k] += v*factor/psi[j-1]
+                product[k+1] += v*h/psi[j-1]
+            basis = product
+            for i in range(n):
+                for k, v in enumerate(basis):
+                    result[i][k] += Fraction(phi[j*n+i])*v
+        raw_polynomials = tuple(tuple(row) for row in result)
+        q0, v0 = (_frame_word_values(self.active[k], n) for k in ("q0_words_hex", "v0_words_hex"))
+        for i in range(n):
+            result[i][0] += q0[i]+(tn-Fraction(_hex(self.active["t0_hex"])))*v0[i]
+            result[i][1] += h*v0[i]
+        # Full parent polynomial, independently assembled from actual phi/psi.
+        # The physical map uses the same exact columns and finite input line.
+        self.parent_polynomials = tuple(tuple(row) for row in result)
+        reference = self.request["numeric_packet"]["initial_reference"]["payload"]
+        roots = [None]*n
+        for name, (start, stop) in self.request["numeric_packet"]["variable_offsets"].items():
+            field = reference["fields"][name]
+            roots[start:stop] = [Fraction(_hex(a))+Fraction(_hex(b)) for a, b in zip(field["high"], field["low"])]
+        columns = _hex_vector(self.base["columns_hex"], n)
+        lift = tuple(_hex_vector(row, 2) for row in self.base["lift_hex"])
+        inputs = []
+        for endpoints in (self.segment["voltage"], self.segment["photons"]):
+            slope = Fraction((endpoints[1]-endpoints[0])/(self.segment["end"]-self.segment["start"]))
+            inputs.append((Fraction(endpoints[0])+(tn-Fraction(self.segment["start"]))*slope, h*slope))
+        input_reference = tuple(map(Fraction, _hex_vector(self.base["reference_inputs_hex"], 2)))
+        physical = [[Fraction(columns[i])*v for v in row] for i, row in enumerate(result)]
+        for i, row in enumerate(physical):
+            row[0] += roots[i]+sum((Fraction(lift[i][j])*(inputs[j][0]-input_reference[j]) for j in range(2)), Fraction(0))
+            row[1] += sum((Fraction(lift[i][j])*inputs[j][1] for j in range(2)), Fraction(0))
+        self.physical_polynomials = tuple(tuple(row) for row in physical)
+        self.polynomial_tn, self.polynomial_h, self.reference_values = tn, h, tuple(roots)
+
+        def payload(row):
+            row = list(row)
+            while len(row) > 1 and row[-1] == 0:
+                row.pop()
+            return [[v.numerator, v.denominator] for v in row]
+
+        coefficient_id = _digest({"role": "explicit_polynomial_data_not_native_attestation",
+            "raw": [payload(row) for row in raw_polynomials], "map": _digest(self.current_map),
+            "request": self.request_id, "segment": _digest(self.segment),
+            "coefficient_frame": _snapshot_digest(packet)})
+        predecessor = Fraction(packet["predecessor"]["internal_t"])
+        strip = max(Fraction(0), tn-h-predecessor)
+        clock = {k: [v.numerator, v.denominator] for k, v in {
+            "predecessor": predecessor, "tn": tn, "hused": h, "segment_start": Fraction(self.segment["start"]),
+            "segment_end": Fraction(self.segment["end"]), "native_left": tn-h, "uncovered_strip": strip}.items()}
+        clock.update(generation=packet["generation"], nsteps=packet["native_before"]["nsteps"],
+                     kused=order, segment_id=self.segment["id"], owner=packet["owner"])
+        self.path_identity = _digest({"clock": clock, "origin": "declared_reconstruction",
+            "source": self.base["physical_model"], "layout": reference["layout"], "coefficients": coefficient_id,
+            "clock_policy": "declared_polynomial_extension" if strip else "reject_uncovered",
+            "fields": {name: [payload(row) for row in physical[start:stop]]
+                       for name, (start, stop) in self.request["numeric_packet"]["variable_offsets"].items()},
+            "inputs": [payload(row) for row in inputs]})
+        self.polynomials += 1
+        self.polynomial_hash.update(bytes.fromhex(self.path_identity))
+        self.prior_phi0 = packet["basis"]["phi"][:8*n]
+
+    def readback(self, evidence, history):
+        x = (Fraction(_hex(history["time_hex"]))-self.polynomial_tn)/self.polynomial_h
+        states, rates = [], []
+        for row in self.physical_polynomials:
+            states.append(sum((c*x**k for k, c in enumerate(row)), Fraction(0)))
+            rates.append(sum((k*c*x**(k-1) for k, c in enumerate(row) if k), Fraction(0))/self.polynomial_h)
+        actual = _enclosures(evidence["physical_state_enclosures"], self.size)
+        words = _frame_word_values(history["physical_cumulative_words_hex"], self.size, count=self.input_words)
+        _require(all(abs(item["center"]-root-q) <= item["absolute_error_bound"]
+                     for item, root, q in zip(actual, self.reference_values, words)), "segment_frame_actual_state_enclosure")
+        expected = tuple(abs(a["center"]-p)+a["absolute_error_bound"] for a, p in zip(actual, states))
+        actual_rates = _frame_word_values(history["physical_rate_words_hex"], self.size, count=self.input_words)
+        _require(tuple(evidence["physical_state_absolute_error"]) == expected
+                 and tuple(evidence["physical_rate_absolute_error"]) ==
+                 tuple(abs(a-p) for a, p in zip(actual_rates, rates)), "segment_frame_polynomial_readback_error")
+
+    def finish(self):
+        return {"initializations": self.frames, "numeric_refreshes": self.refreshes,
+                "independent_physical_polynomials": self.polynomials,
+                "physical_path_digests_sha256": self.polynomial_hash.hexdigest(),
+                "weight_basis": "actual callback u/time checked against preceding native phi[0]",
+                "requested_startup_unchanged": True, "actual_automatic_startup_parity_claimed": False,
+                "scientific_qualification": False}
+
+
+class _ScientificCheck:
+    """Reader-owned verdicts; producer flags are compared, never used as oracle."""
+
+    def __init__(self, request):
+        from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+        self.policy = validate_certificate_policy(request)
+        self.failures = set()
+        self.first_failure = None
+
+    def observe(self, gate, value, record):
+        _require(type(value) is bool, "scientific_verdict_type")
+        if not value:
+            self.failures.add(gate)
+            if self.first_failure is None:
+                self.first_failure = {"gate": gate, "record_sha256": _digest(record)}
+
+    def summary(self, *, final=False):
+        return {"schema": "solarlab.scientific-progress.v1",
+                "failed_gates": sorted(self.failures), "first_failure": self.first_failure,
+                "pending_proofs": ["T1"],
+                "status": "failed" if self.failures else "unknown" if final else "pending",
+                "passed": False}
+
+
+class PhysicalChargeCheck:
+    """Independent three-channel physical balance from saved words and flux evidence.
+
+    The source-bound flux enclosure is reused, never recomputed from a raw
+    metal derivative. Signed centers may cancel; every positive error and the
+    first-failure latch persist across protocol and numeric-frame boundaries.
+    """
+
+    error_names = ("saved_charge_evaluation", "physical_flux_integration", "input", "clock_strip")
+    flux_basis = "fixed-uniform-epsilon-Dirichlet-slab-reservoir-carrier-ion-trap-capacitance-v1"
+
+    def __init__(self, request):
+        from scripts.benchmarks.physical_tolerance import physical_charge_policy, CHARGE_ALLOCATION
+        self.request, self.request_id = request, _digest(request)
+        self.policy = physical_charge_policy(request)
+        self.input_words = frame_input_word_count(request)
+        _require(request["interval_observation"].get("physical_charge") == self.policy
+                 and request["interval_observation"].get("quadrature_error_allocation") == CHARGE_ALLOCATION,
+                 "physical_charge_policy_or_allocation")
+        self.budgets = (Fraction(self.policy["budget_C"]),)*3
+        self.intervals = 0
+        self.signed = self.absolute = (Fraction(0),)*3
+        self.components = {name: (Fraction(0),)*3 for name in self.error_names}
+        self.failed = (False,)*3
+
+    def allocation(self, duration):
+        first, last = self.request["segments"][0]["start"], self.request["segments"][-1]["end"]
+        full = Fraction(last)-Fraction(first)
+        _require(first == 0 and 0 < duration <= full, "physical_charge_allocation_clock")
+        return self.budgets[0]/12*duration/full/32
+
+    def saved_change(self, left, right):
+        """Exact affine SI actions of all saved endpoint words, including lows."""
+        packet = self.request["numeric_packet"]
+        size, nodes = len(packet["column_scaling"]), packet["nodes"]
+        values = []
+        for sample in (left, right):
+            words = sample["history"]["physical_cumulative_words_hex"]
+            values.append(_frame_word_values(words, size, count=self.input_words))
+        delta = tuple(b-a for a, b in zip(*values))
+        fields = {name: delta[lo:hi] for name, (lo, hi) in packet["variable_offsets"].items()}
+        _require(all(len(v) == nodes for v in fields.values()), "physical_charge_field_shape")
+        definition = packet["definition"]
+        q = Fraction(_hex(self.policy["reference_basis"]["q_C_hex"]))
+        rho = [q*(p-n) for p, n in zip(fields["p_m3"], fields["n_m3"])]
+        if definition["dynamic"]:
+            nt = Fraction(definition["trap_density"])
+            rho = [v+q*(c-nt*f) for v, c, f in zip(rho, fields["c_m3"], fields["f"])]
+        volume = tuple(Fraction(v) for v in _vector(packet["volumes_m3"], nodes))
+        x = _vector(packet["x_m"], nodes)
+        # These are the declared binary64 spacings used by the source forms.
+        dx0, dx1 = Fraction(float(x[1])-float(x[0])), Fraction(float(x[-1])-float(x[-2]))
+        _require(dx0 > 0 and dx1 > 0 and all(v > 0 for v in volume), "physical_charge_geometry")
+        eps_area = Fraction(definition["epsilon"])*Fraction(definition["area"])
+        phi = fields["phi_V"]
+        return (sum((v*r for v, r in zip(volume, rho)), Fraction(0)),
+                eps_area*(phi[0]-phi[1])/dx0-volume[0]*rho[0],
+                -eps_area*(phi[-2]-phi[-1])/dx1-volume[-1]*rho[-1])
+
+    def summary(self):
+        errors = tuple(sum((v[i] for v in self.components.values()), Fraction(0)) for i in range(3))
+        checks = tuple(not value for value in self.failed)
+        return {"schema": "solarlab.native-physical-charge-prefix.v1", "intervals": self.intervals,
+                "budgets_C": self.budgets, "signed_balance_C": self.signed,
+                "error_components_C": dict(self.components), "total_error_C": errors,
+                "total_bound_C": tuple(abs(v)+e for v, e in zip(self.signed, errors)),
+                "cumulative_interval_absolute_balance_C": self.absolute,
+                "failed": self.failed, "row_checks": checks, "passed": all(checks)}
+
+    def consume(self, evidence, left, right, *, frame_identity, path_identity, map_identity, map_payload):
+        row = evidence.get("physical_charge")
+        packet = self.request["numeric_packet"]
+        _require(type(map_payload) is dict, "physical_charge_active_map")
+        root = self.request["voltage_lift_map"]
+        expected_map = dict(root)
+        if map_payload.get("segment_frame") is not None:
+            frame = map_payload["segment_frame"]
+            _require(type(frame) is dict and frame.get("parent_map_identity") == self.request["map_identity"],
+                     "physical_charge_parent_map")
+            expected_map.update(segment_frame=frame,
+                raw_coordinate_meaning="fixed-segment affine remainder u; native history is u",
+                physical_coordinate_meaning="Point.y is the first retained word of S*(Q0+(t-t0)*V0+u)+L*(a-a_ref)")
+        _require(_digest(root) == self.request["map_identity"] and map_payload == expected_map
+                 and _digest(map_payload) == map_identity, "physical_charge_active_map")
+        expected = {"schema": "solarlab.native-physical-charge.v1", "policy": self.policy,
+                    "request_sha256": self.request_id, "map_identity": map_identity,
+                    "root_map_identity": self.request["map_identity"],
+                    "frame_identity": frame_identity, "path_identity": path_identity, "clock": evidence["clock"],
+                    "source_identity": self.request["voltage_lift_map"]["physical_model"],
+                    "layout_identity": packet["layout_identity"], "model_id": packet["definition"]["id"],
+                    "charge_form_identities": tuple(self.request["physical_charge_forms"][k]
+                                                    for k in ("body_charge", "metal_charge")),
+                    "physical_flux_basis": self.flux_basis,
+                    "integration_uncertainty_role": "combined quadrature and physical-integrand evaluation radius; conservative third-share bound"}
+        computed = {"saved_finite_charge_change_C", "physical_flux_integral_C", "signed_balance_C",
+                    "error_components_C", "interval_total_bound_C", "prefix", "row_checks", "passed"}
+        _require(type(row) is dict and set(row) == set(expected) | computed
+                 and all(row[k] == v for k, v in expected.items())
+                 and evidence["frame_identity"] == frame_identity and evidence["path_identity"] == path_identity,
+                 "physical_charge_record_binding")
+        actual = _enclosures(row["saved_finite_charge_change_C"], 3)
+        flux = _enclosures(row["physical_flux_integral_C"], 3)
+        tangent = evidence["ledgers"]["same_state_affine_tangent"]
+        _require(actual == _enclosures(tangent["saved_finite_charge_change_C"], 3)
+                 == _enclosures(evidence["ledgers"]["raw_polynomial"]["saved_finite_charge_change_C"], 3)
+                 and flux == _enclosures(tangent["signed_integral_C"], 3), "physical_charge_independent_flux_selection")
+        exact = self.saved_change(left, right)
+        _require(all(abs(value["center"]-truth) <= value["absolute_error_bound"]
+                     for value, truth in zip(actual, exact)), "physical_charge_saved_word_action")
+        components = row["error_components_C"]
+        _require(type(components) is dict and set(components) == set(self.error_names), "physical_charge_error_components")
+        components = {name: _nonnegative(components[name], 3) for name in self.error_names}
+        _require(components["saved_charge_evaluation"] == tuple(v["absolute_error_bound"] for v in actual)
+                 and components["physical_flux_integration"] == tuple(v["absolute_error_bound"] for v in flux)
+                 and components["input"] == evidence["input_error"]["tangent_charge_integral_error_C"]
+                 and components["clock_strip"] == tangent["error_components_C"]["clock_strip"],
+                 "physical_charge_error_coverage")
+        balances = tuple(a["center"]-b["center"] for a, b in zip(actual, flux))
+        errors = tuple(sum((v[i] for v in components.values()), Fraction(0)) for i in range(3))
+        bounds = tuple(abs(v)+e for v, e in zip(balances, errors))
+        signed = tuple(a+b for a, b in zip(self.signed, balances))
+        absolute = tuple(a+abs(b) for a, b in zip(self.absolute, balances))
+        cumulative = {name: tuple(a+b for a, b in zip(self.components[name], components[name]))
+                      for name in self.error_names}
+        totals = tuple(sum((v[i] for v in cumulative.values()), Fraction(0)) for i in range(3))
+        checks = tuple(not self.failed[i] and bounds[i] <= budget
+                       and abs(signed[i])+totals[i] <= budget
+                       and 3*components["physical_flux_integration"][i] <= budget
+                       and 3*cumulative["physical_flux_integration"][i] <= budget
+                       for i, budget in enumerate(self.budgets))
+        prefix = {"schema": "solarlab.native-physical-charge-prefix.v1", "intervals": self.intervals+1,
+                  "budgets_C": self.budgets, "signed_balance_C": signed, "error_components_C": cumulative,
+                  "total_error_C": totals, "total_bound_C": tuple(abs(v)+e for v, e in zip(signed, totals)),
+                  "cumulative_interval_absolute_balance_C": absolute, "failed": tuple(not v for v in checks),
+                  "row_checks": checks, "passed": all(checks)}
+        _require(all(type(v) is Fraction for v in _vector(row["signed_balance_C"], 3)),
+                 "physical_charge_signed_terms")
+        _nonnegative(row["interval_total_bound_C"], 3)
+        supplied = row["prefix"]
+        _require(type(supplied) is dict
+                 and all(type(v) is Fraction for v in _vector(supplied.get("signed_balance_C"), 3))
+                 and type(supplied.get("error_components_C")) is dict
+                 and set(supplied["error_components_C"]) == set(self.error_names), "physical_charge_prefix_terms")
+        for name in ("budgets_C", "total_error_C", "total_bound_C", "cumulative_interval_absolute_balance_C"):
+            _nonnegative(supplied[name], 3)
+        for values in supplied["error_components_C"].values():
+            _nonnegative(values, 3)
+        _require(type(row["prefix"]) is dict and type(row["prefix"].get("intervals")) is int
+                 and all(type(v) is bool for name in ("failed", "row_checks")
+                         for v in _vector(row["prefix"].get(name), 3))
+                 and type(row["prefix"].get("passed")) is bool
+                 and all(type(v) is bool for v in _vector(row["row_checks"], 3))
+                 and type(row["passed"]) is bool and row["signed_balance_C"] == balances
+                 and row["interval_total_bound_C"] == bounds and row["prefix"] == prefix
+                 and tuple(row["row_checks"]) == checks and row["passed"] is all(checks),
+                 "physical_charge_signed_prefix_or_latch")
+        self.intervals += 1
+        self.signed, self.absolute, self.components, self.failed = signed, absolute, cumulative, prefix["failed"]
+        return all(checks)
+
+
+class _Protocol:
+    science = None
+    offline_charge = False
+    sample_sink = None
+
+    def __init__(self, request, rows, *, charge_observer=None, sample_sink=None):
+        from scripts.benchmarks.physical_tolerance import run_segment_count
+        self.run_segments = run_segment_count(request)
+        self.full_protocol = self.run_segments == len(request["segments"])
+        self.science = _ScientificCheck(request) if "certificate_failure_policy" in request else None
+        self.offline_charge = self.science is not None and self.science.policy["observation"] == "sealed-history"
+        self.charge_observer = charge_observer
+        self.sample_sink = sample_sink
+        self._comparison_samples = {}
+        _require(charge_observer is None or self.offline_charge, "offline_observer_requires_deferred_history")
+        if "physical_tolerance_policy" in request:
+            from scripts.benchmarks.physical_tolerance import require_balance_integration
+            require_balance_integration(request)
+        self.request, self.rows = request, rows
+        self.request_id = _digest(request)
+        self.mapping, self.policy = request["voltage_lift_map"], request["interval_observation"]
+        self.map_id, self.policy_id = request["map_identity"], _digest(self.policy)
+        self.root_map_id = self.map_id
+        self.size, self.nodes = len(request["z0"]), request["numeric_packet"]["nodes"]
+        qualified_size = (qualification_coordinate_count(request)
+                          if "qualification_policy" in request else None)
+        self.diagnostic = diagnostic_interval_binding(request) if "diagnostic_interval" in request else None
+        _require(request["schema"] == ("solarlab.native-interval-child-request.v1" if self.diagnostic is not None
+                                       else "solarlab.voltage-lift-native-request.v1")
+                 and self.size >= 1
+                 and (self.size <= 45 if qualified_size is None else self.size == qualified_size)
+                 and type(self.nodes) is int and 2 <= self.nodes <= self.size
+                 and self.map_id == _digest(self.mapping), "request_schema_or_map")
+        _vector(request["zdot0"], self.size)
+        for key, value in (("map_identity", self.map_id), ("protocol_sha256", _digest(request["segments"])),
+                           ("controls_sha256", _digest(request["controls"])),
+                           ("budgets_sha256", _digest(request["budgets"])),
+                           ("sampling_sha256", _digest((request["observation_times"], request["quadrature"])))):
+            _require(self.policy[key] == value, "request_policy_binding")
+        refinement = self.policy.get("charge_refinement")
+        _require(self.policy.get("schema") in (None, "solarlab.interval-observation-policy.v1",
+                                               "solarlab.interval-observation-policy.v2"), "observation_policy_schema")
+        if "charge_refinement" in self.policy or self.policy.get("schema") == "solarlab.interval-observation-policy.v2":
+            _require(type(refinement) is dict, "charge_refinement_policy_missing")
+            self.charge_refinement = _ChargeRefinement(request, self.request_id)
+        else:
+            _require("parent_policy_sha256" not in self.policy, "legacy_policy_refinement_metadata")
+            self.charge_refinement = None
+        _require(set(request["quadrature"]) == {"8", "16", "32"}, "quadrature_orders")
+        for order in (8, 16, 32):
+            table = request["quadrature"][str(order)]
+            _require(all(type(v) in (float, int) and -1 < v < 1 for v in _vector(table["nodes"], order))
+                     and all(type(v) in (float, int) and v > 0 for v in _vector(table["weights"], order)),
+                     "quadrature_shape_or_domain")
+        self.jacobians = self.steps = self.intervals = self.samples = self.queries = 0
+        self.prefix = {k: ((Fraction(0),) * 3, (Fraction(0),) * 3) for k in _LEDGERS}
+        self.physical_charge = PhysicalChargeCheck(request) if "physical_tolerance_policy" in request else None
+        self.coverage = []
+        self.native_owner = None
+        self.statistics_counter_context = None
+        self.numeric_ordinal = 0
+        self.refresh_anchor = None
+        self.refresh_binding_identity = None
+        self.startup = SegmentStartupCheck(request)
+        self.startup.expected = self.startup.expected[:self.run_segments]
+        self.segment_frame = SegmentFrameCheck(request)
+        if not self.full_protocol:
+            self.segment_frame.refresh_policy = None
+        self.common_clocks = []
+        self.diagnostic_grid = []
+        self._sample_cache, self._pending_common = {}, []
+        self.signed_integrals = {key: (Fraction(0),)*3 for key in _LEDGERS} if self.diagnostic is not None or self.science is not None else None
+
+    def _context(self, row):
+        _require(row["request_sha256"] == self.request_id and row["map_identity"] == self.map_id,
+                 "record_request_or_map")
+
+    def _statistics(self, phase, returned=None, previous=None):
+        initial = phase in {"initialization_return", "reference_refresh_return"}
+        _require(initial or phase in {"before_onestep", "after_onestep"}, "statistics_phase")
+        row = self.rows.take()
+        while row["kind"] == "jacobian_callback_context":
+            _require(phase != "before_onestep", "callback_outside_native_call")
+            self._context(row)
+            self.jacobians += 1
+            _require(row["segment_id"] == self.segment["id"]
+                     and row["logical_initialization_index"] == self.numeric_ordinal
+                     and row["callback_index"] == self.jacobians, "callback_context")
+            _hex(row["time_hex"])
+            _hex(row["cj_hex"])
+            _hex_vector(row["z_hex"], self.size)
+            _hex_vector(row["zdot_hex"], self.size)
+            row = self.rows.take()
+        returned_receipt = None
+        if row["kind"] == "native_interval_return":
+            _require(self.diagnostic is not None and phase == "after_onestep"
+                     and row["segment_id"] == self.segment["id"] and row["sequence"] == self.steps+1,
+                     "diagnostic_return_sequence")
+            returned_receipt = row["receipt"]
+            _require(returned_receipt["phase"] == "native_return" and returned_receipt["success"] is True
+                     and returned_receipt["segment_id"] == self.segment["id"], "diagnostic_raw_return")
+            _hex_vector(returned_receipt["z_hex"], self.size)
+            _hex_vector(returned_receipt["zdot_hex"], self.size)
+            row = self.rows.take()
+        _require(row["kind"] == "native_statistics" and row["phase"] == phase
+                 and row["segment_id"] == self.segment["id"]
+                 and row["logical_initialization_index"] == self.numeric_ordinal, "statistics_order_or_context")
+        if self.numeric_ordinal == self.ordinal:
+            self.startup.consume(row)
+        elif phase != "reference_refresh_return":
+            self.segment_frame.refresh_work(row)
+        target = (self.segment["start"] if phase == "initialization_return" else
+                  _hex(self.segment_frame.active["t0_hex"]) if phase == "reference_refresh_return" else self.segment["end"])
+        _require(_hex(row["requested_time_hex"]) == target, "statistics_requested_time")
+        raw = row["raw_statistics"]
+        _require(all(type(raw[k]) is int and raw[k] >= 0 for k in _COUNTERS)
+                 and _hex(row["internal_time_hex"]) == raw["current_time"]
+                 and row["method_state_valid"] is (raw["num_steps"] > 0), "statistics_values")
+        marked = "jacobian_counter_phase" in row
+        if marked:
+            _require(row["jacobian_counter_phase"] == ("pre_first_accepted_step" if raw["num_steps"] == 0
+                                                       else "current_initialization"), "statistics_jacobian_phase")
+        if returned is not None:
+            _require(_hex(row["returned_time_hex"]) == returned, "statistics_return_time")
+        if phase == "before_onestep":
+            _require(row["returned_time_hex"] is None, "statistics_before_return")
+        if phase == "after_onestep":
+            _require(_hex(row["returned_time_hex"]) == raw["current_time"], "statistics_after_return")
+            if self.diagnostic is not None:
+                _require(returned_receipt is not None
+                         and returned_receipt["time_hex"] == row["returned_time_hex"], "diagnostic_return_clock")
+                self.last_raw_return = returned_receipt
+        owner = raw["observation_owner"], raw["observation_generation"]
+        _require(type(owner[0]) is str and bool(owner[0]) and type(owner[1]) is int and owner[1] > 0,
+                 "statistics_native_owner")
+        if initial:
+            _require(previous is None and raw["num_steps"] == 0
+                     and "jacobian_work_basis" not in row
+                     and (phase != "reference_refresh_return" or self.segment_frame.enabled),
+                     "statistics_initial_counter_context")
+            self.native_owner = owner
+        else:
+            _require(owner == self.native_owner, "native_owner_changed_within_segment")
+        if self.segment_frame.enabled:
+            self.segment_frame.weight_state(raw.get("parent_weight_state"), owner=owner[0], generation=owner[1],
+                                            initial=phase in {"initialization_return", "reference_refresh_return"})
+        counter_context = (self.segment["id"], self.numeric_ordinal, owner, marked)
+        if initial:
+            self.statistics_counter_context = counter_context
+        else:
+            _require(getattr(self, "statistics_counter_context", None) == counter_context,
+                     "statistics_jacobian_scope_changed")
+        if previous is not None:
+            prior_row = self.last_statistics_record
+            _require(marked is ("jacobian_counter_phase" in prior_row), "statistics_jacobian_scope_changed")
+            work = {k: raw[k] - previous[k] for k in _COUNTERS}
+            first_solve = (marked and phase == "after_onestep" and prior_row["phase"] == "before_onestep"
+                           and previous["num_steps"] == 0 and raw["num_steps"] == 1
+                           and prior_row["jacobian_counter_phase"] == "pre_first_accepted_step")
+            if first_solve:
+                _require(row.get("jacobian_work_basis") == "first_solve_current_total",
+                         "statistics_jacobian_reset_basis")
+                work["jacobian_evals"] = raw["jacobian_evals"]
+            else:
+                _require("jacobian_work_basis" not in row, "statistics_unexpected_jacobian_reset")
+            _require(all(v >= 0 for v in work.values())
+                     and all(type(v) is int for v in row["work_since_before"].values())
+                     and row["work_since_before"] == work,
+                     "statistics_counter_delta")
+            _require(raw["num_steps"] == previous["num_steps"] + 1, "onestep_not_consecutive")
+            self.steps += 1
+        self.last_statistics_record = row
+        return raw
+
+    def _sample(self, when, origin, predecessor, *, initial=False):
+        row = self.rows.take("voltage_lift_rate_pair")
+        self._context(row)
+        _require(row["record_sha256"] == _digest({k: v for k, v in row.items() if k != "record_sha256"}),
+                 "sample_record_digest")
+        _require(row["segment_id"] == self.segment["id"] and row["segment_sha256"] == _digest(self.segment)
+                 and row["controls_sha256"] == self.policy["controls_sha256"]
+                 and row["observation_policy_sha256"] == self.policy_id
+                 and row["current_certificate_follows"] is (not initial), "sample_context")
+        h = row["history"]
+        side = (("continuous" if self.ordinal == 1 else "right") if initial
+                else "left" if when == self.segment["end"] else "continuous")
+        _require(h["schema"] == "solarlab.voltage-lift-sample.v2"
+                 and h["transition_representation"] == "paired-endpoints-v1"
+                 and h["map_identity"] == self.map_id and h["physical_model_identity"] == self.mapping["physical_model"]
+                 and h["reference_digest"] == self.reference_digest and h["predecessor_identity"] == predecessor
+                 and h["time_hex"] == float(when).hex() and h["origin"] == origin and h["event_side"] == side
+                 and h["raw_coordinate_frame"] == ("fixed-affine-state-rate-v1" if self.segment_frame.enabled
+                                                  else "scaled-voltage-departure-v1")
+                 and h["physical_rate_frame"] == "direct-map-push-forward-v1" and h["reference_embedded"] is False,
+                 "sample_history_binding")
+        _require(type(h["point_identity"]) is str and len(h["point_identity"]) == 64, "point_identity_shape")
+        for name in ("physical_cumulative_words_hex", "physical_rate_words_hex"):
+            for word in _vector(h[name], self.segment_frame.input_words):
+                _hex_vector(word, self.size)
+        for name in ("raw_solver_z_hex", "raw_solver_zdot_hex"):
+            _hex_vector(h[name], self.size)
+        _hex_vector(h["inputs_hex"], 2)
+        _hex_vector(h["input_rates_hex"], 2)
+        if self.segment_frame.enabled:
+            self.segment_frame.sample(h)
+        _require(row["input_slope_hex"] == h["input_rates_hex"]
+                 and (type(row["state_checks"]["passed"]) is bool if self.science is not None else row["state_checks"]["passed"] is True)
+                 and row["state_checks"]["state_identity"] == h["point_identity"]
+                 and row["state_checks"]["state_changed"] is False, "sample_state_gate")
+        metrics, budgets = row["state_checks"], self.request["budgets"]
+        state_passed = True
+        for metric, cap in (("constraint_potential_bound_V", "constraint_potential_V"),
+                            ("constraint_charge_bound_C", "constraint_charge_C"),
+                            ("contact_max_relative", "contact_relative")):
+            _require(type(metrics[metric]) in (int, float) and math.isfinite(metrics[metric])
+                     and 0 <= metrics[metric] and (self.science is not None or metrics[metric] <= budgets[cap]), "state_gate_values")
+            state_passed = state_passed and metrics[metric] <= budgets[cap]
+        _require(metrics["constraint_charge_bound_C"] == max(metrics["Poisson_absolute_constraint_charge_C"],
+                 *_vector(metrics["metal_charge_error_bound_C"], 2), metrics["body_charge_error_bound_C"]),
+                 "state_charge_bound_consistency")
+        if "c_m3" in self.request["numeric_packet"]["variable_offsets"]:
+            for name in ("ion_inventory_relative", "maximum_site_fraction"):
+                _require(type(metrics[name]) in (int, float) and math.isfinite(metrics[name])
+                         and 0 <= metrics[name] and (self.science is not None or metrics[name] <= budgets[name]), "dynamic_state_gate")
+                state_passed = state_passed and metrics[name] <= budgets[name]
+            _vector(metrics["ion_inventory_change_words"], 2)
+            _require(0 <= metrics["minimum_f"] <= metrics["maximum_f"] <= 1, "dynamic_occupancy_gate")
+            if self.science is not None:
+                _require(metrics["maximum_site_fraction"] < 1, "dynamic_vacancy_domain")
+        if self.science is not None:
+            _require(metrics["passed"] is state_passed, "state_certificate_boolean")
+            self.science.observe("state_accuracy", state_passed, row)
+        _require(row["physical_rate_consumption"] == "public RateView full mapped words"
+                 and row["rate_projection_role"] == "counterfactual_first_word_only"
+                 and row["rate_projection"] == h["physical_rate_projection"], "sample_rate_semantics")
+        for name, observed_origin in (("raw", origin), ("physical_tangent", "physical_tangent")):
+            obs = row[name]
+            _require(obs["point_identity"] == h["point_identity"] and obs["origin"] == observed_origin
+                     and obs["event_side"] == side, "observable_point_binding")
+            _hex_vector(obs["physical_ydot_hex"], self.size)
+            _hex_vector(obs["tangent_residual_hex"], self.size - len(set(self.request["numeric_packet"]["mass_columns"])))
+            for field, size in (("metal_charge", 2), ("conduction_inward", 2), ("total_inward", 2),
+                                ("body_charge", 1), ("body_charge_rate", 1), ("gauss_defect", 1),
+                                ("interior_total_current", self.nodes - 1)):
+                _word_pair(obs[field], size)
+        rate = row["raw"]["physical_rate"]
+        _require(rate["point_identity"] == h["point_identity"] and rate["source_identity"] == self.mapping["physical_model"]
+                 and rate["mapping_identity"] == self.map_id and rate["frame"] == "mapped-coordinate-rate"
+                 and rate["observed_origin"] == origin and rate["values_words_hex"] == h["physical_rate_words_hex"]
+                 and rate["raw_coordinates_hex"] == h["raw_solver_z_hex"]
+                 and rate["raw_rate_hex"] == h["raw_solver_zdot_hex"] and rate["input_rate_hex"] == h["input_rates_hex"]
+                 and row["raw"]["physical_ydot_hex"] == h["physical_rate_words_hex"][0], "physical_rate_word_binding")
+        _word_pair(row["raw"]["charge_integrands"], 3)
+        _require(type(row["raw"]["linear_actions"]) is dict and bool(row["raw"]["linear_actions"]),
+                 "missing_action_receipts")
+        for action in row["raw"]["linear_actions"].values():
+            _require(all(_hex(v) >= 0 for v in action["absolute_error_bound_hex"]), "action_error_words")
+        if origin == "declared_polynomial":
+            _require(row["coefficient_frame_identity"] == self.frame_id and row["polynomial_path_identity"] == self.path_id
+                     and row["native_getter_used"] is False and row["native_output"] is False,
+                     "polynomial_sample_binding")
+        self.samples += 1
+        if self.sample_sink is not None and when in self.request["observation_times"][self.segment["id"]]:
+            self._comparison_samples[row["record_sha256"]] = {"sample": row, "certificate": None, "tag": None}
+        if self.diagnostic is not None:
+            _require(h["inputs_hex"] == self.diagnostic["accepted"]["inputs_hex"]
+                     and h["input_rates_hex"] == self.diagnostic["accepted"]["input_rates_hex"],
+                     "diagnostic_same_exact_forcing_words")
+            self._sample_cache[row["record_sha256"]] = {"sample": row, "certificate": None}
+        return row
+
+    def _initialization_sample(self, row, proof):
+        """Bind a fresh diagnostic sample to the unchanged complete saved seed.
+
+        The sample has already passed _sample's map, history and physical checks.
+        Its new transition names the saved Point as predecessor; its identity
+        therefore differs even though every physical and raw word is unchanged.
+        Ordinary initializations retain their original same-Point requirement.
+        """
+        h = row["history"]
+        _require(h["raw_solver_z_hex"] == proof["raw_z_hex"]
+                 and h["raw_solver_zdot_hex"] == proof["raw_zdot_hex"], "initialization_words")
+        if self.diagnostic is None:
+            _require(h["point_identity"] == proof["point_identity"], "initialization_words")
+            return
+        accepted, restore = self.diagnostic["accepted"], self.diagnostic["restore"]
+        _require(proof["Point"] == restore["Point"]
+                 and proof["point_identity"] == restore["base_Point_identity"] == accepted["Point_identity"]
+                 and h["predecessor_identity"] == proof["point_identity"]
+                 and h["point_identity"] != proof["point_identity"]
+                 and h["time_hex"] == proof["time_hex"] and h["map_identity"] == proof["map_identity"]
+                 and h["inputs_hex"] == proof["inputs_hex"] == accepted["inputs_hex"]
+                 and h["input_rates_hex"] == proof["input_rates_hex"] == accepted["input_rates_hex"]
+                 and h["physical_cumulative_words_hex"] == accepted["physical_state_words_hex"]
+                 and h["physical_rate_words_hex"] == proof["mapped_physical_rate_words_hex"]
+                 == accepted["physical_rate_words_hex"], "diagnostic_initial_sample")
+
+    @staticmethod
+    def _pointer(row):
+        h = row["history"]
+        return {"record_sha256": row["record_sha256"], "point_identity": h["point_identity"],
+                "time_s": _hex(h["time_hex"]), "origin": h["origin"], "segment_id": row["segment_id"]}
+
+    def _certificate(self, sample):
+        row = self.rows.take("voltage_lift_current_certificate")
+        evidence = _decode(row["evidence"])
+        h, rate = sample["history"], sample["raw"]["physical_rate"]
+        _require(row["sample_record_sha256"] == sample["record_sha256"]
+                 and evidence["point_identity"] == h["point_identity"] and evidence["path_identity"] == self.path_id
+                 and (type(evidence["passed"]) is bool if self.science is not None else evidence["passed"] is True)
+                 and evidence["native_rate_or_state_changed"] is False
+                 and evidence["DAE_accuracy_certified"] is False, "current_certificate_binding")
+        rb = evidence["readback"]
+        when = _hex(h["time_hex"])
+        transferred = (self.refresh_anchor["transfer"] if self.refresh_anchor is not None
+                       and self.refresh_anchor["transfer"]["point_identity"] == h["point_identity"]
+                       and self.refresh_anchor["transfer"]["time_hex"] == h["time_hex"] else None)
+        rate_identity = rate["identity"] if transferred is None else transferred["new_rate_identity"]
+        side = "right" if when == self.segment["start"] else "left" if when == self.segment["end"] else "continuous"
+        _require(rb["point_identity"] == h["point_identity"] and rb["rate_identity"] == rate_identity
+                 and rb["map_identity"] == self.map_id and rb["path_identity"] == self.path_id
+                 and rb["binding_identity"] == (self.refresh_binding_identity or self.initial_proof["source_identity"])
+                 and rb["time_hex"] == h["time_hex"] and rb["event_side"] == side
+                 and rb["state_changed"] is False and rb["native_source_provenance_claimed"] is False,
+                 "current_readback_binding")
+        for name, field, size in (("raw_z_words", "raw_solver_z_hex", self.size),
+                                  ("raw_zdot_words", "raw_solver_zdot_hex", self.size),
+                                  ("input_words", "inputs_hex", 2), ("input_rate_words", "input_rates_hex", 2)):
+            expected = h[field]
+            if transferred is not None and field in {"raw_solver_z_hex", "raw_solver_zdot_hex"}:
+                expected = transferred["new_raw_state_hex" if field == "raw_solver_z_hex" else "new_raw_rate_hex"]
+            _require(rb[name] == _word_bytes(expected, size), "current_readback_words")
+        _require(rb["physical_rate_words"] == tuple(_word_bytes(w, self.size) for w in h["physical_rate_words_hex"]),
+                 "current_readback_rate_layers")
+        for name in ("physical_state_absolute_error", "physical_rate_absolute_error", "state_action_error_bounds"):
+            _nonnegative(rb[name], self.size)
+        _enclosures(rb["physical_state_enclosures"], self.size)
+        if self.segment_frame.enabled:
+            self.segment_frame.readback(rb, h)
+        _require(rb["state_error_includes_actual_input_evaluation"] is True
+                 and rb["do_not_add_same_input_error_twice"] is True
+                 and evidence["input_error_included_once"] is True, "current_input_error_semantics")
+        reported = tuple(_word_pair(sample[name]["total_inward"], 2) for name in ("raw", "physical_tangent"))
+        _require(evidence["reported_currents_A"] == reported, "current_reported_high_low")
+        references = (_enclosures(evidence["raw_reference_A"], 2),
+                      _enclosures(evidence["same_state_exact_tangent_reference_A"], 2))
+        errors = tuple(tuple(abs(v - ref["center"]) + ref["absolute_error_bound"] for v, ref in zip(values, refs))
+                       for values, refs in zip(reported, references))
+        combined = tuple(abs(reported[0][i] - reported[1][i]) + errors[0][i] + errors[1][i] for i in range(2))
+        limit = Fraction(float(self.request["budgets"]["current_A"]) / 3)
+        _require(evidence["source_and_readback_error_A"] == errors
+                 and evidence["combined_current_bound_A"] == combined and evidence["original_allocation_A"] == limit
+                 and evidence["passed"] is all(v <= limit for v in combined)
+                 and (self.science is not None or all(v <= limit for v in combined)), "current_bound_consistency")
+        if self.science is not None:
+            self.science.observe("current", all(v <= limit for v in combined), row)
+        if self.diagnostic is not None:
+            key = sample["record_sha256"]
+            self._sample_cache[key]["certificate"] = row
+            for common in self.common_clocks:
+                if common["sample"]["record_sha256"] == key and common["certificate"] is None:
+                    common["certificate"] = row
+        if self.sample_sink is not None and sample["record_sha256"] in self._comparison_samples:
+            retained = self._comparison_samples[sample["record_sha256"]]
+            retained["certificate"] = row
+            if retained["tag"] is not None:
+                self.sample_sink(retained["tag"], retained["sample"], row)
+                del self._comparison_samples[sample["record_sha256"]]
+        return row
+
+    def _interval(self, left, right, frame, *, supplied_row=None, commit=True):
+        if self.offline_charge and supplied_row is None:
+            return self._deferred_interval(left, right, frame)
+        physical = "physical_tolerance_policy" in self.request
+        _require(not physical or commit and self.diagnostic is None, "physical_charge_complete_interval_required")
+        kind = ("voltage_lift_interval_certificate" if self.science is not None else
+                "voltage_lift_interval_charge_v2" if self.charge_refinement is not None else "voltage_lift_interval_charge")
+        if supplied_row is None and self.diagnostic is not None:
+            for common in self._pending_common:
+                self._interval(left, common["sample"], frame, supplied_row=common["prefix"], commit=False)
+            self._pending_common.clear()
+        row = self.rows.take(kind) if supplied_row is None else supplied_row
+        evidence = _decode(row["observation"])
+        partial = "observation_subinterval" in evidence
+        if not commit:
+            _require(self.diagnostic is not None and row["kind"] == "native_interval_common_prefix"
+                     and row["completed_intervals_before"] == self.intervals
+                     and row["old_B_prefix_credit"] is False
+                     and _hex(row["time_hex"]) == _hex(right["history"]["time_hex"]), "common_prefix_ancestry")
+            _require(partial is (_hex(row["time_hex"]) < frame["endpoint"]["internal_t"]),
+                     "common_prefix_exact_bound")
+        else:
+            _require(not partial, "partial_evidence_cannot_commit_native_interval")
+        _require(row["segment_id"] == self.segment["id"] and row["left"] == self._pointer(left)
+                 and row["right"] == self._pointer(right) and row["coefficient_frame_identity"] == self.frame_id
+                 and evidence["frame_identity"] == self.frame_id and evidence["path_identity"] == self.path_id
+                 and (type(evidence["passed"]) is bool if physical or self.science is not None else evidence["passed"] is True)
+                 and row["endpoint_restore"] is None
+                 and all(row[k] is False for k in ("normal_query_performed", "states_projected",
+                                                  "reference_estimates_are_continuum_certificates")),
+                 "interval_binding_or_gate")
+        clock = evidence["clock"]
+        for key, value in (("predecessor", frame["predecessor"]["internal_t"]),
+                           ("tn", frame["endpoint"]["internal_t"]), ("hused", frame["native_before"]["hused"]),
+                           ("segment_start", self.segment["start"]), ("segment_end", self.segment["end"])):
+            _require(Fraction(*clock[key]) == Fraction(value), "interval_clock")
+        _require(clock["owner"] == frame["owner"] and clock["generation"] == frame["generation"]
+                 and clock["nsteps"] == frame["native_before"]["nsteps"]
+                 and clock["kused"] == frame["native_before"]["kused"] and clock["segment_id"] == self.segment["id"],
+                 "interval_clock_owner")
+        native_left = Fraction(frame["native_before"]["tn"]) - Fraction(frame["native_before"]["hused"])
+        _require(Fraction(*clock["native_left"]) == native_left
+                 and Fraction(*clock["uncovered_strip"]) == max(Fraction(0), native_left - Fraction(frame["predecessor"]["internal_t"])),
+                 "interval_clock_strip")
+        inputs = evidence["input_error"]
+        _require(inputs["path_identity"] == self.path_id and inputs["mapping_identity"] == self.map_id
+                 and inputs["native_admitted"] is False and inputs["endpoint_error_still_required"] is True
+                 and inputs["native_readback_error_still_required"] is True, "interval_input_binding")
+        for name in ("raw_charge_integral_error_C", "tangent_charge_integral_error_C"):
+            _nonnegative(inputs[name], 3)
+        # Charge balances have three ledger rows; the L1 departure has two ports.
+        _nonnegative(inputs["raw_tangent_L1_additional_error_C"], 2)
+        _require(set(evidence["ledgers"]) == set(_LEDGERS), "missing_charge_ledger")
+        calls = row["arithmetic_calls"]
+        _require(type(calls) is list and bool(calls) and all(type(c) is dict for c in calls), "arithmetic_receipts_missing")
+        upper_step = None
+        if self.charge_refinement is not None:
+            self.charge_refinement.partition(evidence, calls, self.path_id)
+            if not partial:
+                upper_step = self.charge_refinement.step(row["observation"], evidence, self.intervals + 1)
+            else:
+                _require("upper_sum" not in evidence, "partial_prefix_cannot_mutate_upper_accumulator")
+        else:
+            _require("terminal_partition" not in evidence and "upper_sum" not in evidence, "legacy_record_refinement_metadata")
+        # Consume the serialized enclosure pairs before the historical-reader
+        # loop below replaces those pairs with its normalized Fractions.
+        physical_passed = (self.physical_charge.consume(evidence, left, right, frame_identity=self.frame_id,
+                           path_identity=self.path_id, map_identity=self.map_id, map_payload=self.mapping)
+                           if physical else None)
+        for key in _LEDGERS:
+            ledger = evidence["ledgers"][key]
+            _require(ledger["endpoint_debited_once"] is True
+                     and (type(ledger["passed"]) is bool
+                          and all(type(v) is bool for v in _vector(ledger["row_checks"], 3)) if physical or self.science is not None
+                          else ledger["passed"] is True and all(v is True for v in _vector(ledger["row_checks"], 3))),
+                     "charge_ledger_gate")
+            for name in ("saved_finite_charge_change_C", "nominal_change_C", "signed_integral_C", "signed_saved_defect_C"):
+                ledger[name] = _enclosures(ledger[name], 3)
+            bound = _nonnegative(ledger["interval_total_bound_C"], 3)
+            absolute = _nonnegative(ledger["prefix_absolute_defect_C"], 3)
+            error = _nonnegative(ledger["interval_reference_error_C"], 3)
+            cumulative = _nonnegative(ledger["prefix_reference_error_C"], 3)
+            budget = Fraction(self.request["budgets"]["charge_C"])
+            # The controller records binary64(B/3); ChargePrefix also enforces
+            # the exact 3*error<=B condition. Preserve both, including rounding.
+            reference_share = Fraction(float(self.request["budgets"]["charge_C"]) / 3)
+            old_checks = tuple(bound[i] <= budget and absolute[i] <= budget
+                               and error[i] <= reference_share and cumulative[i] <= reference_share
+                               and 3*error[i] <= budget and 3*cumulative[i] <= budget for i in range(3))
+            _require(ledger["original_charge_budget_C"] == budget and ledger["original_reference_share_C"] == reference_share
+                     and tuple(ledger["row_checks"]) == old_checks and ledger["passed"] is all(old_checks)
+                     and (physical or self.science is not None or all(old_checks)), "charge_budget_binding")
+            components = ledger["error_components_C"]
+            _require(set(components) == {"endpoint", "input", "clock_strip", "raw_tangent_departure", "integration"},
+                     "charge_error_components")
+            for values in components.values():
+                _nonnegative(values, 3)
+            integrals, nominal, actual = ledger["signed_integral_C"], ledger["nominal_change_C"], ledger["saved_finite_charge_change_C"]
+            _require(all(v["absolute_error_bound"] == 0 for v in nominal)
+                     and components["integration"] == tuple(v["absolute_error_bound"] for v in integrals)
+                     and error == tuple(sum((v[i] for v in components.values()), Fraction(0)) for i in range(3))
+                     and bound == tuple(abs(a["center"] - b["center"]) + e for a, b, e in zip(nominal, integrals, error)),
+                     "charge_error_arithmetic")
+            for a, b, defect in zip(actual, integrals, ledger["signed_saved_defect_C"]):
+                _require(defect == {"center": a["center"] - b["center"],
+                                    "absolute_error_bound": a["absolute_error_bound"] + b["absolute_error_bound"]},
+                         "saved_charge_defect_words")
+            old_abs, old_error = self.prefix[key]
+            if upper_step is None:
+                _require(absolute == tuple(a + b for a, b in zip(old_abs, bound))
+                         and cumulative == tuple(a + b for a, b in zip(old_error, error)), "charge_prefix_reset_or_error")
+            else:
+                offset = _LEDGERS.index(key) * 6
+                _require(absolute == upper_step[3][offset:offset + 6:2]
+                         and cumulative == upper_step[3][offset + 1:offset + 6:2], "charge_upper_ledger_prefix")
+            next_signed = (tuple(a+b["center"] for a, b in zip(self.signed_integrals[key], integrals))
+                           if self.signed_integrals is not None else None)
+            if not commit:
+                _require(_decode(row["signed_integral_centers_C"])[key] == next_signed
+                         and _decode(row["reference_error_C"])[key] == cumulative,
+                         "common_signed_prefix_or_error")
+            if commit:
+                self.prefix[key] = absolute, cumulative
+                if self.signed_integrals is not None:
+                    self.signed_integrals[key] = next_signed
+        _require(evidence["passed"] is all(evidence["ledgers"][k]["passed"] for k in _LEDGERS),
+                 "historical_charge_verdict_changed")
+        for call in calls:
+            if call.get("purpose") == "full-real-interval-precheck":
+                # BallIntegrator.absolute_bound first checks a real enclosure;
+                # this receipt is not an integral value/error estimate.
+                _require(call == {"evaluations": 1, "purpose": "full-real-interval-precheck", "working_bits": 512}
+                         and type(call["evaluations"]) is int and type(call["working_bits"]) is int,
+                         "arithmetic_precheck_receipt")
+                continue
+            actual, requested = Fraction(*call["actual_error"]), Fraction(*call["requested_error"])
+            _require(type(call["evaluations"]) is int and call["evaluations"] > 0
+                     and 0 <= actual <= requested, "arithmetic_receipt_error")
+        if physical:
+            allocation = _decode(row.get("physical_charge_error_allocation_C"))
+            duration = Fraction(*clock["tn"])-Fraction(*clock["predecessor"])
+            _require(row.get("charge_gate") == "signed-physical-charge-v1" and type(allocation) is Fraction
+                     and allocation == self.physical_charge.allocation(duration), "physical_charge_actual_allocation")
+            _require(self.science is not None or physical_passed, "physical_charge_gate")
+        else:
+            _require("physical_charge" not in evidence and "charge_gate" not in row
+                     and "physical_charge_error_allocation_C" not in row, "unbound_physical_charge_gate")
+        if upper_step is not None and commit:
+            self.charge_refinement.commit(upper_step)
+        if commit:
+            self.intervals += 1
+        if self.science is not None:
+            progress = row.get("scientific_progress")
+            _require(type(progress) is dict and type(progress.get("passed")) is bool, "interval_scientific_progress_type")
+            _require(_digest(progress) == _digest(self.science.summary()), "interval_scientific_progress")
+        return row
+
+    def _deferred_interval(self, left, right, frame):
+        """Missing quadrature is explicit pending work, not a zero-error pass."""
+        row = self.rows.take("voltage_lift_interval_deferred")
+        evidence = _decode(row["observation"])
+        _require(set(evidence) == {"frame_identity", "path_identity", "clock", "charge_observation"}
+                 and evidence["charge_observation"] == "pending" and evidence["frame_identity"] == self.frame_id
+                 and evidence["path_identity"] == self.path_id and row["segment_id"] == self.segment["id"]
+                 and row["left"] == self._pointer(left) and row["right"] == self._pointer(right)
+                 and row["coefficient_frame_identity"] == self.frame_id and row["endpoint_restore"] is None
+                 and all(row[k] is False for k in ("normal_query_performed", "states_projected", "reference_estimates_are_continuum_certificates"))
+                 and "charge_gate" not in row and "physical_charge_error_allocation_C" not in row,
+                 "deferred_interval_binding")
+        clock = evidence["clock"]
+        for key, value in (("predecessor", frame["predecessor"]["internal_t"]), ("tn", frame["endpoint"]["internal_t"]),
+                           ("hused", frame["native_before"]["hused"]), ("segment_start", self.segment["start"]), ("segment_end", self.segment["end"])):
+            _require(Fraction(*clock[key]) == Fraction(value), "deferred_interval_clock")
+        native_left = Fraction(frame["native_before"]["tn"])-Fraction(frame["native_before"]["hused"])
+        _require(clock["owner"] == frame["owner"] and clock["generation"] == frame["generation"]
+                 and clock["nsteps"] == frame["native_before"]["nsteps"] and clock["kused"] == frame["native_before"]["kused"]
+                 and clock["segment_id"] == self.segment["id"] and Fraction(*clock["native_left"]) == native_left
+                 and Fraction(*clock["uncovered_strip"]) == max(Fraction(0), native_left-Fraction(frame["predecessor"]["internal_t"])),
+                 "deferred_interval_epoch")
+        progress = row.get("scientific_progress")
+        _require(type(progress) is dict and type(progress.get("passed")) is bool, "deferred_interval_scientific_progress_type")
+        _require(row["charge_observation"] == {"status": "pending", "deferred_intervals": self.intervals+1}
+                 and _digest(progress) == _digest(self.science.summary()), "deferred_interval_progress")
+        if self.charge_observer is not None:
+            self.charge_observer.consume_interval(row, left, right, self.native_packet_row, self.mapping,
+                                                  self.segment, self.refresh_anchor, self.science)
+        self.intervals += 1
+        return row
+
+    def _consume_reference_refresh(self, sample, interval, domain, certificate, cursor, frame, old_statistics):
+        prepared = self.rows.take("voltage_lift_numeric_handoff")
+        old_epoch = {"owner": frame["owner"], "generation": frame["generation"],
+            "nsteps": frame["native_before"]["nsteps"], "endpoint_identity": frame["endpoint"]["identity"],
+            "coefficient_frame_identity": self.frame_id}
+        _require(_digest(prepared["old_epoch"]) == _digest(old_epoch), "reference_refresh_old_native_epoch")
+        ledger = {"prefixes": {k: {"absolute_defects": absolute, "reference_errors": errors}
+                                for k, (absolute, errors) in self.prefix.items()},
+            "upper_accumulator": None if self.charge_refinement is None else self.charge_refinement.summary(),
+            "signed_prefix": self.signed_integrals, "sample_cursor": cursor,
+            **({"physical_charge": self.physical_charge.summary()} if self.physical_charge is not None else {}),
+            **({"scientific_progress": self.science.summary()} if self.science is not None else {}),
+            "last_accepted": None if self.science is not None else self._pointer(sample),
+            "physical_reference_identity": self.request["voltage_lift_map"]["physical_reference"]}
+        if self.offline_charge:
+            ledger.update(prefixes=None, physical_charge=None, upper_accumulator=None, signed_prefix=None,
+                          charge_observation={"status": "pending", "deferred_intervals": self.intervals})
+        self.mapping = self.segment_frame.prepare_refresh(prepared, self.segment, self.ordinal,
+            sample, interval, domain, certificate, ledger)
+        self.map_id = _digest(self.mapping)
+        self.numeric_ordinal = prepared["transfer"]["new_numeric_initialization_ordinal"]
+        raw = self._statistics("reference_refresh_return", _hex(prepared["transfer"]["time_hex"]))
+        complete = self.rows.take("voltage_lift_numeric_handoff")
+        before = complete["before_statistics"]["raw_statistics"]
+        _require(_digest({k: before[k] for k in _COUNTERS}) == _digest({k: old_statistics[k] for k in _COUNTERS}),
+                 "reference_refresh_preserved_old_work")
+        self.segment_frame.complete_refresh(prepared, complete, self.last_statistics_record)
+        self.refresh_anchor, self.refresh_binding_identity = complete, complete["callback_binding_identity"]
+        return raw
+
+    def run(self):
+        row = self.rows.take("voltage_lift_reference")
+        ref = row["reference"]
+        self.reference_digest = _digest(ref)
+        _require(row["request_sha256"] == self.request_id and row["reference_digest"] == self.reference_digest
+                 and ref["schema"] == "solarlab.voltage-lift-reference.v1" and ref["map"] == self.mapping
+                 and ref["map_identity"] == self.map_id and ref["physical_reference"] == self.request["numeric_packet"]["initial_reference"]
+                 and ref["physical_reference_identity"] == self.mapping["physical_reference"]
+                 and _digest(ref["physical_reference"]["payload"]) == ref["physical_reference"]["sha256"],
+                 "reference_binding")
+        predecessor = ref["physical_reference_identity"]
+        last_time = _hex(ref["physical_reference"]["payload"]["time"])
+        if self.diagnostic is not None:
+            seed = self.rows.take("voltage_lift_diagnostic_seed")
+            restore = self.diagnostic["restore"]
+            _require(seed == {"kind": "voltage_lift_diagnostic_seed", "request_sha256": self.request_id,
+                              "descriptor_sha256": _digest(self.request["diagnostic_interval"]),
+                              "Point": restore["Point"], "old_B_prefix_credit": False,
+                              "original_native_authority_restored": False}, "diagnostic_seed_record")
+            predecessor = restore["base_Point_identity"]
+            last_time = _hex(restore["Point"]["payload"]["time"])
+        last_right = None
+        previous_native = None
+        for self.ordinal, self.segment in enumerate(self.request["segments"][:self.run_segments], 1):
+            self.numeric_ordinal = self.ordinal
+            self.rows.checkpoint()
+            start, end = self.segment["start"], self.segment["end"]
+            _require(start == last_time and start < end, "protocol_segment_order")
+            times = self.request["observation_times"][self.segment["id"]]
+            _require(type(times) is list and bool(times) and times == sorted(times)
+                     and all(start <= v <= end for v in times), "requested_sample_schedule")
+            if self.segment_frame.enabled:
+                self.mapping = self.segment_frame.begin(self.rows.take("voltage_lift_segment_frame"),
+                    self.segment, self.ordinal, predecessor, last_right)
+                self.map_id = _digest(self.mapping)
+            init = self.rows.take("voltage_lift_initialization_input")
+            self.initial_proof = proof = init["proof"]
+            _require(init["phase"] == "segment_initialization" and init["segment_id"] == self.segment["id"]
+                     and _hex(init["time_hex"]) == start and proof["request_sha256"] == self.request_id
+                     and proof["map_identity"] == self.map_id and proof["segment_sha256"] == _digest(self.segment)
+                     and proof["predecessor_identity"] == predecessor
+                     and proof["record_sha256"] == _digest({k: v for k, v in proof.items() if k != "record_sha256"}),
+                     "initialization_binding")
+            if self.ordinal == 1 and self.diagnostic is None:
+                for key in ("point_identity", "raw_z_hex", "raw_zdot_hex", "inputs_hex", "input_rates_hex",
+                            "desired_physical_tangent_hex", "mapped_physical_rate_words_hex",
+                            "desired_tangent_residual_SI", "represented_rate_residual_SI"):
+                    _require(proof[key] == self.request["initial_preparation"][key], "initial_preparation_changed")
+            if self.startup.enabled or self.segment_frame.enabled:
+                control = self.rows.take("voltage_lift_initialization_controls")
+                if self.startup.enabled:
+                    self.startup.consume(control)
+                if self.segment_frame.enabled:
+                    self.segment_frame.constructor(control)
+            stats = self._statistics("initialization_return", start)
+            _require(stats["num_steps"] == 0, "initialization_step_counter")
+            left = self._sample(start, "segment_initial", predecessor, initial=True)
+            self._initialization_sample(left, proof)
+            if last_right is not None:
+                _require(left["history"]["physical_cumulative_words_hex"] == last_right["physical_cumulative_words_hex"],
+                         "event_state_changed")
+            cursor, segment_intervals = 0, 0
+            while cursor < len(times) and times[cursor] == start:
+                self._requested(self._pointer(left))
+                cursor += 1
+            now = start
+            while now < end:
+                if self.diagnostic is not None:
+                    self._sample_cache = {left["record_sha256"]: {"sample": left, "certificate": None}}
+                before = self._statistics("before_onestep")
+                _require(all(before[k] >= stats[k] for k in _COUNTERS)
+                         and before["num_steps"] == stats["num_steps"], "statistics_between_steps")
+                stats = self._statistics("after_onestep", previous=before)
+                packet_row = self.rows.take("voltage_lift_native_observation_packet")
+                self.native_packet_row = packet_row
+                _require(packet_row["segment_id"] == self.segment["id"], "packet_segment")
+                frame, self.frame_id = _native_packet(packet_row["packet"], self.policy, self.size)
+                if self.segment_frame.enabled:
+                    self.segment_frame.packet(frame)
+                previous, endpoint = frame["predecessor"], frame["endpoint"]
+                then = endpoint["internal_t"]
+                if previous_native is not None:
+                    old = previous_native
+                    same_epoch = (old["owner"], old["generation"]) == (frame["owner"], frame["generation"])
+                    _require(old["endpoint"]["internal_t"].hex() == previous["internal_t"].hex(), "native_frame_time_gap")
+                    if same_epoch:
+                        _require(old["segment"]["id"] == self.segment["id"]
+                                 and old["endpoint"]["identity"] == previous["identity"], "native_frame_predecessor_identity")
+                    elif (self.refresh_anchor is not None and old["segment"]["id"] == self.segment["id"]
+                          and self.refresh_anchor["transfer"]["time_hex"] == previous["internal_t"].hex()):
+                        handoff = self.refresh_anchor
+                        _require(handoff["old_epoch"] == {"owner": old["owner"], "generation": old["generation"],
+                            "nsteps": old["nsteps"], "endpoint_identity": old["endpoint"]["identity"],
+                            "coefficient_frame_identity": old["frame_identity"]}
+                            and handoff["new_epoch"] == {"owner": frame["owner"], "generation": frame["generation"], "nsteps": 0}
+                            and old["owner"] == frame["owner"] and frame["generation"] == old["generation"]+1
+                            and previous["nsteps"] == 0 and frame["native_before"]["nsteps"] == 1
+                            and handoff["transfer"]["old_map_identity"] == old["map_identity"]
+                            and handoff["transfer"]["new_map_identity"] == self.map_id,
+                            "native_numeric_restart_epoch")
+                    else:
+                        _require(old["segment"]["id"] != self.segment["id"]
+                                 and old["endpoint"]["internal_t"] == old["segment"]["end"]
+                                 and previous["internal_t"] == self.segment["start"]
+                                 and (self.segment_frame.enabled or old["endpoint"]["raw_y"] == previous["raw_y"])
+                                 and frame["native_before"]["nsteps"] == 1 and previous["nsteps"] == 0
+                                 and old["segment"]["voltage"][1] == self.segment["voltage"][0]
+                                 and old["segment"]["photons"][1] == self.segment["photons"][0]
+                                 and frame["generation"] == (old["generation"] + 1 if old["owner"] == frame["owner"] else 1),
+                                 "native_restart_epoch")
+                        # Rates may change at a protocol derivative kink; do
+                        # not equate the two independently retained rate sides.
+                strip = Fraction(then) - Fraction(frame["native_before"]["hused"]) - Fraction(previous["internal_t"])
+                _require(strip <= 0 or frame["predecessor_dky"]["native_eligible"] is True, "native_strip_getter_eligibility")
+                _require(previous["internal_t"] == now < then <= end
+                         and stats["num_steps"] == frame["native_before"]["nsteps"]
+                         and stats["current_time"] == then
+                         and stats["observation_owner"] == frame["owner"]
+                                 and stats["observation_generation"] == frame["generation"], "frame_chronology_or_statistics")
+                if self.diagnostic is not None:
+                    _require(frame["native_before"]["hused"] <= self.request["controls"]["max_step"]
+                             and self.steps <= self.request["diagnostic_limits"]["accepted_intervals"],
+                             "diagnostic_applied_grid_cap")
+                    self.diagnostic_grid.append({"left_hex": float(now).hex(), "right_hex": float(then).hex(),
+                        "hused_hex": float(frame["native_before"]["hused"]).hex(), "order": frame["native_before"]["kused"],
+                        "owner": frame["owner"], "generation": frame["generation"], "step": self.steps,
+                        "strip_exact": [max(Fraction(0), strip).numerator, max(Fraction(0), strip).denominator]})
+                for name, field in (("raw_y", "raw_solver_z_hex"), ("raw_yp", "raw_solver_zdot_hex")):
+                    expected = left["history"][field]
+                    if self.refresh_anchor is not None and self.refresh_anchor["transfer"]["time_hex"] == float(now).hex():
+                        expected = self.refresh_anchor["transfer"]["new_raw_state_hex" if name == "raw_y" else "new_raw_rate_hex"]
+                    _require(previous[name] == _word_bytes(expected, self.size), "predecessor_word_binding")
+                domain_row = self.rows.take("voltage_lift_polynomial_domain")
+                domain = _decode(domain_row["evidence"])
+                self.path_id = domain["path_identity"]
+                if self.segment_frame.enabled:
+                    _require(self.path_id == self.segment_frame.path_identity, "segment_frame_full_physical_polynomial")
+                _require(type(self.path_id) is str and len(self.path_id) == 64
+                         and type(domain["passed"]) is bool and all(type(v) is bool for v in domain["checks"].values())
+                         and domain["passed"] is all(domain["checks"].values())
+                         and (self.science is not None or domain["passed"] is True), "polynomial_domain_gate")
+                fields = set(self.request["numeric_packet"]["variable_offsets"])
+                _require(set(domain["domain_bounds"]) == fields, "polynomial_domain_fields")
+                _require(set(domain["checks"]) == ({"maximum_site_fraction", "ion_inventory"} if "c_m3" in fields else set()),
+                         "polynomial_domain_checks")
+                for name, bounds in domain["domain_bounds"].items():
+                    for lo, hi in _vector(bounds, self.nodes):
+                        _require(type(lo) is Fraction and type(hi) is Fraction and lo <= hi, "polynomial_domain_bounds")
+                        if self.science is not None:
+                            _require(name not in {"n_m3", "p_m3"} or lo > 0, "polynomial_density_domain")
+                            _require(name != "f" or 0 <= lo <= hi <= 1, "polynomial_occupancy_domain")
+                            _require(name != "c_m3" or 0 <= lo <= hi < self.request["numeric_packet"]["definition"]["ion_capacity"],
+                                     "polynomial_vacancy_domain")
+                if self.science is not None:
+                    if "c_m3" in fields:
+                        metrics, budgets = domain["metrics"], self.request["budgets"]
+                        maximum = max(hi for lo, hi in domain["domain_bounds"]["c_m3"])/Fraction(
+                            self.request["numeric_packet"]["definition"]["ion_capacity"])
+                        _require(metrics["maximum_site_fraction"] == maximum
+                                 and domain["checks"]["maximum_site_fraction"] is (maximum <= budgets["maximum_site_fraction"]),
+                                 "polynomial_site_certificate_boolean")
+                        inventory_ok = (metrics["ion_inventory_absolute_deviation"] == 0
+                                        if metrics.get("ion_inventory_zero_branch") is True else
+                                        0 <= metrics["ion_inventory_relative"] <= budgets["ion_inventory_relative"])
+                        _require(domain["checks"]["ion_inventory"] is inventory_ok, "polynomial_inventory_certificate_boolean")
+                    self.science.observe("path_inventory", domain["passed"], domain_row)
+                self._certificate(left)  # Deliberately re-certified in every new frame.
+                origin = "stop_output" if endpoint["native_status"] == 1 else "native"
+                right = self._sample(then, origin, left["history"]["point_identity"])
+                _require(right["snapshot_status"] == endpoint["native_status"], "endpoint_status")
+                for name, field in (("raw_y", "raw_solver_z_hex"), ("raw_yp", "raw_solver_zdot_hex")):
+                    _require(endpoint[name] == _word_bytes(right["history"][field], self.size), "endpoint_word_binding")
+                if self.diagnostic is not None:
+                    _require(endpoint["raw_y"] == _word_bytes(self.last_raw_return["z_hex"], self.size)
+                             and endpoint["raw_yp"] == _word_bytes(self.last_raw_return["zdot_hex"], self.size)
+                             and endpoint["native_status"] == self.last_raw_return["status"],
+                             "diagnostic_retained_raw_return_matches_native_snapshot")
+                right_certificate = self._certificate(right)
+                cache = {now: self._pointer(left), then: self._pointer(right)}
+
+                def query(when):
+                    self.rows.checkpoint()
+                    _require(now <= when <= then, "query_outside_frame")
+                    if when not in cache:
+                        sample = self._sample(when, "declared_polynomial", left["history"]["point_identity"])
+                        self._certificate(sample)
+                        cache[when] = self._pointer(sample)
+                        self.queries += 1
+                    return cache[when]
+
+                for order in (8, 16, 32):
+                    for node in self.request["quadrature"][str(order)]["nodes"]:
+                        query(now + (then - now) * (float(node) + 1) / 2)
+                while cursor < len(times) and times[cursor] <= then:
+                    self._requested(query(float(times[cursor])))
+                    cursor += 1
+                interval_row = self._interval(left, right, frame)
+                previous_native = {"endpoint": endpoint, "owner": frame["owner"],
+                    "generation": frame["generation"], "segment": self.segment, "nsteps": frame["native_before"]["nsteps"],
+                    "frame_identity": self.frame_id, "map_identity": self.map_id}
+                segment_intervals += 1
+                left, now = right, then
+                policy = self.segment_frame.refresh_policy
+                if policy is not None and not self.segment_frame.refreshes and now >= _hex(policy["time_hex"]):
+                    _require(float(now).hex() == policy["time_hex"], "reference_refresh_missed_boundary")
+                    stats = self._consume_reference_refresh(right, interval_row, domain_row, right_certificate, cursor, frame, stats)
+            _require(cursor == len(times), "missing_requested_samples")
+            last_right = left["history"]
+            predecessor, last_time = last_right["point_identity"], now
+            self.final_pointer = self._pointer(left)
+            self.final_history, self.final_status = last_right, left["snapshot_status"]
+            self.coverage.append({"segment_id": self.segment["id"], "intervals": segment_intervals,
+                                  "requested_samples": cursor, "start_s": start, "end_s": end})
+        _require(self.coverage and self.intervals > 0, "empty_protocol")
+        if self.physical_charge is not None and not self.offline_charge:
+            _require(self.physical_charge.intervals == self.intervals
+                     and (self.science is not None or self.physical_charge.summary()["passed"]),
+                     "physical_charge_protocol_prefix")
+        if self.segment_frame.refresh_policy is not None:
+            _require(len(self.segment_frame.refreshes) == 1 and self.segment_frame.refreshes[0]["actual_initial_step_hex"] is not None,
+                     "reference_refresh_incomplete")
+        self.startup.finish(complete=True)
+        if self.sample_sink is not None:
+            _require(not self._comparison_samples, "comparison_sample_certificate_missing")
+        if self.diagnostic is not None:
+            _require(len(self.common_clocks) == 5 and all(c["certificate"] is not None for c in self.common_clocks)
+                     and not self._pending_common, "complete_diagnostic_common_evidence")
+        self.rows.take(eof=True)
+
+    def _requested(self, pointer):
+        row = self.rows.take("requested_sample")
+        _require(row == {"kind": "requested_sample", **pointer}, "requested_sample_pointer")
+        if self.sample_sink is not None:
+            retained = self._comparison_samples[pointer["record_sha256"]]
+            times = self.request["observation_times"][self.segment["id"]]
+            index = times.index(pointer["time_s"])
+            retained["tag"] = {"segment": self.segment["id"], "index": index,
+                "time_hex": float(pointer["time_s"]).hex(),
+                "event_side": "right" if index == 0 else "left" if index == len(times)-1 else "interior",
+                "protocol_initial": self.ordinal == 1 and index == 0,
+                "protocol_terminal": self.ordinal == len(self.request["segments"]) and index == len(times)-1}
+            if retained["certificate"] is not None:
+                self.sample_sink(retained["tag"], retained["sample"], retained["certificate"])
+                del self._comparison_samples[pointer["record_sha256"]]
+        if self.diagnostic is not None:
+            prefix = self.rows.take("native_interval_common_prefix")
+            sample = self._sample_cache[pointer["record_sha256"]]
+            common = {**sample, "prefix": prefix}
+            _require(_hex(prefix["time_hex"]) == pointer["time_s"], "common_prefix_sample_clock")
+            if not self.common_clocks:
+                zero = {key: (Fraction(0),)*3 for key in _LEDGERS}
+                _require(prefix["origin"] == "diagnostic_seed" and prefix["completed_intervals_before"] == 0
+                         and prefix["old_B_prefix_credit"] is False
+                         and _decode(prefix["signed_integral_centers_C"]) == zero
+                         and _decode(prefix["reference_error_C"]) == zero, "diagnostic_zero_prefix_origin")
+            else:
+                self._pending_common.append(common)
+            self.common_clocks.append(common)
+
+
+def execution_output_policy(request, admission=None, *, execution_provenance=None):
+    """Independently bind a caller-admitted output cap; producer claims grant nothing.
+
+    The caller must verify the actual Root admission and operation/message
+    before supplying these arguments. admission_sha256 is its canonical JSON
+    digest, not a value read from NativeResult or inferred from the history.
+    """
+    original = request["budgets"]["total_output_bytes"]
+    admission = {} if admission is None else admission
+    code = "execution_output_binding"
+    _require(type(original) is int and original > 0 and type(admission) is dict, code)
+    if "execution_output_limit" not in admission:
+        _require(execution_provenance is None, code)
+        return {"schema": "solarlab.native-execution-output-observed.v1",
+                "original_total_output_bytes": original, "effective_total_output_bytes": original,
+                "admission_binding": None, "execution_provenance": None}
+    grant = admission["execution_output_limit"]
+    _require(type(grant) is dict and set(grant) == {
+        "schema", "request_sha256", "original_total_output_bytes", "total_output_bytes",
+        "operation_id", "coordinator_message"}, code)
+    _require(type(execution_provenance) is dict and set(execution_provenance) == {
+        "admission_sha256", "request_sha256", "operation_id", "coordinator_message"}, code)
+    value = grant["total_output_bytes"]
+    _require(type(value) is int and value > 0
+             and grant["schema"] == "solarlab.native-execution-output.v1"
+             and type(grant["original_total_output_bytes"]) is int
+             and grant["original_total_output_bytes"] == original, code)
+    _require(admission.get("authority") == "Root" and admission.get("voltage_lift_native_authorized") is True
+             and admission.get("map_identity") == request.get("map_identity"), code)
+    operation, message = grant["operation_id"], grant["coordinator_message"]
+    _require(type(operation) is str and bool(operation)
+             and operation == admission.get("operation_id") == execution_provenance["operation_id"]
+             and type(message) is str and message.startswith("msg_") and len(message) > 4
+             and message == admission.get("coordinator_message") == execution_provenance["coordinator_message"], code)
+    try:
+        request_id, admission_id = _digest(request), _digest(admission)
+    except (TypeError, ValueError, OverflowError) as cause:
+        raise HistoryVerificationError(code) from cause
+    _require(grant["request_sha256"] == admission.get("request_sha256") == request_id
+             and execution_provenance["request_sha256"] == request_id
+             and execution_provenance["admission_sha256"] == admission_id, code)
+    return {"schema": "solarlab.native-execution-output-observed.v1",
+            "original_total_output_bytes": original, "effective_total_output_bytes": value,
+            "admission_binding": dict(grant), "execution_provenance": dict(execution_provenance)}
+
+
+def verify_history(folder: Path, *, max_record_bytes: int, max_logical_bytes: int,
+                   max_records: int, deadline_monotonic: float, integer_io_policy=None,
+                   execution_admission=None, execution_provenance=None, charge_observer=None,
+                   sample_sink=None) -> dict:
+    """Verify a finalized, complete protocol, raising on every partial result.
+
+    All limits are caller-selected stop rules. A receipt verifies stored words,
+    record coverage and the recorded acceptance gates; it neither repeats their
+    numerical proofs nor establishes full-device convergence or performance.
+    """
+    started = time.perf_counter()
+    rows = None
+
+    def checkpoint():
+        _require(time.perf_counter() < deadline_monotonic, "deadline_exceeded")
+
+    try:
+        _require(all(type(v) is int and v > 0 for v in (max_record_bytes, max_logical_bytes, max_records)),
+                 "positive_limits_required")
+        _require(type(deadline_monotonic) in (int, float) and math.isfinite(deadline_monotonic), "finite_deadline_required")
+        integer_io_policy = configure_integer_io(integer_io_policy, max_record_bytes)
+        integer_observed = integer_io_observed(integer_io_policy)
+        folder = Path(folder)
+        checkpoint()
+        request = _read_json(folder / "NativeRequest.json", max_record_bytes, checkpoint)
+        from scripts.benchmarks.physical_tolerance import validate_certificate_policy
+        continuing = validate_certificate_policy(request) is not None
+        _require((continuing or not (folder / "FirstFailure.json").exists())
+                 and not any((folder / name).exists() for name in ("RunnerFailure.json", "PrimaryFailure.json",
+                                                              "LastRecord.tmp", "LastAccepted.tmp", "FirstFailure.tmp")),
+                 "failure_or_incomplete_publication")
+        result = _read_json(folder / "NativeResult.json", max_record_bytes, checkpoint, integer_io_policy)
+        execution_output = execution_output_policy(
+            request, execution_admission, execution_provenance=execution_provenance)
+        if execution_output["admission_binding"] is not None or "execution_output_policy" in result:
+            _require(_digest(result.get("execution_output_policy")) == _digest(execution_output),
+                     "execution_output_observation_binding")
+        diagnostic = "diagnostic_interval" in request
+        history = result["history"]
+        _require(history.get("integer_io") == integer_observed, "integer_io_policy_or_applied_limit_mismatch")
+        if integer_observed is not None:
+            producer = _read_json(folder / "IntegerIOObserved.json", max_record_bytes, checkpoint)
+            _require(producer.get("role") == "producer" and type(producer.get("pid")) is int
+                     and producer["pid"] > 0
+                     and {key: producer.get(key) for key in integer_observed} == integer_observed,
+                     "producer_integer_io_observation_mismatch")
+        else:
+            _require(not (folder / "IntegerIOObserved.json").exists(), "unbound_integer_io_observation")
+        completed = (result["status"] == "completed_bounded_native_interval"
+                     and result.get("complete_diagnostic_window") is True and result["complete_protocol"] is False
+                     if diagnostic else result["status"] == "completed_bounded_voltage_lift_native_pilot"
+                     and (result["complete_protocol"] is True if "execution_window" not in request else
+                          result["complete_protocol"] is False and result.get("complete_run_window") is True
+                          and result.get("execution_window") == request["execution_window"]))
+        _require(completed
+                 and (continuing or result.get("first_failure") is None) and history["closed"] is True
+                 and history["container_complete"] is True and history["error"] is None
+                 and history["encoding"] == "gzip" and history["path"] == "NativeHistory.jsonl.gz", "incomplete_native_result")
+        path = folder / history["path"]
+        before_stat = path.stat()
+        _require(before_stat.st_size == history["encoded_bytes"]
+                 and before_stat.st_size <= execution_output["effective_total_output_bytes"], "encoded_byte_count_or_cap")
+        with HistoryReader(path, encoding="gzip", max_record_bytes=max_record_bytes,
+                            max_logical_bytes=max_logical_bytes, integer_io_policy=integer_io_policy) as reader:
+            rows = _Rows(reader, max_records, checkpoint)
+            protocol = _Protocol(request, rows, charge_observer=charge_observer, sample_sink=sample_sink)
+            _require(result["request_sha256"] == protocol.request_id and result["map_identity"] == protocol.map_id
+                     and result["observation_policy_sha256"] == protocol.policy_id, "result_request_binding")
+            protocol.run()
+            _require(reader.eof_seen and reader.container_complete is True and not reader.partial_tail, "container_incomplete")
+            _require(history["records"] == rows.count and history["logical_bytes"] == reader.logical_bytes
+                     and history["logical_sha256"] == rows.hash.hexdigest(), "logical_count_or_digest")
+        counts = result["counts"]
+        expected = {"history_bytes": history["logical_bytes"],
+                    "native_steps": protocol.steps, "onestep_returns": protocol.intervals,
+                    "normal_queries": 0, "polynomial_queries": protocol.queries,
+                    "initializations": len(protocol.coverage)+len(protocol.segment_frame.refreshes), "jacobian": protocol.jacobians}
+        if protocol.segment_frame.refresh_policy is not None:
+            expected.update(reference_refresh_attempts=1, reference_refreshes=1)
+            _require(result["in_window_reinitializations"] == 1, "reference_refresh_result_count")
+        # The diagnostic-window producer records encoded size in history,
+        # without the full-protocol producer's duplicate work-counter field.
+        # Actual size, complete-container digest, trailer and CRC stay mandatory.
+        if not diagnostic or "history_encoded_bytes" in counts:
+            expected["history_encoded_bytes"] = history["encoded_bytes"]
+        _require(all(type(counts[k]) is int and counts[k] == value for k, value in expected.items()), "result_counters")
+        _require(type(counts["residual"]) is int and 0 <= counts["residual"] <= request["budgets"]["residual_calls"]
+                 and protocol.steps <= request["budgets"]["native_steps"], "native_work_caps")
+        _require(result["last_numerical"] == protocol.final_pointer
+                 and result["last_physically_accepted"] == (None if continuing else protocol.final_pointer), "result_final_pointers")
+        if continuing:
+            progress = protocol.science.summary()
+            original_progress = result.get("scientific_progress")
+            _require(type(original_progress) is dict and type(original_progress.get("passed")) is bool,
+                     "result_scientific_progress_type")
+            _require(_digest(original_progress) == _digest(progress) and result.get("scientific_status") == progress["status"]
+                     and result.get("scientific_pass") is False and result.get("complete_readback") is False
+                     and result.get("first_failure") == progress["first_failure"]
+                     and _decode(result["signed_integral_prefix_C"]) == (None if protocol.offline_charge else protocol.signed_integrals),
+                     "result_scientific_progress")
+            failure_path = folder / "FirstFailure.json"
+            _require(failure_path.exists() is (progress["first_failure"] is not None), "first_failure_publication")
+            if failure_path.exists():
+                _require(_read_json(failure_path, max_record_bytes, checkpoint, integer_io_policy) == progress["first_failure"],
+                         "first_failure_sidecar_binding")
+        attempt = result["last_attempt"]
+        _require(attempt["phase"] == "native_return" and attempt["success"] is True
+                 and attempt["segment_id"] == protocol.final_pointer["segment_id"]
+                 and attempt["time_hex"] == protocol.final_history["time_hex"]
+                 and attempt["status"] == protocol.final_status
+                 and attempt["z_hex"] == protocol.final_history["raw_solver_z_hex"]
+                 and attempt["zdot_hex"] == protocol.final_history["raw_solver_zdot_hex"], "result_last_attempt")
+        for key, (absolute, error) in protocol.prefix.items():
+            if protocol.offline_charge:
+                _require(result["cumulative_absolute_charge_bounds_C"] is None
+                         and result["cumulative_observation_reference_bounds_C"] is None,
+                         "deferred_result_cannot_claim_observation")
+            else:
+                _require(_decode(result["cumulative_absolute_charge_bounds_C"][key]) == absolute
+                         and _decode(result["cumulative_observation_reference_bounds_C"][key]) == error, "result_charge_prefix")
+        if protocol.offline_charge:
+            _require(result.get("charge_observation") == {"status": "pending", "deferred_intervals": protocol.intervals},
+                     "deferred_result_interval_count")
+        if protocol.physical_charge is not None:
+            _require(result.get("charge_gate") == "signed-physical-charge-v1"
+                     and result.get("physical_charge_policy_sha256") == _digest(protocol.physical_charge.policy)
+                     and _decode(result.get("physical_charge")) == (None if protocol.offline_charge else protocol.physical_charge.summary()),
+                     "result_physical_charge_prefix")
+        else:
+            _require(not any(k in result for k in ("charge_gate", "physical_charge", "physical_charge_policy_sha256")),
+                     "unbound_result_physical_charge")
+        if protocol.charge_refinement is not None and not protocol.offline_charge:
+            representation = _decode(result["cumulative_representation"])
+            _require(type(representation) is dict and representation == protocol.charge_refinement.summary()
+                     and type(representation["index"]) is int
+                     and all(type(v) is int for k in ("upper_numerators", "rounded_terms") for v in representation[k])
+                     and all(type(v) is Fraction for v in representation["slack_upper_bounds"]),
+                     "result_charge_representation")
+        else:
+            _require("cumulative_representation" not in result, "legacy_result_refinement_metadata")
+        last = _read_json(folder / "LastRecord.json", max_record_bytes, checkpoint)
+        accepted = None if continuing else _read_json(folder / "LastAccepted.json", max_record_bytes, checkpoint)
+        _require({k: last[k] for k in rows.last} == rows.last
+                 and last["encoded_byte_offset_after_record"] + 10 == history["encoded_bytes"]
+                 and (not (folder / "LastAccepted.json").exists() if continuing else
+                      accepted == {"pointer": last, "right": protocol.final_pointer, "frame": protocol.frame_id}),
+                 "final_sidecar_binding")
+        container_hash, size = hashlib.sha256(), 0
+        # A compressed-byte pass supplies the full container digest without a
+        # second decompression or an in-memory copy of the history.
+        with path.open("rb") as stream:
+            _require(stream.read(10) == b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff", "gzip_writer_header")
+            stream.seek(0)
+            while True:
+                checkpoint()
+                chunk = stream.read(1048576)
+                if not chunk:
+                    break
+                size += len(chunk)
+                _require(size <= history["encoded_bytes"], "container_grew")
+                container_hash.update(chunk)
+            stream.seek(-10, 2)
+            trailer = stream.read(10)
+        _require(trailer == b"\x03\x00" + struct.pack("<II", rows.crc, history["logical_bytes"] % (1 << 32)),
+                 "gzip_final_flush_crc_or_size")
+        after_stat = path.stat()
+        _require(size == history["encoded_bytes"] and
+                 (before_stat.st_dev, before_stat.st_ino, before_stat.st_size, before_stat.st_mtime_ns) ==
+                 (after_stat.st_dev, after_stat.st_ino, after_stat.st_size, after_stat.st_mtime_ns), "container_changed")
+        checkpoint()
+        return {"schema": "solarlab.native-history-verification.v1", "verified": True,
+                "complete_protocol": not diagnostic and protocol.full_protocol,
+                **({"complete_run_window": True, "execution_window": request["execution_window"]} if not protocol.full_protocol else {}),
+                **({"complete_readback": True, "scientific_progress": protocol.science.summary(final=True),
+                    "scientific_status": protocol.science.summary(final=True)["status"], "scientific_pass": False}
+                   if continuing else {}),
+                **({"physical_observation": charge_observer.summary()} if charge_observer is not None else {}),
+                **({"complete_diagnostic_window": True, "common_clocks": protocol.common_clocks,
+                    "diagnostic_grid": protocol.diagnostic_grid} if diagnostic else {}),
+                "status": "verified_complete_native_history", "request_sha256": protocol.request_id,
+                "execution_output_policy": execution_output,
+                "map_identity": protocol.root_map_id, "observation_policy_sha256": protocol.policy_id,
+                "history": {"path": history["path"], "logical_bytes": history["logical_bytes"],
+                            "encoded_bytes": size, "records": rows.count, "logical_sha256": rows.hash.hexdigest(),
+                            "container_sha256": container_hash.hexdigest(), "eof_seen": True, "crc_verified": True,
+                            "container_complete": True, "partial_tail_bytes": 0},
+                "coverage": {"segments": protocol.coverage, "intervals": protocol.intervals,
+                             "rate_pairs": protocol.samples, "quadrature_orders": [8, 16, 32], "ports": 2,
+                             "physical_word_layers": protocol.segment_frame.input_words, "record_counts": dict(rows.counts)},
+                "pointers": {"last_record": last, "last_accepted": accepted}, "elapsed_s": time.perf_counter() - started,
+                **({"segment_startup": protocol.startup.finish(complete=True)} if protocol.startup.enabled else {}),
+                **({"segment_frame": protocol.segment_frame.finish()} if protocol.segment_frame.enabled else {}),
+                **({"charge_refinement": {"name": "fixed4-upper120-v1", "channels": 12,
+                    "intervals": protocol.charge_refinement.index, "policy_sha256": protocol.charge_refinement.policy_id,
+                    "quantum_ratio": [1, 1 << 120], "rounded_terms": list(protocol.charge_refinement.rounded),
+                    "slack_upper_bounds_C": [[v.numerator, v.denominator] for v in
+                        (n * protocol.charge_refinement.quantum for n in protocol.charge_refinement.rounded)]}}
+                   if protocol.charge_refinement is not None and not protocol.offline_charge else {}),
+                **({"integer_io": {"role": "independent_reader", **integer_io_observed(integer_io_policy)}}
+                   if integer_io_policy is not None else {}),
+                **({"physical_charge": {"policy_sha256": _digest(protocol.physical_charge.policy),
+                    "prefix": result["physical_charge"], "saved_charge_words_independently_checked": True,
+                    "flux": "source-bound independently flux-derived enclosure; no physics replay"}}
+                   if protocol.physical_charge is not None and not protocol.offline_charge else {}),
+                "scope": "stored artifact integrity, complete request coverage and recorded gate consistency; no numerical replay",
+                "scientific_qualification": False}
+    except HistoryVerificationError as error:
+        if rows is not None and error.record_index == 0:
+            raise HistoryVerificationError(error.code, rows.count, rows.offset) from error
+        raise
+    except (OSError, EOFError, ValueError, KeyError, TypeError, IndexError, RecursionError, OverflowError, struct.error, zlib.error) as error:
+        # Do not include a malformed giant row or native words in diagnostics.
+        raise HistoryVerificationError("invalid_artifact_" + type(error).__name__,
+                                       0 if rows is None else rows.count,
+                                       0 if rows is None else rows.offset) from error

@@ -1,0 +1,146 @@
+{
+  "schema": "solarlab.ida-observation-source-pins.v1",
+  "binding_version": "1.1.3",
+  "sundials_version": "7.5.0",
+  "source_archive": {
+    "filename": "scikit_sundae-1.1.3.tar.gz",
+    "url": "https://files.pythonhosted.org/packages/a2/2f/669f410f7a151874af1d6ff91e3d129bf80f989e92da3fb8c77f8496f718/scikit_sundae-1.1.3.tar.gz",
+    "sha256": "e3d06de0da6715d51310b2cea3835c495e6613d8c19ccbbf1f278aabe7e8f3d6",
+    "bytes": 58460
+  },
+  "files": {
+    "src/sksundae/c_ida.pxd": {
+      "original_sha256": "7f1443a261d3e65aecc57dafd2e5632a474f750822ded8867bb68ada55078236",
+      "patched_sha256": "a12527faf2d79662ec5ff7c02ed41314bbb9c7d98d4e369ab2d66ef13747463b"
+    },
+    "src/sksundae/_cy_ida.pyx": {
+      "original_sha256": "d1a8a6e49699d2312a90e44e5c5c8f132db66f84e6979fe17d400f58ccc40638",
+      "patched_sha256": "fa2221c914491e1aac66a91c87a71f5a8f3652664b72fec464bcf9a1a26b9e16"
+    },
+    "src/sksundae/ida/_solver.py": {
+      "original_sha256": "03f96bf1c50a196f12a91c87dee0e38b397801c8a6533c87f3b45e55ab6f34d5",
+      "patched_sha256": "ab05db63b7a1b6ab4a928bcae9cd0c4b16666f1e0fa1a2e86538fe6a76a93994"
+    }
+  },
+  "patch_sha256": "cecb03e44fc0999ca1ca797f8208e178289feb0461948563ec7fbf190ab6612c",
+  "build_binding_token": "_OBSERVATION_BUILD_ID = None",
+  "required_config": {
+    "SUNDIALS_VERSION": "7.5.0",
+    "SUNDIALS_FLOAT_TYPE": "double",
+    "SUNDIALS_INT_TYPE": "int",
+    "SUNDIALS_SUPERLUMT_ENABLED": "True",
+    "SUNDIALS_SUPERLUMT_THREAD_TYPE": "OPENMP",
+    "SUNDIALS_BLAS_LAPACK_ENABLED": "True"
+  },
+  "required_libraries": [
+    "sundials_core",
+    "sundials_nvecserial",
+    "sundials_sunlinsoldense",
+    "sundials_sunlinsolband",
+    "sundials_sunmatrixdense",
+    "sundials_sunmatrixband",
+    "sundials_sunmatrixsparse",
+    "sundials_sunlinsolspgmr",
+    "sundials_sunlinsolspbcgs",
+    "sundials_sunlinsolsptfqmr",
+    "sundials_sunlinsolsuperlumt",
+    "superlu_mt_OPENMP",
+    "sundials_sunlinsollapackdense",
+    "sundials_sunlinsollapackband",
+    "sundials_cvode",
+    "sundials_ida"
+  ],
+  "copy_header_sha256": "500287323cf654c4087e8f4770c6e5f0234d6cdb9c5583a6ff7c49de3c01db24",
+  "private_header_sha256": "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce",
+  "composed_controls_patch_sha256": "7841508829e5226cc4de3aa0808aaf9a16ef7217cbbfc99e57f8c8955dbfd44b",
+  "native_cleanup": {
+    "kind": "source-owned constructor, factor-retiring initialize and free; unchanged numerical native routines",
+    "files": {
+      "ida_superlumt_cleanup.c": "ba89c6670e89a858406db56c451d03451a3e1e3c4b0b80bb8a565099e464f643",
+      "ida_superlumt_cleanup.h": "4c312f009208a5ffb86090fb2e2eb64222f8aaf7e20a093673c481c3c8e97d14"
+    },
+    "upstream_sundials_source_sha256": "5f8f4d9d3cb5871c58254b99d26b675c131e7d9322565809ebb047834e3b2a4e",
+    "superlu_mt_commit": "3d805210e95bb5b86b9ec3ade0e200714b6964dc",
+    "upstream_finalize_sha256": "df9e0edfebbf00f68bfae6b4d6c459820fa0292803b2a011f37740a916efacc7",
+    "upstream_destructors_sha256": "8ccd860b67bd5814c6cb357a89b81a4f7c9b9b9a9fb18ef16834e54d2facf347",
+    "unchanged_native_operations": [
+      "SUNLinSolGetType_SuperLUMT",
+      "SUNLinSolGetID_SuperLUMT",
+      "SUNLinSolInitialize_SuperLUMT",
+      "SUNLinSolSetOptions_SuperLUMT",
+      "SUNLinSolSetup_SuperLUMT",
+      "SUNLinSolSolve_SuperLUMT",
+      "SUNLinSolLastFlag_SuperLUMT",
+      "SUNLinSolSpace_SuperLUMT"
+    ],
+    "old_installation_mutated": false,
+    "native_initialize_delegated_after_factor_retirement": "SUNLinSolInitialize_SuperLUMT",
+    "direct_native_operations": [
+      "SUNLinSolGetType_SuperLUMT",
+      "SUNLinSolGetID_SuperLUMT",
+      "SUNLinSolSetOptions_SuperLUMT",
+      "SUNLinSolSetup_SuperLUMT",
+      "SUNLinSolSolve_SuperLUMT",
+      "SUNLinSolLastFlag_SuperLUMT",
+      "SUNLinSolSpace_SuperLUMT"
+    ]
+  },
+  "nonlinear_state_observation": {
+    "schema": "sksundae.ida.nonlinear-control-state.v1",
+    "fields": [
+      "epcon",
+      "epsNewt",
+      "ss",
+      "oldnrm",
+      "toldel"
+    ],
+    "previous_patch_sha256": "b6ef74bce1d55906c6bada39a1a1235896c21ed5ee68551b01986aec353a1c78",
+    "kind": "read-only pinned upstream header word copies with explicit lifecycle validity",
+    "upstream_algorithm_or_header_changed": false
+  },
+  "nonlinear_guard": {
+    "policy": "first-correction-wrms-v1",
+    "default": "off",
+    "trace_record_cap": 4096,
+    "headers": {
+      "sunnonlinsol/sunnonlinsol_newton.h": "738770bf87bf52c1ad6358581bb0dbf091145af9b0e4d9c4725f4582490d7383",
+      "sundials/sundials_nonlinearsolver.h": "3289b49b370ae16e761dd2a3287729eedcee34d1ca9e3bb0af0e8f9e7e93c400"
+    },
+    "installation": "public setter, pinned IDAMem and Newton-content capture; original native delegate/data retained"
+  },
+  "parent_affine_weights": {
+    "schema": "sksundae.ida.parent-affine-weights.v1",
+    "public_api": "IDAWFtolerances / IDAEwtFn",
+    "default": "off",
+    "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
+    "word_capacity": 4,
+    "sum_term_capacity": 32,
+    "minimum_nonzero_product_frexp_exponent_sum": -968,
+    "lifetime": "C-owned context through existing AuxData; refresh on same-size and size-changing reinit; release after IDAFree",
+    "upstream_algorithm_or_header_changed": false,
+    "actual_application_requires_separate_native_fixture": true
+  },
+  "initial_parent_weight_evaluation": {
+    "schema": "sksundae.ida.initial-parent-weight-evaluation.v1",
+    "public_method": "evaluate_initial_parent_weights",
+    "allowed_native_steps": 0,
+    "argument": "actual native phi[0] at bound initial time",
+    "callback": "actual registered ida_efun verified as parent callback; registered user_data without modifying edata",
+    "output": "separate serial vector; copied bytes",
+    "preservation": "native memory record, allocated-order phi columns and stored ewt byte-checked unchanged",
+    "side_effect": "one parent-weight diagnostic cache evaluation; not solver-applied weights",
+    "native_validation_pending": true,
+    "successful_init_phase": "current successful zero-step initialization endpoint, no prior step attempt; failed-first-step and later endpoints reject; explicit evaluations preserve eligibility",
+    "weight_mode_guard": "ida_user_efun plus exact registered callback/user_data under pinned public tolerance setters; no unavailable ida.c macro dependency"
+  },
+  "physical_affine_weights": {
+    "schema": "sksundae.ida.physical-affine-weights.v1",
+    "public_api": "IDAWFtolerances / IDAEwtFn / IDAGetCurrentTime",
+    "default": "off",
+    "sum_term_capacity": 64,
+    "maximum_physical_terms": 52,
+    "upstream_algorithm_or_header_changed": false,
+    "actual_application_requires_separate_native_fixture": true,
+    "rounding": "RN-exact-physical-X_then-unfused-physical-EWT-v1"
+  }
+}

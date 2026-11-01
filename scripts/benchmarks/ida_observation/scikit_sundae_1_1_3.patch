@@ -1,0 +1,1613 @@
+--- a/src/sksundae/c_ida.pxd
++++ b/src/sksundae/c_ida.pxd
+@@ -8,6 +8,7 @@
+     # user-supplied functions
+     ctypedef int (*IDAResFn)(sunrealtype t, N_Vector yy, N_Vector yp, N_Vector rr, void* data) except -1
+     ctypedef int (*IDARootFn)(sunrealtype t, N_Vector yy, N_Vector yp, sunrealtype* ee, void* data) except -1
++    ctypedef int (*IDAEwtFn)(N_Vector yy, N_Vector ewt, void* data) noexcept
+ 
+     # itask
+     int IDA_NORMAL
+@@ -30,6 +31,7 @@
+     # tolerance input functions
+     int IDASStolerances(void* mem, sunrealtype rtol, sunrealtype atol)
+     int IDASVtolerances(void* mem, sunrealtype rtol, N_Vector atol)
++    int IDAWFtolerances(void* mem, IDAEwtFn efun)
+ 
+     # initial condition calculation function
+     int IDACalcIC(void* mem, int ic_opt, sunrealtype ic_t0)
+@@ -50,6 +52,15 @@
+     int IDASetMaxConvFails(void* mem, int max_conv_fails)
+     int IDASetMaxNonlinIters(void* mem, int max_nonlin_iters)
+ 
++    int IDASetNonlinConvCoef(void* mem, sunrealtype epcon)
++    int IDAGetIntegratorStats(void* mem, long int* nsteps, long int* nrevals,
++                             long int* nlinsetups, long int* netfails,
++                             int* qlast, int* qcur, sunrealtype* hinused,
++                             sunrealtype* hlast, sunrealtype* hcur,
++                             sunrealtype* tcur)
++    int IDAGetNonlinSolvStats(void* mem, long int* nniters, long int* nnfails)
++    int IDAGetCurrentCj(void* mem, sunrealtype* cj)
++
+     # rootfinding initialization function
+     int IDARootInit(void* mem, int nrtfn, IDARootFn eventsfn)
+ 
+@@ -65,6 +76,14 @@
+     int IDAGetRootInfo(void* mem, int* rootsfound)
+     int IDAGetNumResEvals(void* mem, long int* nrevals)
+     int IDAGetCurrentStep(void* mem, sunrealtype* hcur)
++    int IDAGetNumSteps(void* mem, long int* nsteps)
++    int IDAGetCurrentTime(void* mem, sunrealtype* tcur)
++    int IDAGetLastStep(void* mem, sunrealtype* hlast)
++    int IDAGetLastOrder(void* mem, int* klast)
++    int IDAGetCurrentOrder(void* mem, int* kcur)
++    int IDAGetDky(void* mem, sunrealtype t, int k, N_Vector dky)
++    int IDAGetErrWeights(void* mem, N_Vector eweight)
++    int IDAGetEstLocalErrors(void* mem, N_Vector ele)
+     
+     # free functions
+     void IDAFree(void** mem)
+@@ -103,3 +122,50 @@
+ 
+     # optional outputs from LS interface
+     int IDAGetNumJacEvals(void* mem, long int* njevals)
++
++
++# Source-owned 7.5.0 serial-word copier, compiled in this owning extension.
++from libc.stddef cimport size_t
++from libc.stdint cimport uint64_t
++cdef extern from "ida_observation_copy.h":
++    const char* sl_ida75_library_path()
++    int sl_ida75_copy(void* memory, sunindextype n, long ns,
++                      sunrealtype tn, sunrealtype hu, int qu,
++                      sunrealtype hn, int qn,
++                      sunrealtype* phi, size_t phi_count,
++                      sunrealtype* psi, size_t psi_count,
++                      sunrealtype* uround)
++    int sl_ida75_evaluate_initial_weights(void* memory, sunindextype n, sunrealtype t0,
++        IDAEwtFn expected_callback, void* expected_user, N_Vector output,
++        sunrealtype* initial_basis, size_t basis_count, int* callback_status, int* phi_columns)
++    int sl_ida75_nls_state(void* memory, long ns, long nni,
++                           sunrealtype tn, sunrealtype hu, int qu,
++                           sunrealtype hn, int qn, int read_step,
++                           sunrealtype* values, size_t count)
++
++    ctypedef struct sl_ida75_guard_record:
++        long generation, operation, sequence, step
++        int iteration, iteration_status, default_status, returned_status, override
++        int oldnrm_before_valid, oldnrm_after_valid, norm_observed, norm_valid
++        sunrealtype norm, tolerance, ss_before, ss_after, oldnrm_before, oldnrm_after
++        sunrealtype toldel, time, cj
++    ctypedef struct sl_ida75_guard:
++        long generation, operation, calls
++        size_t capacity, count
++        int active, overflow
++        sl_ida75_guard_record* records
++        sl_ida75_guard_record first_unrecorded
++    int sl_ida75_guard_install(void* memory, sunindextype size, long generation,
++                               size_t capacity, sl_ida75_guard** out)
++    int sl_ida75_guard_check(sl_ida75_guard* g, void* memory, long generation)
++    int sl_ida75_guard_reinit(sl_ida75_guard* g, void* memory, long generation)
++    int sl_ida75_guard_begin(sl_ida75_guard* g, void* memory, long generation)
++    void sl_ida75_guard_end(sl_ida75_guard* g, int native_status)
++    void sl_ida75_guard_free(sl_ida75_guard** g)
++    uint64_t sl_ida75_guard_word(sunrealtype value)
++
++
++# Only allocation/free are source-owned; numerical operations use pinned native exports.
++cdef extern from "ida_superlumt_cleanup.h":
++    SUNLinearSolver sl_SUNLinSol_SuperLUMT(N_Vector y, SUNMatrix A,
++                                           int nthreads, SUNContext ctx)
+--- a/src/sksundae/_cy_ida.pyx
++++ b/src/sksundae/_cy_ida.pyx
+@@ -6,7 +6,14 @@
+ # Standard library
+ import os
+ import inspect
+-
++import math
++from hashlib import sha256
++from pathlib import Path
++from threading import RLock
++from types import MappingProxyType
++from uuid import uuid4
++
++from copy import deepcopy
+ from warnings import warn
+ from numbers import Integral, Real
+ from typing import Callable, Iterable
+@@ -21,6 +28,7 @@
+ 
+ # Extern cdef headers
+ from .c_ida cimport *
++from libc.math cimport isfinite
+ from .c_nvector cimport *
+ from .c_sundials cimport *
+ from .c_sunmatrix cimport *
+@@ -34,6 +42,294 @@
+ from .utils import RichResult
+ from .ida._precond import IDAPrecond
+ from .ida._jactimes import IDAJacTimes
++
++# This bounded C callback uses only its AuxData-owned context and public IDA
++# APIs. It never calls a Python weight function or changes native u/history.
++cdef extern from *:
++    """
++    #include <ida/ida.h>
++    #include <nvector/nvector_serial.h>
++    #include <stdlib.h>
++    #include <string.h>
++    #include <math.h>
++    #include <stdint.h>
++    typedef struct {
++        void *memory, *owner;
++        long generation, calls;
++        sunindextype n;
++        int installed, status, component;
++        double t0, rtol, basis_time;
++        char frame_id[65];
++        double *data, *q0, *v0, *atol, *u, *parent, *weights;
++        int physical_mode;
++        double *scale, *reference, *lift;
++        double protocol_start, protocol_end;
++        double input_start[2], input_end[2], input_rate[2], input_reference[2];
++        char profile_id[65];
++    } sl_parent_weights;
++
++    static void sl_parent_weights_free(sl_parent_weights **p) {
++        if (p && *p) { free((*p)->data); free(*p); *p = NULL; }
++    }
++    static sl_parent_weights *sl_parent_weights_new(void *mem, void *owner,
++        long generation, sunindextype n, double t0, double rtol,
++        const double *q0, const double *v0, const double *atol, const char *id) {
++        if (!mem || !owner || generation < 1 || n < 1 || n > 1000000) return NULL;
++        sl_parent_weights *p = calloc(1, sizeof(*p));
++        if (!p) return NULL;
++        p->data = calloc((size_t)n*17, sizeof(double));
++        if (!p->data) { free(p); return NULL; }
++        p->memory=mem; p->owner=owner; p->generation=generation; p->n=n;
++        p->t0=t0; p->rtol=rtol; p->status=1; p->component=-1;
++        p->q0=p->data; p->v0=p->q0+4*n; p->atol=p->v0+4*n;
++        p->u=p->atol+n; p->parent=p->u+n; p->weights=p->parent+n;
++        p->scale=p->weights+n; p->reference=p->scale+n; p->lift=p->reference+2*n;
++        memcpy(p->q0,q0,(size_t)n*4*sizeof(double));
++        memcpy(p->v0,v0,(size_t)n*4*sizeof(double));
++        memcpy(p->atol,atol,(size_t)n*sizeof(double));
++        memcpy(p->frame_id,id,64); p->frame_id[64]=0;
++        return p;
++    }
++    /* Exact error-free partials, then one ties-to-even binary64 rounding.
++       At most 21 finite input terms; any intermediate overflow fails closed. */
++    static int sl_parent_sum(const double *values, int count, double *answer) {
++        double p[64], x, y, hi=0.0, lo=0.0, yr; int n=0, i, j;
++        if (count > 64) return -8;
++        for (j=0; j<count; ++j) {
++            x=values[j]; i=0;
++            for (int k=0; k<n; ++k) {
++                y=p[k]; if (fabs(x)<fabs(y)) { double swap=x; x=y; y=swap; }
++                hi=x+y; if (!isfinite(hi)) return -5;
++                lo=y-(hi-x); if (lo != 0.0) p[i++]=lo; x=hi;
++            }
++            n=i; if (x != 0.0) { if(n==64) return -8; p[n++]=x; }
++        }
++        if (n) {
++            hi=p[--n];
++            while (n) {
++                x=hi; y=p[--n]; hi=x+y; yr=hi-x; lo=y-yr;
++                if (lo != 0.0) break;
++            }
++            if (n && ((lo<0.0 && p[n-1]<0.0) || (lo>0.0 && p[n-1]>0.0))) {
++                y=lo*2.0; x=hi+y; yr=x-hi; if (y==yr) hi=x;
++            }
++        } else hi=0.0;
++        if (!isfinite(hi)) return -5;
++        *answer=hi; return 0;
++    }
++    static int sl_parent_product(double a, double b, double *terms, int *n) {
++        if (a==0.0 || b==0.0) return 0;
++        int ea, eb; (void)frexp(a,&ea); (void)frexp(b,&eb);
++        /* Guarantees that every exact product bit is above the subnormal
++           floor. Unsupported tiny products are errors, never dropped. */
++        if (ea+eb < -968) return -5;
++        double hi=a*b;
++        if (!isfinite(hi)) return -5;
++        double lo=fma(a,b,-hi);
++        if (!isfinite(lo)) return -5;
++        terms[(*n)++]=hi; terms[(*n)++]=lo; return 0;
++    }
++    static void sl_physical_weights_set(sl_parent_weights *p, const double *scale,
++            const double *reference, const double *lift, double start, double end,
++            const double *input_start, const double *input_end,
++            const double *input_rate, const double *input_reference, const char *id) {
++        p->physical_mode=1; p->protocol_start=start; p->protocol_end=end;
++        memcpy(p->scale,scale,(size_t)p->n*sizeof(double));
++        memcpy(p->reference,reference,(size_t)p->n*2*sizeof(double));
++        memcpy(p->lift,lift,(size_t)p->n*2*sizeof(double));
++        memcpy(p->input_start,input_start,2*sizeof(double));
++        memcpy(p->input_end,input_end,2*sizeof(double));
++        memcpy(p->input_rate,input_rate,2*sizeof(double));
++        memcpy(p->input_reference,input_reference,2*sizeof(double));
++        memcpy(p->profile_id,id,64); p->profile_id[64]=0;
++    }
++    static int sl_parent_weights_apply(sl_parent_weights *p, void *owner,
++                                       long generation, N_Vector y, N_Vector w) {
++        if (!p) return -1;
++        ++p->calls; p->status=-2; p->component=-1;
++        if (!p->installed || p->owner!=owner || p->generation!=generation) return -1;
++        p->status=-3;
++        if (!y || !w || N_VGetVectorID(y)!=SUNDIALS_NVEC_SERIAL ||
++            N_VGetVectorID(w)!=SUNDIALS_NVEC_SERIAL ||
++            N_VGetLength_Serial(y)!=p->n || N_VGetLength_Serial(w)!=p->n) return -1;
++        double *u=N_VGetArrayPointer(y), *ewt=N_VGetArrayPointer(w), t;
++        if (!u || !ewt) return -1;
++        memcpy(p->u,u,(size_t)p->n*sizeof(double));
++        p->status=-4;
++        if (IDAGetCurrentTime(p->memory,&t)!=0 || !isfinite(t)) return -1;
++        p->basis_time=t;
++        double inputs[2]={0.0,0.0};
++        if (p->physical_mode) {
++            if (t<p->protocol_start || t>p->protocol_end) { p->status=-9; return -1; }
++            for (int j=0;j<2;++j) {
++                if (t==p->protocol_start) inputs[j]=p->input_start[j];
++                else if (t==p->protocol_end) inputs[j]=p->input_end[j];
++                else inputs[j]=p->input_start[j]+p->input_rate[j]*(t-p->protocol_start);
++                if (!isfinite(inputs[j])) { p->status=-9; return -1; }
++            }
++        }
++        double dt=t-p->t0, bv=dt-t, dtlo=(t-(dt-bv))+(-p->t0-bv);
++        if (!isfinite(dt) || !isfinite(dtlo)) { p->status=-5; return -1; }
++        for (sunindextype i=0; i<p->n; ++i) {
++            p->component=(int)i;
++            double terms[24], q, den, product; int n=0, status;
++            if (!isfinite(u[i])) { p->status=-5; return -1; }
++            terms[n++]=u[i];
++            for (int k=0; k<4; ++k) {
++                terms[n++]=p->q0[k*p->n+i];
++                status=sl_parent_product(dt,p->v0[k*p->n+i],terms,&n);
++                if (!status) status=sl_parent_product(dtlo,p->v0[k*p->n+i],terms,&n);
++                if (status) { p->status=status; return -1; }
++            }
++            if (p->physical_mode) {
++                double physical[64]; int used=0;
++                for (int k=0;k<n;++k) {
++                    status=sl_parent_product(p->scale[i],terms[k],physical,&used);
++                    if (status) { p->status=status; return -1; }
++                }
++                physical[used++]=p->reference[i]; physical[used++]=p->reference[p->n+i];
++                for (int j=0;j<2;++j) {
++                    status=sl_parent_product(p->lift[2*i+j],inputs[j],physical,&used);
++                    if (!status) status=sl_parent_product(-p->lift[2*i+j],p->input_reference[j],physical,&used);
++                    if (status) { p->status=status; return -1; }
++                }
++                status=sl_parent_sum(physical,used,&q);
++            } else status=sl_parent_sum(terms,n,&q);
++            if (status) { p->status=status; return -1; }
++            /* Match original SV: abs, separately rounded scale and sum, inv.
++               The supported builder disables contraction and fast math. */
++            product=p->rtol*fabs(q); den=product+p->atol[i];
++            if (!isfinite(den) || den<=0.0) { p->status=-6; return -1; }
++            double weight=(p->physical_mode ? p->scale[i] : 1.0)/den;
++            if (!isfinite(weight) || weight<=0.0) { p->status=-7; return -1; }
++            p->parent[i]=q; p->weights[i]=weight; ewt[i]=weight;
++        }
++        p->status=0; p->component=-1; return 0;
++    }
++    """
++    ctypedef struct sl_parent_weights:
++        void* memory
++        void* owner
++        long generation, calls
++        sunindextype n
++        int installed, status, component
++        double t0, rtol, basis_time
++        char frame_id[65]
++        double *q0, *v0, *atol, *u, *parent, *weights
++        int physical_mode
++        double *scale, *reference, *lift
++        double protocol_start, protocol_end
++        double input_start[2], input_end[2], input_rate[2], input_reference[2]
++        char profile_id[65]
++    sl_parent_weights* sl_parent_weights_new(void*, void*, long, sunindextype, double, double,
++                                           const double*, const double*, const double*, const char*)
++    void sl_parent_weights_free(sl_parent_weights**)
++    void sl_physical_weights_set(sl_parent_weights*, const double*, const double*, const double*,
++                                double, double, const double*, const double*, const double*, const double*, const char*)
++    int sl_parent_weights_apply(sl_parent_weights*, void*, long, N_Vector, N_Vector) noexcept
++
++
++def _validate_parent_weight_frame(value):
++    if value is None:
++        return None
++    keys = {"schema", "frame_identity", "t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding"}
++    if (type(value) is not dict or set(value) != keys
++            or value["schema"] != "sksundae.ida.parent-affine-weights.v1"
++            or value["weight_rounding"] != "RN-exact-parent-q_then-unfused-SV-v1"
++            or type(value["size"]) is not int or not 1 <= value["size"] <= 1000000
++            or type(value["frame_identity"]) is not str or len(value["frame_identity"]) != 64
++            or any(c not in "0123456789abcdef" for c in value["frame_identity"])):
++        raise ValueError("invalid parent_weight_frame binding")
++    def word(v):
++        if type(v) is not str:
++            raise ValueError("parent_weight_frame requires exact hex words")
++        number = float.fromhex(v)
++        if not math.isfinite(number) or number.hex() != v:
++            raise ValueError("noncanonical parent_weight_frame word")
++        return number
++    word(value["t0_hex"])
++    for key in ("q0_words_hex", "v0_words_hex"):
++        rows = value[key]
++        if type(rows) is not list or len(rows) != 4 or any(type(r) is not list or len(r) != value["size"] for r in rows):
++            raise ValueError("parent_weight_frame shape")
++        numbers = [[word(v) for v in row] for row in rows]
++        for terms in zip(*numbers):
++            prefix = []
++            for supplied in terms:
++                rounded = math.fsum((*terms, *(-v for v in prefix)))
++                if supplied != rounded:
++                    raise ValueError("unnormalized parent_weight_frame words")
++                prefix.append(supplied)
++    return deepcopy(value)
++
++def _validate_physical_weight_frame(value):
++    base = {"schema", "frame_identity", "t0_hex", "size", "q0_words_hex", "v0_words_hex", "weight_rounding"}
++    extra = {"profile_identity", "rtol_hex", "atol_physical_hex", "scale_hex", "reference_words_hex", "lift_hex",
++             "reference_inputs_hex", "protocol_start_hex", "protocol_end_hex", "inputs_start_hex", "inputs_end_hex", "input_rates_hex"}
++    if (type(value) is not dict or set(value) != base | extra
++            or value["schema"] != "sksundae.ida.physical-affine-weights.v1"
++            or value["weight_rounding"] != "RN-exact-physical-X_then-unfused-physical-EWT-v1"):
++        raise ValueError("invalid physical_weight_frame binding")
++    parent = {k: value[k] for k in base}
++    parent.update(schema="sksundae.ida.parent-affine-weights.v1", weight_rounding="RN-exact-parent-q_then-unfused-SV-v1")
++    _validate_parent_weight_frame(parent)
++    identity = value["profile_identity"]
++    if type(identity) is not str or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
++        raise ValueError("physical_weight_frame profile identity")
++    def word(v, positive=False):
++        if type(v) is not str:
++            raise ValueError("physical_weight_frame requires exact hex words")
++        f = float.fromhex(v)
++        if not math.isfinite(f) or f.hex() != v or positive and f <= 0:
++            raise ValueError("physical_weight_frame finite positive word")
++        return f
++    def vector(v, size, positive=False):
++        if type(v) is not list or len(v) != size:
++            raise ValueError("physical_weight_frame shape")
++        return [word(x, positive) for x in v]
++    n=value["size"]
++    word(value["rtol_hex"], True)
++    vector(value["atol_physical_hex"], n, True)
++    vector(value["scale_hex"], n, True)
++    if type(value["reference_words_hex"]) is not list or len(value["reference_words_hex"]) != 2:
++        raise ValueError("physical_weight_frame reference shape")
++    for row in value["reference_words_hex"]: vector(row,n)
++    if type(value["lift_hex"]) is not list or len(value["lift_hex"]) != n:
++        raise ValueError("physical_weight_frame lift shape")
++    for row in value["lift_hex"]: vector(row,2)
++    vector(value["reference_inputs_hex"],2)
++    start,end=word(value["protocol_start_hex"]),word(value["protocol_end_hex"])
++    if not start < end or not start <= word(value["t0_hex"]) <= end:
++        raise ValueError("physical_weight_frame protocol time")
++    first,last,rates=(vector(value[k],2) for k in ("inputs_start_hex","inputs_end_hex","input_rates_hex"))
++    if any(v != (b-a)/(end-start) for a,b,v in zip(first,last,rates)):
++        raise ValueError("physical_weight_frame forcing law")
++    return deepcopy(value)
++
++
++# Replaced only by the source/hash-checked observation build helper.
++_OBSERVATION_BUILD_ID = None
++_OBSERVATION_LIBRARIES = ()
++_OBSERVATION_CONFIG_SHA256 = None
++_OBSERVATION_HEADER_SHA256 = "04988c332e2d004b4e838ffca847990f353f68d41cb225f1b9085b3a8bed52ce"
++_OBSERVATION_NEWTON_HEADER_SHA256 = '738770bf87bf52c1ad6358581bb0dbf091145af9b0e4d9c4725f4582490d7383'
++_OBSERVATION_SCHEMA = "sksundae.ida.accepted-step-observation.v1"
++_OBSERVATION_CONFIG = tuple(sorted(config.items()))
++
++
++class IDAObservationError(RuntimeError):
++    """Unavailable observation or native getter failure; status is retained."""
++    def __init__(self, code, operation=None, native_status=None):
++        self.code = code
++        self.operation = operation
++        self.native_status = native_status
++        super().__init__(f"{code}: {operation}, native_status={native_status}")
++
++
++def _observation_status(operation, status):
++    if status != 0:
++        raise IDAObservationError("native_getter_failed", operation, int(status))
++    return (operation, int(status))
+ 
+ 
+ # Messages shorted from documentation online:
+@@ -255,6 +551,8 @@
+     cdef np.ndarray np_cc       # constraints (-2, -1, 0, 1, 2)
+     cdef bint with_userdata
+     cdef bint is_constrained
++    cdef sl_parent_weights* parent_weights
++    cdef long frame_generation
+ 
+     cdef object resfn           # Callable
+     cdef object userdata        # Any
+@@ -266,6 +564,8 @@
+     cdef object jactimes        # IDAJacTimes
+ 
+     def __cinit__(self, sunindextype NEQ, object options):
++        self.parent_weights = NULL
++        self.frame_generation = 0
+         self.np_yy = np.empty(NEQ, DTYPE)
+         self.np_yp = np.empty(NEQ, DTYPE)
+         self.np_rr = np.empty(NEQ, DTYPE)
+@@ -327,6 +627,14 @@
+             self.np_cc = np.zeros(0, INT_TYPE)
+ 
+ 
++cdef int _parent_weight_wrapper(N_Vector y, N_Vector w, void* data) noexcept:
++    # Typed access to the registered owner; no Python callable or array work.
++    if data is NULL:
++        return -1
++    return sl_parent_weights_apply((<AuxData>data).parent_weights, data,
++                                   (<AuxData>data).frame_generation, y, w)
++
++
+ cdef class _idaLSSparseDQJac:
+     """
+     Sparse Jacobian approximation.
+@@ -464,8 +772,21 @@
+     cdef object _malloc         # bool - flag for memory allocation
+     cdef object _options        # dict[str, Any]
+     cdef object _initialized    # bool - flag for init_step completion
++    cdef object _obs_lock, _obs_instance, _obs_endpoint, _obs_previous
++    cdef object _obs_reason, _obs_binding
++    cdef long _obs_generation
++    cdef bint _obs_busy
++    cdef sl_ida75_guard* _nls_guard
++    cdef object _nls_trace
+ 
+     def __cinit__(self, object resfn, **options):
++        self._obs_lock = RLock()
++        self._obs_instance = uuid4().hex
++        self._obs_generation = 0
++        self._obs_busy = False
++        self._obs_binding = None
++        self._nls_guard = NULL
++        self._nls_trace = None
+         self._free_memory()
+         
+         self._options = {
+@@ -488,6 +809,11 @@
+             "max_order": 5,
+             "max_num_steps": 500,
+             "max_nonlin_iters": 4,
++            "nonlin_conv_coef": None,
++            "nonlin_guard": None,
++            "nonlin_trace_capacity": 4096,
++            "parent_weight_frame": None,
++            "physical_weight_frame": None,
+             "max_conv_fails": 10,
+             "constraints_idx": None,
+             "constraints_type": None,
+@@ -503,6 +829,14 @@
+             raise ValueError(f"Invalid keyword arguments: {invalid_keys}.")
+         
+         self._options.update(options)
++        if self._options["physical_weight_frame"] is not None:
++            if self._options["parent_weight_frame"] is not None:
++                raise ValueError("physical and parent weight options are mutually exclusive")
++            physical = _validate_physical_weight_frame(self._options["physical_weight_frame"])
++            self._options["physical_weight_frame"] = physical
++            self._options["parent_weight_frame"] = physical
++        else:
++            self._options["parent_weight_frame"] = _validate_parent_weight_frame(self._options["parent_weight_frame"])
+ 
+         _check_options(self._options)
+ 
+@@ -544,7 +878,7 @@
+             nthreads = <int> self._options["nthreads"]
+ 
+             self.A = SUNSparseMatrix(self.NEQ, self.NEQ, nnz, CSC_MAT, self.ctx)
+-            self.LS = SUNLinSol_SuperLUMT(self.yy, self.A, nthreads, self.ctx)
++            self.LS = sl_SUNLinSol_SuperLUMT(self.yy, self.A, nthreads, self.ctx)
+ 
+         elif linsolver == "gmres":
+             self.LS = SUNLinSol_SPGMR(self.yy, prectype, maxl, self.ctx)
+@@ -561,6 +895,59 @@
+             raise MemoryError("SUNLinSol constructor returned NULL.")
+ 
+     cdef _set_tolerances(self):
++        cdef sl_parent_weights* context = NULL
++        cdef sl_parent_weights* retired = NULL
++        cdef np.ndarray q0, v0, absolute, scale, reference, lift, input_first, input_last, input_rates, input_reference
++        cdef sunrealtype tcur
++        if self._options["parent_weight_frame"] is not None:
++            spec = self._options["parent_weight_frame"]
++            self._obs_bind_source()
++            if spec["size"] != self.NEQ:
++                raise ValueError("parent_weight_frame dimension changed")
++            status = IDAGetCurrentTime(self.mem, &tcur)
++            if status != 0 or float(tcur).hex() != spec["t0_hex"]:
++                raise IDAObservationError("parent_weight_frame_initial_time", "IDAGetCurrentTime", int(status))
++            q0 = np.ascontiguousarray([[float.fromhex(v) for v in row] for row in spec["q0_words_hex"]], dtype=DTYPE)
++            v0 = np.ascontiguousarray([[float.fromhex(v) for v in row] for row in spec["v0_words_hex"]], dtype=DTYPE)
++            absolute = np.array(np.broadcast_to(self._options["atol"], (int(self.NEQ),)), dtype=DTYPE, copy=True)
++            if (not np.isfinite(absolute).all() or np.any(absolute <= 0)
++                    or not math.isfinite(self._options["rtol"]) or self._options["rtol"] <= 0):
++                raise ValueError("parent_weight_frame nonpositive or nonfinite tolerance")
++            physical = self._options["physical_weight_frame"] is not None
++            if physical:
++                scale = np.array([float.fromhex(v) for v in spec["scale_hex"]], dtype=DTYPE)
++                physical_absolute = np.array([float.fromhex(v) for v in spec["atol_physical_hex"]], dtype=DTYPE)
++                if (self._options["rtol"] != float.fromhex(spec["rtol_hex"])
++                        or not np.array_equal(absolute, physical_absolute / scale)):
++                    raise ValueError("physical_weight_frame tolerance controls mismatch")
++                absolute = physical_absolute
++                reference = np.array([[float.fromhex(v) for v in row] for row in spec["reference_words_hex"]], dtype=DTYPE)
++                lift = np.array([[float.fromhex(v) for v in row] for row in spec["lift_hex"]], dtype=DTYPE)
++                input_first, input_last, input_rates, input_reference = (
++                    np.array([float.fromhex(v) for v in spec[k]], dtype=DTYPE) for k in
++                    ("inputs_start_hex", "inputs_end_hex", "input_rates_hex", "reference_inputs_hex"))
++            encoded_id = spec["frame_identity"].encode("ascii")
++            context = sl_parent_weights_new(self.mem, <void*>self.aux, self._obs_generation,
++                self.NEQ, tcur, <double>self._options["rtol"], <double*>q0.data,
++                <double*>v0.data, <double*>absolute.data, encoded_id)
++            if context is NULL:
++                raise MemoryError("parent weight context allocation failed")
++            if physical:
++                profile_id = spec["profile_identity"].encode("ascii")
++                sl_physical_weights_set(context, <double*>scale.data, <double*>reference.data, <double*>lift.data,
++                    float.fromhex(spec["protocol_start_hex"]), float.fromhex(spec["protocol_end_hex"]),
++                    <double*>input_first.data, <double*>input_last.data, <double*>input_rates.data,
++                    <double*>input_reference.data, profile_id)
++            status = IDAWFtolerances(self.mem, _parent_weight_wrapper)
++            if status != 0:
++                sl_parent_weights_free(&context)
++                raise IDAObservationError("parent_weight_install_failed", "IDAWFtolerances", int(status))
++            context.installed = 1
++            retired = self.aux.parent_weights
++            self.aux.parent_weights = context
++            self.aux.frame_generation = self._obs_generation
++            sl_parent_weights_free(&retired)
++            return
+         rtol = self._options["rtol"]
+         atol = self._options["atol"]
+ 
+@@ -587,42 +974,52 @@
+             raise RuntimeError("IDAtolerances - " + IDAMESSAGES[flag])
+ 
+     cdef _free_memory(self):
++        self._obs_endpoint = None
++        self._obs_previous = None
++        self._obs_reason = ("no_accepted_step", None)
+         if self.mem is not NULL:
+             IDAFree(&self.mem)
+             self.mem = NULL
+-
++        if self.aux is not None:
++            sl_parent_weights_free(&self.aux.parent_weights)
++            self.aux.frame_generation = 0
++        sl_ida75_guard_free(&self._nls_guard)
++
++        # Dependencies outlive their native consumers.
++        if self.LS is not NULL:
++            SUNLinSolFree(self.LS)
++            self.LS = NULL
++
++        if self.A is not NULL:
++            SUNMatDestroy(self.A)
++            self.A = NULL
++
++        if self.atol is not NULL:
++            N_VDestroy(self.atol)
++            self.atol = NULL
++
++        if self.algidx is not NULL:
++            N_VDestroy(self.algidx)
++            self.algidx = NULL
++
++        if self.constraints is not NULL:
++            N_VDestroy(self.constraints)
++            self.constraints = NULL
++
++        if self.yy is not NULL:
++            N_VDestroy(self.yy)
++            self.yy = NULL
++
++        if self.yp is not NULL:
++            N_VDestroy(self.yp)
++            self.yp = NULL
++
++        
+         if self.ctx is not NULL:
+             SUNContext_Free(&self.ctx)
+             self.ctx = NULL
+ 
+-        if self.atol is not NULL:
+-            N_VDestroy(self.atol)
+-            self.atol = NULL
+-
+-        if self.algidx is not NULL:
+-            N_VDestroy(self.algidx)
+-            self.algidx = NULL
+-
+-        if self.constraints is not NULL:
+-            N_VDestroy(self.constraints)
+-            self.constraints = NULL
+-
+-        if self.yy is not NULL:
+-            N_VDestroy(self.yy)
+-            self.yy = NULL
+-
+-        if self.yp is not NULL:
+-            N_VDestroy(self.yp)
+-            self.yp = NULL
+-
+-        if self.A is not NULL:
+-            SUNMatDestroy(self.A)
+-            self.A = NULL
+-
+-        if self.LS is not NULL:
+-            SUNLinSolFree(self.LS)
+-            self.LS = NULL
+-        
++        self._initialized = False
+         self._size = None
+         self._malloc = False
+ 
+@@ -680,6 +1077,13 @@
+         flag = IDAInit(self.mem, _resfn_wrapper, t0, self.yy, self.yp)
+         if flag < 0:
+             raise RuntimeError("IDAInit - " + IDAMESSAGES[flag])
++
++        if self._options["nonlin_guard"] is not None:
++            self._obs_bind_source()
++            flag = sl_ida75_guard_install(self.mem, self.NEQ, self._obs_generation,
++                <size_t>self._options["nonlin_trace_capacity"], &self._nls_guard)
++            if flag != 0:
++                raise IDAObservationError("nonlinear_guard_install_failed", "install", flag)
+ 
+         # 9) Specify integration tolerances
+         self._set_tolerances()
+@@ -732,6 +1136,13 @@
+         if flag < 0:
+             raise RuntimeError("IDASetMaxNonlinIters - " + IDAMESSAGES[flag])
+ 
++        cdef sunrealtype nonlin_conv_coef
++        if self._options["nonlin_conv_coef"] is not None:
++            nonlin_conv_coef = <sunrealtype> self._options["nonlin_conv_coef"]
++            flag = IDASetNonlinConvCoef(self.mem, nonlin_conv_coef)
++            if flag < 0:
++                raise RuntimeError("IDASetNonlinConvCoef - " + IDAMESSAGES[flag])
++
+         cdef int max_conv_fails = <int> self._options["max_conv_fails"]
+         flag = IDASetMaxConvFails(self.mem, max_conv_fails)
+         if flag < 0:
+@@ -820,6 +1231,10 @@
+         cdef int ic_opt
+         cdef sunrealtype ic_t0
+ 
++        self._obs_generation += 1
++        self._obs_endpoint = None
++        self._obs_previous = None
++        self._obs_reason = ("no_accepted_step", None)
+         yy_tmp = y0.copy()
+         yp_tmp = yp0.copy()
+ 
+@@ -840,6 +1255,11 @@
+             flag = IDAReInit(self.mem, t0, self.yy, self.yp)
+             if flag < 0:
+                 raise RuntimeError("IDAReInit - " + IDAMESSAGES[flag])
++            flag = sl_ida75_guard_reinit(self._nls_guard, self.mem, self._obs_generation)
++            if flag != 0:
++                raise IDAObservationError("nonlinear_guard_reinit_failed", "reinit", flag)
++            if self._options["parent_weight_frame"] is not None:
++                self._set_tolerances()  # Refresh even on same-size IDAReInit.
+ 
+         # 16) Correct initial values
+         calc_initcond = self._options["calc_initcond"]
+@@ -878,6 +1298,8 @@
+             nfev=nfev, njev=njev,
+         )
+ 
++        self._obs_endpoint = self._obs_point(0, t0, t0, flag)
++        self._nls_trace = self._guard_snapshot(None)
+         return result
+ 
+     cdef _step(self, sunrealtype tt, object method, object tstop):
+@@ -899,11 +1321,21 @@
+         yp_tmp = self.aux.np_yp
+         
+         # 17) Advance solution in time
++        observation_before = self._obs_before_step()
++        guard_status = sl_ida75_guard_begin(self._nls_guard, self.mem, self._obs_generation)
++        if guard_status != 0:
++            raise IDAObservationError("nonlinear_guard_begin_failed", "begin", guard_status)
+         flag = IDASolve(self.mem, tt, &tout, self.yy, self.yp, itask)
+-
+-        if PyErr_Occurred():
+-            _pyerr_handler()
+-
++        sl_ida75_guard_end(self._nls_guard, flag)
++        try:
++            if PyErr_Occurred():
++                _pyerr_handler()
++        except BaseException:
++            self._guard_store(flag, True)
++            raise
++        self._guard_store(flag)
++
++        self._obs_after_step(observation_before, tout, flag)
+         svec2np(self.yy, yy_tmp)
+         svec2np(self.yp, yp_tmp)
+ 
+@@ -968,11 +1400,13 @@
+         while True:
+             tend = tspan[ind]
+ 
++            observation_before = self._obs_before_step()
+             flag = IDASolve(self.mem, tend, &tt, self.yy, self.yp, IDA_NORMAL)
+ 
+             if PyErr_Occurred():
+                 _pyerr_handler()
+ 
++            self._obs_after_step(observation_before, tt, flag)
+             svec2np(self.yy, yy_tmp)
+             svec2np(self.yp, yp_tmp)
+ 
+@@ -1059,11 +1493,13 @@
+ 
+         # 17) Advance solution in time
+         while True:
++            observation_before = self._obs_before_step()
+             flag = IDASolve(self.mem, tend, &tt, self.yy, self.yp, IDA_ONE_STEP)
+ 
+             if PyErr_Occurred():
+                 _pyerr_handler()
+ 
++            self._obs_after_step(observation_before, tt, flag)
+             svec2np(self.yy, yy_tmp)
+             svec2np(self.yp, yp_tmp)
+ 
+@@ -1111,49 +1547,654 @@
+ 
+         return result
+ 
+-    def init_step(self, DTYPE_t t0, object y0, object yp0):
++    cdef _obs_raw(self):
++        yy = np.empty(self.NEQ, DTYPE)
++        yp = np.empty(self.NEQ, DTYPE)
++        svec2np(self.yy, yy)
++        svec2np(self.yp, yp)
++        return yy.tobytes(), yp.tobytes()
++
++    cdef _obs_point(self, long nsteps, sunrealtype tn, sunrealtype tret, int flag):
++        yy, yp = self._obs_raw()
++        return MappingProxyType({
++            "owner": self._obs_instance, "generation": self._obs_generation,
++            "nsteps": int(nsteps), "internal_t": float(tn),
++            "output_t": float(tret), "native_status": int(flag),
++            "raw_y": yy, "raw_yp": yp,
++            "identity": (self._obs_instance, self._obs_generation, int(nsteps),
++                         float(tn).hex(), float(tret).hex(), sha256(yy + yp).hexdigest()),
++        })
++
++    cdef _obs_before_step(self):
++        cdef long nsteps
++        cdef sunrealtype tn
++        # Metadata failure must not replace an existing solve result/status.
++        if IDAGetNumSteps(self.mem, &nsteps) != 0:
++            return None
++        if IDAGetCurrentTime(self.mem, &tn) != 0:
++            return None
++        endpoint = self._obs_endpoint
++        if (endpoint is None or endpoint["generation"] != self._obs_generation
++                or endpoint["nsteps"] != nsteps
++                or endpoint["internal_t"].hex() != float(tn).hex()):
++            endpoint = None
++        return int(nsteps), float(tn), endpoint
++
++    cdef _obs_after_step(self, before, sunrealtype tret, int flag):
++        cdef long nsteps
++        cdef sunrealtype tn
++        cdef int status
++        self._obs_endpoint = None
++        self._obs_previous = None
++        self._obs_reason = ("integration_failed", int(flag))
++        if flag < 0:
++            return
++        status = IDAGetNumSteps(self.mem, &nsteps)
++        if status != 0:
++            self._obs_reason = ("IDAGetNumSteps", int(status))
++            return
++        status = IDAGetCurrentTime(self.mem, &tn)
++        if status != 0:
++            self._obs_reason = ("IDAGetCurrentTime", int(status))
++            return
++        self._obs_reason = ("output_not_at_accepted_time", None)
++        if float(tret).hex() != float(tn).hex():
++            return
++        self._obs_endpoint = self._obs_point(nsteps, tn, tret, flag)
++        self._obs_reason = ("predecessor_not_observed", None)
++        if before is not None and before[2] is not None and nsteps == before[0] + 1:
++            self._obs_previous = before[2]
++            self._obs_reason = None
++
++    cdef _obs_stamp(self):
++        cdef long nsteps
++        cdef sunrealtype tn, hused, hh
++        cdef int kused, kk
++        statuses = (
++            _observation_status("IDAGetNumSteps", IDAGetNumSteps(self.mem, &nsteps)),
++            _observation_status("IDAGetCurrentTime", IDAGetCurrentTime(self.mem, &tn)),
++            _observation_status("IDAGetLastStep", IDAGetLastStep(self.mem, &hused)),
++            _observation_status("IDAGetLastOrder", IDAGetLastOrder(self.mem, &kused)),
++            _observation_status("IDAGetCurrentStep", IDAGetCurrentStep(self.mem, &hh)),
++            _observation_status("IDAGetCurrentOrder", IDAGetCurrentOrder(self.mem, &kk)),
++        )
++        if nsteps < 1 or hused == 0 or not 1 <= kused <= 5:
++            raise IDAObservationError("no_accepted_interval")
++        if not (np.isfinite(tn) and np.isfinite(hused) and np.isfinite(hh)):
++            raise IDAObservationError("nonfinite_interval")
++        return MappingProxyType({"nsteps": int(nsteps), "tn": float(tn),
++            "hused": float(hused), "kused": int(kused), "hh": float(hh),
++            "kk": int(kk), "statuses": statuses})
++
++    cdef _obs_vector(self, sunrealtype tn, int kind, int k, bint allow_failure=False):
++        cdef N_Vector scratch = NULL
++        cdef int status
++        scratch = N_VNew_Serial(self.NEQ, self.ctx)
++        if scratch is NULL:
++            raise MemoryError("observation N_Vector allocation failed")
++        try:
++            if kind == 0:
++                operation = f"IDAGetDky[{k}]"
++                status = IDAGetDky(self.mem, tn, k, scratch)
++            elif kind == 1:
++                operation = "IDAGetErrWeights"
++                status = IDAGetErrWeights(self.mem, scratch)
++            else:
++                operation = "IDAGetEstLocalErrors"
++                status = IDAGetEstLocalErrors(self.mem, scratch)
++            if allow_failure and status != 0:
++                return None, (operation, int(status))
++            receipt = _observation_status(operation, status)
++            values = np.empty(self.NEQ, DTYPE)
++            svec2np(scratch, values)
++            if not np.all(np.isfinite(values)):
++                raise IDAObservationError("nonfinite_vector", operation, int(status))
++            if kind == 1 and not np.all(values > 0):
++                raise IDAObservationError("invalid_error_weights", operation, int(status))
++            return values.tobytes(), receipt
++        finally:
++            N_VDestroy(scratch)
++
++    cdef _obs_basis(self, stamp):
++        cdef int q = stamp["kused"]
++        cdef sunrealtype uround
++        cdef np.ndarray phi = np.empty((q + 1, int(self.NEQ)), DTYPE, order="C")
++        cdef np.ndarray psi = np.empty(q, DTYPE)
++        cdef int status
++        if np.dtype(DTYPE).str != "<f8" or np.dtype(INT_TYPE).itemsize != 4:
++            raise IDAObservationError("unsupported_copy_precision")
++        status = sl_ida75_copy(self.mem, self.NEQ, stamp["nsteps"],
++            stamp["tn"], stamp["hused"], q, stamp["hh"], stamp["kk"],
++            <sunrealtype*>phi.data, phi.size, <sunrealtype*>psi.data, psi.size, &uround)
++        if status != 0:
++            raise IDAObservationError("native_basis_copy_failed", "sl_ida75_copy", int(status))
++        return MappingProxyType({"kind": "ida75_phi_psi_copy_v1", "status": int(status),
++            "dtype": np.dtype(DTYPE).str, "phi_shape": (q + 1, int(self.NEQ)),
++            "phi": phi.tobytes(order="C"), "psi_shape": (q,), "psi": psi.tobytes(),
++            "uround": float(uround), "source_header_sha256": _OBSERVATION_HEADER_SHA256,
++            "source_config_sha256": _OBSERVATION_CONFIG_SHA256,
++            "build_identity": self._obs_binding["identity"]})
++
++    cdef _obs_bind_source(self):
++        cdef const char* native_library
++        if (_OBSERVATION_BUILD_ID is None or not _OBSERVATION_LIBRARIES
++                or _OBSERVATION_CONFIG_SHA256 is None):
++            raise IDAObservationError("unbound_build_identity")
++        if self._obs_binding is None:
++            native_library = sl_ida75_library_path()
++            if native_library is NULL:
++                raise IDAObservationError("native_library_identity_unavailable")
++            library_path = Path(os.fsdecode(native_library)).resolve(strict=True)
++            library_root = Path(__file__).parent / ".dylibs"
++            if library_path != (library_root / "libsundials_ida.7.5.0.dylib").resolve(strict=True):
++                raise IDAObservationError("different_native_library_loaded")
++            libraries = tuple((name, sha256((library_root / name).read_bytes()).hexdigest())
++                              for name, _ in _OBSERVATION_LIBRARIES)
++            if libraries != _OBSERVATION_LIBRARIES:
++                raise IDAObservationError("native_library_payload_changed")
++            binary_id = sha256(Path(__file__).read_bytes()).hexdigest()
++            source = (_OBSERVATION_SCHEMA, "scikit-sundae=1.1.3",
++                      _OBSERVATION_BUILD_ID, binary_id, _OBSERVATION_CONFIG,
++                      _OBSERVATION_HEADER_SHA256, _OBSERVATION_CONFIG_SHA256, libraries)
++            self._obs_binding = MappingProxyType({"source": source,
++                "identity": sha256(repr(source).encode()).hexdigest(),
++                "build_recipe_sha256": _OBSERVATION_BUILD_ID,
++                "native_library_path": str(library_path), "libraries": libraries})
++        return self._obs_binding
++
++    def evaluate_initial_parent_weights(self):
++        """Evaluate the installed callback at native phi0/time, before any step.
++
++        This updates the parent diagnostic cache, not solver ewt or history.
++        Returned weights are explicitly evaluated, not solver-applied weights.
++        """
++        cdef N_Vector scratch = NULL
++        cdef int status, callback_status = 0, phi_columns = 0
++        cdef sunrealtype t0
++        cdef np.ndarray basis, values
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            if not self._initialized or self.mem == NULL:
++                raise RuntimeError("IDA must be initialized before evaluating parent weights.")
++            if self._options["parent_weight_frame"] is None:
++                raise IDAObservationError("parent_weight_evaluation_requires_opt_in")
++            endpoint = self._obs_endpoint
++            if (self._obs_reason != ("no_accepted_step", None) or self._obs_previous is not None
++                    or endpoint is None or endpoint["owner"] != self._obs_instance
++                    or endpoint["generation"] != self._obs_generation
++                    or endpoint["nsteps"] != 0 or endpoint["native_status"] < 0
++                    or endpoint["internal_t"].hex() != self._options["parent_weight_frame"]["t0_hex"]
++                    or endpoint["output_t"].hex() != endpoint["internal_t"].hex()):
++                raise IDAObservationError("initial_parent_weight_phase_unavailable")
++            self._obs_busy = True
++            try:
++                binding = self._obs_bind_source()
++                before = self._frame_snapshot()
++                if before is None or not before["installed"]:
++                    raise IDAObservationError("parent_weight_context_unavailable")
++                t0 = float.fromhex(before["t0_hex"])
++                scratch = N_VNew_Serial(self.NEQ, self.ctx)
++                if scratch is NULL:
++                    raise MemoryError("parent weight evaluation output allocation failed")
++                basis = np.empty((2, int(self.NEQ)), dtype=DTYPE, order="C")
++                status = sl_ida75_evaluate_initial_weights(self.mem, self.NEQ, t0,
++                    _parent_weight_wrapper, <void*>self.aux, scratch,
++                    <sunrealtype*>basis.data, 2 * <size_t>self.NEQ,
++                    &callback_status, &phi_columns)
++                if status != 0:
++                    raise IDAObservationError("initial_parent_weight_evaluation_failed",
++                        "sl_ida75_evaluate_initial_weights", int(status))
++                values = np.empty(self.NEQ, dtype=DTYPE)
++                svec2np(scratch, values)
++                after = self._frame_snapshot()
++                if (after["callback_calls"] != before["callback_calls"] + 1
++                        or after["computed_weights"] != values.tobytes()
++                        or after["basis_u"] != basis[0].tobytes()
++                        or after["basis_time_hex"] != before["t0_hex"]
++                        or basis[0].tobytes() != endpoint["raw_y"]
++                        or basis[1].tobytes() != endpoint["raw_yp"]):
++                    raise IDAObservationError("initial_parent_weight_evaluation_readback")
++                return {"schema": ("sksundae.ida.initial-physical-weight-evaluation.v1" if self._options["physical_weight_frame"] is not None
++                                   else "sksundae.ida.initial-parent-weight-evaluation.v1"),
++                    "binding": binding, "owner": self._obs_instance,
++                    "generation": self._obs_generation, "size": int(self.NEQ),
++                    "native_steps": 0, "time_hex": before["t0_hex"],
++                    "frame_identity": after["frame_identity"],
++                    "weights": values.tobytes(), "native_initial_state": basis[0].tobytes(),
++                    "native_initial_rate": basis[1].tobytes(),
++                    "native_memory_phi_and_ewt_unchanged": True,
++                    "preserved_phi_columns": int(phi_columns),
++                    "callback_status": int(callback_status),
++                    "parent_weight_state": after,
++                    "diagnostic_cache_updated": True,
++                    "solver_applied_weights": False,
++                    "role": "explicit installed-callback evaluation before first native step"}
++            finally:
++                if scratch is not NULL:
++                    N_VDestroy(scratch)
++                self._obs_busy = False
++
++    @staticmethod
++    def parent_weight_capability():
++        return {"schema": "sksundae.ida.parent-affine-weights-capability.v1",
++                "public_setter": "IDAWFtolerances", "callback": "compiled_C_via_registered_AuxData",
++                "rounding": "RN-exact-parent-q_then-unfused-SV-v1", "word_capacity": 4,
++                "sum_term_capacity": 32, "minimum_nonzero_product_frexp_exponent_sum": -968,
++                "default": "off", "same_size_reinit_refresh": True, "raw_tolerance_getter": False,
++                "build_recipe_sha256": _OBSERVATION_BUILD_ID,
++                "extension_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
++                "config": _OBSERVATION_CONFIG, "native_initializations_performed": 0}
++
++    @staticmethod
++    def physical_weight_capability():
++        return {"schema": "sksundae.ida.physical-affine-weights-capability.v1",
++                "public_setter": "IDAWFtolerances", "callback": "compiled_C_via_registered_AuxData",
++                "rounding": "RN-exact-physical-X_then-unfused-physical-EWT-v1",
++                "word_capacity": 4, "sum_term_capacity": 64, "default": "off",
++                "same_size_reinit_refresh": True, "native_initializations_performed": 0,
++                "build_recipe_sha256": _OBSERVATION_BUILD_ID,
++                "extension_sha256": sha256(Path(__file__).read_bytes()).hexdigest()}
++
++    cdef _frame_snapshot(self):
++        cdef sl_parent_weights* g = NULL
++        cdef int k
++        if self.aux is not None:
++            g = self.aux.parent_weights
++        if g is NULL:
++            return None
++        if (g.memory != self.mem or g.owner != <void*>self.aux or g.n != self.NEQ
++                or g.generation != self._obs_generation or g.generation != self.aux.frame_generation):
++            raise IDAObservationError("parent_weight_context_lifetime")
++        binding = self._obs_bind_source()
++        q0, v0 = [], []
++        for k in range(4):
++            q0.append((<char*>(g.q0+k*g.n))[:g.n*sizeof(double)])
++            v0.append((<char*>(g.v0+k*g.n))[:g.n*sizeof(double)])
++        result = {"schema": "sksundae.ida.parent-affine-weight-state.v1",
++                "owner": self._obs_instance, "generation": g.generation, "size": int(g.n),
++                "frame_identity": (<char*>g.frame_id)[:64].decode("ascii"),
++                "build_identity": binding["identity"], "installed": bool(g.installed),
++                "setter": "IDAWFtolerances", "setter_status": 0 if g.installed else None,
++                "t0_hex": float(g.t0).hex(), "rtol_hex": float(g.rtol).hex(),
++                "q0_words": tuple(q0), "v0_words": tuple(v0), "atol": (<char*>g.atol)[:g.n*sizeof(double)],
++                "callback_calls": g.calls, "callback_status": g.status if g.calls else None,
++                "failure_component": g.component if g.calls and g.status else None,
++                "basis_time_hex": float(g.basis_time).hex() if g.calls else None,
++                "basis_u": (<char*>g.u)[:g.n*sizeof(double)] if g.calls else None,
++                "rounded_parent": (<char*>g.parent)[:g.n*sizeof(double)] if g.calls and g.status == 0 else None,
++                "computed_weights": (<char*>g.weights)[:g.n*sizeof(double)] if g.calls and g.status == 0 else None,
++                "weight_rounding": "RN-exact-parent-q_then-unfused-SV-v1",
++                "basis_role": "actual IDAEwtFn argument at IDAGetCurrentTime; not returned endpoint",
++                "raw_tolerance_getter": False}
++        if g.physical_mode:
++            result.update(schema="sksundae.ida.physical-affine-weight-state.v1",
++                weight_rounding="RN-exact-physical-X_then-unfused-physical-EWT-v1",
++                profile_identity=(<char*>g.profile_id)[:64].decode("ascii"),
++                scale=(<char*>g.scale)[:g.n*sizeof(double)],
++                reference_words=(<char*>g.reference)[:2*g.n*sizeof(double)],
++                lift=(<char*>g.lift)[:2*g.n*sizeof(double)],
++                protocol_start_hex=float(g.protocol_start).hex(), protocol_end_hex=float(g.protocol_end).hex(),
++                inputs_start=(float(g.input_start[0]), float(g.input_start[1])),
++                inputs_end=(float(g.input_end[0]), float(g.input_end[1])),
++                input_rates=(float(g.input_rate[0]), float(g.input_rate[1])),
++                reference_inputs=(float(g.input_reference[0]), float(g.input_reference[1])))
++            result["rounded_physical"] = result.pop("rounded_parent")
++        return result
++
++    cdef _obs_nls_state(self, long nsteps, long nniters,
++                        sunrealtype tcur, sunrealtype hlast, int qlast,
++                        sunrealtype hcur, int qcur):
++        cdef np.ndarray values = np.empty(5, DTYPE)
++        cdef bint read_step = False
++        cdef int status
++        binding = self._obs_bind_source()
++        if np.dtype(DTYPE).str != "<f8" or np.dtype(INT_TYPE).itemsize != 4:
++            raise IDAObservationError("unsupported_copy_precision")
++        endpoint = self._obs_endpoint
++        phase = "initialized_before_step" if nsteps == 0 else "no_current_successful_endpoint"
++        if (nsteps > 0 and nniters > 0 and endpoint is not None
++                and endpoint["generation"] == self._obs_generation
++                and endpoint["nsteps"] == nsteps and endpoint["native_status"] >= 0
++                and endpoint["internal_t"].hex() == float(tcur).hex()):
++            read_step = True
++            phase = "accepted_native_return"
++        status = sl_ida75_nls_state(self.mem, nsteps, nniters, tcur, hlast,
++            qlast, hcur, qcur, read_step, <sunrealtype*>values.data, values.size)
++        if status != 0:
++            raise IDAObservationError("native_nls_state_copy_failed", "sl_ida75_nls_state", int(status))
++        names = ("epcon", "epsNewt", "ss", "oldnrm", "toldel")
++        valid = names if read_step else names[:1]
++        return {"schema": "sksundae.ida.nonlinear-control-state.v1", "phase": phase,
++                "valid_fields": valid, "status": int(status),
++                "epcon": float(values[0]),
++                "epsNewt": float(values[1]) if read_step else None,
++                "ss": float(values[2]) if read_step else None,
++                "oldnrm": float(values[3]) if read_step else None,
++                "toldel": float(values[4]) if read_step else None,
++                "source_header_sha256": _OBSERVATION_HEADER_SHA256,
++                "source_config_sha256": _OBSERVATION_CONFIG_SHA256,
++                "build_identity": binding["identity"],
++                "scope": "actual native scalars under owner lock; not a last-correction or iteration trace"}
++
++    def last_step_snapshot(self, *, expected_step=None):
++        cdef int k
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            if (_OBSERVATION_BUILD_ID is None or not _OBSERVATION_LIBRARIES
++                    or _OBSERVATION_CONFIG_SHA256 is None):
++                raise IDAObservationError("unbound_build_identity")
++            if self.mem is NULL or not self._malloc:
++                raise IDAObservationError("no_accepted_step")
++            self._obs_bind_source()
++            before = self._obs_stamp()
++            key = (self._obs_binding["identity"], self._obs_instance,
++                   self._obs_generation, before["nsteps"], before["tn"].hex(),
++                   before["hused"].hex(), before["kused"], before["hh"].hex(), before["kk"])
++            if expected_step is not None:
++                if (type(expected_step) is not tuple or len(expected_step) != len(key)
++                        or any(type(a) is not type(b) for a, b in zip(expected_step, key))):
++                    raise IDAObservationError("invalid_step_key")
++                if expected_step != key:
++                    raise IDAObservationError("stale_instance_generation_or_step")
++            if self._obs_reason is not None:
++                raise IDAObservationError(self._obs_reason[0], native_status=self._obs_reason[1])
++            endpoint, previous = self._obs_endpoint, self._obs_previous
++            if (endpoint is None or previous is None
++                    or endpoint["nsteps"] != before["nsteps"]
++                    or endpoint["internal_t"].hex() != before["tn"].hex()
++                    or previous["nsteps"] + 1 != before["nsteps"]):
++                raise IDAObservationError("predecessor_not_observed")
++            if (not np.isfinite(previous["internal_t"])
++                    or (before["hused"] > 0 and before["tn"] <= previous["internal_t"])
++                    or (before["hused"] < 0 and before["tn"] >= previous["internal_t"])):
++                raise IDAObservationError("invalid_observed_interval")
++            # tn is the sole query anchor; no arbitrary time/order is accepted.
++            # Keep the signed native interval and witnessed predecessor separate.
++            raw = self._obs_raw()
++            if raw != (endpoint["raw_y"], endpoint["raw_yp"]):
++                raise IDAObservationError("raw_endpoint_changed")
++            for buffer in raw + (previous["raw_y"], previous["raw_yp"]):
++                if not np.all(np.isfinite(np.frombuffer(buffer, dtype=DTYPE))):
++                    raise IDAObservationError("nonfinite_raw_endpoint")
++            basis = self._obs_basis(before)
++            derivative_buffers, statuses = [], []
++            for k in range(before["kused"] + 1):
++                values, status = self._obs_vector(before["tn"], 0, k)
++                derivative_buffers.append(values)
++                statuses.append(status)
++            weights, weight_status = self._obs_vector(before["tn"], 1, 0)
++            errors, error_status = self._obs_vector(before["tn"], 2, 0)
++            predecessor_before = self._obs_stamp()
++            predecessor_buffers, predecessor_statuses = [], []
++            for k in (0, 1):
++                values, status = self._obs_vector(previous["internal_t"], 0, k, True)
++                predecessor_buffers.append(values)
++                predecessor_statuses.append(status[1])
++            predecessor_after = self._obs_stamp()
++            predecessor_dky = MappingProxyType({
++                "query_t": previous["internal_t"], "query_t_hex": previous["internal_t"].hex(),
++                "orders": (0, 1), "buffers": tuple(predecessor_buffers),
++                "statuses": tuple(predecessor_statuses),
++                "native_eligible": all(status == 0 for status in predecessor_statuses),
++                "step_before": predecessor_before, "step_after": predecessor_after})
++            after = self._obs_stamp()
++            if (dict(before) != dict(after) or self._obs_raw() != raw
++                    or dict(before) != dict(predecessor_before)
++                    or dict(before) != dict(predecessor_after)
++                    or basis != self._obs_basis(after)):
++                raise IDAObservationError("accepted_step_or_raw_buffer_changed")
++            return MappingProxyType({"schema": _OBSERVATION_SCHEMA,
++                "binding": self._obs_binding, "step_key": key,
++                "owner": self._obs_instance, "generation": self._obs_generation,
++                "native_before": before, "native_after": after,
++                "predecessor": previous, "endpoint": endpoint,
++                "dtype": np.dtype(DTYPE).str, "shape": (int(self.NEQ),),
++                "raw_y": raw[0], "raw_yp": raw[1],
++                "dky": tuple(derivative_buffers), "error_weights": weights,
++                "estimated_local_errors": errors,
++                "vector_statuses": tuple(statuses) + (weight_status, error_status),
++                "native_left_terms": (before["tn"], -before["hused"]),
++                "clock_gap_terms": (before["tn"], -before["hused"], -previous["internal_t"]),
++                "coefficient_kind": "copied_phi_psi_words_with_rounded_Dky_receipts",
++                "basis": basis, "predecessor_dky": predecessor_dky, "event_metadata": None,
++                **({"parent_weight_state": self._frame_snapshot()}
++                   if self._options["parent_weight_frame"] is not None else {})})
++
++    def init_step(self, DTYPE_t t0, object y0, object yp0, *, parent_weight_frame=None, physical_weight_frame=None):
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            self._obs_busy = True
++            try:
++                if physical_weight_frame is not None:
++                    if parent_weight_frame is not None or self._options["physical_weight_frame"] is None:
++                        raise ValueError("physical weight reinit requires exclusive constructor opt-in")
++                    physical = _validate_physical_weight_frame(physical_weight_frame)
++                    if float.fromhex(physical["rtol_hex"]) != self._options["rtol"]:
++                        raise ValueError("physical weight reinit cannot change rtol")
++                    if physical["size"] != self.NEQ:
++                        self._options["atol"] = np.array([float.fromhex(a)/float.fromhex(b)
++                            for a,b in zip(physical["atol_physical_hex"], physical["scale_hex"])], dtype=DTYPE)
++                    self._options["physical_weight_frame"] = physical
++                    self._options["parent_weight_frame"] = physical
++                if parent_weight_frame is not None:
++                    if self._options["physical_weight_frame"] is not None:
++                        raise ValueError("cannot replace physical weights with parent weights")
++                    if self._options["parent_weight_frame"] is None:
++                        raise ValueError("parent weight reinit requires explicit constructor opt-in")
++                    self._options["parent_weight_frame"] = _validate_parent_weight_frame(parent_weight_frame)
+         
+-        y0 = np.asarray(y0, DTYPE)
+-        yp0 = np.asarray(yp0, DTYPE)
++                y0 = np.asarray(y0, DTYPE)
++                yp0 = np.asarray(yp0, DTYPE)
+         
+-        return self._init_step(t0, y0, yp0)
++                return self._init_step(t0, y0, yp0)
++
++            except BaseException:
++                # Release a partial setup, then preserve the initiating error.
++                self._free_memory()
++                self._obs_endpoint = None
++                self._obs_previous = None
++                self._obs_reason = ("operation_failed", None)
++                raise
++            finally:
++                self._obs_busy = False
+ 
+     def step(self, DTYPE_t t, object method, object tstop):
+-
+-        method = method.lower()
+-        valid = {"normal", "onestep"}
+-        if method not in valid:
+-            raise ValueError(f"'method' is invalid. Valid values are {valid}.")
+-        elif not self._initialized:
+-            raise ValueError("'init_step' must be run prior to 'step'.")
+-
+-        if tstop is None:
+-            pass
+-        elif not isinstance(tstop, Real):
+-            raise TypeError("'tstop' must be type float, or None.")
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            self._obs_busy = True
++            try:
++
++                method = method.lower()
++                if self._options["parent_weight_frame"] is not None and method != "onestep":
++                    raise ValueError("parent_weight_frame requires init_step/step(method='onestep')")
++                if self._options["nonlin_guard"] is not None and method != "onestep":
++                    raise ValueError("nonlin_guard requires init_step/step(method='onestep')")
++                valid = {"normal", "onestep"}
++                if method not in valid:
++                    raise ValueError(f"'method' is invalid. Valid values are {valid}.")
++                elif not self._initialized:
++                    raise ValueError("'init_step' must be run prior to 'step'.")
++
++                if tstop is None:
++                    pass
++                elif not isinstance(tstop, Real):
++                    raise TypeError("'tstop' must be type float, or None.")
+         
+-        return self._step(t, method, tstop)
++                return self._step(t, method, tstop)
++
++            except BaseException:
++                self._obs_endpoint = None
++                self._obs_previous = None
++                self._obs_reason = ("operation_failed", None)
++                raise
++            finally:
++                self._obs_busy = False
+ 
+     def solve(self, object tspan, object y0, object yp0):
+-
+-        tspan = np.asarray(tspan, DTYPE)
+-        y0 = np.asarray(y0, DTYPE)
+-        yp0 = np.asarray(yp0, DTYPE)
+-
+-        diff = np.diff(tspan)
+-        if not all(diff > 0) ^ all(diff < 0):
+-            raise ValueError("'tspan' must stictly increase or decrease.")
+-
+-        if tspan.size > 2:
+-            soln = self._normal_solve(tspan, y0, yp0)
+-        elif tspan.size == 2:
+-            soln = self._onestep_solve(tspan, y0, yp0)
+-        else:
+-            raise ValueError("'tspan' length must be >= 2.")
+-
+-        self._initialized = False 
+-
+-        return soln
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            self._obs_busy = True
++            try:
++                if self._options["parent_weight_frame"] is not None:
++                    raise ValueError("parent_weight_frame requires init_step/step(method='onestep')")
++
++                if self._options["nonlin_guard"] is not None:
++                    raise ValueError("nonlin_guard requires init_step/step(method='onestep')")
++                tspan = np.asarray(tspan, DTYPE)
++                y0 = np.asarray(y0, DTYPE)
++                yp0 = np.asarray(yp0, DTYPE)
++
++                diff = np.diff(tspan)
++                if not all(diff > 0) ^ all(diff < 0):
++                    raise ValueError("'tspan' must stictly increase or decrease.")
++
++                if tspan.size > 2:
++                    soln = self._normal_solve(tspan, y0, yp0)
++                elif tspan.size == 2:
++                    soln = self._onestep_solve(tspan, y0, yp0)
++                else:
++                    raise ValueError("'tspan' length must be >= 2.")
++
++                self._initialized = False 
++
++                return soln
++
++            except BaseException:
++                self._obs_endpoint = None
++                self._obs_previous = None
++                self._obs_reason = ("operation_failed", None)
++                raise
++            finally:
++                self._obs_busy = False
++
++    cdef _guard_row(self, sl_ida75_guard_record row):
++        names = ("correction_wrms", "tolerance", "ss_before", "ss_after",
++                 "oldnrm_before", "oldnrm_after", "toldel", "time", "cj")
++        values = (row.norm, row.tolerance, row.ss_before, row.ss_after,
++                  row.oldnrm_before, row.oldnrm_after, row.toldel, row.time, row.cj)
++        words = (sl_ida75_guard_word(row.norm), sl_ida75_guard_word(row.tolerance),
++                 sl_ida75_guard_word(row.ss_before), sl_ida75_guard_word(row.ss_after),
++                 sl_ida75_guard_word(row.oldnrm_before), sl_ida75_guard_word(row.oldnrm_after),
++                 sl_ida75_guard_word(row.toldel), sl_ida75_guard_word(row.time),
++                 sl_ida75_guard_word(row.cj))
++        available = (bool(row.norm_observed), True, True, True,
++                     bool(row.oldnrm_before_valid), bool(row.oldnrm_after_valid), True, True, True)
++        result = {name: value if known and isfinite(value) else None
++                  for name, value, known in zip(names, values, available)}
++        result.update(generation=row.generation, operation=row.operation,
++            sequence=row.sequence, native_step=row.step, iteration=row.iteration,
++            iteration_getter_status=row.iteration_status, default_status=row.default_status,
++            returned_status=row.returned_status, guard_override=bool(row.override),
++            native_words={name: format(word, "016x") if known else None
++                          for name, word, known in zip(names, words, available)},
++            nonfinite_fields=tuple(name for name, value, known in zip(names, values, available)
++                                   if known and not isfinite(value)))
++        return result
++
++    cdef _guard_snapshot(self, native_status):
++        cdef size_t i
++        cdef int status
++        cdef sl_ida75_guard* g = self._nls_guard
++        if g is NULL:
++            return {"schema": "sksundae.ida.nonlinear-guard-trace.v1",
++                    "requested_policy": self._options["nonlin_guard"],
++                    "installed_at_capture": False, "status": "disabled",
++                    "records": (), "complete": True}
++        status = sl_ida75_guard_check(g, self.mem, self._obs_generation)
++        if status != 0 or g.active:
++            raise IDAObservationError("nonlinear_guard_owner_changed", "capture", status)
++        records = []
++        for i in range(g.count):
++            records.append(self._guard_row(g.records[i]))
++        records = tuple(records)
++        return {"schema": "sksundae.ida.nonlinear-guard-trace.v1",
++                "requested_policy": self._options["nonlin_guard"],
++                "applied_policy": "first-correction-wrms-v1", "installed_at_capture": True,
++                "delegate_data_verified": True, "newton_ops_verified": True,
++                "owner": self._obs_instance, "generation": g.generation,
++                "operation": g.operation, "native_status": native_status,
++                "status": "initialized" if g.operation == 0 else "returned",
++                "capacity": g.capacity, "callback_count": g.calls, "record_count": g.count,
++                "complete": not g.overflow, "overflow": bool(g.overflow),
++                "first_unrecorded": self._guard_row(g.first_unrecorded) if g.overflow else None,
++                "records": records, "scope": "this IDASolve call, including retries; not a last-correction estimate",
++                "build_identity": self._obs_bind_source()["identity"],
++                "source_header_sha256": _OBSERVATION_HEADER_SHA256,
++                "source_newton_header_sha256": _OBSERVATION_NEWTON_HEADER_SHA256,
++                "source_config_sha256": _OBSERVATION_CONFIG_SHA256}
++
++    cdef _guard_store(self, int native_status, bint preserve_failure=False):
++        if self._nls_guard is NULL:
++            return
++        try:
++            self._nls_trace = self._guard_snapshot(native_status)
++        except BaseException as error:
++            self._nls_trace = {"schema": "sksundae.ida.nonlinear-guard-trace.v1",
++                "status": "capture_failed", "complete": False, "native_status": native_status,
++                "owner": self._obs_instance, "generation": self._obs_generation,
++                "error_type": type(error).__name__, "error": str(error)}
++            if native_status >= 0 and not preserve_failure:
++                raise
++
++    def nonlinear_trace(self):
++        """Return the owned actual callback trace, including a failed native call."""
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            return deepcopy(self._nls_trace)
++
++    def statistics(self):
++        """Read native counters under the same owner lock; do not advance.
++
++        BR01: method fields remain raw at zero steps and after reinit.
++        BR02: the window is init_step/step, not after batch solve.
++        BR03: counters/cj do not reconstruct Newton iteration history.
++        """
++        cdef long int nsteps, nres, nsetups, netfails, nniters, nnfails, njac
++        cdef int qlast, qcur, flag
++        cdef sunrealtype hinused, hlast, hcur, tcur, cj
++        with self._obs_lock:
++            if self._obs_busy:
++                raise IDAObservationError("operation_in_progress")
++            if not self._initialized or self.mem == NULL:
++                raise RuntimeError("IDA must be initialized before reading statistics.")
++            flag = IDAGetIntegratorStats(self.mem, &nsteps, &nres, &nsetups,
++                                        &netfails, &qlast, &qcur, &hinused,
++                                        &hlast, &hcur, &tcur)
++            if flag < 0:
++                raise RuntimeError("IDAGetIntegratorStats - " + IDAMESSAGES[flag])
++            flag = IDAGetNonlinSolvStats(self.mem, &nniters, &nnfails)
++            if flag < 0:
++                raise RuntimeError("IDAGetNonlinSolvStats - " + IDAMESSAGES[flag])
++            flag = IDAGetCurrentCj(self.mem, &cj)
++            if flag < 0:
++                raise RuntimeError("IDAGetCurrentCj - " + IDAMESSAGES[flag])
++            flag = IDAGetNumJacEvals(self.mem, &njac)
++            if flag < 0:
++                raise RuntimeError("IDAGetNumJacEvals - " + LSMESSAGES[flag])
++            nls_state = self._obs_nls_state(nsteps, nniters, tcur, hlast, qlast, hcur, qcur)
++            return {"num_steps": nsteps, "residual_evals": nres,
++                    "linear_setups": nsetups, "error_test_fails": netfails,
++                    "last_order": qlast, "current_order": qcur,
++                    "initial_step": hinused, "last_step": hlast,
++                    "current_step": hcur, "current_time": tcur,
++                    "current_cj": cj, "nonlinear_iters": nniters,
++                    "nonlinear_conv_fails": nnfails, "jacobian_evals": njac,
++                    "nonlin_conv_coef_requested": self._options["nonlin_conv_coef"],
++                    "coefficient_getter_available": True,
++                    "coefficient_getter_kind": "pinned-private-header-word-copy",
++                    "nonlinear_control_state": nls_state,
++                    **({"parent_weight_state": self._frame_snapshot()}
++                       if self._options["parent_weight_frame"] is not None else {}),
++                    "nonlinear_guard": deepcopy(self._nls_trace),
++                    "observation_owner": self._obs_instance,
++                    "observation_generation": self._obs_generation,
++                    "method_fields_valid": nsteps > 0}
+ 
+     def __dealloc__(self):
+         self._free_memory()
+@@ -1293,6 +2334,18 @@
+ 
+ 
+ def _check_options(options: dict) -> None:
++
++    if options["physical_weight_frame"] is not None:
++        physical = _validate_physical_weight_frame(options["physical_weight_frame"])
++        if options["parent_weight_frame"] != physical:
++            raise ValueError("physical weight internal option binding mismatch")
++    elif options["parent_weight_frame"] is not None:
++        _validate_parent_weight_frame(options["parent_weight_frame"])
++    if options["parent_weight_frame"] is not None:
++        if (options["calc_initcond"] is not None or options["constraints_idx"] is not None
++                or type(options["rtol"]) not in (int, float) or not math.isfinite(options["rtol"])
++                or options["rtol"] <= 0):
++            raise ValueError("parent weight frame requires unchanged finite tolerances and supplied initialization")
+ 
+     # resfn
+     if not isinstance(options["resfn"], Callable):
+@@ -1484,6 +2537,26 @@
+     elif not options["max_nonlin_iters"] > 0:
+         raise ValueError("'max_nonlin_iters' must be > 0.")
+ 
++    # nonlin_conv_coef: None preserves the native library default.
++    coefficient = options["nonlin_conv_coef"]
++    if coefficient is not None:
++        if isinstance(coefficient, bool) or not isinstance(coefficient, Real):
++            raise TypeError("'nonlin_conv_coef' must be a real number or None.")
++        if not isfinite(coefficient) or coefficient <= 0.:
++            raise ValueError("'nonlin_conv_coef' must be finite and positive.")
++
++    # Optional native stopping policy and bounded records per ONESTEP call.
++    guard = options["nonlin_guard"]
++    if guard is not None and (not isinstance(guard, str) or guard != "first-correction-wrms-v1"):
++        raise ValueError("'nonlin_guard' must be None or 'first-correction-wrms-v1'.")
++    capacity = options["nonlin_trace_capacity"]
++    if isinstance(capacity, bool) or not isinstance(capacity, Integral):
++        raise TypeError("'nonlin_trace_capacity' must be an integer.")
++    if not 1 <= capacity <= 4096:
++        raise ValueError("'nonlin_trace_capacity' must be in [1, 4096].")
++    if guard is None and capacity != 4096:
++        raise ValueError("'nonlin_trace_capacity' requires nonlin_guard.")
++
+     # max_conv_fails
+     if not isinstance(options["max_conv_fails"], Integral):
+         raise TypeError("'max_conv_fails' must be type int.")
+--- a/src/sksundae/ida/_solver.py
++++ b/src/sksundae/ida/_solver.py
+@@ -93,6 +93,17 @@
+         max_nonlin_iters : int, optional
+             Specifies the maximum number of nonlinear solver iterations in one
+             step. The default is 4.
++        nonlin_conv_coef : float or None, optional
++            Positive finite coefficient for IDASetNonlinConvCoef. None preserves
++            the linked native library default. This changes nonlinear stopping,
++            independently of the local integration error tolerances.
++        nonlin_guard : {None, 'first-correction-wrms-v1'}, optional
++            Optional native first-correction condition. Requires init_step then
++            step(method='onestep'); default None leaves Newton unchanged.
++        nonlin_trace_capacity : int, optional
++            Maximum actual callback records per ONESTEP call, from 1 to 4096
++            (default). Overflow preserves the stored prefix and first omitted
++            callback, and prevents a default-success return being accepted.
+         max_conv_fails : int, optional
+             Specifies the max number of nonlinear solver convergence failures
+             in one step. The default is 10.
+@@ -282,7 +293,46 @@
+         """
+         self._IDA = _IDA(resfn, **options)
+ 
+-    def init_step(self, t0: float, y0: ndarray, yp0: ndarray) -> IDAResult:
++    def nonlinear_trace(self) -> dict | None:
++        """Owned callback records from the last guarded native call, even on failure."""
++        return self._IDA.nonlinear_trace()
++
++    @staticmethod
++    def parent_weight_capability() -> dict:
++        """Compiled optional public-WF bridge metadata; does not initialize IDA."""
++        return _IDA.parent_weight_capability()
++
++    @staticmethod
++    def physical_weight_capability() -> dict:
++        """Compiled physical-EWT capability; no native initialization."""
++        return _IDA.physical_weight_capability()
++
++    def evaluate_initial_parent_weights(self) -> dict:
++        """Evaluate installed parent weights on the actual zero-step native state.
++
++        Requires an initialized idle owner with parent_weight_frame enabled.
++        Updates that callback's diagnostic cache; solver ewt/history/time and
++        counters are preserved. This is not a getter for solver-applied weights.
++        A state with nonzero native steps is rejected.
++        """
++        return self._IDA.evaluate_initial_parent_weights()
++
++    def statistics(self) -> dict:
++        """Read actual native counters and cj after init_step/step.
++
++        Zero-step method fields may be sentinels or retained from reinit;
++        method_fields_valid only reports whether this generation stepped.
++        Batch solve closes this access window. Requested coefficient metadata
++        stays distinct from nonlinear_control_state, a pinned-header word copy.
++        epcon is valid after initialization; epsNewt, ss, oldnrm and toldel are
++        None until a successful current-generation endpoint with an NLS iteration.
++        Reinitialization/failure invalidate those method fields; they are not
++        a final-correction or iteration trace. Callback cj and returned/requested
++        times remain separately owned by the caller. No history is mutated.
++        """
++        return self._IDA.statistics()
++
++    def init_step(self, t0: float, y0: ndarray, yp0: ndarray, *, parent_weight_frame=None, physical_weight_frame=None) -> IDAResult:
+         """
+         Initialize the solver.
+ 
+@@ -318,7 +368,7 @@
+             'y0' and 'yp0' must be the same length.
+ 
+         """
+-        return self._IDA.init_step(t0, y0, yp0)
++        return self._IDA.init_step(t0, y0, yp0, parent_weight_frame=parent_weight_frame, physical_weight_frame=physical_weight_frame)
+ 
+     def step(self, t: float, method='normal', tstop=None) -> IDAResult:
+         """
+@@ -406,6 +456,30 @@
+ 
+         """
+         return self._IDA.solve(tspan, y0, yp0)
++
++    def last_step_snapshot(self, *, expected_step=None):
++        """Observe one fully witnessed accepted interval without advancing it.
++
++        The returned mapping and nested metadata are read-only. Vector buffers
++        are immutable bytes; decode with ``np.frombuffer(buffer, dtype=...
++        ).reshape(shape)`` using the packet's dtype and shape. ``dky[k]`` is
++        the rounded native derivative of order k at tn, not an exact internal
++        coefficient export. Error weights and local estimates are diagnostic.
++
++        Only adjacent, actually observed native endpoints with a step-count
++        increment of one are eligible. NORMAL calls that hide intermediate
++        steps, or returns at a time different from tn, can make the snapshot
++        unavailable. Subsequent observed consecutive endpoints restore it;
++        this operation never changes NORMAL behavior or invents a predecessor.
++        Both predecessor time and tn-hused terms are retained independently.
++
++        Pass a previously returned step_key as expected_step to reject a stale
++        owner, generation or step. Arbitrary query times and orders are not
++        accepted: all legal orders are read at tn. Event sides and input laws
++        belong to the caller. This experimental patch requires a build identity
++        bound by its accompanying reproducible build helper.
++        """
++        return self._IDA.last_step_snapshot(expected_step=expected_step)
+ 
+ 
+ class IDAResult(_IDAResult):

@@ -1,0 +1,444 @@
+"""Maintained recording boundary and source-bound native runner.
+
+Importing this module never imports a numerical backend. ``run_recorded`` is the
+same recording boundary used by ``main`` and accepts an explicit controller call
+for infrastructure tests. Native admission, imports and device construction occur
+only in ``main``; the next immutable shim must bind this file and native_history.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+import ctypes
+import hashlib
+import importlib.abc
+import json
+import math
+import os
+import resource
+import sys
+import time
+import traceback
+from typing import Any, Callable, Collection
+
+from scripts.benchmarks.runtime_timing import RuntimeTiming
+
+from scripts.benchmarks.native_history import (
+    HistoryLimitError, HistoryWriter, integer_io_observed, integer_json_dumps,
+)
+
+COMPLETED_STATUS = "completed_bounded_voltage_lift_native_pilot"
+
+def validated_integer_helper_origin(name, observed, freeze):
+    """Recognize only the pinned helper's real owner and identical capsule copy.
+
+    ``observed`` contains metadata read from the imported module, never rewritten
+    module attributes. Ordinary repository and native-binding guards still apply.
+    """
+    if name != "scripts.benchmarks._integer_product_native":
+        return False
+    try:
+        info = freeze["integer_product_backend"]
+        owner = Path(info["binary_path"]).resolve()
+        manifest_path = Path(info["manifest_path"]).resolve()
+        root = Path(freeze["isolated_root"]).resolve()
+        snapshot = (root / "integer_product_helper" / owner.name).resolve()
+        pins = dict(freeze.get("external_source_sha256", {}), **freeze["source_sha256"])
+        if (info["schema"] != "solarlab.integer-product-backend.v1" or
+                info["backend"] != "integer128" or info["selection"] != "required" or
+                info["abi"]["supported"] is not True or
+                Path(observed["path"]).resolve() != owner or
+                Path(observed["origin"]).resolve() != owner or
+                observed["build_id"] != info["build_id"] or
+                observed["c_source_sha256"] != info["c_source_sha256"] or
+                dict(observed["abi"]) != info["abi"] or not snapshot.is_relative_to(root) or
+                pins.get(str(owner)) != info["binary_sha256"] or
+                pins.get(str(snapshot)) != info["binary_sha256"]):
+            return False
+        def data(path, limit):
+            with path.open("rb") as stream:
+                value = stream.read(limit + 1)
+            if len(value) > limit:
+                raise ValueError("helper origin input bound")
+            return value
+        raw = data(manifest_path, 2 * 1024 * 1024)
+        manifest = json.loads(raw)
+        return (hashlib.sha256(raw).hexdigest() == info["manifest_sha256"] and
+                manifest["schema"] == "solarlab.integer-product-build.v1" and
+                manifest["build_id"] == info["build_id"] and
+                manifest["build"]["source_sha256"] == info["c_source_sha256"] and
+                Path(manifest["binary_path"]).resolve() == owner and
+                manifest["binary_sha256"] == info["binary_sha256"] and
+                hashlib.sha256(data(owner, 16 * 1024 * 1024)).hexdigest() == info["binary_sha256"] and
+                hashlib.sha256(data(snapshot, 16 * 1024 * 1024)).hexdigest() == info["binary_sha256"])
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+
+def output_bytes(folder, input_names):
+    """Sample files once; on disappearance, reobserve once and keep the larger sum.
+
+    Preserve stat-following file-type and relative input-exclusion behavior.
+    Other I/O errors propagate; this is not an atomic or continuous census.
+    """
+    import stat
+
+    def observe():
+        total, changed = 0, False
+        for path in folder.rglob("*"):
+            try:
+                info = path.stat()
+            except FileNotFoundError:
+                changed = True
+                continue
+            if stat.S_ISREG(info.st_mode) and str(path.relative_to(folder)) not in input_names:
+                total += info.st_size
+        return total, changed
+
+    total, changed = observe()
+    if changed:
+        repeated, _ = observe()
+        return max(total, repeated)
+    return total
+
+def _write_document(folder: Path, name: str, value: Any, *, total_output_bytes: int,
+                    input_names: Collection[str], integer_io_policy=None,
+                    max_document_bytes: int | None = None) -> None:
+    """Retained exclusive publication, with the unchanged whole-artifact cap."""
+    data = (integer_json_dumps(value, integer_io_policy, indent=2, allow_nan=False) + "\n").encode()
+    if max_document_bytes is not None and len(data) > max_document_bytes:
+        raise HistoryLimitError("bounded native failure envelope exceeds cap")
+    if output_bytes(folder, input_names) + len(data) > total_output_bytes:
+        raise HistoryLimitError("native artifact publication exceeds total output cap")
+    with (folder / name).open("xb") as stream:
+        if stream.write(data) != len(data):
+            raise OSError("short native artifact write")
+        stream.flush()
+
+
+def _history_state(writer: HistoryWriter) -> dict[str, Any]:
+    state = {"encoding": writer.encoding, "path": writer.path.name,
+            "max_record_bytes": writer.max_record_bytes,
+            "logical_bytes": writer.logical_bytes, "encoded_bytes": writer.encoded_bytes,
+            "logical_sha256": writer.logical_sha256, "records": writer.records,
+            "closed": writer.closed, "container_complete": writer.container_complete,
+             "error": writer.error, "digest_scope": "complete record bytes written before any failed partial write"}
+    if writer.integer_io_policy is not None:
+        state["integer_io"] = integer_io_observed(writer.integer_io_policy, require_match=False)
+    return state
+
+
+def _controller_failure_envelope(result, writer):
+    """Keep the primary cause and native context without copying huge ledgers."""
+    text = {key: result.get(key)[:12000 if key == "traceback" else 2048]
+            for key in ("status", "reason", "exception", "traceback")
+            if type(result.get(key)) is str}
+    raw_counts = result.get("counts", {})
+    count_names = {"residual", "jacobian", "native_steps", "onestep_returns", "normal_queries",
+                   "polynomial_queries", "initializations", "history_bytes", "history_encoded_bytes"}
+    counts = {key: value for key, value in (raw_counts.items() if isinstance(raw_counts, dict) else ())
+              if key in count_names and type(value) is int and value.bit_length() <= 64}
+    attempt = result.get("last_attempt") or result.get("first_failure") or {}
+    context = {}
+    if isinstance(attempt, dict):
+        for key in ("phase", "segment_id", "segment", "time_hex", "success", "status", "message"):
+            value = attempt.get(key)
+            if (value is None or type(value) is bool or type(value) is int and value.bit_length() <= 64
+                    or type(value) is float and math.isfinite(value)
+                    or type(value) is str and len(value) <= 2048):
+                context[key] = value
+        for key in ("z_hex", "zdot_hex"):
+            value = attempt.get(key)
+            if (type(value) is list and len(value) <= 256
+                    and all(type(item) is str and len(item) <= 32 for item in value)):
+                context[key] = value
+    history = _history_state(writer)
+    if type(history.get("error")) is str:
+        history["error"] = history["error"][:4096]
+    return {"schema": "solarlab.native-primary-failure.v1", "controller": text,
+            "counts": counts, "last_native_context": context, "history": history,
+            "scope": "primary controller error before full failure/result publication; no omitted ledger is reconstructed"}
+
+
+def _record_exception(folder: Path, error: BaseException, *, total_output_bytes: int,
+                      input_names: Collection[str], writer: HistoryWriter | None = None) -> None:
+    """Reporting failures become notes; they never replace the primary exception."""
+    failure = {"exception": type(error).__name__, "reason": str(error),
+               "traceback": "".join(traceback.format_exception(error))}
+    if writer is not None:
+        failure["history"] = _history_state(writer)
+        try:
+            writer.publish_first_failure(failure)
+        except BaseException as secondary:
+            error.add_note(f"first-failure publication failed: {type(secondary).__name__}: {secondary}")
+    if not (folder / "RunnerFailure.json").exists():
+        try:
+            _write_document(folder, "RunnerFailure.json", failure,
+                            total_output_bytes=total_output_bytes, input_names=input_names)
+        except BaseException as secondary:
+            error.add_note(f"runner-failure publication failed: {type(secondary).__name__}: {secondary}")
+
+
+def run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, Any]], *,
+                  total_output_bytes: int, input_names: Collection[str],
+                  max_record_bytes: int = 1048576, integer_io_policy=None,
+                  timing: RuntimeTiming | None = None) -> dict[str, Any]:
+    """Keep aggregate timing on ordinary return/exception; never overwrite a prior attempt."""
+    folder = Path(folder)
+    fresh = not any((folder / name).exists() for name in (
+        "NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json",
+        "RunnerFailure.json", "PrimaryFailure.json", "RuntimeTiming.json"))
+    timing = RuntimeTiming() if timing is None else timing
+    primary = result = None
+    try:
+        with timing.phase("recorded_run"):
+            result = _run_recorded(folder, controller, total_output_bytes=total_output_bytes,
+                                   input_names=input_names, max_record_bytes=max_record_bytes,
+                                   integer_io_policy=integer_io_policy, timing=timing)
+        return result
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if fresh:
+            outcome = ("raised" if primary is not None else "returned_completed"
+                       if result.get("status") == COMPLETED_STATUS else "returned_other_status")
+            try:
+                _write_document(folder, "RuntimeTiming.json", timing.snapshot(outcome),
+                                total_output_bytes=total_output_bytes, input_names=input_names,
+                                max_document_bytes=16384)
+            except BaseException as error:
+                if primary is not None:
+                    primary.add_note(f"aggregate timing publication failed: {type(error).__name__}: {error}")
+                else:
+                    _record_exception(folder, error, total_output_bytes=total_output_bytes,
+                                      input_names=input_names)
+                    raise
+
+
+def _run_recorded(folder: Path, controller: Callable[[HistoryWriter], dict[str, Any]], *,
+                  total_output_bytes: int, input_names: Collection[str],
+                  max_record_bytes: int = 1048576, integer_io_policy=None,
+                  timing: RuntimeTiming) -> dict[str, Any]:
+    """Run the real controller with the writer itself, finalize, then publish.
+
+    An already failed controller may retain an explicitly incomplete container;
+    no successful result is published after a write/finalization/publication
+    failure. Inputs are explicitly excluded from the same outer artifact census.
+    """
+    folder = Path(folder)
+    writer = None
+    try:
+        if any((folder / name).exists() for name in ("NativeHistory.jsonl", "NativeHistory.jsonl.gz", "NativeResult.json", "RunnerFailure.json", "PrimaryFailure.json", "RuntimeTiming.json")):
+            raise FileExistsError("native attempt output already exists")
+        with timing.phase('history_io'):
+            writer = HistoryWriter(folder / "NativeHistory.jsonl.gz", encoding="gzip",
+                                   total_output_bytes=total_output_bytes,
+                                   max_record_bytes=max_record_bytes, integer_io_policy=integer_io_policy)
+        if writer.integer_io_policy is not None:
+            with timing.phase('artifact_io'):
+                _write_document(folder, "IntegerIOObserved.json",
+                                {"role": "producer", "pid": os.getpid(),
+                                 **integer_io_observed(writer.integer_io_policy)},
+                                total_output_bytes=total_output_bytes, input_names=input_names)
+        with timing.phase('controller'):
+            result = controller(writer)  # Do not wrap this object in an untyped callback.
+        successful = result.get("status") == COMPLETED_STATUS
+        if not successful:
+            try:
+                with timing.phase('artifact_io'):
+                    _write_document(folder, "PrimaryFailure.json", _controller_failure_envelope(result, writer),
+                                    total_output_bytes=total_output_bytes, input_names=input_names,
+                                    max_document_bytes=65536)
+            except BaseException as publication_error:
+                if writer.first_exception is None:
+                    raise
+                writer.first_exception.add_note(f"primary envelope publication failed: {type(publication_error).__name__}")
+        if writer.first_exception is not None:
+            # A failed controller must not mask the first writer exception with
+            # another attempt to serialize its enormous cumulative result.
+            raise writer.first_exception
+        if result.get("first_failure") is not None:
+            with timing.phase('history_io'):
+                writer.publish_first_failure(result["first_failure"])
+        with timing.phase('history_io'):
+            writer.finish()
+        # Keep all original controller fields and logical counters. Encoded bytes
+        # include the footer, which the controller's last record cannot count.
+        result = dict(result)
+        if "counts" in result:
+            counts = dict(result["counts"])
+            if writer.first_exception is None and counts["history_bytes"] != writer.logical_bytes:
+                raise RuntimeError("controller/history logical count mismatch")
+            counts["history_encoded_bytes"] = writer.encoded_bytes
+            result["counts"] = counts
+        result["history"] = _history_state(writer)
+        if successful and (not writer.closed or writer.container_complete is not True):
+            raise RuntimeError("successful native result requires finalized history")
+        with timing.phase('artifact_io'):
+            _write_document(folder, "NativeResult.json", result,
+                            total_output_bytes=total_output_bytes, input_names=input_names,
+                            integer_io_policy=writer.integer_io_policy)
+        return result
+    except BaseException as error:
+        if writer is not None:
+            try:
+                with timing.phase('history_io'):
+                    writer.abort(error)
+            except BaseException as secondary:
+                error.add_note(f"history abort failed: {type(secondary).__name__}: {secondary}")
+        with timing.phase('artifact_io'):
+            _record_exception(folder, error, total_output_bytes=total_output_bytes,
+                              input_names=input_names, writer=writer)
+        raise
+
+
+
+def main(folder: Path, admission_path: Path, *, entry_started: float | None = None,
+         execution_provenance: dict | None = None) -> int:
+    """Original source/admission/native boundary; called only by an admitted shim."""
+    from AdmissionBindings import hashed, validate
+
+
+    folder=Path(folder)
+    freeze=json.loads((folder/"NativeFreeze.json").read_text())
+    admission=json.loads(Path(admission_path).read_text())
+    def canonical(value):
+     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(",",":"),allow_nan=False).encode()).hexdigest()
+    def write(name,value):
+     _write_document(folder, name, value, total_output_bytes=freeze["resources"]["total_output_bytes"],
+                     input_names=freeze["watchdog"]["input_file_names"])
+    if (not str(admission.get("task_id", "")).startswith("task_") or
+        not str(admission.get("dispatch_id", "")).startswith("ctx_") or
+        admission.get("session_id")!=freeze["session_id"] or
+        admission.get("voltage_lift_native_authorized") is not True or
+        admission.get("map_identity")!=freeze["map_identity"] or
+        admission.get("request_sha256")!=freeze["request_sha256"] or
+        admission.get("freeze_sha256")!=hashed(folder/"NativeFreeze.json") or
+        not str(admission.get("coordinator_message","")).startswith("msg_")):
+     raise RuntimeError("exact_native_admission_required_before_execution")
+    validate(freeze,folder/"NativeFreeze.json",admission)
+    started=entry_started if entry_started is not None else time.perf_counter()
+    write("RuntimeStart.json",{"utc":datetime.now(timezone.utc).isoformat(),"pid":os.getpid(),"pgid":os.getpgrp(),"executable":sys.executable,
+                              "actual_process_argv":sys.orig_argv,"declared_command":freeze["runner_command"],
+                              "task_id":admission["task_id"],"dispatch_id":admission["dispatch_id"],
+                              "session_id":admission["session_id"],
+                              "source_task_id":freeze["task_id"],"source_dispatch_id":freeze["dispatch_id"],
+                              "request_sha256":freeze["request_sha256"],"admission":admission})
+    code=1;imports={};primary_error=None
+    try:
+     for path,expected in {**freeze["source_sha256"],**freeze["external_source_sha256"]}.items():
+      if hashed(path)!=expected:raise RuntimeError("frozen_source_changed:"+path)
+     if admission["source_sha256"]!=freeze["source_sha256"]:raise RuntimeError("admission_source_binding_mismatch")
+     for required in (Path(__file__).resolve(), Path(sys.modules[HistoryWriter.__module__].__file__).resolve(),
+                      Path(sys.modules[RuntimeTiming.__module__].__file__).resolve()):
+      if (not required.is_relative_to(Path(freeze["isolated_root"])) or
+          freeze["source_sha256"].get(str(required)) != hashed(required)):
+       raise RuntimeError("maintained_recording_source_not_bound:"+str(required))
+     if any(os.environ.get(k)!="1" for k in freeze["threads"]):raise RuntimeError("thread_environment_changed")
+     library="/System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libBLAS.dylib"
+     blas=ctypes.CDLL(library);blas.BLASSetThreading.argtypes=[ctypes.c_int];blas.BLASSetThreading.restype=ctypes.c_int;blas.BLASGetThreading.restype=ctypes.c_int
+     previous=blas.BLASSetThreading(1);mode=blas.BLASGetThreading()
+     if mode!=1:raise RuntimeError("BLAS_thread_mode")
+     class ProductionBoundary(importlib.abc.MetaPathFinder):
+      def find_spec(self,fullname,path=None,target=None):
+       if fullname.startswith("perovskite_sim.") and fullname not in {"perovskite_sim.constants","perovskite_sim.physics","perovskite_sim.physics.compensated"}:
+        raise RuntimeError("unapproved_production_import:"+fullname)
+     sys.meta_path.insert(0,ProductionBoundary())
+     import numpy,scipy,sksundae,flint
+     from sksundae.ida import IDA as PublicIDA
+     public_api={name:callable(getattr(PublicIDA,name,None)) for name in ("statistics","last_step_snapshot")}
+     if not all(public_api.values()):raise RuntimeError("composed_public_IDA_capabilities_missing")
+     from threadpoolctl import threadpool_info
+     from scripts.benchmarks.coupled_device_prototype import AffineCoupledSlab,AffineVoltageMap,SlabDefinition,protocol_from_plan,run_voltage_lift_native_pilot
+     from scripts.benchmarks import coupled_device_prototype as kernel
+     capabilities=freeze["binding_capabilities"]
+     if (numpy.__version__,scipy.__version__,sksundae.__version__)!=(capabilities["numpy_version"],capabilities["scipy_version"],capabilities["binding_version"]):
+      raise RuntimeError("installed_numeric_versions_changed")
+     pools=threadpool_info()
+     if any(p.get("num_threads",1)!=1 for p in pools):raise RuntimeError("native_threadpool_not_one")
+     for name,module in list(sys.modules.items()):
+      if name.startswith(("perovskite_sim","scripts.benchmarks","sksundae","flint")) and getattr(module,"__file__",None):
+       path=str(Path(module.__file__).resolve());actual=hashed(path)
+       if (name.startswith(("perovskite_sim","scripts.benchmarks")) and
+           not Path(path).is_relative_to(Path(freeze["isolated_root"]))):
+        if name != "scripts.benchmarks._integer_product_native" or not validated_integer_helper_origin(
+         name, {"path": path, "origin": getattr(getattr(module, "__spec__", None), "origin", None),
+                "build_id": getattr(module, "BUILD_ID", None),
+                "c_source_sha256": getattr(module, "SOURCE_SHA256", None),
+                "abi": getattr(module, "ABI", None)}, freeze):
+         raise RuntimeError("actual_local_import_outside_frozen_code:"+name)
+       if name.startswith("sksundae") and not Path(path).is_relative_to(Path(freeze["binding_installation"])):
+        raise RuntimeError("actual_binding_outside_composed_installation:"+name)
+       expected=freeze["source_sha256"].get(path,freeze["external_source_sha256"].get(path))
+       if actual!=expected:raise RuntimeError("actual_import_not_bound:"+name+":"+path)
+       imports[name]={"path":path,"sha256":actual}
+     write("EnvironmentObserved.json",{"python":sys.version,"executable":sys.executable,"numpy":numpy.__version__,
+                                     "scipy":scipy.__version__,"binding":sksundae.__version__,"SUNDIALS":sksundae.SUNDIALS_VERSION,"python_flint":flint.__version__,"FLINT":flint.__FLINT_VERSION__,
+                                     "thread_environment":{k:os.environ.get(k) for k in freeze["threads"]},
+                                     "threadpools":pools,"Accelerate":{"observed":mode,"previous":previous},"actual_imports":imports,"public_IDA_API_before_construction":public_api})
+     source=Path(freeze["model_input_root"]);plan=Path(freeze["isolated_plan"])
+     request=json.loads((folder/"NativeRequest.json").read_text())
+     if canonical(request)!=freeze["request_sha256"]:raise RuntimeError("native_request_changed")
+     execution_output=kernel.voltage_lift_execution_output_policy(
+         request,admission,execution_provenance=execution_provenance)
+     effective_output_bytes=execution_output["effective_total_output_bytes"]
+     if (type(freeze["resources"]["total_output_bytes"]) is not int or
+         effective_output_bytes != freeze["resources"]["total_output_bytes"]):
+      raise RuntimeError("controller_and_outer_output_cap_mismatch")
+     intervals = 8
+     if "qualification_policy" in request:
+       from scripts.benchmarks import qualification_policy
+       qualification_policy.check_initialized_request(request)
+       policy_path = str(Path(qualification_policy.__file__).resolve())
+       expected = freeze["source_sha256"].get(policy_path, freeze["external_source_sha256"].get(policy_path))
+       if expected is None or hashlib.sha256(Path(policy_path).read_bytes()).hexdigest() != expected:
+         raise RuntimeError("qualification_policy_source_not_bound")
+       intervals = request["qualification_policy"]["intervals"]
+       write("QualificationPolicyObserved.json", {
+           "schema": "solarlab.qualification-loaded-policy.v1", "source_path": policy_path,
+           "source_sha256": expected, "request_sha256": freeze["request_sha256"],
+           "policy_sha256": canonical(request["qualification_policy"]), "intervals": intervals,
+           "coordinates": request["qualification_policy"]["coordinates"],
+           "scope": "actual loaded metadata-policy binding before model construction; no accuracy qualification"})
+     model=AffineCoupledSlab(SlabDefinition.from_plan(plan,source,request["case_id"]),intervals)
+     segments=protocol_from_plan(plan,request["case_id"])
+     if flint.__version__!="0.8.0":raise RuntimeError("unreviewed_Arb_binding")
+     timing=RuntimeTiming()
+     result=run_recorded(folder,
+                         lambda emit: run_voltage_lift_native_pilot(AffineVoltageMap(model, mapped_input_profile=request.get("frame_input_policy", {}).get("profile")),segments,request,admission,emit,timing=timing,execution_provenance=execution_provenance),
+                         total_output_bytes=effective_output_bytes,
+                         input_names=freeze["watchdog"]["input_file_names"],
+                          max_record_bytes=freeze.get("writer_limits", {}).get("max_record_bytes", 1048576),
+                          integer_io_policy=freeze.get("integer_io_policy"),timing=timing)
+     code=0 if result["status"]=="completed_bounded_voltage_lift_native_pilot" else 1
+    except BaseException as error:
+     primary_error=error
+     _record_exception(folder,error,total_output_bytes=freeze["resources"]["total_output_bytes"],
+                       input_names=freeze["watchdog"]["input_file_names"])
+     code=1
+    finally:
+     try:
+      drift={p:hashed(p) if Path(p).exists() else "missing"
+             for p,v in {**freeze["source_sha256"],**freeze["external_source_sha256"]}.items()
+             if not Path(p).exists() or hashed(p)!=v}
+      if drift:code=1
+      write("RuntimeEnd.json",{"utc":datetime.now(timezone.utc).isoformat(),"elapsed_s":time.perf_counter()-started,
+                              "peak_rss_bytes":resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                              "rss_units":"Darwin ru_maxrss bytes","source_drift":drift,"exitcode":code,
+                              "elapsed_scope":"runner module entry through source recheck; outer supervisor includes RuntimeEnd save and process exit"})
+     except BaseException as end_error:
+      code=1
+      if primary_error is None:
+       primary_error=end_error
+      else:
+       primary_error.add_note(f"runtime finalization failed: {type(end_error).__name__}: {end_error}")
+      _record_exception(folder,primary_error,total_output_bytes=freeze["resources"]["total_output_bytes"],
+                        input_names=freeze["watchdog"]["input_file_names"])
+    return code
+
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: native_runner CASE_FOLDER ADMISSION_JSON")
+    raise SystemExit(main(Path(sys.argv[1]), Path(sys.argv[2])))

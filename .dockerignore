@@ -13,7 +13,7 @@
 **/htmlcov
 
 perovskite-sim/.venv
-perovskite-sim/frontend/node_modules
-perovskite-sim/frontend/dist
+web/node_modules
+web/dist
 perovskite-sim-phase2b
 

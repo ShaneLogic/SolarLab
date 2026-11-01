@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-Single project tree: `perovskite-sim/` (the whole simulator) plus `docs/figures/`
+Project trees: `perovskite-sim/` (Python simulator and backend), root `web/`
+(the frontend), plus `docs/figures/`
 (only the PNGs the root README embeds). **`perovskite-sim/` has its own `CLAUDE.md`** with exhaustive architecture notes (solver hot paths, TMM optics, backend SSE pattern, frontend panel structure, test BLAS-pinning gotcha, etc.). **Always read `perovskite-sim/CLAUDE.md`** — it is the authoritative guide.
 
 Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR #11) and Phase 2b Layer Builder UI (PR #2) merged into `main`. Short-lived feature isolation now uses `.worktrees/<name>/` (gitignored).
@@ -27,7 +28,7 @@ test, and be understood:
 | What | Where | Name |
 |---|---|---|
 | Python / TypeScript / MATLAB code, tests, backend, frontend | language folders | language convention (`snake_case.py`, `test_*.py`, kebab-case `.ts`) — never CamelCase |
-| Shipped device presets (the research entry points the frontend catalogue lists) | `perovskite-sim/configs/` + `frontend/src/preset-catalog.ts` | existing scheme (`snake_case.yaml`) |
+| Shipped device presets (the research entry points the frontend catalogue lists) | `perovskite-sim/configs/` + `web/src/preset-catalog.ts` | existing scheme (`snake_case.yaml`) |
 | Test-only / historical device presets | `perovskite-sim/tests/fixtures/configs/` (never served by the API; API tests use the `serve_all_presets` fixture) | existing scheme |
 | Package data, tooling files | `perovskite_sim/data/`, tool-fixed names | as the tool or existing scheme requires |
 | Physics contract / policy / protocol / schema / certificate docs that code, tests or configs cite | `perovskite-sim/docs/` | multi-word CamelCase, versions as `V1`, `V2` (`TwodTransportContract.md`, `ExplicitDefectSchemaV2.md`) |
@@ -79,9 +80,99 @@ The one input file code still reads, `ScapsParams.xlsx`, stays at
 
 ## Git
 
-`origin`: `github.com/ShaneLogic/SolarLab.git`, default branch `main`. Commits land directly on `main` in this project (no PR workflow enforced locally). Use `git push origin main` after committing.
+`origin`: `github.com/ShaneLogic/SolarLab.git`, default branch `main`.
+
+The user authorized the full refactor on 2026-10-05. All refactor development,
+staging, commits and pushes belong on **`devel`**. Do not modify, commit to, or
+push `main`. A single coordinator-designated integrator owns branch changes,
+staging, commits and synchronization in the shared checkout. Other workers must
+verify the repository path, actual branch and HEAD before editing their assigned
+files; they must not switch branches or commit concurrently. Preserve existing
+changes and unrelated untracked files; never reset or stash them to start work.
+
+The automatic delivery endpoint is a fully validated, reproducible release and
+a review-ready **`devel` → `main` PR**. Only the user may merge it. Agents must
+not merge, enable auto-merge, bypass branch protection, or claim `main` has been
+refactored before the human merge. Resolve safe integration conflicts and rerun
+affected checks on `devel` before requesting that final review. Any per-task
+branch advice in older plans is superseded for this shared refactor run.
+
+Follow archive `plans/Impl/ArchitectureRefactorExecutionV2.md` (V1 is frozen
+history) and keep the sole active state at archive
+`test/ArchitectureRefactor/ExecutionStateV2.json` with the append-only event log
+`test/ArchitectureRefactor/EventLogV2.jsonl`. Worker reports are evidence, not
+additional activity ledgers. Repository-required guidance stays in Git; plans,
+evidence and scientific run artifacts stay in the archive. Use the supported Orca
+task/message/lifecycle workflow and respect each Dispatch's file ownership.
+
+The refactor commander and sole integrator is the user-appointed Claude Code
+session `0537b216-df76-4292-bb73-949175abc111` (model `claude-opus-5-5`, effort
+`max`, Orca terminal `term_a33ad446-8ee7-473b-b4b7-00aea210c562`), appointed by
+the user on 2026-10-29 and bound to Run `run_b01db3902366` at consumer
+generation 6. It replaced Codex session `01a180c3-f826-7873-8d0b-44b2e40899c4`
+(Orca terminal `term_3c65f4db-0a9b-41c7-b337-956eff7204dd`), which served as
+deputy until the user replaced it on 2026-11-01 with Claude Code session
+`d6a3ed06-5f79-4890-bd0b-8ada951d06d6` (`claude-opus-5-5`, effort `max`, Orca
+terminal `term_ac765e70-e569-4ac0-972a-b27b4dea9e35`). The deputy makes no Git
+mutations, dispatches or state writes; it takes over only when the commander
+has been unreachable for more than 2 hours. Execution is authorized. The runnable new-core 1D research
+release has been delivered (research packages up to V8). The next delivery is
+the user-selected engineering milestone (option A, 2026-10-29): one unified
+layout/term/assembly layer serving steady, transient and AC analyses, a
+one-command green test suite, full CI coverage, and the existing new-core
+capabilities migrated onto it. Functionality not yet migrated stays explicitly
+behind the legacy facade, and G9P remains the final endpoint. The commander
+sets the product time-integration route deadline (proposed 2026-11-08). If IDA
+is not qualified by then, a new-core adaptive BDF becomes the product default
+and IDA becomes optional; final scientific gates are unchanged.
+Then continue the remaining approved scope. Clearly distinguish implementation,
+verification, and scientific qualification; legacy execution is not new-core completion.
+Routine reversible implementation and sequencing decisions belong to the commander.
+Use approximately 15-minute investigation checkpoints; after two checkpoints
+without useful evidence or progress, change the assumption, scope, or method.
+Ask the user only about changes to final scientific standards, core delivery
+scope, added resource cost, or merging main. Since 2026-11-01 (user decision)
+every commanded worker role runs `claude-opus-5-5` at effort `max` with full
+permissions and network enabled; the earlier Codex worker sessions are closed
+and their resume ids are kept in the execution state. Every
+participant's actual model/effort/permissions are verified once per session start
+from its own runtime record (Codex turn_context or Claude transcript); a requested
+setting or UI label alone is insufficient. Scientific thresholds change only
+prospectively after independent review and before the affected runs; user-facing
+acceptance targets change only with explicit user approval; old failures are
+never relabelled. R1 L2/L3 qualification is a research track decoupled from the
+product release.
 
 ## Common Commands
+
+### Root developer test command
+
+With the locked editable all-extras development environment active and `web/`
+dependencies installed (`uv sync --frozen --all-extras` and `npm ci --prefix web`),
+run from the SolarLab root:
+
+```bash
+python scripts/test_all.py
+```
+
+This runs every ordinary **root pytest selection** in `.github/workflows/ci.yml`
+on the active Python, with the matching `PYTEST_CI_JOB`. Each selection gets a
+fresh process, including the isolated `scan_execution` and `run_client` groups;
+BLAS uses one thread. The runner reads CI's discovery/isolation policy, keeps all
+failures visible, continues through the remaining groups, prints one final
+per-job/overall summary, and exits nonzero if any selection fails. It writes
+JUnit reports and `summary.json` under `outputs/test_all/` (`--output-dir` overrides
+that path). Existing reasoned skips and xfails (strict marks and conditional runtime xfails) remain visible in the totals.
+The 768 MiB pool limit is unchanged; do not substitute a single root `pytest`
+process, whose accumulated imports count toward the pools' process-family RSS.
+
+This local command uses the existing installation; CI still checks its Python
+matrix, package installation modes, binding probe, lint/types and web test/build
+steps. **legacy suite: not part of the green claim** — the separate
+`perovskite-sim` suite is outside this command. Optional scheduled slow/coverage jobs retain
+their own commands and scope.
+
+### Legacy commands
 
 Run from **inside `perovskite-sim/`**, not from the SolarLab root:
 
