@@ -109,11 +109,13 @@ The refactor commander and sole integrator is the user-appointed Claude Code
 session `0537b216-df76-4292-bb73-949175abc111` (model `claude-opus-5-5`, effort
 `max`, Orca terminal `term_a33ad446-8ee7-473b-b4b7-00aea210c562`), appointed by
 the user on 2026-10-29 and bound to Run `run_b01db3902366` at consumer
-generation 6. It replaces Codex session `01a180c3-f826-7873-8d0b-44b2e40899c4`
-(Orca terminal `term_3c65f4db-0a9b-41c7-b337-956eff7204dd`), which is now deputy
-and standby commander. The deputy makes no Git mutations, dispatches or state
-writes; it takes over only when the commander has been unreachable for more
-than 2 hours. Execution is authorized. The runnable new-core 1D research
+generation 6. It replaced Codex session `01a180c3-f826-7873-8d0b-44b2e40899c4`
+(Orca terminal `term_3c65f4db-0a9b-41c7-b337-956eff7204dd`), which served as
+deputy until the user replaced it on 2026-11-01 with Claude Code session
+`d6a3ed06-5f79-4890-bd0b-8ada951d06d6` (`claude-opus-5-5`, effort `max`, Orca
+terminal `term_ac765e70-e569-4ac0-972a-b27b4dea9e35`). The deputy makes no Git
+mutations, dispatches or state writes; it takes over only when the commander
+has been unreachable for more than 2 hours. Execution is authorized. The runnable new-core 1D research
 release has been delivered (research packages up to V8). The next delivery is
 the user-selected engineering milestone (option A, 2026-10-29): one unified
 layout/term/assembly layer serving steady, transient and AC analyses, a
