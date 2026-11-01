@@ -129,9 +129,10 @@ Routine reversible implementation and sequencing decisions belong to the command
 Use approximately 15-minute investigation checkpoints; after two checkpoints
 without useful evidence or progress, change the assumption, scope, or method.
 Ask the user only about changes to final scientific standards, core delivery
-scope, added resource cost, or merging main. Existing workers keep actual runtime `gpt-6-astra`, reasoning
-`max`, Full Access and network enabled; sessions added after 2026-10-14 may
-instead run `claude-opus-5-5` at effort `max` (user-approved). Every
+scope, added resource cost, or merging main. Since 2026-11-01 (user decision)
+every commanded worker role runs `claude-opus-5-5` at effort `max` with full
+permissions and network enabled; the earlier Codex worker sessions are closed
+and their resume ids are kept in the execution state. Every
 participant's actual model/effort/permissions are verified once per session start
 from its own runtime record (Codex turn_context or Claude transcript); a requested
 setting or UI label alone is insufficient. Scientific thresholds change only
