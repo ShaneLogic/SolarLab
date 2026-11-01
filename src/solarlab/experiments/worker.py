@@ -27,6 +27,7 @@ import resource
 import stat
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from solarlab.io.artifacts import ArtifactPayload, _json_document, _parse_document, bytes_artifact
@@ -47,6 +48,9 @@ PROGRESS_BYTES = 4096
 REQUEST_BYTES = 262144
 TERMINAL_BYTES = 262144
 RUN_SPEC_BYTES = REQUEST_BYTES + 8192
+# Mirror the supervisor RSS-sampler bounds; tested for equality.
+_STARTUP_IDENTITY_MAX_MISSING_SAMPLES = 3
+_STARTUP_IDENTITY_MAX_GAP_SECONDS = 2.0
 
 
 def _name(value: str) -> str:
@@ -498,6 +502,40 @@ def _process_info(pids: list[int], *, include_descendants: bool = False) -> dict
     return {pid: item for pid, item in found.items() if pid in selected}
 
 
+def _observe_child_identity(pid: int) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Bound startup metadata queries without turning a miss into worker failure.
+
+    The parent independently enforces RSS through its tolerant sampler. This
+    identity only helps later PID-reuse diagnosis: unknown was already allowed,
+    and never authorizes signalling or releasing an uncertain restored process.
+    Share the sampler's retry bounds, keeping each ps invocation capped at 0.5 s.
+    """
+    started = time.monotonic()
+    attempts = 0
+    errors: list[str] = []
+    identity = None
+    while (len(errors) < _STARTUP_IDENTITY_MAX_MISSING_SAMPLES
+            and time.monotonic() - started < _STARTUP_IDENTITY_MAX_GAP_SECONDS):
+        attempts += 1
+        try:
+            observed = _process_info([pid]).get(pid)
+        except (subprocess.SubprocessError, OSError, UnicodeError) as error:
+            detail = type(error).__name__ + ": " + str(error)[:512]
+        else:
+            if observed is None:
+                detail = "child OS identity is unobserved"
+            elif time.monotonic() - started >= _STARTUP_IDENTITY_MAX_GAP_SECONDS:
+                detail = "child OS identity arrived after its bounded interval expired"
+            else:
+                identity = observed
+                break
+        errors.append(detail)
+    return identity, {"scope": "child_start_identity_only", "status": "observed" if identity is not None else "unavailable",
+        "attempts": attempts, "missing_samples": len(errors), "errors": errors,
+        "elapsed_seconds": time.monotonic() - started,
+        "max_missing_samples": _STARTUP_IDENTITY_MAX_MISSING_SAMPLES, "max_gap_seconds": _STARTUP_IDENTITY_MAX_GAP_SECONDS}
+
+
 def _regular_bytes(path: Path, maximum: int) -> bytes:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
@@ -554,8 +592,9 @@ def _child_main(
         os.dup2(log, 2)
         os.close(log)
         resource.setrlimit(resource.RLIMIT_FSIZE, (limits.output_bytes, limits.output_bytes))
-        identity = _process_info([os.getpid()]).get(os.getpid())
-        _atomic_json(path / "started.json", {"token": token, "pid": os.getpid(), "pgid": os.getpgrp(), "os_identity": identity})
+        identity, observation = _observe_child_identity(os.getpid())
+        _atomic_json(path / "started.json", {"token": token, "pid": os.getpid(), "pgid": os.getpgrp(),
+            "os_identity": identity, "os_identity_observation": observation})
         request = WorkerRequest.from_bytes(raw)
         binding.validate_request(request)
         if execution is not None:

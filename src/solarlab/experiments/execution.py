@@ -1053,6 +1053,30 @@ class ProcessSupervisor:
             checked.append((name, ArtifactPayload(data, item["format"], item["metadata_json"])))
         return checked
 
+    def _child_start_identity_diagnostic(self, job: _Job) -> dict[str, Any]:
+        """Retain degraded child metadata, separately from parent RSS/identity.
+
+        This optional audit is not a terminal authority. Missing, malformed or
+        differently fenced startup records cannot replace the worker's outcome.
+        """
+        assert job.directory is not None and job.token is not None
+        try:
+            started = self._read_json(job.directory / "started.json")
+            if AttemptToken(**started["token"]) != job.token:
+                return {}
+        except (OSError, ValueError, TypeError, KeyError):
+            return {}
+        observation = started.get("os_identity_observation")
+        if (type(started.get("pid")) is not int or started["pid"] != job.pid
+                or started.get("os_identity") is not None or type(observation) is not dict
+                or observation.get("scope") != "child_start_identity_only"
+                or observation.get("status") != "unavailable"
+                or type(observation.get("missing_samples")) is not int
+                or not 0 <= observation["missing_samples"] <= _RSS_MAX_MISSING_SAMPLES):
+            return {}
+        return {"child_start_identity_observation": {"scope": "child_start_identity_only",
+            "status": "unavailable", "missing_samples": observation["missing_samples"]}}
+
     def _finish(self, job: _Job) -> None:
         assert job.token is not None and job.directory is not None and job.started is not None
         job.process.join(timeout=0)
@@ -1064,6 +1088,7 @@ class ProcessSupervisor:
                          "exitcode": exitcode, "process_joined": True, "process_exit_observed": True,
                          "signals": list(job.signals)}
         _atomic_json(job.directory / "exit.json", exit_evidence)
+        child_start = self._child_start_identity_diagnostic(job)
         manifest: dict[str, Any] = {}
         payloads: list[tuple[str, ArtifactPayload]] = []
         publishable = False
@@ -1157,7 +1182,7 @@ class ProcessSupervisor:
             ("calls", job.counts["calls"], job.limits.calls)) if observed is not None and cap is not None and observed > cap]
         final_result = {"status": "prepared_pending_dependencies", "worker_result": result,
                         "process": exit_evidence, "resources": resources,
-                        "counter_observation_kind": "worker_reported_or_null_unobserved"}
+                        "counter_observation_kind": "worker_reported_or_null_unobserved", **child_start}
         guard = self._output_guard(0, self._completion_allowance(job, final_result))
         resources["shared_output_before_terminal_commit"] = guard
         if publishable and guard["would_exceed"]:
@@ -1184,7 +1209,8 @@ class ProcessSupervisor:
                    "terminal_committed": committed, "commit_error": commit_error, "process_started": True,
                    "process_exit_observed": True, "process_joined": True, "exitcode": exitcode, "pid": job.pid, "pgid": job.pgid,
                    "signals": list(job.signals), "resources": resources, "worker_result": result,
-                   "terminal_artifacts": references if committed else [], "publication_error": publication_error}
+                   "terminal_artifacts": references if committed else [], "publication_error": publication_error,
+                   **child_start}
         _atomic_json(job.directory / "receipt.json", receipt)
         after_audit = self._shared_output()
         finalization = {"token": asdict(job.token), "shared_output_after_audit_bytes": after_audit,
