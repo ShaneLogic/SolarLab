@@ -897,9 +897,9 @@
     {
       "id": "hi_reference_contract",
       "root": "repository",
-      "path": "reproducibility/HysteresisReferenceContractV1.json",
-      "sha256": "bec9fff7f5194a81492b9697f354d460413293a84aa66667c97cf5371adf8d67",
-      "bytes": 43782,
+      "path": "reproducibility/HysteresisReferenceContractV2.json",
+      "sha256": "9a62e36920dd558e19c196cefed6cc191c74253db05ea54a0e1644d6a22eb96a",
+      "bytes": 49140,
       "role": "frozen_prospective_HI_thresholds_and_reference_plan",
       "status": "frozen_standard_reference_qualification_pending"
     },

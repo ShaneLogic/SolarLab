@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -22,6 +23,19 @@ spec = importlib.util.spec_from_file_location("hysteresis_reference_test_subject
 hr = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = hr
 spec.loader.exec_module(hr)
+
+
+def changed_key_paths(old, new, path=""):
+    """Smallest JSON pointers added, removed or modified from old to new."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        keys = [*old, *(key for key in new if key not in old)]
+        return [found for key in keys for found in (
+            changed_key_paths(old[key], new[key], f"{path}/{key}") if key in old and key in new
+            else [f"{path}/{key}"])]
+    if isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
+        return [found for index, pair in enumerate(zip(old, new))
+                for found in changed_key_paths(*pair, f"{path}/{index}")]
+    return [] if type(old) is type(new) and old == new else [path]
 
 
 class RecordingAdapter:
@@ -113,6 +127,13 @@ class TestSourcesAndInput(FrozenFixture):
     def test_wrong_frozen_source_digest_rejected(self):
         with self.assertRaisesRegex(hr.ReferenceError, "source mismatch"):
             hr.checked_json(REPO/hr.CONTRACT, "0"*64)
+
+    def test_superseded_contract_is_unchanged_history_and_only_declared_paths_differ(self):
+        superseded = self.contract["supersedes"]
+        raw = (REPO/superseded["path"]).read_bytes()
+        self.assertEqual((hashlib.sha256(raw).hexdigest(), len(raw)), (superseded["sha256"], superseded["bytes"]))
+        self.assertEqual(sorted(changed_key_paths(json.loads(raw), self.contract)),
+                         sorted(superseded["changed_key_paths"]))
 
 
 class TestTimeline(FrozenFixture):
