@@ -95,6 +95,7 @@
   ],
   "platform_bound_fixtures": {
     "tests/support/assembly_baselines.json": "Raw float/complex words and sparse patterns captured on the recorded Darwin arm64 Python/NumPy/SciPy and Accelerate stack.",
+    "tests/unit/assembly/fixtures/dc2d_gate_v1.npz": "Original pinned 4c7fb353 gate arrays; raw-word comparisons use the shared capture-environment guard while live old-vs-new readouts remain unconditional.",
     "tests/unit/assembly/fixtures/dc2d_steady_seeds_v1.json": "Exact historical input-coordinate bytes are portable; decoded physical-field word digests require the supported capture stack. Live original-vs-assembled solves use the unchanged input words and current gates on every platform.",
     "env:SOLARLAB_ASSEMBLY_2D_BASELINE": "Optional pinned DC2D gate NPZ contains original captured float arrays and sparse patterns; compare only on the capture stack.",
     "tests/independent/p04/fixtures/P04LegacyGoldenV1.json": "Existing macOS/Accelerate golden: floating comparisons retain their current platform prerequisites; metadata and quoted-value checks remain portable.",
