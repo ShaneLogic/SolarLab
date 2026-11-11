@@ -61,10 +61,12 @@ class TestSourcePreparation:
         for key, value in (("size", True), ("size", 2), ("frame_identity", "not-bound"),
                            ("t0_hex", "nan"), ("t0_hex", "0x0p+0"),
                            ("v0_words_hex", [zero]*5), ("extra", 0)):
-            changed = deepcopy(good); changed[key] = value
+            changed = deepcopy(good)
+            changed[key] = value
             with pytest.raises((ValueError, OverflowError)):
                 validate(changed)
-        changed = deepcopy(good); changed["q0_words_hex"][1][0] = (1.0).hex()
+        changed = deepcopy(good)
+        changed["q0_words_hex"][1][0] = (1.0).hex()
         with pytest.raises(ValueError, match="unnormalized"):
             validate(changed)
         initial = code[code.index("    cdef _init_step("):code.index("    cdef _step(")]
@@ -88,11 +90,15 @@ class TestSourcePreparation:
         code = (source / "src/sksundae/_cy_ida.pyx").read_text()
         with tarfile.open(archive) as tar:
             original = tar.extractfile("scikit_sundae-1.1.3/src/sksundae/_cy_ida.pyx").read().decode()
-        calls = lambda text: [line.strip() for line in text.splitlines() if "flag = IDASolve(" in line]
+
+        def calls(text: str) -> list[str]:
+            return [line.strip() for line in text.splitlines() if "flag = IDASolve(" in line]
+
         assert len(calls(code)) == 3
         assert calls(code) == calls(original)
         assert code.count("self._obs_after_step(observation_before,") == 3
-        assert code.count("self._obs_busy = True") == 3
+        assert code.count("self._obs_busy = True") == 4
+        assert code.count("self._obs_busy = False") == 5
         assert "_OBSERVATION_BUILD_ID = None" in code
         wrapper = ast.parse((source / "src/sksundae/ida/_solver.py").read_text())
         public = next(node for node in wrapper.body if isinstance(node, ast.ClassDef) and node.name == "IDA")
@@ -922,13 +928,19 @@ def test_segment_frame_native_application_and_lifetime(native):
     assert not target.exists()
     progress = target.with_suffix(".progress.jsonl")
     assert not progress.exists()
-    zero = np.zeros(45); q0 = np.full(45, 2.0**20); v0 = np.full(45, 2.0**10)
-    alpha = np.full(45, 2.0**-40); alpha[0] = 1.0
+    zero = np.zeros(45)
+    q0 = np.full(45, 2.0**20)
+    v0 = np.full(45, 2.0**10)
+    alpha = np.full(45, 2.0**-40)
+    alpha[0] = 1.0
     settings = dict(rtol=2.0**-50, atol=[2.0**-50]*45, first_step=2.0**-4, max_step=2.0**-4,
                     max_order=3, nonlin_conv_coef=1.024e-5, nonlin_guard="first-correction-wrms-v1",
                     nonlin_trace_capacity=4096, max_nonlin_iters=8)
     assert settings == spec["controls"]
-    hx = lambda row: [float(v).hex() for v in row]
+
+    def hx(row):
+        return [float(v).hex() for v in row]
+
     frame = {"schema": "sksundae.ida.parent-affine-weights.v1", "frame_identity": hashlib.sha256(b"fixture-frame-1").hexdigest(),
              "t0_hex": 0.0.hex(), "size": 45, "q0_words_hex": [hx(q0), hx(zero), hx(zero), hx(zero)],
              "v0_words_hex": [hx(v0), hx(zero), hx(zero), hx(zero)],
@@ -948,18 +960,26 @@ def test_segment_frame_native_application_and_lifetime(native):
         records.append(row)
         with progress.open("a") as output:
             output.write(json.dumps(observation_record(row))+"\n")
-            output.flush(); os.fsync(output.fileno())
+            output.flush()
+            os.fsync(output.fileno())
     try:
         plain = IDA(affine_residual, jacfn=jacobian, **settings)
-        owners.append(plain); refs.append(weakref.ref(plain))
-        outcome["native_initializations"] += 1; assert plain.init_step(0.0, q0, v0).success
-        outcome["onestep_calls"] += 1; assert plain.step(1.0, method="onestep", tstop=1.0).success
-        plain_packet = plain.last_step_snapshot(); retain("default_off", plain)
+        owners.append(plain)
+        refs.append(weakref.ref(plain))
+        outcome["native_initializations"] += 1
+        assert plain.init_step(0.0, q0, v0).success
+        outcome["onestep_calls"] += 1
+        assert plain.step(1.0, method="onestep", tstop=1.0).success
+        plain_packet = plain.last_step_snapshot()
+        retain("default_off", plain)
         assert "parent_weight_state" not in plain.statistics()
         solver = IDA(residual, jacfn=jacobian, parent_weight_frame=frame, **settings)
-        owners.append(solver); refs.append(weakref.ref(solver))
-        outcome["native_initializations"] += 1; assert solver.init_step(0.0, zero, zero).success
-        initial = solver.statistics(); retain("frame_initialized", solver)
+        owners.append(solver)
+        refs.append(weakref.ref(solver))
+        outcome["native_initializations"] += 1
+        assert solver.init_step(0.0, zero, zero).success
+        initial = solver.statistics()
+        retain("frame_initialized", solver)
         assert initial["parent_weight_state"]["callback_calls"] == 0
         previous_phi = zero.tobytes()
         for index in range(2):
@@ -967,7 +987,8 @@ def test_segment_frame_native_application_and_lifetime(native):
             returned = solver.step(1.0, method="onestep", tstop=1.0)
             retain("frame_onestep_"+str(index+1), solver)
             assert returned.success
-            packet = solver.last_step_snapshot(); records.append({"phase": "accepted_packet", "packet": packet})
+            packet = solver.last_step_snapshot()
+            records.append({"phase": "accepted_packet", "packet": packet})
             state = packet["parent_weight_state"]
             assert state["basis_u"] == previous_phi
             t = Fraction(float.fromhex(state["basis_time_hex"]))
@@ -982,7 +1003,8 @@ def test_segment_frame_native_application_and_lifetime(native):
             assert np.any(np.asarray(returned.y)[1:] != 0)
             assert np.all(np.abs(np.asarray(returned.y)[1:]) < np.spacing(q0[1:]))
             previous_phi = packet["basis"]["phi"][:45*8]
-        newer = deepcopy(frame); newer.update(t0_hex=0.25.hex(), frame_identity=hashlib.sha256(b"fixture-frame-2").hexdigest())
+        newer = deepcopy(frame)
+        newer.update(t0_hex=0.25.hex(), frame_identity=hashlib.sha256(b"fixture-frame-2").hexdigest())
         origin[0] = 0.25
         outcome["native_initializations"] += 1
         assert solver.init_step(0.25, zero, zero, parent_weight_frame=newer).success
@@ -990,7 +1012,8 @@ def test_segment_frame_native_application_and_lifetime(native):
         changed = solver.statistics()["parent_weight_state"]
         assert changed["frame_identity"] == newer["frame_identity"] and changed["generation"] == 2
         assert changed["callback_calls"] == 0 and changed["t0_hex"] == 0.25.hex()
-        resized = deepcopy(newer); resized["size"] = 44
+        resized = deepcopy(newer)
+        resized["size"] = 44
         resized["q0_words_hex"] = [row[:44] for row in resized["q0_words_hex"]]
         resized["v0_words_hex"] = [row[:44] for row in resized["v0_words_hex"]]
         outcome["native_initializations"] += 1
@@ -1009,7 +1032,8 @@ def test_segment_frame_native_application_and_lifetime(native):
                 records.append({"phase": "failed_operation", "statistics_unavailable": str(unavailable)})
         raise
     finally:
-        owners.clear(); plain = solver = None
+        owners.clear()
+        plain = solver = None
         gc.collect()
         outcome["python_owners_released"] = all(ref() is None for ref in refs)
         target.write_text(json.dumps(observation_record(outcome), indent=2)+"\n")
@@ -1196,5 +1220,5 @@ def test_time_weight_refinement_application_45(native):
                 finish(False, first_error=failure, missing_native_fields_remain_absent=True)
             raise
         finally:
-            solver = None
+            solver = None  # noqa: F841
             gc.collect()
