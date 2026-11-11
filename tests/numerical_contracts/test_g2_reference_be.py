@@ -1895,6 +1895,214 @@ def test_BE4_integer_pipeline_clock_above_binary64_exact_range(tmp_path, monkeyp
             assert type(record["original_deadline_ns"]) is int
 
 
+def test_affine_input_lift_predictor_preserves_analytic_be_solution_and_exact_lift(
+    tmp_path,
+):
+    segments = (
+        ProtocolSegment("a", 0.0, 0.25, (0.0, 0.0), (0.0, 0.0)),
+        ProtocolSegment("b", 0.25, 0.5, (0.0, 0.3), (0.0, 0.0)),
+        ProtocolSegment("c", 0.5, 0.75, (0.3, 0.3), (0.0, 0.0)),
+    )
+    lift_hex = [
+        [(0.0).hex(), (0.0).hex()],
+        [(0.0).hex(), (0.0).hex()],
+        [(1.0).hex(), (0.0).hex()],
+    ]
+    base_backend = manufactured("voltage", segments=segments)
+    lifted_backend = replace(
+        base_backend,
+        initial_predictor={"policy": "affine-input-lift-v1", "lift_hex": lift_hex},
+    )
+    assert "initial_predictor" not in be.effective_controls(base_backend)
+    assert be.effective_controls(lifted_backend)["initial_predictor"] == {
+        "policy": "affine-input-lift-v1",
+        "lift_hex": lift_hex,
+    }
+
+    _, schedule, _, _, base_readback = execute(
+        tmp_path / "unlifted", backend=base_backend
+    )
+    _, _, lifted_id, _, lifted_readback = execute(
+        tmp_path / "lifted", backend=lifted_backend
+    )
+    assert base_readback["structural_pass"] and lifted_readback["structural_pass"]
+    assert (
+        base_readback["accepted_steps"]
+        == lifted_readback["accepted_steps"]
+        == len(schedule.steps)
+    )
+
+    base_steps = [
+        r for r in raw_rows(tmp_path / "unlifted") if r["kind"] == "be_accepted_step"
+    ]
+    lifted_steps = [
+        r for r in raw_rows(tmp_path / "lifted") if r["kind"] == "be_accepted_step"
+    ]
+    # Segment a (constant V=0): identical initial trials when delta_inputs == 0.
+    for row_u, row_l in zip(base_steps, lifted_steps, strict=True):
+        if row_u["segment"] == "a":
+            assert (
+                row_u["newton_summary"]["initial_trial_identity"]
+                == row_l["newton_summary"]["initial_trial_identity"]
+            )
+            assert row_u["right"] == row_l["right"]
+        elif row_u["segment"] == "b":
+            assert (
+                row_u["newton_summary"]["initial_trial_identity"]
+                != row_l["newton_summary"]["initial_trial_identity"]
+            )
+
+    # Terminal and intermediate tagged physical states satisfy the identical
+    # analytic BE solution within the 1e-24 equation budgets.
+    expected_n0, expected_n1 = Fraction(3), Fraction(3)
+    for step in schedule.steps:
+        h = Fraction(step.h)
+        t_r = Fraction(step.right)
+        expected_n0 += h * (2 * t_r)
+        expected_n1 += h * (-t_r)
+    terminal_v = Fraction(0.3)
+    expected_phi = expected_n0 + 2 * expected_n1 + terminal_v
+
+    for readback in (base_readback, lifted_readback):
+        obs = readback["observations"][-1]["physical_state_words"]
+        n_vals = [
+            sum(Fraction(float.fromhex(w[i])) for w in obs["n"]["words_hex"])
+            for i in range(2)
+        ]
+        phi_val = sum(Fraction(float.fromhex(w[0])) for w in obs["phi"]["words_hex"])
+        assert abs(n_vals[0] - expected_n0) <= Fraction(1e-24)
+        assert abs(n_vals[1] - expected_n1) <= Fraction(1e-24)
+        assert abs(phi_val - expected_phi) <= Fraction(3e-24)
+
+    # On a pure boundary-lift step with zero storage change (tiny rate within budget),
+    # the exact DD affine lift satisfies phi - (n0 + 2*n1 + V_right) == 0 at trial 0
+    # and accepts in 0 Newton iterations even for non-dyadic delta_V = 0.3 V.
+    pure_segments = (ProtocolSegment("ramp", 0.0, 0.125, (0.0, 0.3), (0.0, 0.0)),)
+    pure_base = replace(
+        manufactured("tiny", segments=pure_segments),
+        budgets={
+            "balance": EquationBudget(PARTICLE, [1e-20, 1e-20]),
+            "constraint": EquationBudget(VOLT, [1e-30]),
+        },
+    )
+    pure_lifted = replace(
+        pure_base,
+        initial_predictor={"policy": "affine-input-lift-v1", "lift_hex": lift_hex},
+    )
+    pure_sched = be.compile_schedule(
+        pure_segments,
+        tags_for(pure_segments, [[0.0, 0.125]]),
+        level=0,
+        seed=Fraction(1, 8),
+    )
+    execute(tmp_path / "pure_lifted", backend=pure_lifted, schedule=pure_sched)
+    pure_step = next(
+        r
+        for r in raw_rows(tmp_path / "pure_lifted")
+        if r["kind"] == "be_accepted_step"
+    )
+    assert pure_step["newton_iterations"] == []
+    assert pure_step["newton_summary"]["initial_trial_accepted"] is True
+    assert pure_step["solver_counts"] == {
+        "factorizations": 0,
+        "linear_solves": 0,
+        "residual_evaluations": 1,
+    }
+    assert be._unpair(pure_step["residual_ratios"][2]) == 0
+
+    # Independent reader rejects tampering of initial_trial_identity or header predictor.
+    rows = raw_rows(tmp_path / "lifted")
+    ramp_step = next(
+        r for r in rows if r["kind"] == "be_accepted_step" and r["segment"] == "b"
+    )
+    unlifted_ramp_step = next(
+        r
+        for r in raw_rows(tmp_path / "unlifted")
+        if r["kind"] == "be_accepted_step" and r["segment"] == "b"
+    )
+    ramp_step["newton_summary"]["initial_trial_identity"] = unlifted_ramp_step[
+        "newton_summary"
+    ]["initial_trial_identity"]
+    reseal(tmp_path / "lifted", rows)
+    with pytest.raises(ContractError, match="newton_diagnostics_initial_trial"):
+        be.read_reference_history(
+            tmp_path / "lifted", lifted_backend.problem.layout, lifted_id
+        )
+
+
+def test_initial_predictor_validation_and_request_binding_rejection(tmp_path):
+    segments = (ProtocolSegment("ramp", 0.0, 0.125, (0.0, 0.25), (0.0, 0.0)),)
+    lift_hex = [
+        [(0.0).hex(), (0.0).hex()],
+        [(0.0).hex(), (0.0).hex()],
+        [(-1.0).hex(), (0.0).hex()],
+    ]
+    backend = replace(
+        manufactured("voltage", segments=segments),
+        initial_predictor={"policy": "affine-input-lift-v1", "lift_hex": lift_hex},
+    )
+    for bad in (
+        {"policy": "unknown-v1"},
+        {"policy": "zero-local-increment-v1", "lift_hex": lift_hex},
+        {"policy": "affine-input-lift-v1"},
+        {"policy": "affine-input-lift-v1", "lift_hex": lift_hex[:2]},
+        {"policy": "affine-input-lift-v1", "lift_hex": [["0x1.0p+0"], ["0x0.0p+0"], ["0x0.0p+0"]]},
+        {"policy": "affine-input-lift-v1", "lift_hex": [["0x1p+0", "0x0.0p+0"]] * 3},
+    ):
+        with pytest.raises(ContractError, match="reference_be_"):
+            be.effective_controls(replace(backend, initial_predictor=bad))
+
+    schedule = be.compile_schedule(
+        segments, tags_for(segments, [[0.0, 0.125]]), level=0, seed=Fraction(1, 8)
+    )
+    bad_lift = deepcopy(lift_hex)
+    bad_lift[2][0] = (-0.5).hex()
+    mismatched_request = {
+        "kind": "manufactured",
+        "segments": [asdict(s) for s in segments],
+        "voltage_lift_map": {"lift_hex": bad_lift},
+    }
+    identity = be.RunIdentity(
+        "manufactured",
+        be.digest(mismatched_request),
+        "1" * 64,
+        "2" * 64,
+        "3" * 40,
+        "manufactured-test-environment",
+        schedule.identity,
+        backend.problem.source_identity,
+        backend.initial.identity,
+        be.digest(be.effective_controls(backend)),
+    )
+    limits = be.Limits(60.0, output_bytes=64 * 1048576, logical_bytes=64 * 1048576)
+    with pytest.raises(ContractError, match="initial_predictor_request_binding"):
+        be.run_reference(
+            backend,
+            schedule,
+            identity,
+            mismatched_request,
+            tmp_path / "mismatch_run",
+            limits,
+        )
+
+    # Also verify reader rejects header predictor tampering or request map mismatch.
+    good_request = dict(mismatched_request, voltage_lift_map={"lift_hex": lift_hex})
+    good_id = replace(identity, input_sha256=be.digest(good_request))
+    be.run_reference(
+        backend, schedule, good_id, good_request, tmp_path / "good_run", limits
+    )
+    assert be.read_reference_history(
+        tmp_path / "good_run", backend.problem.layout, good_id
+    )["structural_pass"]
+    rows = raw_rows(tmp_path / "good_run")
+    rows[0]["initial_predictor"]["lift_hex"][2][0] = (-0.5).hex()
+    reseal(tmp_path / "good_run", rows)
+    with pytest.raises(ContractError, match="controls_identity"):
+        be.read_reference_history(
+            tmp_path / "good_run", backend.problem.layout, good_id
+        )
+
+
 # Exact original time words are appended below from the already reviewed plan;
 # tests never access the archive, build the device, or open a historical gzip.
 

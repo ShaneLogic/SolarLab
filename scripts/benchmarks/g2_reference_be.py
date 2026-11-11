@@ -28,6 +28,7 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from perovskite_sim.physics.compensated import DD
 from scripts.benchmarks.conservative_device import EquationBudget, conservative_be_step
 from scripts.benchmarks.contract_prototype import (
     ContractError,
@@ -64,6 +65,10 @@ SECANT_ARITHMETICS = {
     "public-double-arithmetic-divide-v1": DoubleArithmetic,
     "public-float-arithmetic-divide-v1": FloatArithmetic,
 }
+INITIAL_PREDICTOR_POLICIES = (
+    "zero-local-increment-v1",
+    "affine-input-lift-v1",
+)
 GIB = 1024**3
 TAG_FIELDS = (
     "segment",
@@ -458,11 +463,92 @@ class Backend:
     observe_point: Callable[[Point, Any], dict]
     observe_interval: Callable[[Point, Point, Any, Any, TimeStep], dict]
     metadata: dict
+    initial_predictor: Mapping[str, Any] | None = None
+
+
+def _validate_initial_predictor(
+    spec: Any, layout_size: int, input_count: int
+) -> dict:
+    _require(
+        isinstance(spec, Mapping)
+        and type(spec.get("policy")) is str
+        and spec["policy"] in INITIAL_PREDICTOR_POLICIES,
+        "initial_predictor_policy",
+    )
+    policy = spec["policy"]
+    if policy == "zero-local-increment-v1":
+        _require(set(spec) == {"policy"}, "initial_predictor_fields")
+        return {"policy": policy}
+    _require(
+        set(spec) == {"policy", "lift_hex"} and input_count > 0,
+        "initial_predictor_fields",
+    )
+    rows = spec["lift_hex"]
+    _require(
+        isinstance(rows, (list, tuple)) and len(rows) == layout_size,
+        "initial_predictor_shape",
+    )
+    lift_hex = []
+    for row in rows:
+        _require(
+            isinstance(row, (list, tuple)) and len(row) == input_count,
+            "initial_predictor_shape",
+        )
+        lift_hex.append(
+            [float(_hex_time(entry, nonnegative=False)).hex() for entry in row]
+        )
+    return {"policy": policy, "lift_hex": lift_hex}
+
+
+def _initial_predictor_spec(backend: Backend) -> dict:
+    spec = (
+        {"policy": "zero-local-increment-v1"}
+        if backend.initial_predictor is None
+        else backend.initial_predictor
+    )
+    return _validate_initial_predictor(
+        spec, backend.problem.layout.size, backend.problem.input_count
+    )
+
+
+def _predict_initial_increment(
+    spec: Mapping[str, Any],
+    layout_size: int,
+    left_inputs: Any,
+    right_inputs: Any,
+) -> PrimitiveExpansion:
+    """Boundary-consistent initial trial increment; never alters the BE residual."""
+    left = np.asarray(left_inputs, dtype=float)
+    right = np.asarray(right_inputs, dtype=float)
+    _require(
+        left.ndim == 1
+        and left.shape == right.shape
+        and np.isfinite(left).all()
+        and np.isfinite(right).all(),
+        "initial_predictor_inputs",
+    )
+    validated = _validate_initial_predictor(spec, layout_size, left.size)
+    if validated["policy"] == "zero-local-increment-v1" or np.array_equal(
+        left, right
+    ):
+        return PrimitiveExpansion.from_value(np.zeros(layout_size))
+    lift = np.array(
+        [[float.fromhex(entry) for entry in row] for row in validated["lift_hex"]],
+        dtype=float,
+    )
+    acc = DD(np.zeros(layout_size))
+    for col in range(left.size):
+        if right[col] != left[col] and np.any(lift[:, col] != 0.0):
+            da = DD(float(right[col])) - DD(float(left[col]))
+            acc = acc + DD(lift[:, col]) * da
+    high = np.where(acc.hi == 0.0, 0.0, np.asarray(acc.hi, dtype=float))
+    low = np.where(acc.lo == 0.0, 0.0, np.asarray(acc.lo, dtype=float))
+    return PrimitiveExpansion.from_value(DoubleArray(high, low))
 
 
 def effective_controls(backend: Backend) -> dict:
     """Expose the exact applied BE and observation controls for pre-run pinning."""
-    return {
+    controls = {
         "method": METHOD,
         "step_options": dict(STEP_OPTIONS),
         "storage_secant_arithmetic": _secant_arithmetic(backend.problem),
@@ -479,6 +565,9 @@ def effective_controls(backend: Backend) -> dict:
         },
         "observation_controls": backend.metadata["observation_controls"],
     }
+    if backend.initial_predictor is not None:
+        controls["initial_predictor"] = _initial_predictor_spec(backend)
+    return controls
 
 
 def _secant_arithmetic(problem: Any) -> str:
@@ -1088,7 +1177,11 @@ def supervised_stage(manifest, plan, action):
 
 
 def _check_newton(
-    row: Mapping, left: Point, right: Point, ratios: tuple[Fraction, ...]
+    row: Mapping,
+    left: Point,
+    right: Point,
+    ratios: tuple[Fraction, ...],
+    predictor_spec: Mapping[str, Any] | None = None,
 ) -> None:
     """Validate required diagnostics, iterate chain and accounting, not E3 bounds."""
     iterations, summary = row.get("newton_iterations"), row.get("newton_summary")
@@ -1107,9 +1200,17 @@ def _check_newton(
         },
         "newton_diagnostics",
     )
+    spec = (
+        {"policy": "zero-local-increment-v1"}
+        if predictor_spec is None
+        else predictor_spec
+    )
+    initial_local = _predict_initial_increment(
+        spec, left.state.layout.size, left.inputs, right.inputs
+    )
     initial = _coordinate_trial(
         left,
-        PrimitiveExpansion.from_value(np.zeros(left.state.layout.size)),
+        initial_local,
         right.time,
         right.inputs,
     )
@@ -1331,6 +1432,17 @@ def run_reference(
         and backend.initial.time == backend.segments[0].start,
         "initial_binding",
     )
+    predictor_spec = _initial_predictor_spec(backend)
+    if (
+        predictor_spec["policy"] == "affine-input-lift-v1"
+        and "voltage_lift_map" in input_payload
+    ):
+        _require(
+            isinstance(input_payload["voltage_lift_map"], Mapping)
+            and predictor_spec["lift_hex"]
+            == input_payload["voltage_lift_map"].get("lift_hex"),
+            "initial_predictor_request_binding",
+        )
     guard()
     _require(backend.feasible(backend.initial), "initial_domain")
     directory = Path(directory)
@@ -1524,6 +1636,15 @@ def run_reference(
                 guard()
                 return backend.feasible(point)
 
+            phase = "step_guard"
+            initial_increment = measured(
+                "step_validation",
+                _predict_initial_increment,
+                predictor_spec,
+                backend.problem.layout.size,
+                last_point.inputs,
+                inputs,
+            )
             phase = "be_step"
             step = measured(
                 "be_step",
@@ -1535,6 +1656,7 @@ def run_reference(
                 scaling=backend.scaling,
                 budgets=backend.budgets,
                 inputs=inputs,
+                initial_increment=initial_increment,
                 feasible=feasible,
                 **STEP_OPTIONS,
             )
@@ -1581,9 +1703,7 @@ def run_reference(
                         "step_validation",
                         _coordinate_trial,
                         step.left,
-                        PrimitiveExpansion.from_value(
-                            np.zeros(backend.problem.layout.size)
-                        ),
+                        initial_increment,
                         step.right.time,
                         step.right.inputs,
                     ).identity,
@@ -1621,6 +1741,7 @@ def run_reference(
                 step.left,
                 step.right,
                 step.residual_ratios,
+                predictor_spec,
             )
             phase = "accepted_step_write"
             row = emit("be_accepted_step", **step_payload)
@@ -1948,6 +2069,7 @@ def read_reference_history(
     segment = None
     generation = 0
     expected_schedule = None
+    predictor_spec = {"policy": "zero-local-increment-v1"}
     next_interval = 1
     cumulative = [{"center": [0, 1], "radius": [0, 1]} for _ in range(3)]
     final = None
@@ -2040,22 +2162,39 @@ def read_reference_history(
                     and row["scientific_pass"] is False,
                     "header_physical_semantics",
                 )
-                controls = {
-                    k: row[k]
-                    for k in (
-                        "method",
-                        "step_options",
-                        "storage_secant_arithmetic",
-                        "equation_budgets",
-                        "solver_scaling",
-                        "observation_controls",
-                    )
-                }
+                control_keys = (
+                    "method",
+                    "step_options",
+                    "storage_secant_arithmetic",
+                    "equation_budgets",
+                    "solver_scaling",
+                    "observation_controls",
+                ) + (("initial_predictor",) if "initial_predictor" in row else ())
+                controls = {k: row[k] for k in control_keys}
                 _require(
                     digest(controls) == expected_identity.controls_sha256
                     and row["step_options"] == STEP_OPTIONS,
                     "controls_identity",
                 )
+                predictor_spec = (
+                    _validate_initial_predictor(
+                        row["initial_predictor"],
+                        layout.size,
+                        len(previous_point.inputs),
+                    )
+                    if "initial_predictor" in row
+                    else {"policy": "zero-local-increment-v1"}
+                )
+                if (
+                    predictor_spec["policy"] == "affine-input-lift-v1"
+                    and "voltage_lift_map" in request
+                ):
+                    _require(
+                        isinstance(request["voltage_lift_map"], Mapping)
+                        and predictor_spec["lift_hex"]
+                        == request["voltage_lift_map"].get("lift_hex"),
+                        "initial_predictor_request_binding",
+                    )
                 secant_arithmetic = row["storage_secant_arithmetic"]
                 _require(
                     secant_arithmetic in SECANT_ARITHMETICS,
@@ -2235,7 +2374,7 @@ def read_reference_history(
                     _require(
                         set(row["solver_counts"]) == set(solver_totals), "solver_counts"
                     )
-                    _check_newton(row, previous_point, right, ratios)
+                    _check_newton(row, previous_point, right, ratios, predictor_spec)
                     for k in solver_totals:
                         _require(_integer(row["solver_counts"][k]), "solver_counts")
                         solver_totals[k] += row["solver_counts"][k]
@@ -2892,6 +3031,10 @@ def prepare_B_backend(
             "native_history_created": False,
             "model_id": definition.id,
             "scientific_qualification": False,
+        },
+        initial_predictor={
+            "policy": "affine-input-lift-v1",
+            "lift_hex": [[float(v).hex() for v in row] for row in mapping.lift],
         },
     )
 
