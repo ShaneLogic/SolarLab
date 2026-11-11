@@ -1,9 +1,10 @@
 """Bitwise DC2D migration, against frozen oracles and the unchanged readouts.
 
 The twenty harness states are algebra probes, not accepted steady results.
-Set SOLARLAB_ASSEMBLY_2D_BASELINE to the pinned gate NPZ to additionally
-compare the raw arrays captured at 4c7fb353; the repository's frozen digest
-oracle is checked on its capture environment. Live old-vs-new comparisons
+The checked-in gate NPZ retains the raw arrays captured at 4c7fb353;
+SOLARLAB_ASSEMBLY_2D_BASELINE may explicitly override its location with the
+same pinned bytes. Raw arrays and the repository's frozen digest oracle
+are checked on their capture environment. Live old-vs-new comparisons
 run on every platform. No baseline is rewritten and no solver is called.
 """
 
@@ -36,6 +37,7 @@ from support.assembly_references import Probe, REFERENCE_FACTORIES, ReferenceCas
 
 FACTORIES = ("dc2d:fixed", "dc2d:contacts", "dc2d:ct", "dc2d:grain", "dc2d:composed")
 BASELINE_SHA256 = "dee5eae717fbba920fa0d8ddd1dc7d657beb7d33dca34ad594d00031fd687345"
+BASELINE = Path(__file__).with_name("fixtures") / "dc2d_gate_v1.npz"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -51,10 +53,7 @@ def cases() -> dict[str, ReferenceCase]:
 
 @pytest.fixture(scope="module")
 def gate_baseline(frozen_digests: tuple[Callable[[Any], dict[str, Any]], dict[str, Any]]) -> Iterator[Any]:
-    filename = os.environ.get("SOLARLAB_ASSEMBLY_2D_BASELINE")
-    if filename is None:
-        yield None
-        return
+    filename = os.environ.get("SOLARLAB_ASSEMBLY_2D_BASELINE", str(BASELINE))
     path = Path(filename)
     assert hashlib.sha256(path.read_bytes()).hexdigest() == BASELINE_SHA256
     with np.load(path, allow_pickle=False) as baseline:
@@ -117,13 +116,12 @@ def test_all_twenty_states_match_frozen_original_arrays(
         candidate = assembled_capture(case, state)
         assert candidate.S is None and candidate.S_u is None and candidate.M is None
         assert digest(candidate) == expected[name]["states"][state.name]["quantities"]
-        if gate_baseline is not None:
-            prefix = f"{name}__{state.name}"
-            assert_bits(gate_baseline[prefix + "_u"], state.u)
-            assert_bits(gate_baseline[prefix + "_F"], candidate.F)
-            assert_bits(gate_baseline[prefix + "_J_data"], candidate.J.data)
-            assert np.array_equal(gate_baseline[prefix + "_J_indices"], candidate.J.indices)
-            assert np.array_equal(gate_baseline[prefix + "_J_indptr"], candidate.J.indptr)
+        prefix = f"{name}__{state.name}"
+        assert_bits(gate_baseline[prefix + "_u"], state.u)
+        assert_bits(gate_baseline[prefix + "_F"], candidate.F)
+        assert_bits(gate_baseline[prefix + "_J_data"], candidate.J.data)
+        assert np.array_equal(gate_baseline[prefix + "_J_indices"], candidate.J.indices)
+        assert np.array_equal(gate_baseline[prefix + "_J_indptr"], candidate.J.indptr)
     request.node.user_properties.append(("frozen_parity", {"factory": name, "states": len(case.states),
         "F_changed_words": 0, "J_changed_words": 0, "gate_NPZ": gate_baseline is not None}))
 

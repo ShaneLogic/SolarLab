@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-Project trees: `perovskite-sim/` (Python simulator and backend), root `web/`
-(the frontend), plus `docs/figures/`
-(only the PNGs the root README embeds). **`perovskite-sim/` has its own `CLAUDE.md`** with exhaustive architecture notes (solver hot paths, TMM optics, backend SSE pattern, frontend panel structure, test BLAS-pinning gotcha, etc.). **Always read `perovskite-sim/CLAUDE.md`** — it is the authoritative guide.
+The active package lives in `src/solarlab/`, with the service in
+`src/solarlab_server/`, root `tests/`, `examples/` and `web/`. Read
+[Development Guide](docs/DevelopmentGuide.md) for the current extension and
+validation workflow. `perovskite-sim/` is the retained legacy engine and has
+its own `CLAUDE.md`; read that guide before working on legacy behavior.
 
 Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR #11) and Phase 2b Layer Builder UI (PR #2) merged into `main`. Short-lived feature isolation now uses `.worktrees/<name>/` (gitignored).
 
@@ -33,6 +35,7 @@ test, and be understood:
 | Package data, tooling files | `perovskite_sim/data/`, tool-fixed names | as the tool or existing scheme requires |
 | Physics contract / policy / protocol / schema / certificate docs that code, tests or configs cite | `perovskite-sim/docs/` | multi-word CamelCase, versions as `V1`, `V2` (`TwodTransportContract.md`, `ExplicitDefectSchemaV2.md`) |
 | Registries and data the reproducibility chain reads | `perovskite-sim/reproducibility/` | CamelCase (`ConfigBenchmarkMatrix.yaml`); re-pin the sha256 in the matrix after any edit |
+| Operational developer and extension guidance | `docs/` | Multi-word CamelCase, such as `DevelopmentGuide.md` |
 | Figures the root README embeds | `docs/figures/` | CamelCase, no date; regenerate under a new `V<n>` and update the README link |
 | Tutorial notebooks and run-by-path benchmark scripts | `perovskite-sim/notebooks/` | CamelCase (`JvHysteresis.ipynb`, `IonmongerBenchmark.py`) |
 
@@ -80,68 +83,59 @@ The one input file code still reads, `ScapsParams.xlsx`, stays at
 
 ## Git
 
-`origin`: `github.com/ShaneLogic/SolarLab.git`, default branch `main`.
+`origin` is `github.com/ShaneLogic/SolarLab.git`; remote `main` retains the
+published history. The user's November 10, 2026 consolidation keeps two local
+development branches and workspaces:
 
-The user authorized the full refactor on 2026-10-05. All refactor development,
-staging, commits and pushes belong on **`devel`**. Do not modify, commit to, or
-push `main`. A single coordinator-designated integrator owns branch changes,
-staging, commits and synchronization in the shared checkout. Other workers must
-verify the repository path, actual branch and HEAD before editing their assigned
-files; they must not switch branches or commit concurrently. Preserve existing
-changes and unrelated untracked files; never reset or stash them to start work.
+- **`devel`**: the shared new-core engineering and integration baseline.
+- **`AIMC`**: the proposed microscopic aging model, based on the current
+  `devel` core. Its research design is not an implemented model capability.
 
-The automatic delivery endpoint is a fully validated, reproducible release and
-a review-ready **`devel` → `main` PR**. Only the user may merge it. Agents must
-not merge, enable auto-merge, bypass branch protection, or claim `main` has been
-refactored before the human merge. Resolve safe integration conflicts and rerun
-affected checks on `devel` before requesting that final review. Any per-task
-branch advice in older plans is superseded for this shared refactor run.
+Use one active writer per checkout. Verify the actual repository path, branch
+and HEAD before editing or staging. Preserve unrelated user changes; do not
+reset or stash them to make room. Shared engineering changes belong on
+`devel`; model-specific changes belong on `AIMC` until their contracts and
+validation support integration.
 
-Follow archive `plans/Impl/ArchitectureRefactorExecutionV2.md` (V1 is frozen
-history) and keep the sole active state at archive
-`test/ArchitectureRefactor/ExecutionStateV2.json` with the append-only event log
-`test/ArchitectureRefactor/EventLogV2.jsonl`. Worker reports are evidence, not
-additional activity ledgers. Repository-required guidance stays in Git; plans,
-evidence and scientific run artifacts stay in the archive. Use the supported Orca
-task/message/lifecycle workflow and respect each Dispatch's file ownership.
+The former commander/deputy/worker terminal assignments were retired by the
+user's consolidation request. Do not restart that roster or treat old
+"in progress" terminal labels as current work. Future delegation follows the
+user's current instructions and recorded model preferences. Live user
+directions supersede historical staffing assignments.
 
-The refactor commander and sole integrator is the user-appointed Claude Code
-session `0537b216-df76-4292-bb73-949175abc111` (model `claude-opus-5-5`, effort
-`max`, Orca terminal `term_a33ad446-8ee7-473b-b4b7-00aea210c562`), appointed by
-the user on 2026-10-29 and bound to Run `run_b01db3902366` at consumer
-generation 6. It replaced Codex session `01a180c3-f826-7873-8d0b-44b2e40899c4`
-(Orca terminal `term_3c65f4db-0a9b-41c7-b337-956eff7204dd`), which served as
-deputy until the user replaced it on 2026-11-01 with Claude Code session
-`d6a3ed06-5f79-4890-bd0b-8ada951d06d6` (`claude-opus-5-5`, effort `max`, Orca
-terminal `term_ac765e70-e569-4ac0-972a-b27b4dea9e35`). The deputy makes no Git
-mutations, dispatches or state writes; it takes over only when the commander
-has been unreachable for more than 2 hours. Execution is authorized. The runnable new-core 1D research
-release has been delivered (research packages up to V8). The next delivery is
-the user-selected engineering milestone (option A, 2026-10-29): one unified
-layout/term/assembly layer serving steady, transient and AC analyses, a
-one-command green test suite, full CI coverage, and the existing new-core
-capabilities migrated onto it. Functionality not yet migrated stays explicitly
-behind the legacy facade, and G9P remains the final endpoint. The commander
-sets the product time-integration route deadline (proposed 2026-11-08). If IDA
-is not qualified by then, a new-core adaptive BDF becomes the product default
-and IDA becomes optional; final scientific gates are unchanged.
-Then continue the remaining approved scope. Clearly distinguish implementation,
-verification, and scientific qualification; legacy execution is not new-core completion.
-Routine reversible implementation and sequencing decisions belong to the commander.
-Use approximately 15-minute investigation checkpoints; after two checkpoints
-without useful evidence or progress, change the assumption, scope, or method.
-Ask the user only about changes to final scientific standards, core delivery
-scope, added resource cost, or merging main. Since 2026-11-01 (user decision)
-every commanded worker role runs `claude-opus-5-5` at effort `max` with full
-permissions and network enabled; the earlier Codex worker sessions are closed
-and their resume ids are kept in the execution state. Every
-participant's actual model/effort/permissions are verified once per session start
-from its own runtime record (Codex turn_context or Claude transcript); a requested
-setting or UI label alone is insufficient. Scientific thresholds change only
-prospectively after independent review and before the affected runs; user-facing
-acceptance targets change only with explicit user approval; old failures are
-never relabelled. R1 L2/L3 qualification is a research track decoupled from the
-product release.
+The sole active state remains archive
+`test/ArchitectureRefactor/ExecutionStateV2.json`, with append-only events in
+`test/ArchitectureRefactor/EventLogV2.jsonl`. The snapshot, pending-work
+decisions, source/evidence recovery material and session indexes are under
+`test/ArchitectureRefactor/WorkspaceConsolidationV1/`. Older formal task
+counts and independently pinned results retain their historical scope; they
+are not a current implementation percentage.
+
+The unified layout/term/assembly engineering milestone A was delivered and
+merged through PR #26 on November 1, 2026. Supported new-core 1D and steady
+2D entry points use that assembly layer; unmigrated features remain behind
+the explicit legacy boundary. Backward Euler remains the general transient
+default. Explicit BDF routes exist, but CND2 method-selection/default-switch
+work is a separate unmerged candidate.
+
+For the next CND2 review, use
+`Stage04/P04CoreV1/Core1D/AdaptiveBDFV1/Cnd2ReviewScopeDecisionV1.json` in the
+archive: the November 2 user decision adopts the interface trust standard.
+Earlier strict-scope failures remain historical. V4's committed-tree CI was
+recorded green, while independent acceptance under the new standard remains
+outstanding. November 8 was an earliest permitted switch date, not an
+automatic switch; retain every applicable prerequisite.
+
+Scientific thresholds and resource limits are unchanged. Distinguish working
+implementation, engineering verification and scientific qualification.
+G2/C2, the applicable hysteresis/SCAPS reference work, refinement and final
+G9P acceptance remain separate. R1 L2/L3 research qualification remains
+decoupled from product engineering delivery.
+
+Do not modify or push remote `main`, merge a release PR, enable auto-merge
+or bypass branch protection. Only the user merges into `main`. Keep a
+review-ready `devel` change reproducible without reintroducing old worktree
+paths, duplicate numerical implementations or unreviewed candidate defaults.
 
 ## Common Commands
 

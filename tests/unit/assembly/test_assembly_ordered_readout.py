@@ -1,8 +1,8 @@
 """The ordered port readout against the original 2D contact readout.
 
-The five 2D harness factories at their four probes (Core's 2D-gate probes,
-cross-checked against the gate's frozen ``Baseline4c7fb353.npz`` states) are
-read out through :meth:`Assembler.reaction_flux_ordered`. The Terms here
+The five 2D harness factories at their four probes are read out through
+:meth:`Assembler.reaction_flux_ordered`. Their frozen gate states are checked
+separately, with the capture guard, in ``test_assembly_two_dimensional``. The Terms here
 return the original constitutive values (SG/CT face fluxes, generation and
 the bound recombination as two plain cell parts), so only the readout
 arithmetic is under test, not a 2D F/J binding. Every fixed-reservoir port
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Any, Callable, TypeAlias
 
 import numpy as np
@@ -40,7 +39,6 @@ BLOCKS = ("potential", "electron", "hole")
 FLUX = PARTICLE / (AREA * SECOND)
 SOURCE = PARTICLE / (VOLUME * SECOND)
 BALANCE = PARTICLE / (LENGTH * SECOND)
-GATE = Path("/Users/bytedance/Intern/SolarLab/.worktrees/assembly_2d/artifacts/Assembly2DGateV1/Baseline4c7fb353.npz")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -134,7 +132,6 @@ def bits(value: object) -> bytes:
 
 
 def test_twenty_probes_read_out_every_fixed_port_bitwise(request: pytest.FixtureRequest) -> None:
-    gate = np.load(GATE) if GATE.exists() else None
     compared = changed_plain = probes = 0
     for name in FACTORIES:
         case = REFERENCE_FACTORIES[name]()
@@ -142,8 +139,6 @@ def test_twenty_probes_read_out_every_fixed_port_bitwise(request: pytest.Fixture
         assembler = readout_binding(device)
         for state in case.states:
             probes += 1
-            if gate is not None:
-                assert bits(gate[f"{name}__{state.name}_u"]) == bits(state.u)
             inputs = OperatingInputs(state.voltage_V, state.generation_scale)
             original = DC2DProblem(device, state.voltage_V, state.generation_scale).contact_particle_fluxes(state.u)
             system = assembler.evaluate(state.u, inputs, derivatives=False)
@@ -173,7 +168,7 @@ def test_twenty_probes_read_out_every_fixed_port_bitwise(request: pytest.Fixture
     assert probes == 20 and compared == 56
     request.node.user_properties.append(("ordered_readout", {
         "probes": probes, "fixed_port_vectors": compared, "changed_words": 0,
-        "plain_reaction_flux_changed_words": changed_plain, "gate_states_checked": gate is not None}))
+        "plain_reaction_flux_changed_words": changed_plain}))
 
 
 def test_the_readout_identity_records_the_operation_and_both_stencils() -> None:

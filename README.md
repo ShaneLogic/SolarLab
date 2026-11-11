@@ -47,6 +47,18 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 
 ## Overview
 
+**Continuing development:** `devel` is the shared engineering baseline;
+`AIMC` is the separate branch for the proposed microscopic aging model.
+Start with the [Development Guide](docs/DevelopmentGuide.md) for the current
+package layout, test commands, model extension boundaries and pending work.
+The package remains `solarlab==0.1.0`; full scientific qualification is still
+in progress.
+
+Supported new-core 1D and steady 2D entry points use the unified equation
+assembly. Backward Euler remains the general transient default; adaptive BDF
+is an explicit bounded route. The separate CND2 method-selection/default
+switch is not part of this baseline.
+
 **New-core development on `devel`:** the [1D research workflow](examples/research_1d/README.md)
 runs configuration, a real Poisson/drift-diffusion assembly, the new steady
 Newton solver, J–V, parameter sweeps and lossless result reading. It includes
@@ -188,6 +200,16 @@ The function named `solve_equilibrium` provides a quasi-neutral starting state; 
 
 ~~~text
 SolarLab/
+  src/solarlab/                   New core: configuration, physics, equations,
+                                  assembly, solvers, experiments, IO and identity
+  src/solarlab_server/            Registered execution, HTTP and legacy facade
+  src/solarlab_research/          Reserved research companion namespace
+  examples/research_1d/           Runnable new-core 1D workflows
+  examples/research_2d/           Runnable bounded new-core 2D workflows
+  tests/                         Root contracts, integration and runtime tests
+  reproducibility/               Active reference and transition contracts
+  pyproject.toml, uv.lock         Locked root package and development environment
+  docs/DevelopmentGuide.md        Current development and extension workflow
   docs/figures/                    Curated README and comparison figures
   perovskite-sim/
     perovskite_sim/                Python models, physics, discretization,
@@ -200,7 +222,7 @@ SolarLab/
     scripts/                      Experiments, imports, validation, plotting
     tests/                        Unit, integration, regression, validation
     notebooks/                    Exploratory workflows
-    pyproject.toml                Core package and test dependencies
+    pyproject.toml                Legacy package and test dependencies
   web/                            Vite/TypeScript/Plotly/GoldenLayout UI
   scripts/                        Repository support utilities
   docker-compose.yml              Backend/frontend development stack
@@ -218,6 +240,10 @@ automatically part of the published evidence.
 ---
 
 ## Installation
+
+For the active `devel` package, install from the repository root using the
+[locked development workflow](docs/DevelopmentGuide.md#start-from-the-root-package).
+The perovskite-sim installation below is the legacy application setup.
 
 ### Prerequisites
 
@@ -267,6 +293,11 @@ python scripts/verify_reproducibility.py --json         # registry and frozen-ba
 ---
 
 ## Running the Application
+
+The application commands below run the retained legacy backend. New-core
+process/HTTP workflows and their saved-result readers are documented in the
+[1D](examples/research_1d/README.md) and [2D](examples/research_2d/README.md)
+examples.
 
 SolarLab runs as **two processes**: a FastAPI backend that executes the simulations, and a Vite dev server that serves the UI.
 
@@ -520,6 +551,11 @@ The 2D solver is an experimental extension for lateral microstructure effects, n
 
 ## Numerical Method
 
+This table describes the retained `perovskite_sim` engine. The new core has
+shared equation assembly, dedicated nonlinear/time solvers, a Backward Euler
+default and explicit adaptive BDF routes; see the
+[development baseline](docs/DevelopmentGuide.md#current-behavior-and-limits).
+
 | Ingredient | Choice |
 |:-----------|:-------|
 | **Driver topology** | Explicit transient, direct steady-state, quasi-Fermi DC, QF frequency-domain, and 2D paths |
@@ -742,6 +778,12 @@ describe their declared historical configurations. The new ion-sweep preset carr
 ---
 
 ## Testing
+
+From the repository root, `.venv/bin/python scripts/test_all.py` runs the
+ordinary root CI pytest selections in isolated processes. Standalone web
+tests/builds, installation checks and optional scientific/slow campaigns have
+their own scope; see [Development Guide](docs/DevelopmentGuide.md).
+The commands and dated measurements below describe the legacy suite.
 
 The 2026-10-01 documentation review ran six focused modules for research-preset inventory/API round trips, SCAPS inline configuration, Calado protocol helpers, mode defaults, ionic-flux Jacobians, and solver dispatch: **77 tests passed**. This check did not rerun the full physics suite, historical grid campaigns, or external-solver comparisons quoted above.
 

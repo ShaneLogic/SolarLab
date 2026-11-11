@@ -1,6 +1,10 @@
 # OMC state
 .omc/
 .claude/
+/.codex/
+
+# Local research run records and literature, indexed outside production Git.
+/work/ignis/
 
 # OS
 .DS_Store

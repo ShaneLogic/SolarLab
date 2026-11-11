@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Any
 
 
-CONTRACT = "reproducibility/HysteresisReferenceContractV1.json"
-CONTRACT_SHA256 = "bec9fff7f5194a81492b9697f354d460413293a84aa66667c97cf5371adf8d67"
+CONTRACT = "reproducibility/HysteresisReferenceContractV2.json"
+CONTRACT_SHA256 = "9a62e36920dd558e19c196cefed6cc191c74253db05ea54a0e1644d6a22eb96a"
 ANALYTIC = "tests/numerical_contracts/AnalyticGatesV1.json"
 ANALYTIC_SHA256 = "43c9ba4ab1b6a95b3e278efcd8eed9a67dc4d5e258295c8e6961c53f7ee57201"
 PHASE_IDS = ("dark_seed", "dark_prebias", "forward_light_dwell", "forward_ramp",
