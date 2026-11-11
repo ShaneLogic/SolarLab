@@ -276,3 +276,83 @@ def test_release_job_provenance_keeps_full_pins_and_strict_source_policy(frozen,
     with pytest.raises(ValueError, match="strict_same_source"):
         bundle.verify_job_provenance(recorded.envelope(), current, **checks)
     assert bundle.canonical_json == original
+
+
+def test_target_profile_bundle_builds_roundtrips_and_verifies_without_legacy_tree(frozen, tmp_path):
+    source, _ = frozen
+    target_source = tmp_path / "target-build-source"
+    for rel in ("src", "uv.lock", "pyproject.toml", "reproducibility/RefactorTransitionBoundariesV1.json",
+                "scripts/generate_configuration_schema.py", "generated/configuration-schema.json"):
+        src_item = source / rel
+        dst_item = target_source / rel
+        if src_item.is_dir():
+            shutil.copytree(src_item, dst_item)
+        else:
+            dst_item.parent.mkdir(parents=True, exist_ok=True)
+            dst_item.write_bytes(src_item.read_bytes())
+    core_nk = target_source / "resources/nk/MAPbI3.csv"
+    core_nk.parent.mkdir(parents=True, exist_ok=True)
+    core_nk.write_bytes((source / "perovskite-sim/perovskite_sim/data/nk/MAPbI3.csv").read_bytes())
+    target_required = tuple(
+        ("resources/nk/MAPbI3.csv", "resource") if role == "resource" else (rel, role)
+        for rel, role in REQUIRED
+    )
+    commit = command(["git", "rev-parse", "HEAD"], ROOT).decode().strip()
+    target_bundle = snapshot_release_bundle(
+        target_source, build_source_commit=commit, profile="target", required_files=target_required,
+    )
+    assert target_bundle.profile == "target" and not target_bundle.can_execute
+    assert not any(item.path.startswith("site/perovskite_sim/") for item in target_bundle.files)
+    installed = tmp_path / "target-installed"
+    write_release_bundle(target_bundle, installed)
+    manifest = SourceDocument("ReleaseBundle.json", (installed / "ReleaseBundle.json").read_bytes())
+    assert read_release_bundle(manifest, installed, expected_sha256=target_bundle.sha256) == target_bundle
+    verified = verify_release_installation(
+        target_bundle, installed, expected_sha256=target_bundle.sha256,
+        module_origins=(("solarlab.config.identity", str(installed / "site/solarlab/config/identity.py")),),
+        required_modules=("solarlab.config.identity",),
+    )
+    assert verified["source_installation_verified"] is True
+    assert verified["bundle_sha256"] == target_bundle.sha256
+    assert verified["files_verified"] == len(target_bundle.files)
+
+
+def test_historical_result_provenance_verifies_against_original_source_without_relabelling(frozen):
+    from solarlab.reproducibility.job_provenance import result_provenance
+
+    bundle = frozen[1]
+    older_commit = command(["git", "rev-parse", "HEAD^"], ROOT).decode().strip()
+    historical_bundle = replace(
+        bundle,
+        build_source_commit=older_commit,
+        files=tuple(
+            replace(item, content=item.content + b"# historical\n")
+            if item.source_path == "src/solarlab/config/identity.py" else item
+            for item in bundle.files
+        ),
+    )
+    inputs = {"declared_input": "historical-standalone-case"}
+    historical_prov = historical_bundle.job_provenance(inputs, operator="test.historical")
+    historical_envelope = historical_prov.envelope()
+    saved_identity_sha = next(
+        row["sha256"] for row in historical_prov.export()["source_files"]
+        if row["path"] == "src/solarlab/config/identity.py"
+    )
+    saved_record = {
+        "job_provenance": historical_envelope,
+        "source_sha256": {"solarlab.config.identity": saved_identity_sha},
+        "source_identity": {"git_commit": older_commit},
+    }
+    current_prov = bundle.job_provenance(inputs, operator="test.historical")
+    compared = result_provenance(saved_record, current_prov, expected_inputs=inputs)
+    assert compared["status"] == "different" and compared["scientific_qualification"] is False
+    assert "git_commit" in compared["different_fields"]
+    assert "source_tree_sha256" in compared["different_fields"]
+    assert compared["producer_identity"]["record"]["git_commit"] == older_commit
+    assert compared["current_identity"]["record"]["git_commit"] == bundle.build_source_commit
+    assert saved_record["job_provenance"] == historical_envelope
+    with pytest.raises(ValueError, match="strict_same_source"):
+        result_provenance(saved_record, current_prov, strict_same_source=True, expected_inputs=inputs)
+    with pytest.raises(ValueError, match="different inputs"):
+        result_provenance(saved_record, current_prov, expected_inputs={"declared_input": "wrong"})
+

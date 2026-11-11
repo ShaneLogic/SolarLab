@@ -318,6 +318,9 @@ class IdentityInputs:
             else:
                 ceilings, switches = _material_switches(data["settings"], dict(behavior.environment),
                                                        {item.id: item for item in behavior.sources})
+                if (document["material_behavior"]["mode_ceiling"] != ceilings
+                        or document["material_behavior"]["switches"] != switches):
+                    raise ValueError("R1 material behavior switches disagree with source inspection")
                 physical = _project_r1_physics(physical, document["material_behavior"], ceilings=ceilings,
                     switches=switches, controls=document["arguments"]["controls"], reference=json.loads(behavior.reference.content))
             binding["effective_behavior"] = {"sha256": behavior.content_sha256, "context": document}
@@ -488,6 +491,8 @@ class ExecutionEngine:
             raise ValueError("execution engine must be explicitly legacy or solarlab")
         if self.name == "legacy" and type(self.behavior) not in {BehaviorContext, R1ExecutionContext}:
             raise ValueError("legacy execution identity requires an explicit BehaviorContext or complete R1ExecutionContext")
+        if isinstance(self.behavior, BehaviorContext) and self.behavior.driver == "r1_material":
+            raise ValueError("R1 execution identity requires a complete R1ExecutionContext, not material-only BehaviorContext")
         if self.name == "solarlab" and self.behavior is not None:
             raise ValueError("a legacy BehaviorContext cannot be relabelled as the solarlab engine")
 
@@ -520,6 +525,8 @@ def physics_identity(inputs: IdentityInputs) -> Identity:
 def _match_behavior(behavior: BehaviorContext | R1ExecutionContext, device: PreparedDevice, selection: Selection) -> None:
     if type(behavior) not in {BehaviorContext, R1ExecutionContext}:
         raise ValueError("actual source-bound BehaviorContext or complete R1ExecutionContext required")
+    if isinstance(behavior, BehaviorContext) and behavior.driver == "r1_material":
+        raise ValueError("R1 physics and execution identity require a complete R1ExecutionContext")
     if behavior.device.content_sha256 != device.content_sha256 or (
         isinstance(behavior, BehaviorContext) and behavior.selection.content_sha256 != selection.content_sha256
     ):

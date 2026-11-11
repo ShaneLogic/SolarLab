@@ -10,8 +10,10 @@
       "BehaviorContext",
       "CapturedPreparation",
       "behavior_source_requirements",
+      "inspect_device_optical_coherence",
       "inspect_historical_behavior",
-      "inspect_r1_material_behavior"
+      "inspect_r1_material_behavior",
+      "inspect_scaps_optical_coherence"
     ],
     "solarlab.config.device_import": [
       "import_standard_device"
@@ -577,8 +579,10 @@
       "BehaviorContext",
       "CapturedPreparation",
       "behavior_source_requirements",
+      "inspect_device_optical_coherence",
       "inspect_historical_behavior",
-      "inspect_r1_material_behavior"
+      "inspect_r1_material_behavior",
+      "inspect_scaps_optical_coherence"
     ],
     "solarlab.config.device_import": [
       "import_standard_device"

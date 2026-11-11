@@ -20,8 +20,10 @@ import pytest
 
 from solarlab.config.behavior import (
     CapturedPreparation, _verify_words, behavior_source_requirements, inspect_historical_behavior,
-    inspect_r1_material_behavior,
+    inspect_r1_material_behavior, inspect_scaps_optical_coherence,
 )
+from solarlab.config.identity import ExecutionEngine
+from solarlab.config.legacy_execution import LegacyExecutionContext
 from solarlab.config.device_import import import_standard_device
 from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.model_parameters import device_topology, layer_parameter_source
@@ -471,3 +473,110 @@ def test_r1_missing_changed_sources_backend_and_environment_refuse(r1_material_i
         inspect_r1_material_behavior(device, sources=sources, environment=(), backend="automatic")
     with pytest.raises(ValueError, match="environment"):
         inspect_r1_material_behavior(device, sources=sources, environment=(("UNKNOWN_FLAG", "1"),))
+
+
+def test_scaps_optical_coherence_surfaces_declared_vs_effective_without_changing_physics(scaps, defaults, sources):
+    import yaml
+
+    path = ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"
+    raw_source = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
+    rows = inspect_scaps_optical_coherence(raw_source, defaults=defaults)
+    assert len(rows) == 4
+    glass = rows[0]
+    assert glass == {
+        "layer": "layer_0",
+        "name": "glass",
+        "role": "substrate",
+        "parameterization": "scaps",
+        "declared_present": True,
+        "declared": True,
+        "normalized_configured": True,
+        "effective": False,
+        "historical_loader_value": False,
+        "ignored_by_legacy_loader": True,
+        "prospective_fix_owner": "P08-04",
+    }
+    for item in rows[1:]:
+        assert item["declared_present"] is False and item["declared"] is None
+        assert item["normalized_configured"] is False and item["effective"] is False
+        assert item["ignored_by_legacy_loader"] is False and item["prospective_fix_owner"] is None
+
+    behavior = context(scaps, sources)
+    diagnostics = behavior.optical_coherence_diagnostics()
+    assert diagnostics == list(rows)
+    diagnostics[0]["effective"] = True
+    assert behavior.optical_coherence_diagnostics()[0]["effective"] is False
+
+    parsed = yaml.safe_load(raw_source.content)
+    parsed["layers"][0]["incoherent"] = False
+    explicit_false = SourceDocument("explicit_false.yaml", yaml.safe_dump(parsed, sort_keys=False).encode())
+    false_glass = inspect_scaps_optical_coherence(explicit_false, defaults=defaults)[0]
+    assert false_glass["declared_present"] is True and false_glass["declared"] is False
+    assert false_glass["effective"] is False and false_glass["ignored_by_legacy_loader"] is False
+    assert false_glass["prospective_fix_owner"] is None
+
+    for invalid in ("yes", 1):
+        parsed["layers"][0]["incoherent"] = invalid
+        bad_source = SourceDocument("bad_incoherent.yaml", yaml.safe_dump(parsed, sort_keys=False).encode())
+        with pytest.raises(ValueError, match=r"layers\[0\]\.incoherent: expected boolean"):
+            inspect_scaps_optical_coherence(bad_source, defaults=defaults)
+
+
+def test_r1_behavior_context_represents_all_implicit_flags_and_blocks_material_only_execution(r1_material_inputs):
+    device, sources = r1_material_inputs
+    env = (("SOLARLAB_IFACE_QSS", "1"), ("SOLARLAB_IFACE_ALLOW_GEN", "0"), ("SOLARLAB_DOS_BAND", "0"))
+    direct = inspect_r1_material_behavior(device, sources=sources, environment=env, backend="pair")
+    sel = selection(device, "transient")
+    r1_ctx = inspect_historical_behavior(
+        device, sel, driver="r1_material", sources=sources, environment=env,
+        arguments=document("r1_call", {"backend": "pair"}),
+    )
+    exported = r1_ctx.export()
+    observed = exported["source_inspection"]
+    assert exported["driver"] == "r1_material" and exported["can_execute"] is False
+    assert exported["driver_source"] == {
+        "path": "experiments/one_dimensional_mechanism_r1.py",
+        "function": "build_r1_material",
+    }
+    assert observed["switches"] == direct["switches"] and len(observed["switches"]) == 10
+    assert observed["mode_ceiling"] == direct["mode_ceiling"]
+    assert observed["ion_flux_label"] == direct["ion_flux_label"] == "diffusion_only"
+    assert observed["declared_interface_charge_closure"] == "equilibrium_referenced"
+    assert observed["material_interface_charge_closure"] == "off"
+    assert observed["qf_material_preparation"] == {
+        "defect_energy_quadrature_order": 32,
+        "explicit_defect_charge_closure": "none",
+    }
+    assert observed["two_sided_preparation"] == {
+        "physical_boundary_volumes": True,
+        "interface_faces": [],
+        "iface_qss_two_sided_trace": True,
+    }
+    assert observed["runtime_interface_requests"]["qss"] is True
+    assert observed["runtime_interface_requests"]["allow_generation"] is False
+    assert observed["backend_representation"] == "float64-pair-v1"
+    assert r1_ctx.optical_coherence_diagnostics() == direct["optics"]["incoherence"]
+
+    dist_path = ROOT / "perovskite-sim/tests/fixtures/configs/distributed_defect_qf_dc_pn.yaml"
+    dist_src = SourceDocument(str(dist_path.relative_to(ROOT)), dist_path.read_bytes())
+    dist_dev = resolve_device(
+        import_standard_device(dist_src, id="r1_qf_dc", defaults=device.defaults),
+        device.defaults, device.resources, sources=(dist_src,),
+    )
+    qf_dc = inspect_r1_material_behavior(dist_dev, sources=sources, environment=())
+    assert qf_dc["qf_material_preparation"]["explicit_defect_charge_closure"] == "qf_dc"
+
+    from test_execution_identity_preparation import identity_inputs
+
+    with pytest.raises(ValueError, match="R1ExecutionContext"):
+        LegacyExecutionContext(behavior=r1_ctx, input_source=device.sources[0])
+    with pytest.raises(ValueError, match="R1ExecutionContext"):
+        ExecutionEngine("legacy", r1_ctx)
+    with pytest.raises(ValueError, match="R1ExecutionContext"):
+        identity_inputs(device, effective_behavior=r1_ctx)
+    with pytest.raises(ValueError, match="SCAPS capture cannot be attached"):
+        inspect_historical_behavior(
+            device, sel, driver="r1_material", sources=sources, environment=(),
+            arguments=document("r1_call", {}), capture=object(),  # type: ignore[arg-type]
+        )
+

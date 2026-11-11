@@ -199,6 +199,52 @@ def _scaps_bulk(value: dict[str, Any], v_th: Any, path: str) -> dict[str, Any]:
     return result
 
 
+def _derived_scaps_metadata_entry(
+    defect: dict[str, Any], index: int, previous_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    distribution, energy = defect["distribution"], defect["energy_level"]
+    kind = "single" if distribution["kind"] == "single_level" else "gaussian"
+    entry: dict[str, Any] = {
+        "defect_id": f"bulk_{index}",
+        "distribution": kind,
+        "energy_reference": energy["reference"],
+        "trap_depth_eV": energy["value_eV"],
+    }
+    if "width_eV" in distribution and distribution["width_eV"] is not None:
+        entry["E_char_eV"] = distribution["width_eV"]
+    elif kind == "single" and previous_meta is not None and previous_meta.get("E_char_eV") is not None:
+        entry["E_char_eV"] = previous_meta["E_char_eV"]
+    if previous_meta is not None and previous_meta.get("N_peak_m3") is not None:
+        entry["N_peak_m3"] = previous_meta["N_peak_m3"]
+    return entry
+
+
+def _input_optical_coherence(device: DeviceInput, defaults: DefaultCatalog) -> list[dict[str, Any]]:
+    legacy_effective = bool(dict(defaults.material)["incoherent"])
+    rows = []
+    for layer in device.layers:
+        editing = layer.parameters.editing_data()
+        declared_present = "incoherent" in editing
+        declared = layer.parameters.incoherent if declared_present else None
+        configured = bool(declared) if declared_present else legacy_effective
+        effective = legacy_effective if layer.parameterization == "scaps" else configured
+        ignored = bool(declared_present and declared != effective)
+        rows.append({
+            "layer": layer.id,
+            "name": layer.name,
+            "role": layer.role,
+            "parameterization": layer.parameterization,
+            "declared_present": declared_present,
+            "declared": declared,
+            "normalized_configured": configured,
+            "effective": effective,
+            "historical_loader_value": effective,
+            "ignored_by_legacy_loader": ignored,
+            "prospective_fix_owner": "P08-04" if ignored else None,
+        })
+    return rows
+
+
 def _scaps_layer(raw: dict[str, Any], before: dict[str, Any], after: dict[str, Any], path: str) -> dict[str, Any]:
     inverse = {name: (old, unit, wire_unit) for old, (name, unit, wire_unit) in SCAPS_FIELDS.items()}
     profile = {"trap_N_t_interface": ("N_t_peak_cm3", "m^-3", "cm^-3"),
@@ -225,21 +271,54 @@ def _scaps_layer(raw: dict[str, Any], before: dict[str, Any], after: dict[str, A
         else:
             target[old] = (_wire_quantity(b[name], unit, wire_unit)
                            if unit is not None and wire_unit is not None else b[name])
-    if not _same(before.get("bulk_defects", []), after.get("bulk_defects", [])):
+    bulk_before, bulk_after = before.get("bulk_defects", []), after.get("bulk_defects", [])
+    meta_before, meta_after = before.get("scaps_defect_metadata", []), after.get("scaps_defect_metadata", [])
+    bulk_changed = not _same(bulk_before, bulk_after)
+    meta_changed = not _same(meta_before, meta_after)
+    v_th_changed = bool(bulk_after) and not _same(a.get("v_th"), b.get("v_th"))
+    if bulk_changed or meta_changed or v_th_changed:
+        if meta_changed and len(meta_after) != len(bulk_after):
+            raise _Unsupported(f"{path}.scaps_defect_metadata", "scaps_partner_metadata_conflict",
+                               "SCAPS partner defect metadata count disagrees with bulk_defects.")
         singular = "bulk_defect" in raw
-        old_blocks = [raw["bulk_defect"]] if singular and raw["bulk_defect"] is not None else raw.get("bulk_defects", [])
+        old_blocks = [raw["bulk_defect"]] if singular and raw["bulk_defect"] is not None else list(raw.get("bulk_defects", []))
         blocks = []
-        for i, value in enumerate(after.get("bulk_defects", [])):
-            target = _scaps_bulk(value, b["v_th"], f"{path}.bulk_defects[{i}]")
-            previous = _scaps_bulk(before["bulk_defects"][i], a["v_th"], path) if i < len(before.get("bulk_defects", [])) else {}
-            blocks.append(_patch(old_blocks[i] if i < len(old_blocks) else {}, previous, target))
+        for i, value in enumerate(bulk_after):
+            if value.get("id") != f"bulk_{i}":
+                raise _Unsupported(f"{path}.bulk_defects[{i}].id", "scaps_bulk_defect_id",
+                                   "SCAPS positional bulk defects require sequential bulk_0..bulk_{n-1} IDs.")
+            target_block = _scaps_bulk(value, b["v_th"], f"{path}.bulk_defects[{i}]")
+            previous = _scaps_bulk(bulk_before[i], a["v_th"], path) if i < len(bulk_before) else {}
+            patched = _patch(old_blocks[i] if i < len(old_blocks) else {}, previous, target_block)
+            if meta_changed:
+                meta = meta_after[i]
+                expected_kind = "single" if value["distribution"]["kind"] == "single_level" else "gaussian"
+                expected_ref = value["energy_level"]["reference"]
+                expected_depth = value["energy_level"]["value_eV"]
+                expected_width = value["distribution"].get("width_eV")
+                if (meta["defect_id"] != f"bulk_{i}" or meta["distribution"] != expected_kind
+                        or meta["energy_reference"] != expected_ref or not _same(meta["trap_depth_eV"], expected_depth)
+                        or (expected_kind == "gaussian" and not _same(meta.get("E_char_eV"), expected_width))):
+                    raise _Unsupported(f"{path}.scaps_defect_metadata[{i}]", "scaps_partner_metadata_conflict",
+                                       "SCAPS partner defect metadata disagrees with the canonical bulk_defects declaration.")
+                if meta.get("N_peak_m3") is not None:
+                    patched["N_peak_cm3"] = _wire_quantity(meta["N_peak_m3"], "m^-3", "cm^-3")
+                else:
+                    patched.pop("N_peak_cm3", None)
+                if expected_kind == "single":
+                    if meta.get("E_char_eV") is not None:
+                        patched["E_char_eV"] = meta["E_char_eV"]
+                    else:
+                        patched.pop("E_char_eV", None)
+            blocks.append(patched)
         if singular and len(blocks) == 1:
             raw["bulk_defect"] = blocks[0]
+        elif not blocks and "defect_model" not in after and "defect_schema_version" not in after:
+            raw.pop("bulk_defect", None)
+            raw.pop("bulk_defects", None)
         else:
             raw.pop("bulk_defect", None)
             raw["bulk_defects"] = blocks
-    # Partner metadata is retained independently. A divergent duplicate cannot
-    # disappear: the complete strict roundtrip below detects it.
     return raw
 
 
@@ -416,6 +495,49 @@ def _semantic(value: DeviceInput | TandemInput) -> dict[str, Any]:
     return _without_source_metadata(value.normalized_data())
 
 
+def _sync_untouched_scaps_metadata(
+    checked_device: dict[str, Any], before_device: dict[str, Any], defaults: DefaultCatalog,
+) -> None:
+    if before_device.get("source_format") != "scaps" and not any(
+        row.get("parameterization") == "scaps" for row in before_device.get("layers", ())
+    ):
+        return
+    for before_layer, checked_layer in zip(before_device["layers"], checked_device["layers"]):
+        if before_layer.get("parameterization") != "scaps" and checked_layer.get("parameterization") != "scaps":
+            continue
+        bulk_before = before_layer.get("bulk_defects", [])
+        bulk_after = checked_layer.get("bulk_defects", [])
+        meta_before = before_layer.get("scaps_defect_metadata", [])
+        meta_after = checked_layer.get("scaps_defect_metadata", [])
+        if _same(bulk_before, bulk_after) or not _same(meta_before, meta_after):
+            continue
+        if bulk_after:
+            checked_layer["scaps_defect_metadata"] = [
+                _derived_scaps_metadata_entry(item, i, meta_before[i] if i < len(meta_before) else None)
+                for i, item in enumerate(bulk_after)
+            ]
+            checked_layer.setdefault("defect_schema_version", "solarlab-explicit-bulk-defects-v1")
+            checked_layer.setdefault("defect_model", defaults.defect_model)
+        elif "defect_model" not in checked_layer and "defect_schema_version" not in checked_layer:
+            checked_layer.pop("bulk_defects", None)
+            checked_layer.pop("scaps_defect_metadata", None)
+        else:
+            checked_layer["scaps_defect_metadata"] = []
+
+
+def _expected_semantic(
+    checked: DeviceInput | TandemInput, before: DeviceInput | TandemInput, defaults: DefaultCatalog,
+) -> dict[str, Any]:
+    semantic = _semantic(checked)
+    before_norm = before.normalized_data()
+    if isinstance(checked, TandemInput):
+        _sync_untouched_scaps_metadata(semantic["top_cell"], before_norm["top_cell"], defaults)
+        _sync_untouched_scaps_metadata(semantic["bottom_cell"], before_norm["bottom_cell"], defaults)
+    else:
+        _sync_untouched_scaps_metadata(semantic, before_norm, defaults)
+    return semantic
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, Decimal):
         return {"decimal": str(value)}
@@ -493,6 +615,13 @@ def prepare_legacy_wire(
         report["retained_legacy_evidence"] = (_data(before).get("legacy_fields") if isinstance(before, DeviceInput)
             else {side: _data(before).get(side, {}).get("legacy_fields") for side in ("top_cell", "bottom_cell")})
         devices = (checked,) if isinstance(checked, DeviceInput) else (checked.top_cell, checked.bottom_cell)
+        report["optical_coherence"] = (
+            _input_optical_coherence(checked, defaults) if isinstance(checked, DeviceInput)
+            else {
+                "top_cell": _input_optical_coherence(checked.top_cell, defaults),
+                "bottom_cell": _input_optical_coherence(checked.bottom_cell, defaults),
+            }
+        )
         report["inheritance"] = {device.id: {
             "settings_from_catalog": {name: value for name, value in defaults.device if name not in device.settings.editing_data()},
             "undeclared_layer_parameters": {layer.id: sorted(set(type(layer.parameters).model_fields) - set(layer.parameters.editing_data())) for layer in device.layers},
@@ -508,13 +637,37 @@ def prepare_legacy_wire(
         report["wire_differences"] = _differences(load_yaml_mapping(source.content), wire)
         report["reference_differences"] = {name: _differences(load_yaml_mapping(supplied[name].content), load_yaml_mapping(doc.content))
                                            for name, doc in emitted_references.items()}
-        losses = _differences(_semantic(checked), _semantic(reopened))
+        expected_semantic = _expected_semantic(checked, before, defaults)
+        losses = _differences(expected_semantic, _semantic(reopened))
         if losses:
             report["roundtrip_differences"] = losses[:64]
             report["roundtrip_difference_count"] = len(losses)
             raise _Unsupported(losses[0]["path"], "roundtrip_loss", "The strict importer cannot retain this declaration/presence; no partial wire is published.")
+        checked_words = _without_source_metadata(_data(checked))
+        if isinstance(checked, TandemInput):
+            for side in ("top_cell", "bottom_cell"):
+                if "scaps_defect_metadata" in expected_semantic[side].get("layers", [{}])[0] or any(
+                    "scaps_defect_metadata" in row for row in expected_semantic[side]["layers"]
+                ):
+                    for cw, ew in zip(checked_words[side]["layers"], expected_semantic[side]["layers"]):
+                        for k in ("scaps_defect_metadata", "defect_schema_version", "defect_model"):
+                            if k in ew and k not in cw:
+                                cw[k] = ew[k]
+                            elif k in ew and k == "scaps_defect_metadata":
+                                cw[k] = ew[k]
+                            elif k not in ew and k in cw and k in ("scaps_defect_metadata", "bulk_defects"):
+                                cw.pop(k, None)
+        else:
+            for cw, ew in zip(checked_words["layers"], expected_semantic["layers"]):
+                for k in ("scaps_defect_metadata", "defect_schema_version", "defect_model"):
+                    if k in ew and k not in cw:
+                        cw[k] = ew[k]
+                    elif k in ew and k == "scaps_defect_metadata":
+                        cw[k] = ew[k]
+                    elif k not in ew and k in cw and k in ("scaps_defect_metadata", "bulk_defects"):
+                        cw.pop(k, None)
         report["existing_import_normalization"] = _differences(
-            _without_source_metadata(_data(checked)), _without_source_metadata(_data(reopened)))
+            checked_words, _without_source_metadata(_data(reopened)))
         report["normalization_policy"] = "Wire/editing evidence retains signed zero; the existing SI importer normalizes converted zero to positive zero, reported separately without changing that contract."
         if behavior is not None:
             if type(behavior) is not BehaviorContext or not isinstance(checked, DeviceInput):

@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from solarlab.config.behavior import _mapping
+from solarlab.config.behavior import _mapping, inspect_device_optical_coherence
 from solarlab.config.device_import import import_standard_device
 from solarlab.config.legacy_wire import LegacyWire, prepare_legacy_wire
 from solarlab.config.resolve_device import resolve_device, resolve_tandem
@@ -186,9 +186,22 @@ def migrate_configuration(
         report["reverse_adapter"] = wire.export()
         if not wire.supported or wire.document != source or dict(wire.references) != supplied:
             raise ValueError("the existing reverse adapter cannot retain all original bytes; keep the old path")
+        legacy_incoherent = bool(dict(defaults.material)["incoherent"])
+        prepared_map = prepared.to_mapping()
+        if isinstance(prepared, PreparedDevice):
+            diagnostics = prepared_map.get("diagnostics", [])
+            optical_coherence: Any = inspect_device_optical_coherence(prepared, legacy_incoherent=legacy_incoherent)
+        else:
+            diagnostics = [{"cell": side, **item} for side in ("top_cell", "bottom_cell")
+                           for item in prepared_map[side].get("diagnostics", [])]
+            optical_coherence = {
+                "top_cell": inspect_device_optical_coherence(prepared.top_cell, legacy_incoherent=legacy_incoherent),
+                "bottom_cell": inspect_device_optical_coherence(prepared.bottom_cell, legacy_incoherent=legacy_incoherent),
+            }
         report.update(supported=True, proposed=_binding(document), prepared_content_sha256=prepared.content_sha256,
-                      input_declaration=json.loads(prepared.input_json), diagnostics=prepared.to_mapping().get("diagnostics", []),
-                      capability_gaps=prepared.to_mapping().get("capability_gaps", []),
+                      input_declaration=json.loads(prepared.input_json), diagnostics=diagnostics,
+                      optical_coherence=optical_coherence,
+                      capability_gaps=prepared_map.get("capability_gaps", []),
                       preparation_roundtrip_exact=True, original_wire_bytes_exact=True,
                       runtime_behavior="existing source-bound driver context still required; v2 data is not execution admission")
         return ConfigurationMigration(document, _encode(report))

@@ -249,3 +249,188 @@ def test_exact_selected_input_reconciles_derived_metadata_without_relabelling(ma
     with pytest.raises(ValueError, match="differs from the original"):
         module.read_selected_configuration_v2(matrix, SourceDocument("selection", plan.selection_json), row["id"],
             documents=(document,), defaults=context[0], resources=context[1], strict_derived_metadata=True)
+
+
+def test_scaps_and_tandem_migration_surface_declared_vs_effective_optical_coherence_without_changing_words(
+    matrix, context, plan,
+):
+    import yaml
+
+    defaults, resources = context
+    rows = plan.export()["rows"]
+    scaps_rows = [
+        row for row in rows
+        if row["migration"]["format"] == "scaps-device-v1" and row["migration"]["diagnostics"]
+    ]
+    assert scaps_rows
+    for row in scaps_rows:
+        mig = row["migration"]
+        diag = next(item for item in mig["diagnostics"] if item["code"] == "legacy_scaps_ignored_incoherent")
+        assert diag["declared"] is True and diag["historical_effective"] is False
+        glass = mig["optical_coherence"][0]
+        assert glass["declared_present"] is True and glass["declared"] is True
+        assert glass["normalized_configured"] is True and glass["effective"] is False
+        assert glass["historical_loader_value"] is False and glass["ignored_by_legacy_loader"] is True
+        assert glass["prospective_fix_owner"] == "P08-04"
+        v2_doc = next(doc for _, doc in plan.files if doc.id == mig["proposed"]["id"])
+        original = prepare_configuration(matrix, row["id"], defaults=defaults, resources=resources).prepared
+        migrated = read_configuration_v2(v2_doc, defaults=defaults, resources=resources, sources=matrix.sources.documents)
+        assert words(migrated.to_mapping()) == words(original.to_mapping())
+
+    tandem_rows = [row for row in rows if row["migration"]["format"] == "tandem-v1"]
+    assert tandem_rows
+    for row in tandem_rows:
+        assert set(row["migration"]["optical_coherence"]) == {"top_cell", "bottom_cell"}
+
+    # Verify subcell diagnostic and optical_coherence propagation on tandem migration.
+    from pathlib import PurePosixPath
+    import posixpath
+
+    tandem_entry = matrix.entry(tandem_rows[0]["id"])
+    tandem_src = matrix.sources.at_path(matrix.spec.original_path_root + "/" + tandem_entry.original_key)
+    tandem_prepared = prepare_configuration(matrix, tandem_entry.id, defaults=defaults, resources=resources).prepared
+    assert tandem_prepared is not None
+    parent = PurePosixPath(matrix.sources.reference(tandem_src.id).path).parent
+    tandem_decl = tandem_prepared.to_input()
+    tandem_refs = {
+        name: matrix.sources.at_path(posixpath.normpath(str(parent / name)))
+        for name in (tandem_decl.top_cell_reference, tandem_decl.bottom_cell_reference)
+    }
+    top_key = tandem_decl.top_cell_reference
+    top_wire = yaml.safe_load(tandem_refs[top_key].content)
+    top_wire["simulation_hints"] = {"jv_sweep": {"v_rate": 1.0}}
+    top_wire["layers"][0]["incoherent"] = True
+    synthetic_refs = {
+        **tandem_refs,
+        top_key: SourceDocument(top_key, yaml.safe_dump(top_wire, sort_keys=False).encode()),
+    }
+    tandem_mig = migrate_configuration(
+        tandem_src, format="tandem-v1", input_id="tandem_subcell_diag",
+        defaults=defaults, resources=resources, references=synthetic_refs,
+    )
+    assert tandem_mig.supported
+    exported = tandem_mig.export()
+    assert any(item.get("cell") == "top_cell" for item in exported["diagnostics"])
+    top_coherence = exported["optical_coherence"]["top_cell"][0]
+    assert top_coherence["declared_present"] is True and top_coherence["declared"] is True
+    assert top_coherence["effective"] is True and top_coherence["ignored_by_legacy_loader"] is False
+
+
+def test_scaps_bulk_defect_edits_multi_defect_promotion_and_conflict_guards_in_legacy_wire(context):
+    from copy import deepcopy
+    import yaml
+
+    from solarlab.config.legacy_wire import prepare_legacy_wire
+    from solarlab.config.scaps_input import import_scaps_device
+    from solarlab.device.inputs import DeviceInput
+
+    defaults, _ = context
+    v2_path = ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"
+    scaps_src = SourceDocument(str(v2_path.relative_to(ROOT)), v2_path.read_bytes())
+    base_input = import_scaps_device(scaps_src, id="scaps_edit", defaults=defaults)
+
+    # 1. Single-field & Gaussian promotion edits on bulk_defects without manually editing scaps_defect_metadata.
+    edited_data = deepcopy(base_input.editing_data())
+    edited_data["layers"][2]["bulk_defects"][0]["energy_level"] = {
+        "reference": "above_valence_band",
+        "value_eV": 0.55,
+    }
+    edited_data["layers"][2]["bulk_defects"][0]["kinetics"]["sigma_n_m2"] = "2e-15 cm^2"
+    edited_data["layers"][2]["bulk_defects"][1]["distribution"] = {
+        "kind": "gaussian",
+        "normalization": "integrated_total",
+        "total_density_m3": "1e12 cm^-3",
+        "width_eV": 0.08,
+        "width_convention": "scaps_characteristic_energy",
+    }
+    wire_res = prepare_legacy_wire(DeviceInput.model_validate(edited_data), source=scaps_src, defaults=defaults)
+    assert wire_res.supported and wire_res.document is not None
+    reopened = import_scaps_device(wire_res.document, id="scaps_edit", defaults=defaults)
+    meta = reopened.layers[2].scaps_defect_metadata
+    assert meta[0].energy_reference == "above_valence_band" and meta[0].trap_depth_eV == 0.55
+    assert meta[1].distribution == "gaussian" and meta[1].E_char_eV == 0.08
+    assert wire_res.export()["optical_coherence"][0]["ignored_by_legacy_loader"] is True
+
+    # 2. Singular `bulk_defect` -> plural `bulk_defects` multi-defect promotion and clearing all bulk defects.
+    singular_yaml = yaml.safe_load(scaps_src.content)
+    first_defect = singular_yaml["layers"][2].pop("bulk_defects")[0]
+    singular_yaml["layers"][2]["bulk_defect"] = first_defect
+    singular_src = SourceDocument("singular_scaps.yaml", yaml.safe_dump(singular_yaml, sort_keys=False).encode())
+    singular_in = import_scaps_device(singular_src, id="singular", defaults=defaults)
+    promoted = deepcopy(singular_in.editing_data())
+    second_defect = deepcopy(promoted["layers"][2]["bulk_defects"][0])
+    second_defect["id"] = "bulk_1"
+    second_defect["name"] = "Perovskite-VB-2"
+    second_defect["energy_level"] = {"reference": "above_valence_band", "value_eV": 0.25}
+    promoted["layers"][2]["bulk_defects"] = (*promoted["layers"][2]["bulk_defects"], second_defect)
+    promoted_wire = prepare_legacy_wire(DeviceInput.model_validate(promoted), source=singular_src, defaults=defaults)
+    assert promoted_wire.supported and promoted_wire.document is not None
+    promoted_parsed = yaml.safe_load(promoted_wire.document.content)
+    assert "bulk_defect" not in promoted_parsed["layers"][2]
+    assert len(promoted_parsed["layers"][2]["bulk_defects"]) == 2
+
+    cleared = deepcopy(singular_in.editing_data())
+    cleared["layers"][2].pop("bulk_defects", None)
+    cleared["layers"][2].pop("scaps_defect_metadata", None)
+    cleared["layers"][2].pop("defect_model", None)
+    cleared["layers"][2].pop("defect_schema_version", None)
+    cleared_wire = prepare_legacy_wire(DeviceInput.model_validate(cleared), source=singular_src, defaults=defaults)
+    assert cleared_wire.supported and cleared_wire.document is not None
+    cleared_parsed = yaml.safe_load(cleared_wire.document.content)
+    assert "bulk_defect" not in cleared_parsed["layers"][2] and "bulk_defects" not in cleared_parsed["layers"][2]
+
+    # 3. Independent scaps_defect_metadata N_peak_m3 edit patches N_peak_cm3 cleanly; conflicts fail closed.
+    meta_edit = deepcopy(base_input.editing_data())
+    meta_edit["layers"][2]["scaps_defect_metadata"][0]["N_peak_m3"] = "5e14 cm^-3"
+    meta_wire = prepare_legacy_wire(DeviceInput.model_validate(meta_edit), source=scaps_src, defaults=defaults)
+    assert meta_wire.supported and meta_wire.document is not None
+    assert yaml.safe_load(meta_wire.document.content)["layers"][2]["bulk_defects"][0]["N_peak_cm3"] == 5e14
+
+    conflict = deepcopy(base_input.editing_data())
+    conflict["layers"][2]["bulk_defects"][0]["energy_level"]["value_eV"] = 0.45
+    conflict["layers"][2]["scaps_defect_metadata"][0]["trap_depth_eV"] = 0.30
+    conflict_wire = prepare_legacy_wire(DeviceInput.model_validate(conflict), source=scaps_src, defaults=defaults)
+    assert not conflict_wire.supported and conflict_wire.document is None
+    assert conflict_wire.export()["unsupported"][0]["code"] == "scaps_partner_metadata_conflict"
+
+    bad_id = deepcopy(base_input.editing_data())
+    bad_id["layers"][2]["bulk_defects"][0]["id"] = "bulk_9"
+    bad_id_wire = prepare_legacy_wire(DeviceInput.model_validate(bad_id), source=scaps_src, defaults=defaults)
+    assert not bad_id_wire.supported and bad_id_wire.export()["unsupported"][0]["code"] == "scaps_bulk_defect_id"
+
+    bad_vth = deepcopy(base_input.editing_data())
+    bad_vth["layers"][2]["parameters"]["v_th"] = "2e7 cm/s"
+    bad_vth_wire = prepare_legacy_wire(DeviceInput.model_validate(bad_vth), source=scaps_src, defaults=defaults)
+    assert not bad_vth_wire.supported and bad_vth_wire.export()["unsupported"][0]["code"] == "scaps_bulk_representation"
+
+
+def test_duplicate_layer_display_names_edit_via_stable_ids_without_collateral_mutation(context):
+    from copy import deepcopy
+    import yaml
+
+    from solarlab.config.legacy_wire import prepare_legacy_wire
+    from solarlab.config.scaps_input import import_scaps_device
+    from solarlab.device.inputs import DeviceInput
+
+    defaults, _ = context
+    v2_path = ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"
+    parsed = yaml.safe_load(v2_path.read_bytes())
+    # Give two distinct layers the exact same display name while editing only one via stable layer_id / interface_id.
+    parsed["layers"][1]["name"] = "shared_transport"
+    parsed["layers"][3]["name"] = "shared_transport"
+    dup_src = SourceDocument("duplicate_names_scaps.yaml", yaml.safe_dump(parsed, sort_keys=False).encode())
+    imported = import_scaps_device(dup_src, id="dup_scaps", defaults=defaults)
+    assert [layer.id for layer in imported.layers] == ["layer_0", "layer_1", "layer_2", "layer_3"]
+    assert imported.layers[1].name == imported.layers[3].name == "shared_transport"
+
+    edited = deepcopy(imported.editing_data())
+    edited["layers"][3]["thickness"] = "42 nm"
+    edited["interfaces"][2]["defect"]["total_density_m2"] = "3e12 cm^-2"
+    wire_res = prepare_legacy_wire(DeviceInput.model_validate(edited), source=dup_src, defaults=defaults)
+    assert wire_res.supported and wire_res.document is not None
+    emitted = yaml.safe_load(wire_res.document.content)
+    assert emitted["layers"][1]["thickness_nm"] == 20.0
+    assert emitted["layers"][3]["thickness_nm"] == 42.0
+    assert emitted["interfaces"][0]["N_t_cm2"] == 1.0e12
+    assert emitted["interfaces"][1]["N_t_cm2"] == 3.0e12
+

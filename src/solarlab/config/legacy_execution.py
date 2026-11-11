@@ -68,6 +68,8 @@ class LegacyExecutionContext:
     def __post_init__(self) -> None:
         if type(self.behavior) is not BehaviorContext:
             raise ValueError("an actual historical BehaviorContext is required")
+        if self.behavior.driver == "r1_material":
+            raise ValueError("LegacyExecutionContext supports only the three high-level drivers; use R1ExecutionContext for R1")
         _original_input(self.behavior.device, self.input_source,
                         scaps=self.behavior.driver.startswith("scaps_"))
         inspected = self.behavior.export()

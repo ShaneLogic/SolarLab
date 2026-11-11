@@ -191,3 +191,44 @@ def test_real_random_order_sweep_fresh_binding_keeps_all_numerical_words(prepare
     assert all(value.layer("numeric_factorization").sha256 is None and not value.numerical_reuse for value in instances)
     assert sweep._resolved_json == before
     record_property("binding_payloads", json.dumps(payloads))
+
+
+def test_illumination_change_invalidates_physics_numeric_and_state_keys_without_changing_topology(
+    device, execution, layout, plan,
+):
+    illuminated = changed(device, lambda raw: raw["settings"].update(Phi=5.0e21))
+    first = bound(identity_inputs(device), execution, layout, plan)
+    second = bound(identity_inputs(illuminated), execution, layout, plan)
+    assert first.input_sha256 != second.input_sha256
+    assert first.physics_sha256 != second.physics_sha256
+    assert first.layer("topology_plan").sha256 == second.layer("topology_plan").sha256
+    assert first.layer("numeric_parameter_binding").sha256 != second.layer("numeric_parameter_binding").sha256
+    assert first.layer("working_point_initial_state").sha256 != second.layer("working_point_initial_state").sha256
+
+
+def test_ion_diffusivity_crossing_zero_with_layout_support_change_invalidates_all_four_layers(
+    device, execution, layout, plan,
+):
+    mobile_device = changed(device, lambda raw: raw["layers"][1]["parameters"].update(D_ion=1.0e-15))
+    frozen_device = changed(device, lambda raw: raw["layers"][1]["parameters"].update(D_ion=0.0))
+    mobile_layout = Layout(
+        (Support("fixture", "global", (2,)), Support("ion_cell", "global", (2,))),
+        (
+            VariableSpec("fixture_state", "fixture_owner", "fixture", (2,), ONE),
+            VariableSpec("mobile_ion", "ion_owner", "ion_cell", (2,), ONE),
+        ),
+        (
+            EquationSpec("fixture_equation", "fixture_owner", "fixture", (2,), ONE,
+                         derivative_support=("fixture_state", "mobile_ion")),
+            EquationSpec("ion_continuity", "ion_owner", "ion_cell", (2,), ONE,
+                         derivative_support=("fixture_state", "mobile_ion")),
+        ),
+    )
+    mobile_plan = SourceDocument("fixture:mobile_ion_plan", b'{"scope":"metadata_only","mobile_ion":true}')
+    mobile_matrix = SourceDocument("fixture:matrix_mobile", struct.pack("<4d", 1.0, 0.2, 0.2, 2.0))
+    frozen_matrix = SourceDocument("fixture:matrix_frozen", struct.pack("<4d", 1.0, 0.0, 0.0, 2.0))
+    mobile = bound(identity_inputs(mobile_device), execution, mobile_layout, mobile_plan, matrix=mobile_matrix)
+    frozen = bound(identity_inputs(frozen_device), execution, layout, plan, matrix=frozen_matrix)
+    for domain in CACHE_LAYERS:
+        assert mobile.layer(domain).sha256 != frozen.layer(domain).sha256
+
