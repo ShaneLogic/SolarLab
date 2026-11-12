@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from examples.research_1d.ionic_residual import prepare_single_ion_device
 from examples.research_1d.ionic_steady import controls as steady_ionic_controls
@@ -31,6 +32,8 @@ from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
 from solarlab.device.compile_multiple_ionic_1d import compile_multiple_ionic_device_1d
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.assembly.ionic_1d import AssembledMultipleIonic1DProblem
+from solarlab.equations.time_method import ALLOWLISTED_DEFAULT, resolve_time_method
+from solarlab.experiments.bdf import solve_electronic_bdf
 from solarlab.experiments.ionic_transient import (
     IonicTransientResult,
     load_ionic_steady_initial,
@@ -61,10 +64,11 @@ def test_public_transient_entry_points_keep_backward_euler_default(
     """Backward Euler remains the public default; BDF requires explicit opt-in."""
     electronic_sig = inspect.signature(solve_transient)
     ionic_sig = inspect.signature(solve_ionic_transient)
-    assert electronic_sig.parameters["method"].default == "backward_euler"
+    assert electronic_sig.parameters["method"].default is None
     assert electronic_sig.parameters["bdf_options"].default is None
-    assert ionic_sig.parameters["method"].default == "backward_euler"
+    assert ionic_sig.parameters["method"].default is None
     assert ionic_sig.parameters["bdf_options"].default is None
+    assert ALLOWLISTED_DEFAULT == ("backward_euler", None)
 
     device = compile_device_1d(load_device(), intervals_per_layer=8)
     steady_opts = SteadyOptions()
@@ -78,20 +82,51 @@ def test_public_transient_entry_points_keep_backward_euler_default(
         np.array([1.0, 1.002, 1.005]),
     )
 
+    assert (
+        resolve_time_method(
+            None,
+            compiled=device,
+            initial=initial,
+            protocol=protocol,
+            options=controls(),
+            initial_options=steady_opts,
+        ).effective
+        == "backward_euler"
+    )
     be_res = solve_transient(
         device, initial, protocol, options=controls(), initial_options=steady_opts
     )
     assert isinstance(be_res, TransientResult1D)
     assert len(be_res.accepted_times_s) == 3
 
-    bdf_res = solve_transient(
+    custom_bdf = BDFOptions(1e-7, adaptive=False, max_order=2)
+    with pytest.raises(ValueError, match="production BDF runs only the frozen profile"):
+        solve_transient(
+            device,
+            initial,
+            protocol,
+            options=controls(),
+            initial_options=steady_opts,
+            method="bdf",
+            bdf_options=custom_bdf,
+        )
+    with pytest.raises(ValueError, match="BDF is not selectable"):
+        solve_transient(
+            device,
+            initial,
+            protocol,
+            options=controls(),
+            initial_options=steady_opts,
+            method="bdf",
+        )
+
+    bdf_res = solve_electronic_bdf(
         device,
         initial,
         protocol,
         options=controls(),
         initial_options=steady_opts,
-        method="bdf",
-        bdf_options=BDFOptions(1e-7, adaptive=False, max_order=2),
+        bdf_options=custom_bdf,
     )
     assert isinstance(bdf_res, BDFResult)
     assert bdf_res.completed
