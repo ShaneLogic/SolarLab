@@ -16,7 +16,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from solarlab.contracts import frozen_array
-from solarlab.mesh.geometry_2d import RECTANGULAR_HALF_ENDPOINT_2D_V1, RectangularGeometry2D
+from solarlab.mesh.geometry_2d import RECTANGULAR_2D_NAMES, RectangularGeometry2D
 from solarlab.physics.transport.electrochemical_flux import CarrierFaceFlux, CarrierFaceFluxes, stable_sg_particle_flux
 from solarlab.physics.transport.field_mobility import FieldMobilityFaceParameters, linearize_field_mobility
 from solarlab.physics.transport.field_mobility_tangents import (
@@ -49,8 +49,8 @@ class FieldTransport2D:
         require_field_measure(self.field_measure)
         if self.field_measure != FACE_NORMAL_COMPONENT_2D:
             raise FieldMobilityCapabilityError("2D CT requires the declared normal-face-component field")
-        if not isinstance(self.geometry, RectangularGeometry2D) or self.geometry.name != RECTANGULAR_HALF_ENDPOINT_2D_V1:
-            raise FieldMobilityCapabilityError("2D CT requires the nonperiodic half-endpoint face geometry")
+        if not isinstance(self.geometry, RectangularGeometry2D) or self.geometry.name not in RECTANGULAR_2D_NAMES:
+            raise FieldMobilityCapabilityError("2D CT requires a supported half-endpoint 2D face geometry")
         if not np.isfinite(self.thermal_voltage_V) or self.thermal_voltage_V <= 0:
             raise ValueError("field transport requires positive finite thermal voltage")
         count = self.geometry.face_spacing_m.size

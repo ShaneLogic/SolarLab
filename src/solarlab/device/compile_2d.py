@@ -30,6 +30,8 @@ from solarlab.units import normalize_quantity
 
 CLASSICAL_2D_DC_V1 = "classical_mb_fixed_reservoir_neumann_2d_dc_v1"
 CLASSICAL_2D_CONTACTS_V1 = "classical_mb_carrier_exchange_neumann_2d_dc_v1"
+CLASSICAL_2D_PERIODIC_DC_V1 = "classical_mb_fixed_reservoir_periodic_2d_dc_v1"
+CLASSICAL_2D_PERIODIC_CONTACTS_V1 = "classical_mb_carrier_exchange_periodic_2d_dc_v1"
 _GEOMETRY_FIELDS = frozenset({"kind", "lateral_length", "Nx", "Ny_per_layer", "lateral_bc", "microstructure"})
 
 
@@ -49,8 +51,8 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
             raise CapabilityError("unsupported_classical_2d_dc: execution field " + name)
     if spatial.lateral_length is None or spatial.Nx is None or spatial.Ny_per_layer is None:
         raise CapabilityError("2D DC requires explicit lateral_length, Nx and Ny_per_layer")
-    if spatial.lateral_bc != "neumann":
-        raise CapabilityError("2D DC requires explicit zero-normal-flux neumann lateral boundaries")
+    if spatial.lateral_bc not in ("neumann", "periodic"):
+        raise CapabilityError("2D DC requires explicit 'neumann' or 'periodic' lateral boundaries")
     if spatial.Ny_per_layer < 2:
         raise ValueError("Ny_per_layer must be at least two intervals")
     data = prepared.to_mapping()
@@ -83,7 +85,9 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
         raise CapabilityError("unsupported_classical_2d_dc: explicit defect populations are not bound")
     length = normalize_quantity(spatial.lateral_length, "m")
     y_geometry = half_endpoint_geometry(column.nodes_m, [plane.position_m for plane in column.geometry.interfaces])
-    geometry = RectangularGeometry2D(np.linspace(0.0, length, spatial.Nx + 1), y_geometry)
+    geometry = RectangularGeometry2D(
+        np.linspace(0.0, length, spatial.Nx + 1), y_geometry, lateral_bc=spatial.lateral_bc
+    )
     alpha, eps = np.empty(column.node_count), np.empty(column.node_count)
     for layer, mask in zip(prepared.layers, column.parameters.layer_masks):
         values = dict(layer.parameters)
@@ -94,7 +98,7 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
     grains = bind_grain_regions_2d(prepared, spatial, geometry)
     faceD = []
     for carrier in ("electron", "hole"):
-        faceD.append(np.r_[np.repeat(getattr(column.parameters, carrier + "_diffusivity_m2_s"), geometry.nx - 1),
+        faceD.append(np.r_[np.repeat(getattr(column.parameters, carrier + "_diffusivity_m2_s"), geometry.x_faces_per_row),
                            np.repeat(getattr(column, carrier + "_diffusivity_faces_m2_s"), geometry.nx)])
     empirical: dict[str, np.ndarray] = {}
     for name in ("v_sat_n", "v_sat_p", "ct_beta_n", "ct_beta_p", "pf_gamma_n", "pf_gamma_p"):
@@ -107,8 +111,11 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
         ct_beta_n=empirical["ct_beta_n"], ct_beta_p=empirical["ct_beta_p"],
         pf_gamma_n=empirical["pf_gamma_n"], pf_gamma_p=empirical["pf_gamma_p"])
     declaration = spatial.model_dump_json().encode()
-    contact_model = (CLASSICAL_2D_DC_V1 if all(channel.kind == "fixed_reservoir" for channel in column.channels)
-                     else CLASSICAL_2D_CONTACTS_V1)
+    fixed_contacts = all(channel.kind == "fixed_reservoir" for channel in column.channels)
+    if spatial.lateral_bc == "neumann":
+        contact_model = CLASSICAL_2D_DC_V1 if fixed_contacts else CLASSICAL_2D_CONTACTS_V1
+    else:
+        contact_model = CLASSICAL_2D_PERIODIC_DC_V1 if fixed_contacts else CLASSICAL_2D_PERIODIC_CONTACTS_V1
     identity = hashlib.sha256(json.dumps((contact_model, prepared.content_sha256, column.identity,
                                          geometry.sha256, generation.binding_sha256, declaration.decode()),
                                         separators=(",", ":")).encode()).hexdigest()

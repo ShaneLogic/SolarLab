@@ -20,7 +20,7 @@ from solarlab.device.optical_generation import (
     PHOTON_BUDGET_RTOL, OpticalGeneration1D, bind_optical_generation_1d,
 )
 from solarlab.device.resolved import PreparedDevice
-from solarlab.mesh.geometry_2d import RECTANGULAR_HALF_ENDPOINT_2D_V1, RectangularGeometry2D
+from solarlab.mesh.geometry_2d import RECTANGULAR_2D_NAMES, RectangularGeometry2D
 from solarlab.physics.generation.profile import StaleGenerationProfileError
 
 OPTICAL_BINDING_2D_V1 = "uniform_lateral_coherent_front_tmm_half_cells_2d_v1"
@@ -43,8 +43,8 @@ class OpticalGeneration2D:
     identity_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.geometry, RectangularGeometry2D) or self.geometry.name != RECTANGULAR_HALF_ENDPOINT_2D_V1:
-            raise ValueError("optical2D requires the explicit nonperiodic half-endpoint geometry")
+        if not isinstance(self.geometry, RectangularGeometry2D) or self.geometry.name not in RECTANGULAR_2D_NAMES:
+            raise ValueError("optical2D requires a supported half-endpoint 2D geometry")
         if not isinstance(self.optical_y, OpticalGeneration1D):
             raise TypeError("optical2D requires the actual existing1D optical binding")
         if not self.prepared_sha256:

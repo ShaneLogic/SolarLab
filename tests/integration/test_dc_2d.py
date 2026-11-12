@@ -207,7 +207,7 @@ def test_width_changes_integrated_current_but_not_uniform_density(prepared: Prep
     assert wide.identity != device.identity and wide.geometry.sha256 != device.geometry.sha256
 
 
-@pytest.mark.parametrize("field,value", [("lateral_bc", "periodic"), ("lateral_length", None), ("Ny_per_layer", 1), ("settle_t", 1e-6)])
+@pytest.mark.parametrize("field,value", [("lateral_bc", None), ("lateral_length", None), ("Ny_per_layer", 1), ("settle_t", 1e-6)])
 def test_unbound_spatial_modes_are_rejected(prepared: PreparedDevice, field: str, value: Any) -> None:
     data = example.spatial_input().editing_data()
     data[field] = value

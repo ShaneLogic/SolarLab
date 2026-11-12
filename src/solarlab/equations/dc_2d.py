@@ -132,7 +132,7 @@ class CompiledDevice2D:
         for carrier in ("electron", "hole"):
             nodal = getattr(column.parameters, carrier + "_diffusivity_m2_s")
             vertical = getattr(column, carrier + "_diffusivity_faces_m2_s")
-            values = np.r_[np.repeat(nodal, geometry.nx - 1), np.repeat(vertical, geometry.nx)]
+            values = np.r_[np.repeat(nodal, geometry.x_faces_per_row), np.repeat(vertical, geometry.nx)]
             if np.any(values <= 0.0):
                 raise ValueError("2D DC requires positive finite carrier diffusivities")
             object.__setattr__(self, carrier + "_diffusivity_faces_m2_s", frozen_array(values))
@@ -142,7 +142,9 @@ class CompiledDevice2D:
                     or not np.array_equal(model.base_electron_diffusivity_m2_s, self.electron_diffusivity_faces_m2_s)
                     or not np.array_equal(model.base_hole_diffusivity_m2_s, self.hole_diffusivity_faces_m2_s)):
                 raise ValueError("field transport must match the exact2D grid, temperature and baseD")
-        horizontal_capacitance = (VACUUM_PERMITTIVITY_F_M * eps[:, None] / np.diff(geometry.x_m)[None, :]).ravel()
+        dx_row = (np.diff(geometry.x_m) if geometry.lateral_bc == "neumann"
+                  else geometry.face_spacing_m[:geometry.nx])
+        horizontal_capacitance = (VACUUM_PERMITTIVITY_F_M * eps[:, None] / dx_row[None, :]).ravel()
         object.__setattr__(self, "face_capacitance_F_m2", frozen_array(np.r_[
             horizontal_capacitance, np.repeat(column.poisson.face_capacitance_F_m2, geometry.nx)]))
         faces = geometry.face_spacing_m.size
