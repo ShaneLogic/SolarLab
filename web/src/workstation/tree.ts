@@ -1,5 +1,10 @@
 import type { Workspace, Device, Experiment, Run } from './types'
 import { describeActivePhysics } from '../active-physics'
+import { getExperimentTreeLabelHTML } from './experiment-catalog'
+import {
+  formatQualificationBadge,
+  resolveRunExecutionPhysics,
+} from './execution-physics'
 
 function escapeHtml(s: string): string {
   return s
@@ -11,43 +16,14 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * Compact tier badge with a hover tooltip that previews the active-
- * physics summary that the device's current tier + parameters will
- * activate at run time. The tooltip mirrors ``describeActivePhysics``
- * (frontend) and ``backend/main.py:_describe_active_physics`` so the
- * pre-run preview matches the post-run truth in shape if not in
- * verbosity. Visible text stays at the original 4-character tier name
- * to avoid disturbing the tree-row layout.
+ * Compact pre-run legacy tier badge for a declared device configuration.
+ * Tooltip explicitly distinguishes pre-run declared parameters from post-run
+ * backend execution manifests.
  */
 function tierBadge(d: Device): string {
   const tier = d.tier
-  const physics = describeActivePhysics(d.config)
+  const physics = `Pre-run declared configuration (not an execution manifest) — ${describeActivePhysics(d.config)}`
   return `<span class="tier-badge tier-badge-${tier}" title="${escapeHtml(physics)}">${tier.toUpperCase()}</span>`
-}
-
-/**
- * Returns experiment label as HTML. May contain <sub> tags for subscript
- * typography (V_oc, L_g, J_0, etc.). Strings are hard-coded source
- * constants, so callers can inject the result as innerHTML directly.
- */
-function experimentLabelHTML(kind: Experiment['kind']): string {
-  switch (kind) {
-    case 'jv': return 'J–V Sweep'
-    case 'impedance': return 'Impedance'
-    case 'dynamic_defect_transient': return 'Defect–Ion Transient'
-    case 'degradation': return 'Degradation'
-    case 'tpv': return 'TPV'
-    case 'current_decomp': return 'Current Decomp.'
-    case 'spatial': return 'Spatial Profiles'
-    case 'dark_jv': return 'Dark J–V'
-    case 'suns_voc': return 'Suns–V<sub>oc</sub>'
-    case 'voc_t': return 'V<sub>oc</sub>(T)'
-    case 'eqe': return 'EQE / IPCE'
-    case 'el': return 'EL / ΔV<sub>nr</sub>'
-    case 'mott_schottky': return 'Mott–Schottky (C–V)'
-    case 'jv_2d': return 'J–V Sweep (2D)'
-    case 'voc_grain_sweep': return 'V<sub>oc</sub>(L<sub>g</sub>) Grain Sweep'
-  }
 }
 
 function runLabel(r: Run): string {
@@ -57,15 +33,31 @@ function runLabel(r: Run): string {
   return `Run ${hh}:${mm}`
 }
 
+function runExecutionBadge(r: Run): string {
+  const receipt = resolveRunExecutionPhysics(r)
+  const qual = formatQualificationBadge(receipt)
+  const title = `${receipt.summary} | ${qual.detail}`
+  if (qual.explicitUnqualified) {
+    return `<span class="tier-badge tier-badge-legacy" data-test="tree-run-qualification" title="${escapeHtml(title)}">PREVIEW</span>`
+  }
+  if (receipt.source === 'execution_manifest' || receipt.source === 'worker_result') {
+    return `<span class="tier-badge tier-badge-full" data-test="tree-run-manifest" title="${escapeHtml(title)}">MANIFEST</span>`
+  }
+  return ''
+}
+
 function renderRun(deviceId: string, experimentId: string, r: Run, activeRunId: string | null): string {
   const active = r.id === activeRunId ? ' tree-node-active' : ''
+  const receipt = resolveRunExecutionPhysics(r)
   return `
     <div class="tree-node tree-node-run${active}"
          data-device-id="${escapeHtml(deviceId)}"
          data-experiment-id="${escapeHtml(experimentId)}"
-         data-run-id="${escapeHtml(r.id)}">
+         data-run-id="${escapeHtml(r.id)}"
+         title="${escapeHtml(receipt.summary)}">
       <span class="tree-icon">▶</span>
       <span class="tree-label">${escapeHtml(runLabel(r))}</span>
+      ${runExecutionBadge(r)}
     </div>`
 }
 
@@ -77,7 +69,7 @@ function renderExperiment(deviceId: string, e: Experiment, ws: Workspace): strin
          data-device-id="${escapeHtml(deviceId)}"
          data-experiment-id="${escapeHtml(e.id)}">
       <span class="tree-icon">🧪</span>
-      <span class="tree-label">${experimentLabelHTML(e.kind)}</span>
+      <span class="tree-label">${getExperimentTreeLabelHTML(e.kind)}</span>
     </div>
     <div class="tree-children">${runs}</div>`
 }

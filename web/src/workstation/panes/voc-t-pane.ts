@@ -3,6 +3,7 @@ import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import type { DeviceConfig, VocTResult } from '../../types'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface VocTPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -62,13 +63,15 @@ export function mountVocTPane(container: HTMLElement, opts: VocTPaneOptions): vo
         streamJobEvents<VocTResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result as VocTResult & { active_physics?: string }
+            const { pure, receipt } = extractExecutionPhysics(result as VocTResult & { active_physics?: string })
             const runResult: RunResult = { kind: 'voc_t', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }

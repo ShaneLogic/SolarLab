@@ -4,6 +4,7 @@ import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import type { DeviceConfig, DynamicDefectTransientResult } from '../../types'
 import { numField, readNum, setStatus } from '../../ui-helpers'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface DynamicDefectTransientPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -94,7 +95,7 @@ export function mountDynamicDefectTransientPane(
           {
             onProgress: ev => progressBar.update(ev),
             onResult: result => {
-              const { active_physics, ...pure } = result
+              const { pure, receipt } = extractExecutionPhysics(result)
               const runResult: RunResult = {
                 kind: 'dynamic_defect_transient',
                 data: pure,
@@ -103,7 +104,9 @@ export function mountDynamicDefectTransientPane(
                 id: randomRunId(),
                 timestamp: Date.now(),
                 result: runResult,
-                activePhysics: active_physics ?? 'unknown',
+                activePhysics: receipt.summary,
+                executionPhysics: receipt,
+                scientificQualification: receipt.scientificQualification,
                 durationMs: performance.now() - t0,
                 deviceSnapshot: snapshot,
               }

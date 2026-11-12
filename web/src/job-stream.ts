@@ -1,24 +1,8 @@
-import type { JobStartResponse, JobStreamHandlers, ProgressEvent } from './types'
+import type { DispatchableJobKind, JobStartResponse, JobStreamHandlers, ProgressEvent } from './types'
 import { BASE } from './api'
 
 export async function startJob(
-  kind:
-    | 'jv'
-    | 'impedance'
-    | 'dynamic_defect_transient'
-    | 'degradation'
-    | 'tpv'
-    | 'current_decomp'
-    | 'spatial'
-    | 'tandem'
-    | 'dark_jv'
-    | 'suns_voc'
-    | 'voc_t'
-    | 'eqe'
-    | 'el'
-    | 'mott_schottky'
-    | 'jv_2d'
-    | 'voc_grain_sweep',
+  kind: DispatchableJobKind,
   device: unknown,
   params: Record<string, unknown>,
   configPath: string | null = null,

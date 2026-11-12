@@ -13,6 +13,7 @@ import { setStatus, numField, readNum } from '../../ui-helpers'
 import { describeActivePhysics } from '../../active-physics'
 import type { DeviceConfig, JV2DResult } from '../../types'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface JV2DPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -164,19 +165,39 @@ export function mountJV2DPane(container: HTMLElement, opts: JV2DPaneOptions): vo
         streamJobEvents<JV2DResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result as JV2DResult & { active_physics?: string }
+            const { pure, receipt } = extractExecutionPhysics(result as JV2DResult & { active_physics?: string })
             const runResult: RunResult = { kind: 'jv_2d', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
+            physSlot.textContent = receipt.summary
             opts.onRunComplete(active.id, run)
             progressBar.done()
             const nV = pure.V.length
+            const diag: string[] = []
+            if (pure.metrics?.voc_bracketed === false || (pure.metrics && !Number.isFinite(pure.metrics.V_oc))) {
+              diag.push('V_oc not bracketed')
+            }
+            if ((pure.failed_points?.length ?? 0) > 0) {
+              diag.push(`${pure.failed_points!.length} failed point(s)`)
+            } else if (pure.converged?.some(c => !c)) {
+              diag.push(`${pure.converged.filter(c => !c).length} unconverged point(s)`)
+            }
+            if (diag.length > 0) {
+              setStatus(
+                'status-jv2d',
+                `Done · ${nV} voltage points · BC=${pure.lateral_bc} · Diagnostics: ${diag.join(', ')}`,
+                true,
+              )
+              return
+            }
             setStatus('status-jv2d', `Done · ${nV} voltage points · BC=${pure.lateral_bc}`)
           },
           onError: (msg) => {

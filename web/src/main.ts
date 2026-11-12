@@ -67,6 +67,7 @@ async function mount() {
   } else if (query.get('view') === 'steady-jv') {
     const { mountSteadyJVPanel } = await import('./panels/steady-jv')
     app.innerHTML = `<header class="workstation-header"><div><h1>SolarLab</h1><p>Steady DC research</p></div>
+      <a class="btn btn-ghost" href="?view=configuration">Configuration · V2 DTO</a>
       <a class="btn btn-ghost" href="?view=steady-2d">2D steady</a>
       <a class="btn btn-ghost" href="?view=transient">Transient · new core</a>
       <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
@@ -75,6 +76,36 @@ async function mount() {
     const host = app.querySelector<HTMLElement>('#steady-dc')!
     host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
     const panel = mountSteadyJVPanel(host, new URL('/steady-service/', location.origin))
+    window.addEventListener('pagehide', () => panel.dispose(), { once: true })
+    await panel.ready
+  } else if (query.get('view') === 'configuration') {
+    const { mountConfigurationWorkstation } = await import('./panels/configuration-workstation')
+    app.innerHTML = `<header class="workstation-header"><div><h1>SolarLab</h1><p>V2 Configuration &amp; Sweep Preparation</p></div>
+      <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>
+      <a class="btn btn-ghost" href="?view=steady-2d">2D steady</a>
+      <a class="btn btn-ghost" href="?view=transient">Transient · new core</a>
+      <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
+      <a class="btn btn-ghost" href="?view=ionic-jv">Ionic J–V</a>
+      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="configuration-v2"></main>`
+    const host = app.querySelector<HTMLElement>('#configuration-v2')!
+    host.style.cssText = 'max-width:1440px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
+    const panel = mountConfigurationWorkstation(host, new URL('/steady-service/', location.origin))
+    window.addEventListener('pagehide', () => panel.dispose(), { once: true })
+    await panel.ready
+  } else if (query.get('view') === 'stored-run' && query.get('storeId') && query.get('runId') && query.get('attemptId')) {
+    const { mountStoredRunPanel } = await import('./panels/stored-run')
+    app.innerHTML = `<header class="workstation-header"><div><h1>SolarLab</h1><p>Stored Run Inspector</p></div>
+      <a class="btn btn-ghost" href="?view=configuration">Configuration · V2 DTO</a>
+      <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>
+      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="stored-run"></main>`
+    const host = app.querySelector<HTMLElement>('#stored-run')!
+    host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
+    const panel = mountStoredRunPanel(host, {
+      endpoint: new URL('/steady-service/', location.origin),
+      storeId: query.get('storeId')!,
+      runId: query.get('runId')!,
+      attemptId: query.get('attemptId')!,
+    })
     window.addEventListener('pagehide', () => panel.dispose(), { once: true })
     await panel.ready
   } else {

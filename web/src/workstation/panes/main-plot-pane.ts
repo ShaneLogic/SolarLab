@@ -1,6 +1,8 @@
 import Plotly from 'plotly.js-basic-dist-min'
 import type { Workspace } from '../types'
 import { findRun } from '../state'
+import { formatQualificationBadge, resolveRunExecutionPhysics } from '../execution-physics'
+import { getExperimentDescriptor } from '../experiment-catalog'
 import {
   baseLayout, plotConfig, LINE, axisTitle,
   publicationLayout, publicationAxis, publicationConfig,
@@ -46,6 +48,46 @@ export interface MainPlotHandle {
   dispose(): void
 }
 
+const PLOT_RENDERERS_BY_KIND: Readonly<Record<string, (el: HTMLElement, data: unknown) => void>> = Object.freeze({
+  jv: (el, data) => renderJV(el, data as JVResult),
+  impedance: (el, data) => renderImpedance(el, data as ISResult),
+  dynamic_defect_transient: (el, data) => renderDynamicDefectTransient(el, data as DynamicDefectTransientResult),
+  degradation: (el, data) => renderDegradation(el, data as DegResult),
+  tpv: (el, data) => renderTPV(el, data as TPVResult),
+  current_decomp: (el, data) => renderCurrentDecomp(el, data as CurrentDecompResult),
+  spatial: (el, data) => renderSpatialProfiles(el, data as SpatialProfileResult),
+  dark_jv: (el, data) => renderDarkJV(el, data as DarkJVResult),
+  suns_voc: (el, data) => renderSunsVoc(el, data as SunsVocResult),
+  voc_t: (el, data) => renderVocT(el, data as VocTResult),
+  eqe: (el, data) => renderEQE(el, data as EQEResult),
+  el: (el, data) => renderEL(el, data as ELResult),
+  mott_schottky: (el, data) => renderMottSchottky(el, data as MottSchottkyResult),
+  jv_2d: (el, data) => renderJV2D(el, data as JV2DResult),
+  voc_grain_sweep: (el, data) => renderVocGrainSweep(el, data as VocGrainSweepResult),
+})
+
+function renderRegisteredCapabilityResultFallback(
+  el: HTMLElement,
+  kind: string,
+  data: unknown,
+): void {
+  Plotly.purge(el)
+  while (el.firstChild) el.removeChild(el.firstChild)
+  const wrapper = document.createElement('div')
+  wrapper.className = 'plot-capability-fallback'
+  wrapper.setAttribute('data-test', 'plot-capability-fallback')
+  const desc = getExperimentDescriptor(kind)
+  const heading = document.createElement('div')
+  heading.className = 'plot-capability-fallback-title'
+  const labelText = desc ? desc.treeLabelHTML.replace(/<[^>]+>/g, '') : kind
+  heading.textContent = `${labelText} — Registered Capability Payload`
+  const pre = document.createElement('pre')
+  pre.className = 'plot-capability-fallback-json'
+  pre.textContent = JSON.stringify(data, null, 2)
+  wrapper.append(heading, pre)
+  el.appendChild(wrapper)
+}
+
 export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
   container.innerHTML = `
     <div class="main-plot-pane">
@@ -84,7 +126,7 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
   resizeObserver?.observe(container)
 
   function clear(msg: string): void {
-    header.textContent = 'Results'
+    header.replaceChildren(document.createTextNode('Results'))
     header.removeAttribute('title')
     purgePlots()
     plotEl.innerHTML = '<div class="plot-empty"></div>'
@@ -105,57 +147,41 @@ export function mountMainPlotPane(container: HTMLElement): MainPlotHandle {
         clear('Result not found')
         return
       }
-      const runMode = run.deviceSnapshot?.device?.mode
-      header.textContent = `${runMode ? `${runMode.toUpperCase()} · ` : ''}${new Date(run.timestamp).toLocaleString()}`
-      header.title = run.activePhysics
+      const receipt = resolveRunExecutionPhysics(run)
+      const qual = formatQualificationBadge(receipt)
+      const timeSpan = document.createElement('span')
+      timeSpan.className = 'mpp-header-time'
+      timeSpan.textContent = new Date(run.timestamp).toLocaleString()
+      const manifestBadge = document.createElement('span')
+      manifestBadge.className = 'mpp-manifest-badge'
+      manifestBadge.setAttribute('data-test', 'run-manifest-badge')
+      manifestBadge.title = receipt.summary
+      manifestBadge.textContent = receipt.badgeLabel
+      const qualBadge = document.createElement('span')
+      qualBadge.className = qual.explicitUnqualified
+        ? 'mpp-qualification-badge mpp-qualification-preview'
+        : qual.qualified
+          ? 'mpp-qualification-badge mpp-qualification-ok'
+          : 'mpp-qualification-badge mpp-qualification-unverified'
+      qualBadge.setAttribute('data-test', 'run-qualification-badge')
+      qualBadge.setAttribute('data-qualified', String(qual.qualified))
+      qualBadge.title = qual.detail
+      qualBadge.textContent = qual.label
+      header.replaceChildren(
+        timeSpan,
+        document.createTextNode(' · '),
+        manifestBadge,
+        document.createTextNode(' · '),
+        qualBadge,
+      )
+      header.title = `${receipt.summary} | ${qual.detail}`
       purgePlots()
-      switch (run.result.kind) {
-        case 'jv':
-          renderJV(plotEl, run.result.data)
-          return
-        case 'impedance':
-          renderImpedance(plotEl, run.result.data)
-          return
-        case 'dynamic_defect_transient':
-          renderDynamicDefectTransient(plotEl, run.result.data)
-          return
-        case 'degradation':
-          renderDegradation(plotEl, run.result.data)
-          return
-        case 'tpv':
-          renderTPV(plotEl, run.result.data)
-          return
-        case 'current_decomp':
-          renderCurrentDecomp(plotEl, run.result.data)
-          return
-        case 'spatial':
-          renderSpatialProfiles(plotEl, run.result.data)
-          return
-        case 'dark_jv':
-          renderDarkJV(plotEl, run.result.data)
-          return
-        case 'suns_voc':
-          renderSunsVoc(plotEl, run.result.data)
-          return
-        case 'voc_t':
-          renderVocT(plotEl, run.result.data)
-          return
-        case 'eqe':
-          renderEQE(plotEl, run.result.data)
-          return
-        case 'el':
-          renderEL(plotEl, run.result.data)
-          return
-        case 'mott_schottky':
-          renderMottSchottky(plotEl, run.result.data)
-          return
-        case 'jv_2d':
-          renderJV2D(plotEl, run.result.data)
-          return
-        case 'voc_grain_sweep':
-          renderVocGrainSweep(plotEl, run.result.data)
-          return
+      const renderer = PLOT_RENDERERS_BY_KIND[run.result.kind]
+      if (renderer) {
+        renderer(plotEl, run.result.data)
+        return
       }
+      renderRegisteredCapabilityResultFallback(plotEl, run.result.kind, run.result.data)
     },
     dispose() {
       if (disposed) return
@@ -179,13 +205,35 @@ export function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): vo
   _vgsPlotDiv.id = 'voc-grain-sweep-plot-inner'
   el.appendChild(_vgsPlotDiv)
 
-  const V_oc_mV = r.V_oc_V.map(v => v * 1e3)
+  const invalidIndices = r.grain_sizes_nm
+    .map((_, i) => i)
+    .filter(
+      i =>
+        r.V_oc_V[i] == null ||
+        !Number.isFinite(r.V_oc_V[i]) ||
+        r.voc_bracketed?.[i] === false,
+    )
+
+  const V_oc_mV: Array<number | null> =
+    invalidIndices.length === 0
+      ? r.V_oc_V.map(v => v * 1e3)
+      : r.V_oc_V.map((v, i) =>
+          v == null || !Number.isFinite(v) || r.voc_bracketed?.[i] === false
+            ? null
+            : v * 1e3,
+        )
   const J_sc_mA = r.J_sc_Am2.map(j => j / 10)
   const ann = r.grain_sizes_nm
-    .map((L, i) =>
-      `L<sub>g</sub>=${L.toFixed(0)} nm: V<sub>oc</sub>=${V_oc_mV[i].toFixed(1)} mV, ` +
-        `J<sub>sc</sub>=${J_sc_mA[i].toFixed(2)} mA·cm⁻², FF=${r.FF[i].toFixed(3)}`,
-    )
+    .map((L, i) => {
+      const vocCell =
+        V_oc_mV[i] === null ? 'not bracketed / failed' : `${V_oc_mV[i]!.toFixed(1)} mV`
+      const jscCell = Number.isFinite(J_sc_mA[i]) ? `${J_sc_mA[i].toFixed(2)} mA·cm⁻²` : '—'
+      const ffCell = Number.isFinite(r.FF[i]) && V_oc_mV[i] !== null ? r.FF[i].toFixed(3) : '—'
+      return (
+        `L<sub>g</sub>=${L.toFixed(0)} nm: V<sub>oc</sub>=${vocCell}, ` +
+        `J<sub>sc</sub>=${jscCell}, FF=${ffCell}`
+      )
+    })
     .join('<br>')
 
   Plotly.newPlot(
@@ -225,6 +273,26 @@ export function renderVocGrainSweep(el: HTMLElement, r: VocGrainSweepResult): vo
     }),
     publicationConfig('voc_grain_sweep'),
   )
+
+  if (invalidIndices.length > 0 || (r.failed_points?.length ?? 0) > 0) {
+    const notes: string[] = []
+    if (invalidIndices.length > 0) {
+      const grains = invalidIndices.map(i => `L_g=${r.grain_sizes_nm[i].toFixed(0)} nm`).join(', ')
+      notes.push(`V_oc unavailable or unbracketed at ${grains}`)
+    }
+    if ((r.failed_points?.length ?? 0) > 0) {
+      const reasons = r.failed_points!
+        .map(fp => `${fp.label ?? `#${fp.index}`} (${fp.reason})`)
+        .join('; ')
+      notes.push(`Failed sweep points (${r.failed_points!.length}): ${reasons}`)
+    }
+    const warnBanner = document.createElement('div')
+    warnBanner.className = 'jv2d-warning'
+    warnBanner.setAttribute('role', 'alert')
+    warnBanner.setAttribute('data-test', 'voc-grain-sweep-diagnostic-warning')
+    warnBanner.textContent = notes.join(' | ')
+    el.appendChild(warnBanner)
+  }
 }
 
 // ── Stage-A 2D J-V (Phase 6) ────────────────────────────────────────────────
@@ -360,15 +428,16 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
     // is misleading — show "—" (em dash, the conventional "not
     // available" placeholder). J_sc stays because ``compute_metrics``
     // interpolates it at V=0 regardless of bracket success.
-    const bracketed = m.voc_bracketed !== false
+    const bracketed = m.voc_bracketed !== false && Number.isFinite(m.V_oc)
     const dash = '—'
     const vocStr = bracketed ? `${m.V_oc.toFixed(3)} V` : dash
-    const ffStr  = bracketed ? `${(m.FF * 100).toFixed(1)} %` : dash
-    const pceStr = bracketed ? `${(m.PCE * 100).toFixed(2)} %` : dash
+    const jscStr = Number.isFinite(m.J_sc) ? `${(m.J_sc / 10).toFixed(2)} mA/cm²` : dash
+    const ffStr  = bracketed && Number.isFinite(m.FF) ? `${(m.FF * 100).toFixed(1)} %` : dash
+    const pceStr = bracketed && Number.isFinite(m.PCE) ? `${(m.PCE * 100).toFixed(2)} %` : dash
     const cardsHtml =
       `<div class="metric-row">` +
       metricCard('V<sub>oc</sub>', vocStr) +
-      metricCard('J<sub>sc</sub>', `${(m.J_sc / 10).toFixed(2)} mA/cm²`) +
+      metricCard('J<sub>sc</sub>', jscStr) +
       metricCard('FF', ffStr) +
       metricCard('PCE', pceStr) +
       `</div>`
@@ -383,11 +452,33 @@ export function renderJV2D(el: HTMLElement, r: JV2DResult): void {
     if (m.voc_bracketed === false) {
       const warnBanner = document.createElement('div')
       warnBanner.className = 'jv2d-warning'
+      warnBanner.setAttribute('role', 'alert')
       warnBanner.setAttribute('data-test', 'jv2d-voc-not-bracketed')
       warnBanner.textContent =
         'V_oc not bracketed — increase V_max'
       el.appendChild(warnBanner)
     }
+  }
+
+  const failedMessages: string[] = []
+  if (m && m.voc_bracketed !== false && !Number.isFinite(m.V_oc)) {
+    failedMessages.push('V_oc is unavailable or non-finite')
+  }
+  if ((r.failed_points?.length ?? 0) > 0) {
+    const details = r.failed_points!
+      .map(fp => `${fp.label ?? (fp.bias_V !== undefined ? `V=${fp.bias_V} V` : `#${fp.index}`)} (${fp.reason})`)
+      .join('; ')
+    failedMessages.push(`Failed sweep points (${r.failed_points!.length}): ${details}`)
+  } else if (r.converged?.some(c => !c)) {
+    failedMessages.push(`${r.converged.filter(c => !c).length} bias point(s) failed to converge`)
+  }
+  if (failedMessages.length > 0) {
+    const failBanner = document.createElement('div')
+    failBanner.className = 'jv2d-warning'
+    failBanner.setAttribute('role', 'alert')
+    failBanner.setAttribute('data-test', 'jv2d-failed-points-warning')
+    failBanner.textContent = failedMessages.join(' | ')
+    el.appendChild(failBanner)
   }
 }
 
@@ -618,6 +709,36 @@ export function renderJV(el: HTMLElement, r: JVResult): void {
     }),
     publicationConfig('jv_sweep'),
   )
+
+  const diagNotes: string[] = []
+  if (r.metrics_fwd?.voc_bracketed === false) {
+    diagNotes.push('Forward sweep V_oc not bracketed')
+  } else if (r.metrics_fwd && !Number.isFinite(r.metrics_fwd.V_oc)) {
+    diagNotes.push('Forward sweep V_oc unavailable')
+  }
+  if (!chargedEvidence) {
+    if (r.metrics_rev?.voc_bracketed === false) {
+      diagNotes.push('Reverse sweep V_oc not bracketed')
+    } else if (r.metrics_rev && !Number.isFinite(r.metrics_rev.V_oc)) {
+      diagNotes.push('Reverse sweep V_oc unavailable')
+    }
+  }
+  if ((r.failed_points?.length ?? 0) > 0) {
+    const details = r.failed_points!
+      .map(fp => `${fp.label ?? (fp.bias_V !== undefined ? `V=${fp.bias_V} V` : `#${fp.index}`)} (${fp.reason})`)
+      .join('; ')
+    diagNotes.push(`Failed sweep points (${r.failed_points!.length}): ${details}`)
+  } else if (r.converged?.some(c => !c)) {
+    diagNotes.push(`${r.converged.filter(c => !c).length} sweep point(s) failed to converge`)
+  }
+  if (diagNotes.length > 0) {
+    const warnBanner = document.createElement('div')
+    warnBanner.className = 'jv2d-warning'
+    warnBanner.setAttribute('role', 'alert')
+    warnBanner.setAttribute('data-test', 'jv-diagnostic-warning')
+    warnBanner.textContent = diagNotes.join(' | ')
+    el.appendChild(warnBanner)
+  }
 }
 
 export function renderImpedance(el: HTMLElement, r: ISResult): void {
@@ -780,8 +901,20 @@ export function renderDegradation(el: HTMLElement, r: DegResult): void {
   _degPlotDiv.id = 'degradation-plot-inner'
   el.appendChild(_degPlotDiv)
 
-  const pce0 = r.PCE[0] || 1
-  const normalized = r.PCE.map(p => p / pce0)
+  const hasInvalid = Boolean(
+    r.valid?.some(v => !v) ||
+    r.PCE.some(p => p == null || !Number.isFinite(p)) ||
+    r.V_oc.some(v => v == null || !Number.isFinite(v)) ||
+    (r.failed_points?.length ?? 0) > 0,
+  )
+  const pce0 = hasInvalid
+    ? (r.PCE.find((p, i) => r.valid?.[i] !== false && Number.isFinite(p) && p !== 0) ?? (r.PCE[0] || 1))
+    : (r.PCE[0] || 1)
+  const normalized: Array<number | null> = hasInvalid
+    ? r.PCE.map((p, i) =>
+        r.valid?.[i] === false || p == null || !Number.isFinite(p) ? null : p / pce0,
+      )
+    : r.PCE.map(p => p / pce0)
 
   Plotly.newPlot(
     _degPlotDiv,
@@ -801,6 +934,33 @@ export function renderDegradation(el: HTMLElement, r: DegResult): void {
     }),
     publicationConfig('degradation'),
   )
+
+  if (hasInvalid) {
+    const degNotes: string[] = []
+    if ((r.failed_points?.length ?? 0) > 0) {
+      const details = r.failed_points!
+        .map(fp => `${fp.label ?? `#${fp.index}`} (${fp.reason})`)
+        .join('; ')
+      degNotes.push(`Failed trajectory steps (${r.failed_points!.length}): ${details}`)
+    }
+    const invalidStepCount = r.times.filter(
+      (_, i) =>
+        r.valid?.[i] === false ||
+        r.PCE[i] == null ||
+        !Number.isFinite(r.PCE[i]) ||
+        r.V_oc[i] == null ||
+        !Number.isFinite(r.V_oc[i]),
+    ).length
+    if (invalidStepCount > 0) {
+      degNotes.push(`${invalidStepCount} trajectory step(s) invalid or non-identifiable`)
+    }
+    const warnBanner = document.createElement('div')
+    warnBanner.className = 'jv2d-warning'
+    warnBanner.setAttribute('role', 'alert')
+    warnBanner.setAttribute('data-test', 'degradation-diagnostic-warning')
+    warnBanner.textContent = degNotes.join(' | ')
+    el.appendChild(warnBanner)
+  }
 }
 
 export function renderTPV(el: HTMLElement, r: TPVResult): void {
@@ -816,9 +976,10 @@ export function renderTPV(el: HTMLElement, r: TPVResult): void {
 
   // Convert time to microseconds for readability
   const t_us = r.t.map(t => t * 1e6)
+  const nonIdReason = r.non_identifiable_reason ?? r.fit?.non_identifiable_reason ?? null
   const validTrace = !r.valid || r.valid.every(Boolean)
   const hasDecay = validTrace && r.tau !== null && Number.isFinite(r.tau) && r.tau > 0
-    && (!r.fit || r.fit.status === 'accepted')
+    && (!r.fit || r.fit.status === 'accepted') && !nonIdReason
   const fitStatus: Record<string, string> = {
     no_signal: 'No resolved pulse',
     insufficient_data: 'Insufficient data',
@@ -830,9 +991,13 @@ export function renderTPV(el: HTMLElement, r: TPVResult): void {
   }
   const tauLabel = hasDecay
     ? `${((r.tau as number) * 1e6).toFixed(1)} \u00B5s`
-    : (validTrace ? (fitStatus[r.fit?.status ?? ''] ?? 'Unavailable') : 'Invalid response')
-  const delta = r.delta_V ?? r.V.map((v, i) => v - (r.V_reference?.[i] ?? r.V_oc))
-  const dV_mV = delta.map((v, i) => r.valid && !r.valid[i] ? null : v * 1e3)
+    : (validTrace ? (fitStatus[r.fit?.status ?? ''] ?? nonIdReason ?? 'Unavailable') : 'Invalid response')
+  const vocValid = Number.isFinite(r.V_oc)
+  const vocRefFallback = vocValid ? r.V_oc : 0
+  const delta = r.delta_V ?? r.V.map((v, i) => v - (r.V_reference?.[i] ?? vocRefFallback))
+  const dV_mV = delta.map((v, i) => (r.valid && !r.valid[i]) || !Number.isFinite(v) ? null : v * 1e3)
+  const vocLabel = vocValid ? `${r.V_oc.toFixed(3)} V` : 'unavailable'
+  const dv0Label = Number.isFinite(r.delta_V0) ? `${(r.delta_V0 * 1e3).toFixed(2)} mV` : 'unavailable'
 
   Plotly.newPlot(
     _tpvPlotDiv,
@@ -858,9 +1023,9 @@ export function renderTPV(el: HTMLElement, r: TPVResult): void {
           xanchor: 'right' as const, yanchor: 'top' as const,
           showarrow: false,
           text:
-            `V<sub>oc</sub> = ${r.V_oc.toFixed(3)} V<br>` +
+            `V<sub>oc</sub> = ${vocLabel}<br>` +
             `\u03C4 = ${tauLabel}<br>` +
-            `\u0394V<sub>0</sub> = ${(r.delta_V0 * 1e3).toFixed(2)} mV`,
+            `\u0394V<sub>0</sub> = ${dv0Label}`,
           align: 'right' as const,
           bgcolor: 'rgba(255,255,255,0)',
           bordercolor: 'rgba(0,0,0,0)',
@@ -872,6 +1037,30 @@ export function renderTPV(el: HTMLElement, r: TPVResult): void {
     publicationConfig('tpv'),
   )
   observePlotResize(el, _tpvPlotDiv)
+
+  if (!hasDecay || !vocValid) {
+    const tpvNotes: string[] = []
+    if (!validTrace) {
+      tpvNotes.push('Invalid response points detected in ΔV(t) trajectory')
+    }
+    if (r.tau === null || !Number.isFinite(r.tau) || r.tau <= 0) {
+      tpvNotes.push('Lifetime τ is non-identifiable')
+    }
+    if (nonIdReason) {
+      tpvNotes.push(`Reason: ${nonIdReason}`)
+    } else if (r.fit?.status && r.fit.status !== 'accepted') {
+      tpvNotes.push(`Fit status: ${fitStatus[r.fit.status] ?? r.fit.status}`)
+    }
+    if (!vocValid) {
+      tpvNotes.push('Steady open-circuit voltage V_oc unavailable')
+    }
+    const warnBanner = document.createElement('div')
+    warnBanner.className = 'jv2d-warning'
+    warnBanner.setAttribute('role', 'alert')
+    warnBanner.setAttribute('data-test', 'tpv-diagnostic-warning')
+    warnBanner.textContent = tpvNotes.join(' | ')
+    el.appendChild(warnBanner)
+  }
 }
 
 export function renderVocT(el: HTMLElement, r: VocTResult): void {

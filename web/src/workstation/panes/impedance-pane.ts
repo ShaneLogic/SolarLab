@@ -11,6 +11,7 @@ import {
 import type { DeviceConfig, ISResult } from '../../types'
 import { dynamicDefectImpedancePreset } from '../../explicit-defect-capability'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface ImpedancePaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -172,13 +173,15 @@ export function mountImpedancePane(container: HTMLElement, opts: ImpedancePaneOp
         streamJobEvents<ISResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result as ISResult & { active_physics?: string }
+            const { pure, receipt } = extractExecutionPhysics(result as ISResult & { active_physics?: string })
             const runResult: RunResult = { kind: 'impedance', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
