@@ -34,7 +34,6 @@ from solarlab.device.inputs import GrainBoundaryInput
 from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.dc_2d import CompiledDevice2D, State2D
-from solarlab.experiments.transient_results import _decode, _encode
 from solarlab.experiments.two_dimensional.inputs import (
     GrainSweepInput,
     JV2DInput,
@@ -43,14 +42,16 @@ from solarlab.experiments.two_dimensional.inputs import (
 from solarlab.experiments.two_dimensional.jv_sweep_2d import (
     Disposition,
     ProgressCallback,
-    _device_has_ions,
-    _precondition_frozen_lane,
-    _project_prepared_for_electronic_2d,
     build_jv_2d_execution_protocol,
+    decode_json_payload,
+    device_has_ions,
+    encode_json_payload,
+    precondition_frozen_lane,
+    project_prepared_for_electronic_2d,
     run_jv_sweep_2d,
+    write_atomic_json,
 )
 from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment
-from solarlab.experiments.worker import _atomic_json
 from solarlab.solvers.nonlinear.steady_1d import solve_steady_state
 from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, solve_steady_state_2d
 
@@ -237,7 +238,7 @@ def solve_direct_voc_2d(
         lateral_bc="neumann",
         microstructure=ms_input,
     )
-    has_ions, _ = _device_has_ions(prepared)
+    has_ions, _ = device_has_ions(prepared)
     if has_ions:
         proto = build_jv_2d_execution_protocol(
             prepared,
@@ -252,7 +253,7 @@ def solve_direct_voc_2d(
             initial_state_settle_s=initial_state_settle_s,
             implicit_legacy_protocol=True,
         )
-        device_2d, seed_2d, rr_specs, iface_couplings = _precondition_frozen_lane(
+        device_2d, seed_2d, rr_specs, iface_couplings = precondition_frozen_lane(
             prepared, geom_spatial, proto
         )
         if rr_specs or iface_couplings:
@@ -260,7 +261,7 @@ def solve_direct_voc_2d(
                 "direct_voc_2d_unsupported_extensions: direct steady V_oc requires standard local 2D recombination"
             )
     else:
-        clean = _project_prepared_for_electronic_2d(prepared, strip_ions=False, strip_interfaces=False)
+        clean = project_prepared_for_electronic_2d(prepared, strip_ions=False, strip_interfaces=False)
         device_2d = compile_device_2d(clean, geom_spatial)
         col_illum = solve_steady_state(device_2d.column, voltage_V=0.0, generation_scale=1.0)
         if col_illum.state is None:
@@ -545,7 +546,7 @@ def write_voc_grain_sweep(path: str | Path, result: VocGrainSweepResult) -> str:
         "FF": result.FF,
         "points": [asdict(p) for p in result.points],
     }
-    _atomic_json(target, _encode(payload))
+    write_atomic_json(target, encode_json_payload(payload))
     return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
@@ -555,7 +556,7 @@ def read_voc_grain_sweep(path: str | Path, *, expected_sha256: str | None = None
     actual_sha = hashlib.sha256(raw).hexdigest()
     if expected_sha256 is not None and actual_sha != expected_sha256:
         raise ValueError("VocGrainSweepResult SHA-256 mismatch")
-    doc = _decode(json.loads(raw))
+    doc = decode_json_payload(json.loads(raw))
     if doc.get("schema") != VOC_GRAIN_SWEEP_SCHEMA or doc.get("scientific_qualification") is not False:
         raise ValueError("invalid VocGrainSweepResult schema or qualification flag")
     return VocGrainSweepResult(

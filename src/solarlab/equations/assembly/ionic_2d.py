@@ -44,9 +44,9 @@ from solarlab.equations.assembly.weighted import MEASURE
 from solarlab.equations.dc_2d import CompiledDevice2D
 from solarlab.equations.ionic_2d import (
     CompiledIonicDevice2D, RadiativeReabsorptionSpec2D, TwoSidedInterfaceSRHCoupling2D,
-    _interface_srh_sheet_rate_and_partials, evaluate_two_sided_interface_srh_2d,
-    finite_site_secant_2d_m3, ion_pair_flux_jacobian_2d, recompute_g_with_rad_2d,
-    trapezoid_weights_1d,
+    evaluate_two_sided_interface_srh_2d, finite_site_secant_2d_m3,
+    interface_srh_sheet_rate_and_partials, ion_pair_flux_jacobian_2d,
+    recompute_g_with_rad_2d, trapezoid_weights_1d,
 )
 from solarlab.physics.ions import DIFFUSION_ONLY_STERIC_V1, IonFaceFluxJacobian
 from solarlab.physics.recombination.bulk import RecombinationRate
@@ -724,7 +724,7 @@ def _electronic_extension_off_diagonal_jacobian(
             right_nodes: NDArray[np.intp] = c.right_sample_row * nx + cols_x
             scale = vol[row_nodes] / normal_widths[c.interface_row]
 
-            raw_a, da_dn, da_dp = _interface_srh_sheet_rate_and_partials(
+            raw_a, da_dn, da_dp = interface_srh_sheet_rate_and_partials(
                 n_2d[c.right_sample_row, :], p_2d[c.left_sample_row, :],
                 c.pair_a_equilibrium_product_m6, c.n1_m3, c.p1_m3,
                 c.electron_capture_velocity_m_s, c.hole_capture_velocity_m_s,
@@ -733,7 +733,7 @@ def _electronic_extension_off_diagonal_jacobian(
             dn_r = -scale * act_a * da_dn * n_2d[c.right_sample_row, :]
             dp_l = -scale * act_a * da_dp * p_2d[c.left_sample_row, :]
 
-            raw_b, db_dn, db_dp = _interface_srh_sheet_rate_and_partials(
+            raw_b, db_dn, db_dp = interface_srh_sheet_rate_and_partials(
                 n_2d[c.left_sample_row, :], p_2d[c.right_sample_row, :],
                 c.pair_b_equilibrium_product_m6, c.n1_m3, c.p1_m3,
                 c.electron_capture_velocity_m_s, c.hole_capture_velocity_m_s,

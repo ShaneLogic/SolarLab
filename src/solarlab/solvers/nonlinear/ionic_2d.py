@@ -36,6 +36,7 @@ __all__ = [
     "IonicSteady2DResult",
     "checks",
     "diagnostics",
+    "poisson_weights_2d",
     "solve_ionic_steady_state_2d",
 ]
 
@@ -161,7 +162,7 @@ class IonicSteady2DResult:
 _Unconstrained2D: TypeAlias = Ionic2DProblem | AssembledIonic2DProblem
 
 
-def _poisson_weights_2d(device: CompiledIonicDevice2D) -> np.ndarray:
+def poisson_weights_2d(device: CompiledIonicDevice2D) -> np.ndarray:
     comp = device.electronic_component
     g = comp.geometry.contract_geometry
     reference_V = max(abs(comp.column.built_in_potential_V), comp.thermal_voltage_V)
@@ -190,7 +191,7 @@ def _newton_settings(device: CompiledIonicDevice2D, options: IonicSteady2DOption
     n_elec = comp.node_count
     n_ion = device.ion_node_count
     weights: NDArray[np.float64] = np.empty(device.state_size, dtype=np.float64)
-    weights[:n_elec] = _poisson_weights_2d(device) / c.poisson_tolerance
+    weights[:n_elec] = poisson_weights_2d(device) / c.poisson_tolerance
     weights[n_elec:3 * n_elec] = 2.0 * n_elec * Q / (
         comp.geometry.lateral_length_m * c.continuity_tolerance_A_m2
     )
@@ -218,7 +219,7 @@ def diagnostics(problem: _Unconstrained2D, u: np.ndarray, options: IonicSteady2D
     phi, n, p, ion_p = d.fields(u, voltage_V=problem.voltage_V)
     if not (np.all(np.isfinite(raw_res)) and np.all(np.isfinite(n)) and np.all(np.isfinite(p)) and np.all(np.isfinite(ion_p))):
         raise ValueError("2D ionic diagnostic fields or original residual are non-finite")
-    poisson_norm = float(np.max(np.abs(raw_res[:n_elec] * _poisson_weights_2d(d))))
+    poisson_norm = float(np.max(np.abs(raw_res[:n_elec] * poisson_weights_2d(d))))
     carrier_rows = raw_res[n_elec:3 * n_elec].reshape(2, n_elec).copy()
     contact_logs = carrier_rows[comp.fixed_carrier_mask].copy()
     carrier_rows[comp.fixed_carrier_mask] = 0.0

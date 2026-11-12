@@ -50,6 +50,7 @@ __all__ = [
     "control_volume_areas_2d",
     "evaluate_two_sided_interface_srh_2d",
     "finite_site_secant_2d_m3",
+    "interface_srh_sheet_rate_and_partials",
     "ion_inventory_2d",
     "ion_pair_flux_jacobian_2d",
     "positive_ion_fluxes_2d",
@@ -185,7 +186,7 @@ class TwoSidedInterfaceSRHReport2D:
     volumetric_sink_m3_s: Vector
 
 
-def _interface_srh_sheet_rate_and_partials(
+def interface_srh_sheet_rate_and_partials(
     n_sample: Vector,
     p_sample: Vector,
     eq_product: float,
@@ -232,12 +233,12 @@ def evaluate_two_sided_interface_srh_2d(
     for idx, c in enumerate(couplings):
         if c.interface_row <= 0 or c.interface_row >= electrons.shape[0] - 1:
             raise ValueError("interface-SRH sheet must use interior idx-1/idx+1 sampling")
-        raw_a, _, _ = _interface_srh_sheet_rate_and_partials(
+        raw_a, _, _ = interface_srh_sheet_rate_and_partials(
             electrons[c.right_sample_row, :], holes[c.left_sample_row, :],
             c.pair_a_equilibrium_product_m6, c.n1_m3, c.p1_m3,
             c.electron_capture_velocity_m_s, c.hole_capture_velocity_m_s,
         )
-        raw_b, _, _ = _interface_srh_sheet_rate_and_partials(
+        raw_b, _, _ = interface_srh_sheet_rate_and_partials(
             np.maximum(electrons[c.left_sample_row, :], 0.0),
             np.maximum(holes[c.right_sample_row, :], 0.0),
             c.pair_b_equilibrium_product_m6, c.n1_m3, c.p1_m3,
@@ -1083,7 +1084,7 @@ class Ionic2DProblem:
                 right_nodes: NDArray[np.intp] = c.right_sample_row * nx + cols_x
                 scale = vol[row_nodes] / normal_widths[c.interface_row]
 
-                raw_a, da_dn, da_dp = _interface_srh_sheet_rate_and_partials(
+                raw_a, da_dn, da_dp = interface_srh_sheet_rate_and_partials(
                     n_2d[c.right_sample_row, :], p_2d[c.left_sample_row, :],
                     c.pair_a_equilibrium_product_m6, c.n1_m3, c.p1_m3,
                     c.electron_capture_velocity_m_s, c.hole_capture_velocity_m_s,
@@ -1093,7 +1094,7 @@ class Ionic2DProblem:
                 dn_r = -scale * act_a * da_dn * n_2d[c.right_sample_row, :]
                 dp_l = -scale * act_a * da_dp * p_2d[c.left_sample_row, :]
 
-                raw_b, db_dn, db_dp = _interface_srh_sheet_rate_and_partials(
+                raw_b, db_dn, db_dp = interface_srh_sheet_rate_and_partials(
                     n_2d[c.left_sample_row, :], p_2d[c.right_sample_row, :],
                     c.pair_b_equilibrium_product_m6, c.n1_m3, c.p1_m3,
                     c.electron_capture_velocity_m_s, c.hole_capture_velocity_m_s,

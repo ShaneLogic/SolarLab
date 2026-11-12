@@ -273,8 +273,8 @@ class DC2DProblem:
         left, right = self.device.geometry.contract_geometry.pairs.T
         return -self.device.face_capacitance_F_m2 * (phi[right] - phi[left])
 
-    def _contact_exchange(self, u: Vector, channel: CarrierExchangeChannel,
-                          nodes: NDArray[np.int64]) -> tuple[Vector, float]:
+    def contact_exchange(self, u: Vector, channel: CarrierExchangeChannel,
+                         nodes: NDArray[np.int64]) -> tuple[Vector, float]:
         """The 1D contact law/expm1 construction on a whole y contact face.
 
         Left/right means y-min/y-max here. Gamma is directed along +y,
@@ -288,6 +288,10 @@ class DC2DProblem:
         boundary = boundary_particle_flux(channel, channel.reservoir_density_m3)
         excess = channel.reservoir_density_m3 * np.expm1(exponent)
         return boundary.density_derivative * excess, boundary.density_derivative
+
+    def _contact_exchange(self, u: Vector, channel: CarrierExchangeChannel,
+                          nodes: NDArray[np.int64]) -> tuple[Vector, float]:
+        return self.contact_exchange(u, channel, nodes)
 
     def residual(self, u: ArrayLike) -> Vector:
         d, count = self.device, self.device.node_count

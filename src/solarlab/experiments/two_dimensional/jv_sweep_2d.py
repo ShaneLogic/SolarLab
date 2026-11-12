@@ -17,10 +17,12 @@ conservative Backward Euler steppers (``run_backward_euler_2d`` for
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
+from enum import Enum
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import time
 from typing import Any, Literal, TypeAlias, cast
@@ -55,7 +57,7 @@ from solarlab.equations.ionic_2d import (
     recompute_g_with_rad_2d,
 )
 from solarlab.experiments.jv.steady import SteadyJVMetrics, steady_jv_metrics
-from solarlab.experiments.transient_results import _decode, _encode
+from solarlab.experiments.results import decode_array, encode_array
 from solarlab.experiments.two_dimensional.inputs import (
     JV2DInput,
     JV2DProtocolInput,
@@ -71,7 +73,6 @@ from solarlab.experiments.two_dimensional.jv_protocol_2d import (
     resolve_jv_2d_protocol,
 )
 from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment
-from solarlab.experiments.worker import _atomic_json
 from solarlab.solvers.nonlinear.ionic_1d import IonicSteadyOptions, solve_ionic_steady_state
 from solarlab.solvers.nonlinear.ionic_2d import solve_ionic_steady_state_2d
 from solarlab.solvers.nonlinear.problem import SolveBudget, state_digest
@@ -99,12 +100,90 @@ __all__ = [
     "SpatialSnapshot2D",
     "build_jv_2d_execution_protocol",
     "compute_jv_2d_metrics",
+    "decode_json_payload",
+    "default_ionic_steady_options_1d",
+    "device_has_ions",
+    "embed_frozen_ion_excess_2d",
+    "encode_json_payload",
     "extract_snapshot_2d",
+    "precondition_frozen_lane",
+    "project_prepared_for_electronic_2d",
     "read_jv_2d_result",
     "run_dynamic_jv_pair_2d",
     "run_jv_sweep_2d",
+    "write_atomic_json",
     "write_jv_2d_result",
 ]
+
+_JSON_CODEC_TAGS = {"$array", "$scalar", "$float", "$tuple"}
+
+
+def encode_json_payload(value: Any) -> Any:
+    """Losslessly encode dataclasses, tuples, arrays, and nonfinite floats for JSON."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: encode_json_payload(getattr(value, f.name)) for f in fields(value)}
+    if type(value) is np.ndarray:
+        return {"$array": encode_array(value, unit="raw diagnostic; units follow the named producer field")}
+    if isinstance(value, np.generic):
+        return {"$scalar": encode_array(np.asarray(value), unit="raw diagnostic")}
+    if isinstance(value, Enum):
+        return encode_json_payload(value.value)
+    if type(value) is tuple:
+        return {"$tuple": [encode_json_payload(item) for item in value]}
+    if type(value) is list:
+        return [encode_json_payload(item) for item in value]
+    if type(value) is dict:
+        if any(type(key) is not str for key in value) or set(value) & _JSON_CODEC_TAGS:
+            raise ValueError("JSON payloads require plain string keys without codec tags")
+        return {key: encode_json_payload(item) for key, item in value.items()}
+    if type(value) is float and not math.isfinite(value):
+        return {"$float": encode_array(np.asarray(value), unit="raw diagnostic")}
+    if value is None or type(value) in {str, bool, int, float}:
+        return value
+    raise ValueError("unsupported JSON payload type: " + type(value).__name__)
+
+
+def decode_json_payload(value: Any) -> Any:
+    """Decode a payload written with :func:`encode_json_payload`."""
+    if type(value) is list:
+        return [decode_json_payload(item) for item in value]
+    if type(value) is dict:
+        tags = set(value) & _JSON_CODEC_TAGS
+        if tags:
+            if len(value) != 1:
+                raise ValueError("ambiguous JSON payload tag")
+            (tag,) = tags
+            if tag == "$tuple":
+                if type(value[tag]) is not list:
+                    raise ValueError("invalid JSON payload tuple")
+                return tuple(decode_json_payload(item) for item in value[tag])
+            array = decode_array(value[tag])
+            if tag != "$array":
+                if array.shape != ():
+                    raise ValueError("JSON payload scalar must have scalar shape")
+                return array.item() if tag == "$float" else array[()]
+            return array
+        return {key: decode_json_payload(item) for key, item in value.items()}
+    return value
+
+
+def write_atomic_json(path: Path, value: dict[str, Any]) -> None:
+    """Atomically write canonical strict JSON to ``path`` with fsync."""
+    if type(value) is not dict:
+        raise ValueError("an explicit strict JSON object is required")
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    partial = path.with_suffix(path.suffix + ".part")
+    fd = os.open(partial, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(partial, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 Vector: TypeAlias = NDArray[np.float64]
 ProgressCallback: TypeAlias = Callable[[str, int, int, str], None]
@@ -354,14 +433,14 @@ def _ramp_fn(v_start: float, v_end: float, duration_s: float) -> Callable[[float
     return _fn
 
 
-def _default_ionic_steady_options_1d(ion_node_count: int) -> IonicSteadyOptions:
+def default_ionic_steady_options_1d(ion_node_count: int) -> IonicSteadyOptions:
     return IonicSteadyOptions(
         SteadyOptions(), 1.0e-12, 1.0e6, 1.0e6, 1.0, ion_node_count - 1,
         SolveBudget(60, 600, 60, 24), 30.0,
     )
 
 
-def _device_has_ions(prepared: PreparedDevice) -> tuple[bool, str | None]:
+def device_has_ions(prepared: PreparedDevice) -> tuple[bool, str | None]:
     elec = [layer for layer in prepared.layers if layer.role != "substrate"]
     ion_layers: list[str] = []
     for layer in elec:
@@ -375,7 +454,7 @@ def _device_has_ions(prepared: PreparedDevice) -> tuple[bool, str | None]:
     return (len(ion_layers) == 1, ion_layers[0] if ion_layers else None)
 
 
-def _project_prepared_for_electronic_2d(
+def project_prepared_for_electronic_2d(
     prepared: PreparedDevice,
     *,
     strip_ions: bool,
@@ -423,7 +502,7 @@ def _project_prepared_for_electronic_2d(
     )
 
 
-def _embed_frozen_ion_excess_2d(
+def embed_frozen_ion_excess_2d(
     device_2d: CompiledDevice2D,
     excess_1d_m3: Vector,
 ) -> CompiledDevice2D:
@@ -504,7 +583,7 @@ def extract_snapshot_2d(
     )
 
 
-def _precondition_frozen_lane(
+def precondition_frozen_lane(
     prepared: PreparedDevice,
     geom_spatial: JV2DInput,
     protocol: JV2DProtocol,
@@ -515,10 +594,10 @@ def _precondition_frozen_lane(
     tuple[TwoSidedInterfaceSRHCoupling2D, ...],
 ]:
     """Compile frozen-ion 2D device and run 1D dark/illuminated preconditioner."""
-    has_ions, ion_layer_id = _device_has_ions(prepared)
+    has_ions, ion_layer_id = device_has_ions(prepared)
     use_iface = protocol.interface_srh == "two_sided_cross_node"
     # Validate dynamic interface flags and two-sided SRH before projecting interfaces
-    base_clean = _project_prepared_for_electronic_2d(
+    base_clean = project_prepared_for_electronic_2d(
         prepared, strip_ions=has_ions, strip_interfaces=use_iface
     )
     device_2d = compile_device_2d(base_clean, geom_spatial)
@@ -534,7 +613,7 @@ def _precondition_frozen_lane(
     # 1. Solve 1D dark equilibrium (and 1D illuminated finite-time settle if requested)
     excess_1d: Vector = np.zeros(ny_nodes, dtype=np.float64)
     if has_ions and ion_layer_id is not None:
-        prep_1d_ion = _project_prepared_for_electronic_2d(
+        prep_1d_ion = project_prepared_for_electronic_2d(
             prepared, strip_ions=False, strip_interfaces=use_iface, strip_grains=True
         )
         # If carrier contacts are ohmic and Neumann-x, use Nx=1 auxiliary 2D ionic solver so
@@ -551,7 +630,7 @@ def _precondition_frozen_lane(
                 interface_srh=protocol.interface_srh,
             )
             aux_ionic = compile_ionic_device_2d(
-                _project_prepared_for_electronic_2d(prepared, strip_ions=False, strip_interfaces=False, strip_grains=True),
+                project_prepared_for_electronic_2d(prepared, strip_ions=False, strip_interfaces=False, strip_grains=True),
                 aux_spatial,
                 ion_domain_layer=ion_layer_id,
                 ion_domain_endpoints=("blocking", "blocking"),
@@ -613,7 +692,7 @@ def _precondition_frozen_lane(
             ref_col0 = aux_ionic.positive_ion_reference_m3.reshape(aux_ionic.ion_geometry.ny, aux_nx)[:, 0]
             ratio_col0 = aux_ionic.ion_charge_weight_ratio.reshape(aux_ionic.ion_geometry.ny, aux_nx)[:, 0]
             excess_1d[aux_ionic.ion_row_indices] = (ion_p_col0 - ref_col0) * ratio_col0
-            device_2d = _embed_frozen_ion_excess_2d(device_2d, excess_1d)
+            device_2d = embed_frozen_ion_excess_2d(device_2d, excess_1d)
             init_2d = device_2d.state(device_2d.extrude_coordinates(col_u_1d), voltage_V=0.0)
             return device_2d, init_2d, rr_specs, iface_couplings
 
@@ -628,7 +707,7 @@ def _precondition_frozen_lane(
             ionic_1d,
             voltage_V=0.0,
             generation_scale=0.0,
-            options=_default_ionic_steady_options_1d(ionic_1d.ion_node_count),
+            options=default_ionic_steady_options_1d(ionic_1d.ion_node_count),
         )
         if not dark_1d_ion.accepted or dark_1d_ion.state is None:
             raise RuntimeError(f"1D Robin ionic dark equilibrium failed: {dark_1d_ion.error}")
@@ -637,7 +716,7 @@ def _precondition_frozen_lane(
         excess_1d[ionic_1d.ion_node_indices] = (
             ion_p_1d - ionic_1d.positive_ion_reference_m3
         ) * ionic_1d.ion_charge_weight_ratio
-        device_2d = _embed_frozen_ion_excess_2d(device_2d, excess_1d)
+        device_2d = embed_frozen_ion_excess_2d(device_2d, excess_1d)
         if not protocol.illuminated:
             return device_2d, device_2d.state(device_2d.extrude_coordinates(col_u_1d), voltage_V=0.0), rr_specs, iface_couplings
     else:
@@ -658,10 +737,10 @@ def _precondition_frozen_lane(
         lateral_bc="neumann",
         microstructure=MicrostructureInput(grain_boundaries=()),
     )
-    aux_clean = _project_prepared_for_electronic_2d(
+    aux_clean = project_prepared_for_electronic_2d(
         prepared, strip_ions=has_ions, strip_interfaces=use_iface, strip_grains=True
     )
-    aux_dev = _embed_frozen_ion_excess_2d(compile_device_2d(aux_clean, aux_geom), excess_1d)
+    aux_dev = embed_frozen_ion_excess_2d(compile_device_2d(aux_clean, aux_geom), excess_1d)
     aux_rr = build_radiative_reabsorption_2d(prepared, aux_dev)
     aux_if = build_two_sided_interface_srh_2d(prepared, aux_dev, interface_srh_mode=protocol.interface_srh)
     aux_s0 = aux_dev.state(aux_dev.extrude_coordinates(col_u_1d), voltage_V=0.0)
@@ -689,7 +768,7 @@ def _precondition_mobile_ion_lane(
     protocol: JV2DProtocol,
 ) -> tuple[CompiledIonicDevice2D, IonicState2D]:
     """Compile mobile-ion 2D device and run 1D dark/illuminated preconditioner."""
-    _, ion_layer_id = _device_has_ions(prepared)
+    _, ion_layer_id = device_has_ions(prepared)
     ionic_2d = compile_ionic_device_2d(
         prepared,
         exec_spatial,
@@ -706,7 +785,7 @@ def _precondition_mobile_ion_lane(
         ion_dynamics="single_mobile",
         interface_srh=protocol.interface_srh,
     )
-    aux_prep = _project_prepared_for_electronic_2d(
+    aux_prep = project_prepared_for_electronic_2d(
         prepared, strip_ions=False, strip_interfaces=False, strip_grains=True
     )
     aux_ionic = compile_ionic_device_2d(
@@ -848,8 +927,8 @@ def build_jv_2d_execution_protocol(
         lateral_bc=lateral_bc,
         microstructure=ms_input,
     )
-    has_ions, _ = _device_has_ions(prepared)
-    clean_prep = _project_prepared_for_electronic_2d(
+    has_ions, _ = device_has_ions(prepared)
+    clean_prep = project_prepared_for_electronic_2d(
         prepared,
         strip_ions=has_ions,
         strip_interfaces=(interface_srh == "two_sided_cross_node"),
@@ -1200,7 +1279,7 @@ def run_jv_sweep_2d(
             if progress is not None:
                 progress("jv_2d", idx + 1, int(voltages.size), f"V = {v_val:.3f} V")
     else:
-        elec_dev, elec_state, rr_specs, iface_couplings = _precondition_frozen_lane(
+        elec_dev, elec_state, rr_specs, iface_couplings = precondition_frozen_lane(
             prepared, geom_spatial, resolved_proto
         )
         polarity = float(elec_dev.column.voltage_polarity)
@@ -1349,7 +1428,7 @@ def run_dynamic_jv_pair_2d(
         ion_dynamics="single_mobile",
         interface_srh=protocol.interface_srh,
     )
-    _, ion_layer_id = _device_has_ions(prepared)
+    _, ion_layer_id = device_has_ions(prepared)
     ionic_dev = compile_ionic_device_2d(
         prepared,
         exec_spatial,
@@ -1525,7 +1604,7 @@ def write_jv_2d_result(path: str | Path, result: JV2DResult) -> str:
         "attempts": [asdict(a) for a in result.attempts],
         "ion_diagnostics": [asdict(d) for d in result.ion_diagnostics],
     }
-    _atomic_json(target, _encode(payload))
+    write_atomic_json(target, encode_json_payload(payload))
     return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
@@ -1535,7 +1614,7 @@ def read_jv_2d_result(path: str | Path, *, expected_sha256: str | None = None) -
     actual_sha = hashlib.sha256(raw).hexdigest()
     if expected_sha256 is not None and actual_sha != expected_sha256:
         raise ValueError("JV2DResult SHA-256 mismatch")
-    doc = _decode(json.loads(raw))
+    doc = decode_json_payload(json.loads(raw))
     if doc.get("schema") != JV2D_RESULT_SCHEMA or doc.get("scientific_qualification") is not False:
         raise ValueError("invalid JV2DResult schema or qualification flag")
     proto = None if doc["protocol"] is None else JV2DProtocol.from_dict(doc["protocol"])

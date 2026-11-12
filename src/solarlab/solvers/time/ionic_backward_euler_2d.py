@@ -37,7 +37,7 @@ from solarlab.equations.ionic_2d import (
     assess_mobile_ion_terminal_2d, positive_ion_fluxes_2d,
 )
 from solarlab.physics.contacts import junction_polarity
-from solarlab.solvers.nonlinear.ionic_2d import _poisson_weights_2d
+from solarlab.solvers.nonlinear.ionic_2d import poisson_weights_2d
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, ResidualScaling, SolveBudget, StepControl
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
@@ -626,7 +626,7 @@ def step_ionic_backward_euler_2d(
     n_elec = comp.node_count
     n_ion = device.ion_node_count
     weights: Vector = np.empty(device.state_size, dtype=float)
-    weights[:n_elec] = _poisson_weights_2d(device) / c.poisson_tolerance
+    weights[:n_elec] = poisson_weights_2d(device) / c.poisson_tolerance
     weights[n_elec:3 * n_elec] = 2.0 * n_elec * Q / (
         comp.geometry.lateral_length_m * c.continuity_tolerance_A_m2
     )

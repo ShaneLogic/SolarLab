@@ -36,15 +36,16 @@ from solarlab.device.compile_2d import compile_device_2d
 from solarlab.device.compile_ionic_2d import compile_ionic_device_2d
 from solarlab.device.inputs import GrainBoundaryInput
 from solarlab.device.resolved import PreparedDevice
-from solarlab.experiments.transient_results import _decode, _encode
 from solarlab.experiments.two_dimensional.inputs import JV2DInput, MicrostructureInput
 from solarlab.experiments.two_dimensional.jv_sweep_2d import (
-    _default_ionic_steady_options_1d,
-    _device_has_ions,
-    _embed_frozen_ion_excess_2d,
-    _project_prepared_for_electronic_2d,
+    decode_json_payload,
+    default_ionic_steady_options_1d,
+    device_has_ions,
+    embed_frozen_ion_excess_2d,
+    encode_json_payload,
+    project_prepared_for_electronic_2d,
+    write_atomic_json,
 )
-from solarlab.experiments.worker import _atomic_json
 from solarlab.solvers.nonlinear.ionic_1d import solve_ionic_steady_state
 from solarlab.solvers.nonlinear.ionic_2d import solve_ionic_steady_state_2d
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
@@ -246,7 +247,7 @@ def _evaluate_one_point(
     elec_tol = _scaled_steady_options(tol_scale)
 
     if baseline.ion_dynamics == "single_mobile":
-        _, ion_layer_id = _device_has_ions(prepared)
+        _, ion_layer_id = device_has_ions(prepared)
         exec_spatial = JV2DInput(
             kind="jv_2d",
             lateral_length=baseline.lateral_length_m,
@@ -264,7 +265,7 @@ def _evaluate_one_point(
             ion_domain_endpoints=("blocking", "blocking"),
         )
         # Seed from 1D dark equilibrium on grain-free Nx=1 column
-        aux_prep = _project_prepared_for_electronic_2d(
+        aux_prep = project_prepared_for_electronic_2d(
             prepared, strip_ions=False, strip_interfaces=False, strip_grains=True
         )
         aux_sp = JV2DInput(
@@ -349,8 +350,8 @@ def _evaluate_one_point(
         )
 
     # Frozen-ion / classical 2D refinement lane
-    has_ions, ion_layer_id = _device_has_ions(prepared)
-    clean_prep = _project_prepared_for_electronic_2d(prepared, strip_ions=has_ions, strip_interfaces=False)
+    has_ions, ion_layer_id = device_has_ions(prepared)
+    clean_prep = project_prepared_for_electronic_2d(prepared, strip_ions=has_ions, strip_interfaces=False)
     geom_sp = JV2DInput(
         kind="jv_2d",
         lateral_length=baseline.lateral_length_m,
@@ -362,7 +363,7 @@ def _evaluate_one_point(
     elec_dev = compile_device_2d(clean_prep, geom_sp)
     if has_ions and ion_layer_id is not None:
         n_layers = len([lyr for lyr in prepared.layers if lyr.role != "substrate"])
-        prep_1d_ion = _project_prepared_for_electronic_2d(
+        prep_1d_ion = project_prepared_for_electronic_2d(
             prepared, strip_ions=False, strip_interfaces=False, strip_grains=True
         )
         from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
@@ -377,7 +378,7 @@ def _evaluate_one_point(
             ion_1d,
             voltage_V=0.0,
             generation_scale=0.0,
-            options=_default_ionic_steady_options_1d(ion_1d.ion_node_count),
+            options=default_ionic_steady_options_1d(ion_1d.ion_node_count),
         )
         if not dark_1d_i.accepted or dark_1d_i.state is None:
             raise RuntimeError(f"refinement 1D frozen-ion seed failed: {dark_1d_i.error}")
@@ -385,7 +386,7 @@ def _evaluate_one_point(
         exc[ion_1d.ion_node_indices] = (
             dark_1d_i.state.positive_ion_density_m3 - ion_1d.positive_ion_reference_m3
         ) * ion_1d.ion_charge_weight_ratio
-        elec_dev = _embed_frozen_ion_excess_2d(elec_dev, exc)
+        elec_dev = embed_frozen_ion_excess_2d(elec_dev, exc)
         u_1d = dark_1d_i.state.u[:3 * ion_1d.node_count]
     else:
         dark_1d = solve_steady_state(elec_dev.column, voltage_V=0.0, generation_scale=0.0)
@@ -582,7 +583,7 @@ def run_four_axis_refinement_2d(
 def write_refinement_report_2d(path: str | Path, report: FourAxisRefinementReport2D) -> str:
     """Write a lossless JSON artifact for ``FourAxisRefinementReport2D`` and return SHA-256."""
     target = Path(path)
-    _atomic_json(target, _encode(report.to_dict()))
+    write_atomic_json(target, encode_json_payload(report.to_dict()))
     return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
@@ -594,7 +595,7 @@ def read_refinement_report_2d(
     actual_sha = hashlib.sha256(raw).hexdigest()
     if expected_sha256 is not None and actual_sha != expected_sha256:
         raise ValueError("FourAxisRefinementReport2D SHA-256 mismatch")
-    doc = _decode(json.loads(raw))
+    doc = decode_json_payload(json.loads(raw))
     if (
         doc.get("schema") != REFINEMENT_2D_SCHEMA
         or doc.get("scientific_qualification") is not False

@@ -94,7 +94,7 @@ def compute_carrier_only_terminal_current_2d(
                 rows.append(assembler.reaction_flux(sys_eval, block, port_id))
             else:
                 dc_prob = DC2DProblem(device, state.voltage_V, generation_scale)
-                exch, _ = dc_prob._contact_exchange(np.asarray(state.u, dtype=np.float64), ch, nodes)
+                exch, _ = dc_prob.contact_exchange(np.asarray(state.u, dtype=np.float64), ch, nodes)
                 rows.append(exch)
         ports.append(np.stack(rows))
     return np.sum((-Q * ports[0] + Q * ports[1]) * g.x_widths_m[None, :], axis=1) / g.lateral_length_m
@@ -197,7 +197,7 @@ def step_accounting_2d(
                 rows.append(assembler.reaction_flux(sys_new, block, port_id, storage_rate=storage_rate))
             else:
                 prob = DC2DProblem(d, current.voltage_V, current.generation_scale)
-                exch, _ = prob._contact_exchange(np.asarray(u_new, dtype=float), ch, nodes)
+                exch, _ = prob.contact_exchange(np.asarray(u_new, dtype=float), ch, nodes)
                 rows.append(exch)
         particle_ports.append(np.stack(rows))
     j_cond_ports = np.sum((-Q * particle_ports[0] + Q * particle_ports[1]) * g.x_widths_m[None, :], axis=1) / width
