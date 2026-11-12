@@ -37,7 +37,7 @@ from solarlab.solvers.time.assembled_storage import AssembledStorage1D
 from solarlab.solvers.time.backward_euler import BackwardEuler1DStep, step_accounting
 from solarlab.solvers.time.bdf import Assessment, BDFEvent, BDFOptions, BDFStep, HistoryPoint, solve_bdf
 from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, bdf_accounting
-from solarlab.experiments.bdf import _events
+from solarlab.experiments.bdf import _events, solve_electronic_bdf
 from support.equation_provenance import counted, one_ulp_residual
 
 
@@ -266,17 +266,17 @@ def test_fixed_step_assembled_BE_and_BDF1_are_bitwise(device, generation):
     requested, drive = protocol(generation)
     settings = BDFOptions(1e-7, max_step_s=1e-7, max_order=1, adaptive=False)
     original_BE = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
-                                                           initial_options=SteadyOptions()))
+                                                           initial_options=SteadyOptions(), method="backward_euler"))
     record("BE_" + str(generation), original_BE)
-    original_BDF = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
-        initial_options=SteadyOptions(), method="bdf", bdf_options=settings))
+    original_BDF = legacy_reference(lambda: solve_electronic_bdf(device, point, requested, options=controls(),
+        initial_options=SteadyOptions(), bdf_options=settings))
     record("BDF1_legacy_" + str(generation), original_BDF)
     assembled_BDF = assembled_candidate(lambda: run_assembled(device, point, requested, drive, settings))
     record("BDF1_assembled_" + str(generation), assembled_BDF)
     assert_bdf(original_BDF, assembled_BDF, device, drive)
     # The production BE driver on its assembled storage system (one binding per history).
     assembled_BE = assembled_candidate(lambda: solve_transient(device, point, requested, options=controls(),
-                                                               initial_options=SteadyOptions()))
+                                                               initial_options=SteadyOptions(), method="backward_euler"))
     record("BE_assembled_" + str(generation), assembled_BE)
     assert_be(original_BE, assembled_BE, assembled_BDF)
 
@@ -288,13 +288,14 @@ def test_a_one_ulp_assembled_residual_change_fails_both_comparisons(device):
     requested, drive = protocol(1.0)
     settings = BDFOptions(1e-7, max_step_s=1e-7, max_order=1, adaptive=False)
     original_BE = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
-                                                           initial_options=SteadyOptions()))
-    original_BDF = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
-        initial_options=SteadyOptions(), method="bdf", bdf_options=settings))
+                                                           initial_options=SteadyOptions(), method="backward_euler"))
+    original_BDF = legacy_reference(lambda: solve_electronic_bdf(device, point, requested, options=controls(),
+        initial_options=SteadyOptions(), bdf_options=settings))
     with one_ulp_residual() as perturbed:
         assembled_BDF = assembled_candidate(lambda: run_assembled(device, point, requested, drive, settings))
         assembled_BE = assembled_candidate(lambda: solve_transient(device, point, requested, options=controls(),
-                                                                   initial_options=SteadyOptions()))
+                                                                   initial_options=SteadyOptions(),
+                                                                   method="backward_euler"))
     assert perturbed
     with pytest.raises(AssertionError):
         assert_bdf(original_BDF, assembled_BDF, device, drive)
@@ -311,8 +312,8 @@ def test_adaptive_assembled_history_orders_rejections_and_dense_samples_are_bitw
     point = initial(device, generation)
     requested, drive = protocol(generation, np.array([0.0, .13, .31, 1.0]) * 4e-7)
     settings = BDFOptions(1e-7, max_step_s=2e-7, relative_tolerance=1e-5)
-    original = legacy_reference(lambda: solve_transient(device, point, requested, options=controls(),
-        initial_options=SteadyOptions(), method="bdf", bdf_options=settings, bdf_drive=drive))
+    original = legacy_reference(lambda: solve_electronic_bdf(device, point, requested, options=controls(),
+        initial_options=SteadyOptions(), bdf_options=settings, drive=drive))
     record("adaptive_legacy_" + str(generation), original)
     assembled = assembled_candidate(lambda: run_assembled(device, point, requested, drive, settings))
     record("adaptive_assembled_" + str(generation), assembled)

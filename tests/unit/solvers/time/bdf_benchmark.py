@@ -25,9 +25,11 @@ from examples.research_1d.ionic_steady import controls as steady_ionic_controls
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
 from solarlab.equations.dc_1d import DC1DProblem
+from solarlab.equations.implementation import LEGACY, equation_implementation
 from solarlab.equations.ionic_1d import Ionic1DProblem
+from solarlab.experiments.bdf import solve_electronic_bdf, solve_ionic_bdf
 from solarlab.experiments.transient import TransientProtocol, solve_transient
-from solarlab.experiments.ionic_transient import load_ionic_steady_initial, solve_ionic_transient
+from solarlab.experiments.ionic_transient import load_ionic_steady_initial
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
 from solarlab.solvers.nonlinear.ionic_1d import solve_ionic_steady_state
 from solarlab.solvers.time.bdf import BDFOptions, solve_bdf
@@ -35,6 +37,15 @@ from solarlab.solvers.time.bdf_1d import BDFDrive, ElectronicStorage1D, IonicSto
 from solarlab.solvers.nonlinear.newton import NewtonSettings
 from solarlab.solvers.nonlinear.newton import NewtonResult, IterationRecord, Termination
 from solarlab.solvers.nonlinear.problem import ResidualScaling, StepControl, SolveBudget, GateOutcome
+
+
+def research_bdf(adapter, *args, **kwargs):
+    """An explicit research BDF call on the original equations, as the transient entry points ran it before CND2.
+
+    The production entry points run only the frozen profile on allowlisted scopes (solarlab.equations.time_method).
+    """
+    with equation_implementation(LEGACY):
+        return adapter(*args, **kwargs)
 
 
 def generic_controls(step):
@@ -146,9 +157,8 @@ def diagnostic(output):
     finals = []
     ns = [2, 4, 8, 16, 32, 64, 128]
     for n in ns:
-        result = solve_transient(device, initial, request, options=controls, initial_options=admission,
-            method="bdf", bdf_options=BDFOptions(4e-7 / n, adaptive=False, max_order=2,
-                                                wall_s=90, min_step_s=1e-23), bdf_drive=drive)
+        result = research_bdf(solve_electronic_bdf, device, initial, request, options=controls, initial_options=admission,
+            bdf_options=BDFOptions(4e-7 / n, adaptive=False, max_order=2, wall_s=90, min_step_s=1e-23), drive=drive)
         value = ElectronicStorage1D(DC1DProblem(device, 0, 1.1)).physical_storage(result.accepted_coordinates[-1])
         finals.append(value)
         record["runs"].append({"n": n, "final_inventory": value, "result": result})
@@ -196,9 +206,9 @@ def electronic(output):
     for order in (1, 2):
         for n in ns:
             requested = TransientProtocol([0.0, 4e-7], [0, 0], [1, 1.01])
-            result = solve_transient(device, initial, requested, options=control, initial_options=admission,
-                method="bdf", bdf_options=BDFOptions(4e-7 / n, max_order=order, adaptive=False,
-                                                    min_step_s=1e-23, wall_s=90), bdf_drive=drive)
+            result = research_bdf(solve_electronic_bdf, device, initial, requested, options=control,
+                initial_options=admission, bdf_options=BDFOptions(4e-7 / n, max_order=order, adaptive=False,
+                                                                  min_step_s=1e-23, wall_s=90), drive=drive)
             adapter = ElectronicStorage1D(DC1DProblem(device, 0.0, 1.01))
             final = adapter.physical_storage(result.accepted_coordinates[-1])
             finals[order].append(final)
@@ -210,9 +220,11 @@ def electronic(output):
         record["fits"][str(order)] = fit(ns[:-1], differences)
     times = np.linspace(0, 4e-7, 5)
     requested = TransientProtocol(times, np.zeros(5), 1 + .01 * (times / times[-1])**2)
-    baseline = solve_transient(device, initial, requested, options=control, initial_options=admission)
-    candidate = solve_transient(device, initial, requested, options=control, initial_options=admission,
-        method="bdf", bdf_options=BDFOptions(1e-7, max_order=1, adaptive=False))
+    # The BE baseline opts out explicitly: this light ramp is an allowlisted BDF envelope.
+    baseline = solve_transient(device, initial, requested, options=control, initial_options=admission,
+                               method="backward_euler")
+    candidate = research_bdf(solve_electronic_bdf, device, initial, requested, options=control,
+        initial_options=admission, bdf_options=BDFOptions(1e-7, max_order=1, adaptive=False))
     differences = [float(np.max(abs(a.u - b))) for a, b in zip(baseline.states, candidate.accepted_coordinates)]
     record["BE_parity"] = {"maximum_coordinate_difference": max(differences),
         "bitwise_coordinates": all(a.u.tobytes() == b.tobytes() for a, b in zip(baseline.states, candidate.accepted_coordinates)),
@@ -246,8 +258,8 @@ def ionic(output):
                              "steppers_verified_byte_unchanged": True}
     references = []
     for n in (64, 128):
-        result = solve_ionic_transient(device, initial, sample, options=control, method="bdf",
-            bdf_options=BDFOptions(1 / n, adaptive=False, max_order=2, wall_s=90, min_step_s=1e-23), bdf_drive=drive)
+        result = research_bdf(solve_ionic_bdf, device, initial, sample, options=control,
+            bdf_options=BDFOptions(1 / n, adaptive=False, max_order=2, wall_s=90, min_step_s=1e-23), drive=drive)
         final = adapter.physical_storage(result.accepted_coordinates[-1])
         references.append(final)
         record["references"].append({"method": "fixed BDF2", "n": n, "final_inventory": final, "result": result})
@@ -271,14 +283,14 @@ def ionic(output):
         if not result.completed:
             raise RuntimeError("first fixed BE comparison failure retained")
         if n == 4:
-            parity = solve_ionic_transient(device, initial, protocol, options=control, method="bdf",
+            parity = research_bdf(solve_ionic_bdf, device, initial, protocol, options=control,
                 bdf_options=BDFOptions(.25, adaptive=False, max_order=1))
             record["BE_parity"] = {"maximum_coordinate_difference": max(float(np.max(abs(a.u - b)))
                 for a, b in zip(result.states, parity.accepted_coordinates)), "bitwise_coordinates": all(a.u.tobytes() == b.tobytes()
                 for a, b in zip(result.states, parity.accepted_coordinates)), "candidate": parity}
     for tolerance in (1e-4, 1e-5, 1e-6):
-        result = solve_ionic_transient(device, initial, sample, options=control, method="bdf",
-            bdf_options=BDFOptions(.1, relative_tolerance=tolerance, max_step_s=.5, wall_s=90), bdf_drive=drive)
+        result = research_bdf(solve_ionic_bdf, device, initial, sample, options=control,
+            bdf_options=BDFOptions(.1, relative_tolerance=tolerance, max_step_s=.5, wall_s=90), drive=drive)
         final = adapter.physical_storage(result.accepted_coordinates[-1])
         error = float(np.max(abs(final - reference) / scales))
         record["work_precision"].append({"method": "adaptive BDF1/2", "error_rtol": tolerance,

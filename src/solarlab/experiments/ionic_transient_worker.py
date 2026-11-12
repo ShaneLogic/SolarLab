@@ -178,10 +178,12 @@ def prepare_ionic_transient_job(prepared: PreparedDevice, protocol: TransientPro
     inputs = _identity_inputs(prepared, implementation)
     body = _body(prepared, protocol, intervals, ion_domain_layer, ion_domain_endpoints, options, initial_options)
     from solarlab.equations.implementation import selection_setting
+    from solarlab.equations.time_method import IONIC, time_method_setting
 
     # The child installs these before any engine import: a queued or spawned
-    # job runs the equation selection of the parent that prepared it.
-    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting()]))
+    # job runs the equation selection and time method of the parent that
+    # prepared it. A worker integrates with backward Euler; BDF is refused here.
+    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting(), time_method_setting(IONIC)]))
     environment = RuntimeEnvironment(platform.python_implementation(), platform.python_version(), platform.system(), platform.machine(),
         tuple((name, importlib.metadata.version(name)) for name in _PACKAGES), tuple((name, json.dumps(value)) for name, value in settings))
     description = ExecutionDescription(**_roles(prepared, body, implementation), implementation=implementation,
@@ -204,8 +206,10 @@ def run_ionic_transient_worker(request: WorkerRequest, worker: WorkerContext) ->
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
     from solarlab.equations.implementation import verify_selection
+    from solarlab.equations.time_method import BACKWARD_EULER, IONIC, verify_time_method
 
     verify_selection(binding.environment)
+    time_method = verify_time_method(binding.environment, IONIC)
     _verify_sources(binding.execution)
     _limits(worker._limits)
     from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
@@ -267,7 +271,7 @@ def run_ionic_transient_worker(request: WorkerRequest, worker: WorkerContext) ->
                 admitted = IonicTransientInitial(initial.state, float(protocol.generation_scale[0]), initial_options,
                                                   INITIAL_ROLE, initial_sha256, initial_bytes.decode())
                 worker.progress({"stage": "ionic_time_steps", "requested_steps": protocol.times_s.size - 1})
-                history = solve_ionic_transient(compiled, admitted, protocol, options=options)
+                history = solve_ionic_transient(compiled, admitted, protocol, options=options, method=BACKWARD_EULER)
             worker.check_cancel()
         summary, payloads = ionic_transient_payload(compiled, initial, protocol, history, initial_bytes)
         sources = {source.id: source.sha256 for source in binding.execution.implementation.files}
@@ -279,7 +283,8 @@ def run_ionic_transient_worker(request: WorkerRequest, worker: WorkerContext) ->
         return WorkerResult.from_dict({"schema": _RESULT, "engine": "solarlab", "H_input": request.H_input,
             "H_physics": request.H_physics, "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
             "prepared_sha256": prepared.content_sha256, "ionic_result": summary, "reason": summary["reason"],
-            "capture": capture, "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
+            "capture": capture, "time_method": time_method.record(),
+            "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
             for name, p in payloads.items()}, "scientific_qualification": False}, artifacts=tuple(payloads.items()),
             state="succeeded" if summary["outcome"] == "completed" else "failed")
 
@@ -290,7 +295,7 @@ def read_ionic_transient_job(store: RunStore, run_id: str, *, attempt_id: str | 
     from solarlab.experiments.ionic_transient_results import (
         SCHEMA, result_digest, storage_components, stored_units, units, unpack_ionic_arrays, validate_ionic_history,
     )
-    from solarlab.experiments.transient_results import _decode, _fingerprint
+    from solarlab.experiments.transient_results import _decode, _fingerprint, recorded_backward_euler
     from solarlab.io.artifacts import ArtifactPayload, _json_document, _parse_document
 
     run = store.get_run(run_id)
@@ -384,6 +389,8 @@ def read_ionic_transient_job(store: RunStore, run_id: str, *, attempt_id: str | 
             or capture["time_solve_started"] != raw["initial"]["accepted"]
             or capture["result_sha256"] != result_digest(summary, payloads)):
         raise ValueError("ionic computation capture differs from actual stored source/inputs/result")
+    if not recorded_backward_euler(result.get("time_method"), bound["environment"]["settings"]):
+        raise ValueError("ionic worker time-method record differs from its execution manifest")
     return {"document": {**summary, "run_id": run_id, "attempt_id": selected, "generation": attempt["generation"],
         "arrays": {name: by_name[name]["artifact_id"] for name in unit_map}, "logical_array_units": units(species),
         "array_layout": {"packed_components": storage_components(species),

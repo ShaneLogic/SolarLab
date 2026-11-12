@@ -206,8 +206,9 @@ def test_generation_predictor_is_explicit_and_does_not_modify_old_state(case):
 @pytest.fixture(scope="module")
 def refinements(case):
     device, point, initial_controls = case
-    return tuple(solve_transient(device, point, protocol(n), options=controls(), initial_options=initial_controls)
-                 for n in (4, 8, 16))
+    # These are backward-Euler histories; the light ramps are allowlisted BDF envelopes, so opt out explicitly.
+    return tuple(solve_transient(device, point, protocol(n), options=controls(), initial_options=initial_controls,
+                                 method="backward_euler") for n in (4, 8, 16))
 
 
 def test_real_37_node_time_refinement_and_maxwell_accounting(case, refinements):

@@ -130,6 +130,8 @@
     "solarlab.experiments.bdf_results": [
       "CapturedBDFRun",
       "run_bdf_for_publication",
+      "run_production_bdf_for_publication",
+      "capture_admitted_bdf",
       "publish_bdf_result",
       "read_bdf_result",
       "read_bdf_packet"
@@ -419,6 +421,7 @@
       "run_transient_for_publication",
       "publish_transient_result",
       "read_transient_result",
+      "recorded_backward_euler",
       "transient_result_payload"
     ],
     "solarlab.experiments.transient_worker": [
@@ -570,6 +573,38 @@
       "diagnostics",
       "scope",
       "sources"
+    ],
+    "solarlab.equations.time_method": [
+      "ADAPTIVE_MAX_STEPS",
+      "ALLOWLIST",
+      "ALLOWLIST_SHA256",
+      "ALLOWLISTED_DEFAULT",
+      "BACKWARD_EULER",
+      "BDF",
+      "ELECTRONIC",
+      "ENVIRONMENT",
+      "IONIC",
+      "MULTIPLE_IONIC",
+      "PROFILE",
+      "PROFILE_SHA256",
+      "SCOPE_SCHEMA",
+      "SELECTION_SCHEMA",
+      "TIME_METHODS",
+      "TRUST_STANDARD",
+      "AdmittedBDFCall",
+      "TimeMethodSelection",
+      "admit_time_method",
+      "electronic_components",
+      "electronic_scope",
+      "integrate_admitted",
+      "ionic_scope",
+      "requested_time_method",
+      "resolve_time_method",
+      "scope_digest",
+      "time_method",
+      "time_method_setting",
+      "verify_integration",
+      "verify_time_method"
     ]
   },
   "public_imports": {

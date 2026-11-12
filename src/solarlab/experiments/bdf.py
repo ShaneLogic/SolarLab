@@ -15,6 +15,7 @@ from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
 from solarlab.equations.assembly.ionic_1d import AssembledIonic1DProblem, AssembledMultipleIonic1DProblem
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem
 from solarlab.equations.implementation import use_assembled
+from solarlab.equations.time_method import AdmittedBDFCall, verify_integration
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D
 from solarlab.experiments import ionic_transient, multiple_ionic_transient
@@ -172,8 +173,14 @@ def solve_electronic_bdf(
     compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions, bdf_options: BDFOptions,
     drive: BDFDrive | None = None, adaptive_max_steps: int | None = None,
-    density_seed_activation: bool = False,
+    density_seed_activation: bool = False, admission: AdmittedBDFCall | None = None,
 ) -> BDFResult:
+    """Integrate exactly these inputs; with ``admission``, refuse at the last check inputs it does not admit.
+
+    A production route hands it the inputs that ``integrate_admitted`` built from the admission's records.
+    """
+    if admission is not None and type(admission) is not AdmittedBDFCall:
+        raise ValueError("BDF is not selectable: this is not an admission of a production BDF call")
     if type(density_seed_activation) is not bool:
         raise ValueError("density_seed_activation must be an explicit boolean")
     started = time.monotonic()
@@ -200,13 +207,19 @@ def solve_electronic_bdf(
     remaining = min(bdf_options.wall_s, options.wall_s) - preparation_s
     if remaining <= 0:
         raise TimeoutError("BDF initial admission exhausted the whole-history wall budget")
-    result = solve_bdf(factory, initial.state.u, (float(protocol.times_s[0]), float(protocol.times_s[-1])),
-        options=replace(bdf_options, wall_s=remaining, max_steps=work_steps), settings=lambda step: base,
+    # The integrator's arguments are computed first, so a production history's last check comes right before it.
+    start, interval = initial.state.u, (float(protocol.times_s[0]), float(protocol.times_s[-1]))
+    run_options = replace(bdf_options, wall_s=remaining, max_steps=work_steps)
+    breakpoints, events = tuple(float(t) for t in source.times_s[1:-1]), _events(source, factory, options)
+    if admission is not None:
+        # A production history: what the integrator reads is re-keyed against its admission (time_method, D1-R1).
+        verify_integration(admission, compiled=compiled, initial=initial, protocol=protocol, options=options,
+                           initial_options=initial_options, drive=source, start=start, run_options=run_options)
+    result = solve_bdf(factory, start, interval, options=run_options, settings=lambda step: base,
         convergence_norm=norm, assess=assessment,
         seed=lambda step: bdf_seed(step, options.predictor, voltage_lift=True),
         density_seed_context=(lambda step, failed: _generation_density_context(source, step)) if density_seed_activation else None,
-        breakpoints_s=tuple(float(t) for t in source.times_s[1:-1]),
-        events=_events(source, factory, options), output_times_s=protocol.times_s)
+        breakpoints_s=breakpoints, events=events, output_times_s=protocol.times_s)
     return replace(result, wall_s=time.monotonic() - started, controls={**result.controls, "physical_controls": asdict(options),
         "initial_controls": asdict(initial_options), "compiled_identity": compiled.identity,
         "drive": asdict(source), "initial_admission_wall_s": preparation_s, "method": "classical_physical_storage_bdf12",
@@ -217,8 +230,14 @@ def solve_electronic_bdf(
 def solve_ionic_bdf(
     compiled: CompiledIonicDevice1D, initial: IonicTransientInitial, protocol: TransientProtocol, *,
     options: IonicTransientOptions, bdf_options: BDFOptions, drive: BDFDrive | None = None,
-    adaptive_max_steps: int | None = None,
+    adaptive_max_steps: int | None = None, admission: AdmittedBDFCall | None = None,
 ) -> BDFResult:
+    """Integrate exactly these inputs; with ``admission``, refuse at the last check inputs it does not admit.
+
+    A production route hands it the inputs that ``integrate_admitted`` built from the admission's records.
+    """
+    if admission is not None and type(admission) is not AdmittedBDFCall:
+        raise ValueError("BDF is not selectable: this is not an admission of a production BDF call")
     started = time.monotonic()
     work_steps = _adapter_step_budget(protocol, options.electronic.max_steps, bdf_options, adaptive_max_steps)
     admitted, generation, checks = _admit_evidence(compiled, initial.evidence_json, initial.source_sha256,
@@ -243,12 +262,18 @@ def solve_ionic_bdf(
     remaining = min(bdf_options.wall_s, options.electronic.wall_s) - preparation_s
     if remaining <= 0:
         raise TimeoutError("BDF ionic admission exhausted the whole-history wall budget")
-    result = solve_bdf(factory, admitted.u, (float(protocol.times_s[0]), float(protocol.times_s[-1])),
-        options=replace(bdf_options, wall_s=remaining, max_steps=work_steps),
+    # The integrator's arguments are computed first, so a production history's last check comes right before it.
+    start, interval = admitted.u, (float(protocol.times_s[0]), float(protocol.times_s[-1]))
+    run_options = replace(bdf_options, wall_s=remaining, max_steps=work_steps)
+    breakpoints, events = tuple(float(t) for t in source.times_s[1:-1]), _events(source, factory, options.electronic)
+    if admission is not None:
+        # A production history: what the integrator reads is re-keyed against its admission (time_method, D1-R1).
+        verify_integration(admission, compiled=compiled, initial=initial, protocol=protocol, options=options,
+                           drive=source, start=start, run_options=run_options)
+    result = solve_bdf(factory, start, interval, options=run_options,
         settings=lambda step: base, convergence_norm=norm, assess=assessment,
         seed=lambda step: bdf_seed(step, options.electronic.predictor, voltage_lift=True),
-        breakpoints_s=tuple(float(t) for t in source.times_s[1:-1]),
-        events=_events(source, factory, options.electronic), output_times_s=protocol.times_s)
+        breakpoints_s=breakpoints, events=events, output_times_s=protocol.times_s)
     return replace(result, wall_s=time.monotonic() - started, controls={**result.controls, "physical_controls": asdict(options),
         "initial_source_sha256": initial.source_sha256, "initial_checks": checks,
         "compiled_identity": compiled.identity, "drive": asdict(source), "initial_admission_wall_s": preparation_s,

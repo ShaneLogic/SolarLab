@@ -24,6 +24,7 @@ from solarlab.equations.assembly.ionic_1d import (
 from solarlab.equations.implementation import provenance_binding, use_assembled
 from solarlab.equations.ionic_closure import immobile_profile_binding, ion_mobility_partition
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D, MultipleIonic1DProblem, MultipleIonicState1D
+from solarlab.equations.time_method import MULTIPLE_IONIC, resolve_time_method
 from solarlab.experiments.ionic_transient import IonicTransientOptions, _finite_accounting
 from solarlab.experiments.transient import TransientProtocol
 from solarlab.experiments.transient_results import _decode, _encode
@@ -194,7 +195,12 @@ def solve_multiple_ionic_transient(
     device: CompiledMultipleIonicDevice1D, initial: MultipleIonicTransientInitial, protocol: TransientProtocol,
     *, options: IonicTransientOptions,
 ) -> MultipleIonicTransientResult:
-    """Exactly the requested native time steps, stopping at the first failure."""
+    """Exactly the requested native time steps, stopping at the first failure.
+
+    This entry point integrates with backward Euler only: a BDF request
+    (scope or process setting) is refused, never run as backward Euler.
+    """
+    resolve_time_method(compiled=device, family=MULTIPLE_IONIC)
     started = time.monotonic()
     if not isinstance(initial, MultipleIonicTransientInitial) or not isinstance(protocol, TransientProtocol) or not isinstance(options, IonicTransientOptions):
         raise ValueError("explicit bound initial evidence, protocol and reviewed ionic controls are required")

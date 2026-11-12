@@ -1,0 +1,830 @@
+{
+ "schema": "solarlab.time-method-allowlist-fixture.v1",
+ "freeze": {
+  "name": "CommanderBdfDefaultFreezeV1",
+  "sha256": "4383658431b8b1e2a6106073b5fa91829456ba41049c48a4b5102397fb106066"
+ },
+ "key_table": "CND2 path-independent scope keys of the same ten envelopes, for CommanderBdfDefaultFreezeV2",
+ "profile": {
+  "sha256": "9239679194ed68a8c72780877a80a84ecca3dba24a895a17fe1ac1a94fd76bea",
+  "options": {
+   "initial_step_s": 0.001,
+   "min_step_s": 1e-16,
+   "max_step_s": 1e+30,
+   "relative_tolerance": 1e-05,
+   "absolute_tolerance": 1e-12,
+   "max_order": 2,
+   "adaptive": true,
+   "safety": 0.8,
+   "min_factor": 0.2,
+   "max_factor": 2.0,
+   "max_steps": 10000,
+   "max_attempts": 20000,
+   "max_consecutive_rejections": 12,
+   "wall_s": 30.0
+  },
+  "adaptive_max_steps": 10000
+ },
+ "scope_schema": "solarlab.time-method-scope.v1",
+ "family": "electronic_1d",
+ "device": {
+  "config_sha256": "2003cd46e119c2c8ff324ffc11562c2e69cd32dc1e7cdeda43f22dfdd501e086",
+  "intervals_per_layer": 12,
+  "content_sha256": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac"
+ },
+ "capture": {
+  "system": "Darwin",
+  "machine": "arm64",
+  "python": "3.13.15",
+  "numpy": "2.5.3",
+  "scipy": "1.18.1",
+  "numpy_blas": "accelerate",
+  "numpy_lapack": "accelerate",
+  "scipy_blas": "accelerate",
+  "scipy_lapack": "accelerate"
+ },
+ "envelopes": [
+  {
+   "case_id": "E_dark_hold",
+   "scope_sha256": "221e31f715757df14ebaaa73e4f2c2f879e6cb980a5fc483c7940a607b53cebf",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "2146bc9c8266a0e6a2b1fac978232a17e6847b26affb901255b62c27708ee791",
+    "protocol": "813c88451d629c420a753368dc0570e7c166130e8da26e58b7dbd171862a046a",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "dcdcb4da6cd0f970df04e92a598ce869aebf90682fa3d06953355ecb30bfd828",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     1e-07,
+     2e-07,
+     3e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "generation_scale": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_light_hold",
+   "scope_sha256": "59aca9ef958c68f5c179afe0ea59817d51d66b519af65aeaff6c847d545a03c3",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
+    "protocol": "aa2a8c23095cf5c1f020a5246ec6bff5487507f56adbbc674fdff1dedea87e85",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "fb8af7adb2d4af7b2dd8b5c459ad2aff6df4a36cf3599dc96d965b9ef693787f",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     1e-07,
+     2e-07,
+     3e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "generation_scale": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_dark_voltage_ramp",
+   "scope_sha256": "7dace99e619ecddd410121309ea5443a16f832720e90fb22781b8b3be591b2a5",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "2146bc9c8266a0e6a2b1fac978232a17e6847b26affb901255b62c27708ee791",
+    "protocol": "03673360ca7baf7c4d2c0122631764dd0f6b99163c7c63d6dde9940159e2ca4f",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "dcdcb4da6cd0f970df04e92a598ce869aebf90682fa3d06953355ecb30bfd828",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     1e-07,
+     2e-07,
+     3e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.0,
+     0.0005,
+     0.001,
+     0.0015,
+     0.002
+    ],
+    "generation_scale": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_light_ramp_4",
+   "scope_sha256": "608051152d7f5b41bdbb9d227f4cb69f6b5d37e0f9be13d9cc5b09fc1c214d33",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
+    "protocol": "e9a2a4a2ce13370f928c749800c8db8425bc5b88b878602cb06c627257098682",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "fb8af7adb2d4af7b2dd8b5c459ad2aff6df4a36cf3599dc96d965b9ef693787f",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     1e-07,
+     2e-07,
+     3e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "generation_scale": [
+     1.0,
+     1.000625,
+     1.0025,
+     1.005625,
+     1.01
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_voltage_ramp_4",
+   "scope_sha256": "cdadc98646e0665667b9b26ef5ddc294bb89b1434faca40498f2bc3855cbff63",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "6a5ecb883c056be909cf9cafd9f3755449fe2b08e20e0dfd5e44bc0536b82e49",
+    "protocol": "a89197bc7fa0b472e5968ab15ebb3f56147b39a3b49f6a6aff19d70a1d9a1652",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "36b259f39906ecd88e9df8ac12614f45610076dbfe698829d083a3a6f56d85fb",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     1e-07,
+     2e-07,
+     3e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.1,
+     0.1000625,
+     0.10025,
+     0.1005625,
+     0.101
+    ],
+    "generation_scale": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_light_ramp_8",
+   "scope_sha256": "700083da5b3e5dcbc3eec176f91830b27290491a363a8204e5336772f38dcd27",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
+    "protocol": "07ad2898d0714b8aa587fb1e833f36cf155e8568f8f73c9bacf3b030ad1a5b3f",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "fb8af7adb2d4af7b2dd8b5c459ad2aff6df4a36cf3599dc96d965b9ef693787f",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     5e-08,
+     1e-07,
+     1.5e-07,
+     2e-07,
+     2.5e-07,
+     3e-07,
+     3.5e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "generation_scale": [
+     1.0,
+     1.00015625,
+     1.000625,
+     1.00140625,
+     1.0025,
+     1.00390625,
+     1.005625,
+     1.00765625,
+     1.01
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_voltage_ramp_8",
+   "scope_sha256": "6e315c3f151c1a0744093a63f04229ddc76fa4995bbb0272c7c9eaf3097ec1e6",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "6a5ecb883c056be909cf9cafd9f3755449fe2b08e20e0dfd5e44bc0536b82e49",
+    "protocol": "bf98884538495964633878d5e040b677466703b4c1b3f8ec1ac992eb77663aba",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "36b259f39906ecd88e9df8ac12614f45610076dbfe698829d083a3a6f56d85fb",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     5e-08,
+     1e-07,
+     1.5e-07,
+     2e-07,
+     2.5e-07,
+     3e-07,
+     3.5e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.1,
+     0.10001562500000001,
+     0.1000625,
+     0.10014062500000001,
+     0.10025,
+     0.10039062500000001,
+     0.1005625,
+     0.10076562500000001,
+     0.101
+    ],
+    "generation_scale": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_light_ramp_16",
+   "scope_sha256": "a9364a002e141af1c09d252098eba75268136005d4755ddf6a76e954b13e5ca4",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
+    "protocol": "d509d81b817ef0691ade9cbb24dfeda8e1ce5da31338889f722ad25eb0567371",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "fb8af7adb2d4af7b2dd8b5c459ad2aff6df4a36cf3599dc96d965b9ef693787f",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     2.5e-08,
+     5e-08,
+     7.5e-08,
+     1e-07,
+     1.25e-07,
+     1.5e-07,
+     1.75e-07,
+     2e-07,
+     2.25e-07,
+     2.5e-07,
+     2.75e-07,
+     3e-07,
+     3.2499999999999996e-07,
+     3.5e-07,
+     3.75e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "generation_scale": [
+     1.0,
+     1.0000390625,
+     1.00015625,
+     1.0003515625,
+     1.000625,
+     1.0009765625,
+     1.00140625,
+     1.0019140625,
+     1.0025,
+     1.0031640625,
+     1.00390625,
+     1.0047265625,
+     1.005625,
+     1.0066015625,
+     1.00765625,
+     1.0087890625,
+     1.01
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_voltage_ramp_16",
+   "scope_sha256": "8e315434aa617005a75bb7224cebabf03830f05afe06782c38626c37f49c9af8",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "6a5ecb883c056be909cf9cafd9f3755449fe2b08e20e0dfd5e44bc0536b82e49",
+    "protocol": "8d96602a2fd3a5f5c45667f9ca31c8ff5487165f9fa72c6ab3f5f7d2c33c8dd6",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "36b259f39906ecd88e9df8ac12614f45610076dbfe698829d083a3a6f56d85fb",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     2.5e-08,
+     5e-08,
+     7.5e-08,
+     1e-07,
+     1.25e-07,
+     1.5e-07,
+     1.75e-07,
+     2e-07,
+     2.25e-07,
+     2.5e-07,
+     2.75e-07,
+     3e-07,
+     3.2499999999999996e-07,
+     3.5e-07,
+     3.75e-07,
+     4e-07
+    ],
+    "voltage_V": [
+     0.1,
+     0.10000390625000001,
+     0.10001562500000001,
+     0.10003515625,
+     0.1000625,
+     0.10009765625,
+     0.10014062500000001,
+     0.10019140625,
+     0.10025,
+     0.10031640625,
+     0.10039062500000001,
+     0.10047265625,
+     0.1005625,
+     0.10066015625000001,
+     0.10076562500000001,
+     0.10087890625000001,
+     0.101
+    ],
+    "generation_scale": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  },
+  {
+   "case_id": "E_saved_packet",
+   "scope_sha256": "e79d312254e470a833c985f8304c6faf9df11c4fff139658175fdc1a983c0851",
+   "components": {
+    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
+    "protocol": "9f86cabc9d07defbeeaf46ffb83e77849d9837a32f0730b044845f8089f67f0a",
+    "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
+    "physical_controls": "f614faff432e1a62715a24b23157b3ecb0c1c9fa94c342bcd40a158dd03a79b3",
+    "initial_controls": "a687cb51a6a5cb76e640f8732665f2f83261f7d25876a63ab9d4ef864519426a"
+   },
+   "initial_artifact_sha256": "fb8af7adb2d4af7b2dd8b5c459ad2aff6df4a36cf3599dc96d965b9ef693787f",
+   "frozen_source": {
+    "times_s": [
+     0.0,
+     1e-07,
+     2e-07
+    ],
+    "voltage_V": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "generation_scale": [
+     1.0,
+     1.0025,
+     1.01
+    ]
+   },
+   "physical_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "newton_budget": {
+     "max_iterations": 50,
+     "max_residual_evaluations": 1000,
+     "max_jacobian_evaluations": 50,
+     "max_backtracks": 24
+    },
+    "max_steps": 32,
+    "wall_s": 30.0,
+    "predictor": "previous",
+    "convergence_policy": "poisson_contact_balance_v1"
+   },
+   "initial_controls": {
+    "poisson_tolerance": 1e-11,
+    "continuity_tolerance_A_m2": 1e-08,
+    "current_spread_tolerance_A_m2": 1e-08,
+    "equilibrium_current_tolerance_A_m2": 1e-10,
+    "contact_log_tolerance": 1e-11,
+    "potential_step_V": 0.1,
+    "quasi_fermi_step": 2.0,
+    "max_iterations": 100,
+    "max_residual_evaluations": 10000,
+    "max_jacobian_evaluations": 2000,
+    "max_backtracks": 40,
+    "max_bias_step_V": 0.1,
+    "max_continuation_steps": 100,
+    "convergence_policy": "historical_max_row_v1"
+   }
+  }
+ ],
+ "allowlist_sha256": "faaaf7cb92862de77d8bb48ba15d9552fdb988d1df493b2ebe7b2cddb247dbae",
+ "qualification": false
+}

@@ -28,7 +28,10 @@
     "tests/integration/test_bdf_publication.py::test_saved_readiness_packets_keep_original_words_and_identity": "Reads exact captured ReadinessV1/V2 BDF words and checks stored integrity only; no locally regenerated floating output is compared, so readback runs on every platform.",
     "tests/integration/test_bdf_publication.py::test_historical_packet_structural_tampering_refuses": "Reads exact captured ReadinessV1/V2 BDF words and checks stored integrity only; no locally regenerated floating output is compared, so readback runs on every platform.",
     "tests/integration/test_bdf_publication.py::test_solver_free_process_reads_historical_packets": "Reads historical BDF fixture words with solver imports forbidden; this byte-integrity/readback test performs no local numerical recomputation and runs on every platform.",
-    "tests/integration/test_bdf_publication.py::test_reviewer_rejected_restart_witness_refuses_historical_packets": "Reseals one Boolean in a temporary copy of the captured V1/V2 packet; checks historical semantic integrity without recomputing floats, on every platform."
+    "tests/integration/test_bdf_publication.py::test_reviewer_rejected_restart_witness_refuses_historical_packets": "Reseals one Boolean in a temporary copy of the captured V1/V2 packet; checks historical semantic integrity without recomputing floats, on every platform.",
+    "tests/integration/test_time_method_selection.py::test_the_allowlist_holds_exactly_the_ten_frozen_envelopes": "Reads the CND2 key table; compares only declared source/control words and the embedded allowlist, so it runs on every platform.",
+    "tests/integration/test_time_method_selection.py::test_live_scope_keys_are_the_frozen_allowlist": "Compares live compiled-device and cold-initial digests with the frozen CND2 keys; skips off the recorded capture stack, where the other tests allowlist the platform's own keys.",
+    "tests/integration/test_time_method_selection.py::test_production_bdf_reproduces_the_reviewed_readiness_history": "Compares a live production BDF history with the captured ReadinessV2 E_saved_packet words; skips off the recorded capture stack."
   },
   "markers": {
     "slow": "Excluded from the default fast command. scheduled-suite.yml inventories and partitions every slow node in both root and legacy suites; the older optional ci.yml smoke job retains its bounded legacy regression scope.",
@@ -91,7 +94,10 @@
     "tests/integration/test_bdf_publication.py::test_saved_readiness_packets_keep_original_words_and_identity",
     "tests/integration/test_bdf_publication.py::test_historical_packet_structural_tampering_refuses",
     "tests/integration/test_bdf_publication.py::test_solver_free_process_reads_historical_packets",
-    "tests/integration/test_bdf_publication.py::test_reviewer_rejected_restart_witness_refuses_historical_packets"
+    "tests/integration/test_bdf_publication.py::test_reviewer_rejected_restart_witness_refuses_historical_packets",
+    "tests/integration/test_time_method_selection.py::test_the_allowlist_holds_exactly_the_ten_frozen_envelopes",
+    "tests/integration/test_time_method_selection.py::test_live_scope_keys_are_the_frozen_allowlist",
+    "tests/integration/test_time_method_selection.py::test_production_bdf_reproduces_the_reviewed_readiness_history"
   ],
   "platform_bound_fixtures": {
     "tests/support/assembly_baselines.json": "Raw float/complex words and sparse patterns captured on the recorded Darwin arm64 Python/NumPy/SciPy and Accelerate stack.",
@@ -102,7 +108,8 @@
     "tests/integration/fixtures/bdf_readiness/readinessv1_e_saved_packet.json.gz": "Exact captured BDF history words; reader tests preserve bytes without running a solver or comparing locally regenerated floating outputs.",
     "tests/integration/fixtures/bdf_readiness/readinessv1_e_light_step.json.gz": "Exact captured BDF history words; reader tests preserve bytes without running a solver or comparing locally regenerated floating outputs.",
     "tests/integration/fixtures/bdf_readiness/readinessv2_e_saved_packet.json.gz": "Exact captured BDF history words; reader tests preserve bytes without running a solver or comparing locally regenerated floating outputs.",
-    "tests/integration/fixtures/bdf_readiness/readinessv2_e_dark_voltage_step.json.gz": "Exact captured failed ReadinessV2 BDF restart history; validate the recorded left/right words without local floating recomputation or endpoint reconstruction."
+    "tests/integration/fixtures/bdf_readiness/readinessv2_e_dark_voltage_step.json.gz": "Exact captured failed ReadinessV2 BDF restart history; validate the recorded left/right words without local floating recomputation or endpoint reconstruction.",
+    "tests/integration/fixtures/bdf_readiness/allowlist.json": "CND2 scope-key table: each frozen envelope's scope digest binds compiled-device and initial-state words of the recorded Darwin arm64 Accelerate stack; source knots, controls and profile are exact declared inputs."
   },
   "portable_fixtures": {
     "tests/fixtures/native_history/accepted.jsonl": "Exact historical reader bytes from the incomplete original attempt; no local floating output is regenerated or qualified against them.",

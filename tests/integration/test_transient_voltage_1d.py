@@ -122,8 +122,9 @@ def test_variable_bias_jacobian_is_the_new_endpoint_analytic_jacobian(case):
 @pytest.fixture(scope="module")
 def runs(case):
     device, point, initial_options = case
-    return tuple(solve_transient(device, point, voltage_protocol(n), options=controls(), initial_options=initial_options)
-                 for n in (4, 8, 16))
+    # These are backward-Euler histories; the voltage ramps are allowlisted BDF envelopes, so opt out explicitly.
+    return tuple(solve_transient(device, point, voltage_protocol(n), options=controls(), initial_options=initial_options,
+                                 method="backward_euler") for n in (4, 8, 16))
 
 
 def test_real_variable_bias_histories_and_maxwell_refinement(case, runs):

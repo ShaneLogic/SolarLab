@@ -15,6 +15,7 @@ import pytest
 from solarlab.equations.implementation import ASSEMBLED, ENVIRONMENT, LEGACY, equation_implementation
 from solarlab.experiments.bdf_results import (
     _canonical, _decode, _digest, _encode, _input_record, _validate_history, _work, read_bdf_packet, read_bdf_result,
+    run_bdf_for_publication,
 )
 from solarlab.experiments.transient_results import (
     publish_transient_result, read_transient_result, run_transient_for_publication,
@@ -100,8 +101,9 @@ def _published(tmp_path_factory, *, assembled, ionic_initial_path=None):
                         return (replace(events[0], restart=reject), *events[1:])
 
                     patch.setattr(bdf_backend, "_events", rejecting_events)
-                capture = run_transient_for_publication(compiled, initial, active_protocol,
-                    options=options, initial_options=initial_options, method="bdf", bdf_options=requested,
+                # An explicit research capture: these scopes and BDFOptions are not allowlisted.
+                capture = run_bdf_for_publication(compiled, initial, active_protocol,
+                    options=options, initial_options=initial_options, bdf_options=requested,
                     bdf_drive=active_drive)
             assert (observed.original == 0 and observed.assembled > 0) if assembled else (
                 observed.original > 0 and observed.assembled == 0)
@@ -119,7 +121,6 @@ def _published(tmp_path_factory, *, assembled, ionic_initial_path=None):
         from examples.research_1d.ionic_transient import controls as ionic_controls
         from examples.research_1d.transient import json_value
         from solarlab.device.compile_ionic_1d import compile_ionic_device_1d
-        from solarlab.experiments.bdf_results import run_bdf_for_publication
         from solarlab.experiments.ionic_transient import load_ionic_steady_initial
         from solarlab.solvers.nonlinear.ionic_1d import solve_ionic_steady_state
 

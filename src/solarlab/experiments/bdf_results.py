@@ -5,7 +5,7 @@ No method, gate, control or qualification status is inferred from current code.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 import gzip
@@ -28,13 +28,14 @@ if TYPE_CHECKING:
     from solarlab.solvers.time.bdf import BDFOptions, BDFResult
     from solarlab.solvers.time.bdf_1d import BDFDrive
 
-__all__ = ["CapturedBDFRun", "run_bdf_for_publication", "publish_bdf_result",
-           "read_bdf_result", "read_bdf_packet"]
+__all__ = ["CapturedBDFRun", "run_bdf_for_publication", "run_production_bdf_for_publication", "capture_admitted_bdf",
+           "publish_bdf_result", "read_bdf_result", "read_bdf_packet"]
 
 _SCHEMA = "solarlab.bdf-publication.v1"
 _HISTORY_SCHEMA = "solarlab.physical_storage_bdf12.v1"
 _METHOD = "classical_physical_storage_bdf12"
 _LABEL = "experimental_unqualified"
+_SELECTION = "solarlab.time-method-selection.v1"
 _TAGS = {"$array", "$scalar", "$float", "$tuple"}
 
 
@@ -459,6 +460,7 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
                  == _sha(request["initial"]["evidence_json"].encode()), "BDF initial evidence hash differs")
         _require(_digest(request["initial_controls"]) == _digest(request["initial"]["steady_controls"]),
                  "BDF ionic initial controls differ from admission")
+    _validate_time_method(request, controls)
     _require(body["remaining_wall_budget_s"] == controls["wall_s"]
              and body["initial_admission_wall_s"] == controls["initial_admission_wall_s"], "BDF wall budget accounting differs")
     _require(body["caps"] == {"requested_max_steps": request["bdf_options"]["max_steps"],
@@ -466,6 +468,31 @@ def _validate_body(body: dict[str, Any]) -> dict[str, Any]:
              "effective_max_steps": controls["max_steps"], "effective_max_attempts": controls["max_attempts"]},
              "BDF clipped caps differ from the saved controls")
     return summary
+
+
+def _validate_time_method(request: dict[str, Any], controls: dict[str, Any]) -> None:
+    """The saved time-method selection agrees with its history; captures before CND2 hold none."""
+    record = request.get("time_method")
+    _require((record is None) == ("time_method" not in controls), "BDF time-method record differs from its history")
+    if record is None:
+        return
+    _require(_digest(record) == _digest(controls["time_method"]) and record["schema"] == _SELECTION
+             and record["requested"] in ("bdf", None) and record["effective"] == "bdf"
+             and record["qualification"] is False and record["label"] == _LABEL,
+             "BDF time-method record differs from its history")
+    if record["source"] == "research_capture":
+        _require(record["requested"] == "bdf" and record.get("trust_standard") is None and all(record[name] is None for name in (
+                     "scope", "scope_sha256", "allowlist_sha256", "profile_sha256", "profile", "adaptive_max_steps"))
+                 and "adapter_adaptive_max_steps" not in controls,
+                 "a research BDF capture cannot claim an allowlisted scope, the frozen profile or a production work cap")
+        return
+    physical = request["physical_controls"].get("electronic", request["physical_controls"])
+    _require(type(record["scope"]) is str and type(record["scope_sha256"]) is str
+             and record.get("trust_standard") in (None, "interface_level_trust_standard_v1")
+             and _digest(request["bdf_options"]) == _digest(record["profile"])
+             and controls["adapter_adaptive_max_steps"] == record["adaptive_max_steps"]
+             and controls["adapter_sample_interval_limit"] == physical["max_steps"],
+             "a production BDF record differs from its frozen profile or forwarded work cap")
 
 
 def _capture_identity(body: dict[str, Any], provenance: dict[str, Any]) -> dict[str, str]:
@@ -612,23 +639,97 @@ def run_bdf_for_publication(
     compiled: Any, initial: Any, protocol: Any, *, options: Any,
     bdf_options: BDFOptions, initial_options: Any = None, bdf_drive: BDFDrive | None = None,
 ) -> CapturedBDFRun:
-    """Capture an actual electronic or admitted single-ion BDF call.
+    """Capture an explicit research BDF call: the supplied BDFOptions and drive on any supported device.
 
-    No default is flipped and no fallback is attempted. Admission refusals that
-    produce no BDF history still raise; returned failed histories are retained.
-    Initial/DC history is represented by its supplied bytes, not re-attributed.
+    It admits no production scope and is recorded as ``source="research_capture"``
+    with no scope, profile or work cap. Production BDF is captured by
+    ``run_production_bdf_for_publication``. No default is flipped and no
+    fallback is attempted. Admission refusals that produce no BDF history
+    still raise; returned failed histories are retained. Initial/DC history
+    is represented by its supplied bytes, not re-attributed.
+    """
+    from solarlab.equations.ionic_1d import CompiledIonicDevice1D
+    from solarlab.equations.time_method import BDF, TimeMethodSelection
+
+    family = "ionic_1d" if isinstance(compiled, CompiledIonicDevice1D) else "electronic_1d"
+    record = TimeMethodSelection(family, BDF, "research_capture", BDF).record()
+    return _capture(compiled, initial, protocol, options=options, bdf_options=bdf_options,
+                    initial_options=initial_options, drive=bdf_drive, drive_was_explicit=bdf_drive is not None,
+                    record=record, adaptive_max_steps=None)
+
+
+def run_production_bdf_for_publication(
+    compiled: Any, initial: Any, protocol: Any, *, options: Any, initial_options: Any = None,
+    method: str | None = None, bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None,
+) -> CapturedBDFRun:
+    """Capture a production BDF call: the time-method axis must select BDF for this call's own scope.
+
+    The call is admitted here, once, from its actual inputs
+    (``solarlab.equations.time_method.admit_time_method``), never taken from
+    the caller. The capture records and integrates inputs built from the
+    admission's records (``capture_admitted_bdf``): the frozen profile, the
+    protocol's own continuous drive and the forwarded work cap. A
+    backward-Euler selection or any refused request raises before numerical
+    work.
+    """
+    from solarlab.equations.time_method import admit_time_method
+
+    # The family is the compiled device's own.
+    selection, call = admit_time_method(method, compiled=compiled, initial=initial, protocol=protocol,
+                                        options=options, initial_options=initial_options, bdf_options=bdf_options,
+                                        bdf_drive=bdf_drive)
+    if call is None:
+        raise ValueError("this call's time method is backward_euler; publish it as a transient result")
+    return capture_admitted_bdf(selection, call, drive_was_explicit=bdf_drive is not None)
+
+
+def capture_admitted_bdf(selection: Any, admission: Any, *, drive_was_explicit: bool = False) -> CapturedBDFRun:
+    """Capture one admitted production BDF call, with no second admission (CND2 D1-R1).
+
+    ``selection`` and ``admission`` are one ``admit_time_method`` result:
+    a selection that names another family, scope or key than the admission
+    is refused before the adapter. The capture records and integrates the
+    inputs that ``integrate_admitted`` builds from the admission's records.
+    The selection's request and source are recorded as it states them.
+    """
+    from solarlab.equations.time_method import BDF, TimeMethodSelection, integrate_admitted
+
+    if type(selection) is not TimeMethodSelection or selection.effective != BDF:
+        raise ValueError("a production BDF capture needs the BDF selection of its admission")
+    record = selection.record()
+
+    def capture(compiled: Any, initial: Any, protocol: Any, *, options: Any, bdf_options: BDFOptions,
+                drive: BDFDrive, adaptive_max_steps: int, admission: Any, initial_options: Any = None) -> CapturedBDFRun:
+        # ``integrate_admitted`` has taken exactly an admission; read it as it does, through tuple's accessors.
+        if (selection.family, selection.scope, selection.scope_sha256) != tuple.__getitem__(admission, slice(0, 3)):
+            raise ValueError("the selection does not state this admission's family, scope and key")
+        return _capture(compiled, initial, protocol, options=options, bdf_options=bdf_options,
+                        initial_options=initial_options, drive=drive, drive_was_explicit=drive_was_explicit,
+                        record=record, adaptive_max_steps=adaptive_max_steps, admission=admission)
+
+    return integrate_admitted(admission, capture)
+
+
+def _capture(
+    compiled: Any, initial: Any, protocol: Any, *, options: Any, bdf_options: BDFOptions, initial_options: Any,
+    drive: BDFDrive | None, drive_was_explicit: bool, record: dict[str, Any], adaptive_max_steps: int | None,
+    admission: Any = None,
+) -> CapturedBDFRun:
+    """Run and capture one BDF history with its time-method record, under job provenance (default: the protocol's drive).
+
+    ``admission`` is a production call's admission; the adapter re-keys what it hands to the integrator against it.
     """
     from solarlab.equations.dc_1d import CompiledDevice1D
     from solarlab.equations.implementation import (
         ASSEMBLED, equation_implementation, provenance_binding, selected_implementation,
     )
     from solarlab.equations.ionic_1d import CompiledIonicDevice1D
-    from solarlab.experiments.transient import solve_transient
-    from solarlab.experiments.ionic_transient import solve_ionic_transient
+    from solarlab.experiments.bdf import solve_electronic_bdf, solve_ionic_bdf
     from solarlab.solvers.time.bdf import BDFOptions, BDFResult
     from solarlab.solvers.time.bdf_1d import BDFDrive
 
-    _require(type(bdf_options) is BDFOptions, "BDF publication requires explicit BDFOptions")
+    if type(bdf_options) is not BDFOptions:
+        raise ValueError("BDF publication requires explicit BDFOptions")
     ionic = isinstance(compiled, CompiledIonicDevice1D)
     _require(ionic or isinstance(compiled, CompiledDevice1D), "BDF publication requires a supported compiled device")
     _require(ionic or initial_options is not None, "electronic BDF publication requires initial controls")
@@ -637,8 +738,10 @@ def run_bdf_for_publication(
     assembled = selection == ASSEMBLED
     binding = provenance_binding("BDFStep:" + operator, compiled,
         inventory_row_node=initial.steady_controls.inventory_row_node if ionic else None, assembled=assembled)
-    drive = BDFDrive.from_protocol(protocol) if bdf_drive is None else bdf_drive
-    _require(type(drive) is BDFDrive, "BDF publication requires the actual drive")
+    drive = BDFDrive.from_protocol(protocol) if drive is None else drive
+    # The record names the drive by its knots: a drive with state of its own would run another waveform.
+    _require(type(drive) is BDFDrive and set(vars(drive)) == {item.name for item in fields(drive)},
+             "BDF publication requires the actual drive")
     nodes = np.frombuffer(compiled.nodes_m.tobytes(), dtype=compiled.nodes_m.dtype).reshape(compiled.nodes_m.shape)
     problem_module = ("assembly.ionic_1d" if ionic else "assembly.classical_1d") if assembled else (
         "ionic_1d" if ionic else "dc_1d")
@@ -648,10 +751,10 @@ def run_bdf_for_publication(
     request = _decode(_encode({
         "method": "bdf", "bdf_options": asdict(bdf_options), "physical_controls": asdict(options),
         "initial_controls": initial.steady_controls if ionic else asdict(initial_options),
-        "protocol": asdict(protocol), "drive": asdict(drive), "drive_was_explicit": bdf_drive is not None,
+        "protocol": asdict(protocol), "drive": asdict(drive), "drive_was_explicit": drive_was_explicit,
         "nodes_m": nodes, "initial": initial, "initial_sha256": _digest(initial),
         "initial_source_sha256": getattr(initial, "source_sha256", None), "device_sha256": compiled.identity,
-        "equation_implementation": implementation,
+        "equation_implementation": implementation, "time_method": record,
         "event_restart_policy": {
             "interpolation": "right[i] to left[i+1] between drive knots",
             "breakpoints_s": tuple(float(t) for t in drive.times_s[1:-1]),
@@ -675,12 +778,14 @@ def run_bdf_for_publication(
                  and admitted.export()["execution_manifest_sha256"] is None,
                  "process-bound BDF publication requires its verified worker/manifest route")
         if ionic:
-            result = solve_ionic_transient(compiled, initial, protocol, options=options,
-                                          method="bdf", bdf_options=bdf_options, bdf_drive=drive)
+            result = solve_ionic_bdf(compiled, initial, protocol, options=options, bdf_options=bdf_options,
+                                     drive=drive, adaptive_max_steps=adaptive_max_steps, admission=admission)
         else:
-            result = solve_transient(compiled, initial, protocol, options=options, initial_options=initial_options,
-                                     method="bdf", bdf_options=bdf_options, bdf_drive=drive)
+            result = solve_electronic_bdf(compiled, initial, protocol, options=options, initial_options=initial_options,
+                                          bdf_options=bdf_options, drive=drive, adaptive_max_steps=adaptive_max_steps,
+                                          admission=admission)
         _require(type(result) is BDFResult, "the requested BDF call returned another method")
+        result = replace(result, controls={**result.controls, "time_method": record})
         history = _decode(_encode(result))
         summary = _validate_history(history)
         runtime = admitted.export()["runtime_observed"]

@@ -138,8 +138,9 @@ def test_dc_transient_publication_admits_the_implementation_that_ran(dc_device: 
     with equation_implementation(LEGACY):
         initial = solve_steady_state(dc_device, voltage_V=0.0, generation_scale=1.0, options=SteadyOptions())
     protocol = TransientProtocol([0, 1e-7, 2e-7], [0, 0, 0], [1, 1.0025, 1.01])
+    # The backward-Euler producer; this protocol is the allowlisted saved-packet envelope, so opt out explicitly.
     pair(lambda: run_transient_for_publication(dc_device, initial, protocol, options=transient_controls(),
-                                               initial_options=SteadyOptions()),
+                                               initial_options=SteadyOptions(), method="backward_euler"),
          lambda capture: json.loads(capture.capture_json)["description"]["job_provenance"],
          "BackwardEuler1DStep", dc_device)
 

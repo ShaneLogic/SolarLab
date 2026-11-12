@@ -90,8 +90,9 @@ def saved(tmp_path_factory):
         with RunStore(root / "store") as store:
             for name, protocol, options in cases:
                 with checked_provenance_owner():
+                    # Backward-Euler publications; "completed" is the allowlisted saved-packet envelope.
                     capture = run_transient_for_publication(compiled, initial, protocol,
-                        options=options, initial_options=initial_controls)
+                        options=options, initial_options=initial_controls, method="backward_euler")
                 result = capture.result
                 assert result.completed == (name == "completed")
                 source_words = expected(result, compiled.nodes_m)
