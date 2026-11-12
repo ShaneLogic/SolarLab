@@ -19,7 +19,7 @@ from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
-from solarlab.equations.dc_1d import CapabilityError
+from solarlab.equations.dc_1d import CapabilityError, TERegularizationName
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D
 from solarlab.mesh.geometry import half_endpoint_geometry
 from solarlab.physics.band_structure.temperature import ion_diffusivity_at_temperature
@@ -36,6 +36,8 @@ def compile_ionic_device_1d(
     prepared: PreparedDevice, *, intervals_per_layer: int | Sequence[int] = 24,
     ion_domain_layer: str | None = None,
     ion_domain_endpoints: tuple[str, str] | None = None,
+    te_softness: float = 0.02,
+    te_regularization_mode: TERegularizationName = "legacy_logistic",
 ) -> CompiledIonicDevice1D:
     """Compile independent or shared finite-site ions in one blocking layer.
 
@@ -117,7 +119,12 @@ def compile_ionic_device_1d(
     component_prepared = resolve_device(
         DeviceInput.model_validate(projection), prepared.defaults, prepared.resources, sources=prepared.sources,
     )
-    component = compile_device_1d(component_prepared, intervals_per_layer=intervals_per_layer)
+    component = compile_device_1d(
+        component_prepared,
+        intervals_per_layer=intervals_per_layer,
+        te_softness=te_softness,
+        te_regularization_mode=te_regularization_mode,
+    )
     domain_index = layers.index(domain_layer)
     left = 0 if domain_index == 0 else component.geometry.interfaces[domain_index - 1].shared_node
     right = component.node_count - 1 if domain_index == len(layers) - 1 else component.geometry.interfaces[domain_index].shared_node

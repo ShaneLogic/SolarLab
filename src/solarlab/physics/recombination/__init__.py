@@ -1,10 +1,10 @@
-"""Bulk recombination constitutive laws (P04-07, values, tangents and DC).
+"""Bulk and heterointerface recombination constitutive laws (P04-07, P04-09).
 
 Maxwell-Boltzmann lifetime SRH, radiative and Auger recombination; the DEF-1
 explicit neutral SRH inventory and its node ownership; position-dependent
-trap profiles; and the energy-resolved bulk-trap closure. Interface SRH
-belongs to the interface-transport slice and dynamic, multivalent and
-metastable defect closures to the defect slice; neither is provided here.
+trap profiles; the energy-resolved bulk-trap closure; and electrical
+heterointerface SRH, plane closure, and static sheet-charge closure. Dynamic,
+multivalent and metastable defect closures belong to the defect slice.
 """
 
 from solarlab.physics.recombination.bulk import (
@@ -33,6 +33,24 @@ from solarlab.physics.recombination.explicit_neutral import (
     compile_neutral_defect_species,
     evaluate_neutral_explicit_defects,
 )
+from solarlab.physics.recombination.interface import (
+    CrossCarrierCellPairEvaluation,
+    InterfaceDefectReferences,
+    InterfaceDefectSpec,
+    InterfaceSRHRate,
+    PlaneClosureParams,
+    PlaneClosureResult,
+    S_SUPPLY_M_S,
+    SharedInterfaceTrapEvaluation,
+    TwoDimensionalInterfaceSRHMode,
+    build_plane_closure_params,
+    equilibrium_referenced_sheet_charge,
+    evaluate_cross_carrier_cell_pair_srh,
+    evaluate_shared_interface_trap,
+    interface_srh_rate,
+    resolve_interface_defect_references,
+    solve_plane_closure,
+)
 from solarlab.physics.recombination.reaction import (
     BulkRecombinationCoefficients,
     BulkRecombinationEvaluation,
@@ -56,27 +74,43 @@ __all__ = [
     "BulkTrapQuadrature",
     "BulkTrapState",
     "CarrierSources",
+    "CrossCarrierCellPairEvaluation",
+    "InterfaceDefectReferences",
+    "InterfaceDefectSpec",
+    "InterfaceSRHRate",
     "NeutralDefectSpecies",
     "NeutralExplicitDefectEvaluation",
     "NeutralExplicitDefectModel",
+    "PlaneClosureParams",
+    "PlaneClosureResult",
     "RecombinationDomainError",
     "RecombinationRate",
+    "S_SUPPLY_M_S",
+    "SharedInterfaceTrapEvaluation",
     "TrapAwareNeutrality",
     "TrapProfile",
     "TrapProfileBinding",
+    "TwoDimensionalInterfaceSRHMode",
     "auger_recombination",
     "build_bulk_trap_quadrature",
+    "build_plane_closure_params",
     "bulk_trap_distribution_from_mapping",
     "compile_neutral_defect_species",
+    "equilibrium_referenced_sheet_charge",
     "evaluate_bulk_trap_state",
+    "evaluate_cross_carrier_cell_pair_srh",
     "evaluate_neutral_explicit_defects",
+    "evaluate_shared_interface_trap",
     "exponential_edge_profile",
     "gaussian_edge_profile",
+    "interface_srh_rate",
     "lifetime_srh_denominator",
     "lifetime_srh_from_denominator",
     "lifetime_srh_recombination",
     "radiative_recombination",
+    "resolve_interface_defect_references",
     "solve_bulk_trap_charge_neutrality",
+    "solve_plane_closure",
     "sum_recombination_rates",
     "tau_from_trap_density",
 ]

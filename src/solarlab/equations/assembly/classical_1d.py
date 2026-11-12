@@ -41,14 +41,16 @@ from solarlab.equations.assembly.quasi_fermi import (
 )
 from solarlab.equations.assembly.terms import (
     CELL_SOURCE, CONSTRAINT, FACE_FLUX, PORT_FLUX, STORAGE, Contribution, EvaluationState,
-    FaceValue, LocalValue, OperatingInputs, Term, TermValue,
+    FaceValue, FieldValues, LocalValue, OperatingInputs, Term, TermValue,
 )
 from solarlab.equations.assembly.weighted import MEASURE
 from solarlab.equations.dc_1d import CapabilityError, CompiledDevice1D
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
 from solarlab.physics.contacts.exchange import CarrierExchangeChannel
 from solarlab.physics.recombination.bulk import RecombinationRate, sum_recombination_rates
-from solarlab.physics.transport.electrochemical_flux import CarrierFaceFluxes, carrier_particle_fluxes
+from solarlab.physics.transport.electrochemical_flux import (
+    CarrierFaceFlux, CarrierFaceFluxes, carrier_particle_fluxes,
+)
 
 __all__ = [
     "AssembledDC1DProblem", "BulkRecombination", "CarrierExchange", "CarrierGeneration",
@@ -79,6 +81,103 @@ def _density(state: EvaluationState, block: str) -> Vector:
     return state.field("electron_density_m3" if block == ELECTRON else "hole_density_m3")
 
 
+def populate_interface_fields(
+    device: CompiledDevice1D,
+    u: Vector,
+    phi: Vector,
+    n: Vector,
+    p: Vector,
+    fields: dict[str, Vector],
+) -> bool:
+    """Evaluate ``device.interface_model`` once and store all interface fields."""
+    model = device.interface_model
+    if model is None:
+        return True
+    try:
+        ev = model.evaluate_state(device, u, phi, n, p, derivatives=True)
+    except (RuntimeError, FloatingPointError, ValueError):
+        return False
+    ef = ev.fluxes.electron
+    hf = ev.fluxes.hole
+    fields.update({
+        "iface:e_flux": ef.flux,
+        "iface:e_ld": ef.left_density_derivative,
+        "iface:e_rd": ef.right_density_derivative,
+        "iface:e_lpot": ef.left_potential_derivative,
+        "iface:e_rpot": ef.right_potential_derivative,
+        "iface:e_step": ef.energy_step,
+        "iface:e_coeff": ef.coefficient,
+        "iface:h_flux": hf.flux,
+        "iface:h_ld": hf.left_density_derivative,
+        "iface:h_rd": hf.right_density_derivative,
+        "iface:h_lpot": hf.left_potential_derivative,
+        "iface:h_rpot": hf.right_potential_derivative,
+        "iface:h_step": hf.energy_step,
+        "iface:h_coeff": hf.coefficient,
+        "iface:e_left_phi": ev.e_left_phi,
+        "iface:e_right_phi": ev.e_right_phi,
+        "iface:e_left_zn": ev.e_left_zn,
+        "iface:e_right_zn": ev.e_right_zn,
+        "iface:e_left_zp": ev.e_left_zp,
+        "iface:e_right_zp": ev.e_right_zp,
+        "iface:h_left_phi": ev.h_left_phi,
+        "iface:h_right_phi": ev.h_right_phi,
+        "iface:h_left_zn": ev.h_left_zn,
+        "iface:h_right_zn": ev.h_right_zn,
+        "iface:h_left_zp": ev.h_left_zp,
+        "iface:h_right_zp": ev.h_right_zp,
+        "iface:e_port_val": ev.e_port_val,
+        "iface:e_port_phi": ev.e_port_phi,
+        "iface:e_port_zn": ev.e_port_zn,
+        "iface:e_port_zp": ev.e_port_zp,
+        "iface:h_port_val": ev.h_port_val,
+        "iface:h_port_phi": ev.h_port_phi,
+        "iface:h_port_zn": ev.h_port_zn,
+        "iface:h_port_zp": ev.h_port_zp,
+        "iface:g_port_val": ev.g_port_val,
+        "iface:g_port_phi": ev.g_port_phi,
+        "iface:g_port_zn": ev.g_port_zn,
+        "iface:g_port_zp": ev.g_port_zp,
+        "iface:g_left_phi": ev.g_left_phi,
+        "iface:g_right_phi": ev.g_right_phi,
+        "iface:g_left_zn": ev.g_left_zn,
+        "iface:g_right_zn": ev.g_right_zn,
+        "iface:g_left_zp": ev.g_left_zp,
+        "iface:g_right_zp": ev.g_right_zp,
+    })
+    return True
+
+
+@dataclass(frozen=True)
+class InterfaceQuasiFermiFields:
+    """Field map ``u -> (phi, n, p, interface_closure)`` evaluated once per trial."""
+
+    device: CompiledDevice1D
+
+    @property
+    def identity(self) -> str:
+        model = self.device.interface_model
+        assert model is not None
+        return _identity("interface_quasi_fermi_fields_v1", self.device.identity, model.identity_sha256)
+
+    def evaluate(self, layout: SystemLayout, u: Vector, inputs: OperatingInputs) -> FieldValues:
+        values = np.concatenate([layout.view(u, block) for block in (POTENTIAL, ELECTRON, HOLE)])
+        phi, n, p = self.device.fields(values, voltage_V=inputs.voltage_V)
+        admissible = bool(
+            np.all(np.isfinite(n)) and np.all(np.isfinite(p))
+            and not np.any(n <= 0.0) and not np.any(p <= 0.0)
+        )
+        fields: dict[str, Vector] = {
+            "potential_V": phi,
+            "electron_density_m3": n,
+            "hole_density_m3": p,
+        }
+        if not admissible:
+            return FieldValues(fields, False)
+        ok = populate_interface_fields(self.device, values, phi, n, p, fields)
+        return FieldValues(fields, ok)
+
+
 @dataclass(frozen=True)
 class GaussDisplacement:
     """Displacement ``D = -C (phi_R - phi_L)`` [C/m2] on the Poisson channel's faces."""
@@ -88,9 +187,15 @@ class GaussDisplacement:
     kind: str = FACE_FLUX
     support: str = NODES
     equations: tuple[str, ...] = (POTENTIAL,)
-    dependencies: tuple[str, ...] = (POTENTIAL,)
     unit: Unit = DISPLACEMENT_UNIT
     port: str | None = None
+
+    @property
+    def dependencies(self) -> tuple[str, ...]:
+        model = self.device.interface_model
+        if model is not None and model.has_sheet_charge:
+            return (POTENTIAL, ELECTRON, HOLE)
+        return (POTENTIAL,)
 
     @property
     def identity(self) -> str:
@@ -101,6 +206,23 @@ class GaussDisplacement:
         flux = poisson.face_displacement(state.field("potential_V"))
         if not derivatives:
             return {POTENTIAL: FaceValue(flux)}
+        model = self.device.interface_model
+        if model is not None and model.has_sheet_charge:
+            return {
+                POTENTIAL: FaceValue(
+                    flux,
+                    {
+                        POTENTIAL: state.field("iface:g_left_phi"),
+                        ELECTRON: state.field("iface:g_left_zn"),
+                        HOLE: state.field("iface:g_left_zp"),
+                    },
+                    {
+                        POTENTIAL: state.field("iface:g_right_phi"),
+                        ELECTRON: state.field("iface:g_right_zn"),
+                        HOLE: state.field("iface:g_right_zp"),
+                    },
+                )
+            }
         capacitance = poisson.face_capacitance_F_m2
         return {POTENTIAL: FaceValue(flux, {POTENTIAL: capacitance}, {POTENTIAL: -capacitance})}
 
@@ -178,6 +300,27 @@ class CarrierTransport:
 
     def fluxes(self, state: EvaluationState) -> CarrierFaceFluxes:
         device = self.device
+        if device.interface_model is not None:
+            return CarrierFaceFluxes(
+                electron=CarrierFaceFlux(
+                    flux=state.field("iface:e_flux"),
+                    left_density_derivative=state.field("iface:e_ld"),
+                    right_density_derivative=state.field("iface:e_rd"),
+                    left_potential_derivative=state.field("iface:e_lpot"),
+                    right_potential_derivative=state.field("iface:e_rpot"),
+                    energy_step=state.field("iface:e_step"),
+                    coefficient=state.field("iface:e_coeff"),
+                ),
+                hole=CarrierFaceFlux(
+                    flux=state.field("iface:h_flux"),
+                    left_density_derivative=state.field("iface:h_ld"),
+                    right_density_derivative=state.field("iface:h_rd"),
+                    left_potential_derivative=state.field("iface:h_lpot"),
+                    right_potential_derivative=state.field("iface:h_rpot"),
+                    energy_step=state.field("iface:h_step"),
+                    coefficient=state.field("iface:h_coeff"),
+                ),
+            )
         phi = state.field("potential_V")
         electron_diffusivity = device.electron_diffusivity_faces_m2_s
         hole_diffusivity = device.hole_diffusivity_faces_m2_s
@@ -195,6 +338,39 @@ class CarrierTransport:
 
     def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:
         device = self.device
+        if device.interface_model is not None:
+            e_flux = state.field("iface:e_flux")
+            h_flux = state.field("iface:h_flux")
+            if not derivatives:
+                return {ELECTRON: FaceValue(e_flux), HOLE: FaceValue(h_flux)}
+            return {
+                ELECTRON: FaceValue(
+                    e_flux,
+                    {
+                        POTENTIAL: state.field("iface:e_left_phi"),
+                        ELECTRON: state.field("iface:e_left_zn"),
+                        HOLE: state.field("iface:e_left_zp"),
+                    },
+                    {
+                        POTENTIAL: state.field("iface:e_right_phi"),
+                        ELECTRON: state.field("iface:e_right_zn"),
+                        HOLE: state.field("iface:e_right_zp"),
+                    },
+                ),
+                HOLE: FaceValue(
+                    h_flux,
+                    {
+                        POTENTIAL: state.field("iface:h_left_phi"),
+                        ELECTRON: state.field("iface:h_left_zn"),
+                        HOLE: state.field("iface:h_left_zp"),
+                    },
+                    {
+                        POTENTIAL: state.field("iface:h_right_phi"),
+                        ELECTRON: state.field("iface:h_right_zn"),
+                        HOLE: state.field("iface:h_right_zp"),
+                    },
+                ),
+            }
         fluxes = self.fluxes(state)
         if not derivatives:
             return {ELECTRON: FaceValue(fluxes.electron.flux), HOLE: FaceValue(fluxes.hole.flux)}
@@ -449,6 +625,80 @@ class CarrierStorage:
         }
 
 
+@dataclass(frozen=True)
+class InterfaceGaussPort:
+    """Eliminated interface sheet-charge Gauss balance contributions [C/m2]."""
+
+    device: CompiledDevice1D
+    id: str = "potential.interfaces"
+    kind: str = PORT_FLUX
+    support: str = NODES
+    port: str = "interfaces"
+    equations: tuple[str, ...] = (POTENTIAL,)
+    dependencies: tuple[str, ...] = (POTENTIAL, ELECTRON, HOLE)
+    unit: Unit = DISPLACEMENT_UNIT
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.id, self.device.identity, ELECTRODE_QUASI_FERMI_1D_V1)
+
+    def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:
+        val = state.field("iface:g_port_val")
+        if not derivatives:
+            return {POTENTIAL: LocalValue(val)}
+        return {
+            POTENTIAL: LocalValue(
+                val,
+                {
+                    POTENTIAL: state.field("iface:g_port_phi"),
+                    ELECTRON: state.field("iface:g_port_zn"),
+                    HOLE: state.field("iface:g_port_zp"),
+                },
+            )
+        }
+
+
+@dataclass(frozen=True)
+class InterfaceCarrierPort:
+    """Areal heterointerface recombination / trace continuity port [m-2 s-1]."""
+
+    device: CompiledDevice1D
+    block: str
+    kind: str = PORT_FLUX
+    support: str = NODES
+    port: str = "interfaces"
+    dependencies: tuple[str, ...] = (POTENTIAL, ELECTRON, HOLE)
+    unit: Unit = FLUX_UNIT
+
+    @property
+    def id(self) -> str:
+        return f"{self.block}.interfaces"
+
+    @property
+    def equations(self) -> tuple[str, ...]:
+        return (self.block,)
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.id, self.device.identity, ELECTRODE_QUASI_FERMI_1D_V1)
+
+    def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:
+        prefix = "iface:e_port_" if self.block == ELECTRON else "iface:h_port_"
+        val = state.field(prefix + "val")
+        if not derivatives:
+            return {self.block: LocalValue(val)}
+        return {
+            self.block: LocalValue(
+                val,
+                {
+                    POTENTIAL: state.field(prefix + "phi"),
+                    ELECTRON: state.field(prefix + "zn"),
+                    HOLE: state.field(prefix + "zp"),
+                },
+            )
+        }
+
+
 def _layout(device: CompiledDevice1D) -> SystemLayout:
     count = device.node_count
     constraints = [ConstraintRows(POTENTIAL, (0, count - 1), "potential.contacts", VOLT)]
@@ -473,9 +723,12 @@ def _mesh(device: CompiledDevice1D) -> Mesh:
     contract = geometry.to_contract_geometry(cell_support=NODES, face_support=NODES + ".faces")
     # Per unit cross-section the port measure is the face area, unit ONE as
     # for the internal faces of the contract geometry.
-    ports = tuple(Port(face.id, (face.node,), face.outward_normal, np.array([face.area_m2]), ONE)
-                  for face in geometry.ports)
-    return Mesh((SupportGeometry(NODES, contract, ports),))
+    ports = [Port(face.id, (face.node,), face.outward_normal, np.array([face.area_m2]), ONE)
+             for face in geometry.ports]
+    if device.interface_model is not None:
+        interior = tuple(range(1, device.node_count - 1))
+        ports.append(Port("interfaces", interior, -1, np.ones(len(interior)), ONE))
+    return Mesh((SupportGeometry(NODES, contract, tuple(ports)),))
 
 
 @dataclass(frozen=True)
@@ -497,6 +750,12 @@ class ClassicalDC1D:
             GaussDisplacement(device), SpaceCharge(device), PotentialContacts(device),
             transport, CarrierGeneration(device), recombination, CarrierStorage(device),
         ]
+        if device.interface_model is not None:
+            if device.interface_model.has_sheet_charge:
+                terms.append(InterfaceGaussPort(device))
+            if device.interface_model.has_carrier_port:
+                terms.append(InterfaceCarrierPort(device, ELECTRON))
+                terms.append(InterfaceCarrierPort(device, HOLE))
         exchanges: dict[tuple[str, str], CarrierExchange] = {}
         for block, carrier, _ in CARRIERS:
             fixed = []
@@ -509,8 +768,13 @@ class ClassicalDC1D:
             if fixed:
                 terms.append(CarrierReservoirs(device, block, tuple(fixed)))
         terms.extend(exchanges.values())
+        field_map = (
+            ElectrodeQuasiFermiFields(device)
+            if device.interface_model is None
+            else InterfaceQuasiFermiFields(device)
+        )
         object.__setattr__(self, "assembler", Assembler(
-            layout, _mesh(device), ElectrodeQuasiFermiFields(device), terms))
+            layout, _mesh(device), field_map, terms))
         object.__setattr__(self, "transport", transport)
         object.__setattr__(self, "recombination", recombination)
         object.__setattr__(self, "exchanges", exchanges)

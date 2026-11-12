@@ -33,8 +33,8 @@ from solarlab.mesh.geometry import InterfacePlane
 __all__ = [
     "CARRIER_TRACE_UNIT", "InterfaceTraceDeclaration", "OCCUPANCY_UNIT", "TraceElectrostatics",
     "add_sheet_charge_to_interior_residual", "electrostatic_trace_residual_and_jacobian",
-    "interface_trace_layout", "require_carrier_trace", "require_occupancy",
-    "sheet_charge_row_weights", "solve_electrostatic_traces",
+    "interface_displacement_sides", "interface_trace_layout", "require_carrier_trace",
+    "require_occupancy", "sheet_charge_row_weights", "solve_electrostatic_traces",
 ]
 
 EPS_0 = VACUUM_PERMITTIVITY_F_M
@@ -208,3 +208,29 @@ def add_sheet_charge_to_interior_residual(
         sheet = sheets[index]
         interior_residual[left - 1] += weight_left * sheet
         interior_residual[right - 1] += weight_right * sheet
+
+
+def interface_displacement_sides(
+    series_face_displacement_C_m2: float,
+    *,
+    eps_r_left: float,
+    left_distance_m: float,
+    eps_r_right: float,
+    right_distance_m: float,
+    sheet_charge_C_m2: float,
+) -> tuple[float, float]:
+    """Return ``(D_left, D_right)`` [C/m^2] flanking a charged interface plane.
+
+    With eliminated series displacement ``D_series = -C_series (phi_R - phi_L)``
+    and zero potential jump across the plane, ``D_right - D_left == sheet_charge``
+    with ``D_left = D_series - w_L * sheet_charge`` and
+    ``D_right = D_series + w_R * sheet_charge``.
+    """
+    d_series = float(series_face_displacement_C_m2)
+    sigma = float(sheet_charge_C_m2)
+    if not (math.isfinite(d_series) and math.isfinite(sigma)):
+        raise ValueError("series displacement and sheet charge must be finite")
+    weight_left, weight_right = sheet_charge_row_weights(
+        eps_r_left, left_distance_m, eps_r_right, right_distance_m
+    )
+    return d_series - weight_left * sigma, d_series + weight_right * sigma

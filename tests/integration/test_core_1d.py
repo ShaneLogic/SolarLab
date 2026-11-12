@@ -338,8 +338,8 @@ def test_local_model_injection_has_independent_partials_and_real_solution(prepar
 
 @pytest.mark.parametrize("feature", [
     "ions", "fermi_dirac", "dopant_ionization", "band_gap_narrowing",
-    "field_mobility", "interface_recombination", "optics", "manual_contacts",
-    "ion_steric", "qualified_solver_policy",
+    "field_mobility", "interface_shared_occupancy", "interface_two_sided",
+    "optics", "manual_contacts", "ion_steric", "qualified_solver_policy",
 ])
 def test_unsupported_enabled_physics_fails_before_execution(prepared, feature):
     document = prepared.to_input().editing_data()
@@ -354,8 +354,10 @@ def test_unsupported_enabled_physics_fails_before_execution(prepared, feature):
         parameters["band_gap_narrowing_model"] = "slotboom"
     elif feature == "field_mobility":
         parameters["pf_gamma_n"] = 1e-4
-    elif feature == "interface_recombination":
-        document["interfaces"] = [dict(id="interface", left="htl", right="absorber", v_n=1.0, v_p=1.0)]
+    elif feature == "interface_shared_occupancy":
+        document["settings"]["interface_shared_occupancy"] = True
+    elif feature == "interface_two_sided":
+        document["settings"]["interface_two_sided"] = True
     elif feature == "optics":
         parameters["n_optical"] = 2.0
     elif feature == "ion_steric":
@@ -366,6 +368,15 @@ def test_unsupported_enabled_physics_fails_before_execution(prepared, feature):
         document["settings"]["built_in_potential_mode"] = "legacy_manual"
     with pytest.raises(CapabilityError, match="unsupported_classical_1d_dc"):
         compile_device_1d(edited(prepared, document))
+
+
+def test_interface_recombination_compiles_and_solves_steady_state(prepared):
+    document = prepared.to_input().editing_data()
+    document["interfaces"] = [dict(id="interface", left="htl", right="absorber", v_n=10.0, v_p=10.0)]
+    compiled = compile_device_1d(edited(prepared, document))
+    assert compiled.interface_model is not None
+    result = solve_steady_state(compiled, voltage_V=0.8)
+    assert np.all(np.isfinite(result.current_density_A_m2))
 
 
 def test_inconsistent_dos_intrinsic_product_is_not_silently_replaced(prepared):

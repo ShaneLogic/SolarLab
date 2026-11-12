@@ -47,7 +47,9 @@ from scipy.sparse import csc_matrix
 
 from solarlab.contracts.units import AREA, COULOMB, ELEMENTARY_CHARGE_C, ONE, PARTICLE, SECOND, VOLUME, Unit
 from solarlab.equations.assembly.assembler import AssembledSystem, Assembler, Mesh, SupportGeometry
-from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, ClassicalDC1D, classical_dc_1d
+from solarlab.equations.assembly.classical_1d import (
+    AssembledDC1DProblem, ClassicalDC1D, classical_dc_1d, populate_interface_fields,
+)
 from solarlab.equations.assembly.layout import Block, ConstraintRows, NodeSet, SystemLayout
 from solarlab.equations.assembly.quasi_fermi import ELECTRODE_QUASI_FERMI_1D_V1
 from solarlab.equations.assembly.terms import (
@@ -182,6 +184,17 @@ class IonicFields:
             values = populations[domain.name]
             fields.update(zip(domain.blocks, values))
             fields[domain.mass_field] = domain.coordinate_jacobian(values)
+        component = device.electronic_component
+        if component.interface_model is not None:
+            if not (
+                np.all(np.isfinite(n)) and np.all(np.isfinite(p))
+                and not np.any(n <= 0.0) and not np.any(p <= 0.0)
+            ):
+                return FieldValues(fields, False)
+            ok = populate_interface_fields(
+                component, u[:3 * component.node_count], phi, n, p, fields
+            )
+            return FieldValues(fields, ok)
         return FieldValues(fields, True)
 
 

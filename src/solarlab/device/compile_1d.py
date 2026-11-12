@@ -14,7 +14,7 @@ Unsupported active mechanisms fail before any nonlinear solve.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import hashlib
 import json
 import math
@@ -22,19 +22,41 @@ from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
 
+from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.device.resolved import PreparedDevice, PreparedLayer
 from solarlab.device.neutral_defects import LITERAL_ABOVE_VB_DOS_REFERENCE_V1, bind_neutral_defects
 from solarlab.device.optical_generation import bind_optical_generation_1d
 from solarlab.equations.dc_1d import (
     CapabilityError,
     CompiledDevice1D,
+    CompiledInterfaceModel1D,
+    DeduplicatedBareSRHSpec,
+    DeduplicatedDefectSRHSpec,
+    DeduplicatedThermionicFaceSpec,
     LocalRecombinationModel,
+    TERegularizationName,
+    TwoSidedInterfaceBindingSpec,
 )
-from solarlab.equations.field_transport_1d import bind_field_transport_1d
-from solarlab.mesh import INTEGER_ENDPOINT_V1, RIGHT_LAYER_WINS, build_geometry, multilayer_grid
+from solarlab.solvers.nonlinear.steady_1d import (
+    POISSON_CONTACT_BALANCE_V1,
+    SteadyOptions,
+    SteadyStateError,
+    solve_equilibrium,
+)
+from solarlab.equations.field_transport_1d import FieldTransport1D, bind_field_transport_1d
+from solarlab.physics.generation.profile import GenerationProfile
+from solarlab.mesh import (
+    INTEGER_ENDPOINT_V1,
+    RIGHT_LAYER_WINS,
+    TWO_SIDED_TRACE_V1,
+    build_geometry,
+    multilayer_grid,
+)
+from solarlab.mesh.geometry import ControlVolumeGeometry1D
 from solarlab.mesh.grid import layer_node_masks
 from solarlab.physics.band_structure.binding import (
     LayerParameterInput,
+    ParameterBinding,
     TemperatureLawSpec,
     compile_layer_parameters,
 )
@@ -48,8 +70,26 @@ from solarlab.physics.contacts import (
 )
 from solarlab.physics.contacts.exchange import resolve_exchange_velocities
 from solarlab.physics.electrostatics import PoissonOperator1D
+from solarlab.physics.electrostatics.interface_traces import (
+    TraceElectrostatics,
+    sheet_charge_row_weights,
+)
 from solarlab.physics.generation.beer_lambert import BeerLambertBinding
 from solarlab.physics.generation.fixed import FixedGenerationProfile
+from solarlab.physics.interface_transport import (
+    EquilibriumReferencedSheetCharge,
+    TE_BARRIER_THRESHOLD_EV,
+    TwoSidedBulkState,
+    TwoSidedInterfacePhysics,
+    remove_shared_interface_nodes,
+    resolve_layer_richardson,
+    solve_two_sided_interface_qss,
+)
+from solarlab.physics.recombination.interface import (
+    InterfaceDefectSpec,
+    build_plane_closure_params,
+    resolve_interface_defect_references,
+)
 from solarlab.physics.recombination.reaction import (
     BulkRecombinationCoefficients,
     BulkRecombinationReaction,
@@ -58,6 +98,9 @@ from solarlab.physics.transport import legacy_face_diffusivity
 from solarlab.physics.transport.field_mobility_tangents import FieldMobilityCapabilityError
 
 __all__ = ["CapabilityError", "CompiledDevice1D", "compile_device_1d", "unsupported"]
+
+Q = ELEMENTARY_CHARGE_C
+InterfaceTopologyName = Literal["deduplicated", "two_sided_trace"]
 
 
 class _LayerScalars(TypedDict):
@@ -101,17 +144,24 @@ def unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[Pr
     if not settings["dos_band_potentials"]:
         missing.append("settings.dos_band_potentials: physical DOS transport requires this enabled")
     for flag in (
-        "interface_plane_projection", "te_physical_norm", "flat_band_metal_contacts",
-        "interface_two_sided", "interface_shared_occupancy", "interface_plane_closure",
-        "interface_plane_generation", "graded_optics", "interface_tunneling",
+        "te_physical_norm", "flat_band_metal_contacts",
+        "interface_two_sided", "interface_shared_occupancy",
+        "graded_optics", "interface_tunneling",
         "ion_steric_diffusion_only", "ion_steric_shared_site",
     ):
         if settings[flag]:
             missing.append("settings." + flag)
+    if settings["interface_plane_generation"] and not settings["interface_plane_closure"]:
+        missing.append("settings.interface_plane_generation: requires settings.interface_plane_closure")
+    if settings["interface_plane_projection"] and settings["interface_plane_closure"]:
+        missing.append("settings.interface_plane_projection and settings.interface_plane_closure are mutually exclusive")
     if settings["het_recomb_despike"] != 0.0:
         missing.append("settings.het_recomb_despike")
-    if settings["interface_charge_closure"] != "off":
+    charge_closure = settings["interface_charge_closure"]
+    if charge_closure not in ("off", "equilibrium_referenced"):
         missing.append("settings.interface_charge_closure")
+    elif charge_closure == "equilibrium_referenced" and not settings["interface_charge_rebaseline_acknowledged"]:
+        missing.append("settings.interface_charge_closure: equilibrium_referenced requires interface_charge_rebaseline_acknowledged=True")
     if settings["jv_solver_policy"] != "general":
         missing.append("settings.jv_solver_policy: a separately qualified solver route is required")
     if data["grain_boundaries"]:
@@ -152,15 +202,633 @@ def unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[Pr
             not spectral and (layer.optical is not None or parameters["n_optical"] is not None)
         ):
             missing.append(prefix + "optical_material: requires an explicit spectrum; graded optics is not bound")
-    for interface in prepared.interfaces:
-        entry = interface.to_mapping()
-        if interface.electrical and (
-            entry.get("defect") is not None
-            or any((entry.get(name) or 0.0) != 0.0 for name in ("v_n", "v_p"))
-        ):
-            missing.append("interfaces." + entry["id"] + ": interface recombination is not bound")
     if missing:
         raise CapabilityError("unsupported_classical_1d_dc: " + "; ".join(missing))
+
+
+def _solve_dark_uncharged_two_sided_equilibrium(
+    *,
+    device_id: str,
+    geometry: ControlVolumeGeometry1D,
+    binding: ParameterBinding,
+    poisson: PoissonOperator1D,
+    electron_diffusivity: np.ndarray,
+    hole_diffusivity: np.ndarray,
+    generation: GenerationProfile,
+    recombination: BulkRecombinationReaction,
+    channels: tuple[CarrierExchangeChannel, ...],
+    phi_left_V: float,
+    built_in_V: float,
+    fermi_eV: float,
+    reference_phi: np.ndarray,
+    reference_n: np.ndarray,
+    reference_p: np.ndarray,
+    additional_recombination: LocalRecombinationModel | None,
+    field_transport: FieldTransport1D | None,
+    provisional_specs: Sequence[tuple[int, int, int, int, TraceElectrostatics, TwoSidedInterfacePhysics, float]],
+) -> np.ndarray:
+    """Certify dark (V=0, G=0) charge-off two_sided_trace steady state for equilibrium_referenced."""
+    uncharged_specs = tuple(
+        TwoSidedInterfaceBindingSpec(
+            interface_index=k,
+            face=face,
+            left_node=l_node,
+            right_node=r_node,
+            trace_electrostatics=trace_elec,
+            physics=phys,
+            charge=None,
+            weight_left=0.0,
+            weight_right=0.0,
+        )
+        for k, face, l_node, r_node, trace_elec, phys, _ in provisional_specs
+    )
+    prov_model = CompiledInterfaceModel1D(
+        topology="two_sided_trace",
+        identity_sha256="0" * 64,
+        two_sided=uncharged_specs,
+    )
+    prov_dev = CompiledDevice1D(
+        device_id,
+        "0" * 64,
+        geometry,
+        binding,
+        poisson,
+        electron_diffusivity,
+        hole_diffusivity,
+        generation,
+        recombination,
+        channels,
+        phi_left_V,
+        built_in_V,
+        fermi_eV,
+        reference_phi,
+        reference_n,
+        reference_p,
+        additional_recombination,
+        capabilities=("ion_free", "classical_1d_dc", "heterointerface_1d"),
+        field_transport=field_transport,
+        interface_model=prov_model,
+    )
+    try:
+        return solve_equilibrium(
+            prov_dev,
+            options=SteadyOptions(
+                continuity_tolerance_A_m2=5.0e-11,
+                convergence_policy=POISSON_CONTACT_BALANCE_V1,
+            ),
+        ).state.u
+    except SteadyStateError as error:
+        raise CapabilityError(
+            "equilibrium_referenced: dark charge-off two-sided reference failed to converge"
+        ) from error
+
+
+def _bind_interfaces_1d(
+    *,
+    device_id: str,
+    prepared: PreparedDevice,
+    settings: Mapping[str, Any],
+    layers: tuple[PreparedLayer, ...],
+    geometry: ControlVolumeGeometry1D,
+    binding: ParameterBinding,
+    poisson: PoissonOperator1D,
+    electron_diffusivity: np.ndarray,
+    hole_diffusivity: np.ndarray,
+    generation: GenerationProfile,
+    recombination: BulkRecombinationReaction,
+    channels: tuple[CarrierExchangeChannel, ...],
+    eps_r_node: np.ndarray,
+    reference_phi: np.ndarray,
+    reference_n: np.ndarray,
+    reference_p: np.ndarray,
+    phi_left_V: float,
+    built_in_V: float,
+    fermi_eV: float,
+    additional_recombination: LocalRecombinationModel | None,
+    field_transport: FieldTransport1D | None,
+    topology: InterfaceTopologyName,
+    te_softness: float,
+    te_regularization_mode: TERegularizationName,
+    interface_transmission: float,
+    equilibrium_occupancies: Sequence[float] | None,
+) -> CompiledInterfaceModel1D | None:
+    iface_count = len(layers) - 1
+    charge_closure = str(settings["interface_charge_closure"])
+    plane_proj = bool(settings["interface_plane_projection"])
+    plane_clos = bool(settings["interface_plane_closure"])
+    plane_gen = bool(settings["interface_plane_generation"])
+
+    if iface_count == 0:
+        if topology == "two_sided_trace":
+            raise CapabilityError("unsupported_classical_1d_dc: two_sided_trace requires at least two electrical layers")
+        if charge_closure != "off" or plane_proj or plane_clos or plane_gen:
+            raise CapabilityError("unsupported_classical_1d_dc: heterointerface closure requires at least one electrical interface")
+        return None
+
+    by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    for iface in prepared.interfaces:
+        if iface.electrical:
+            entry = iface.to_mapping()
+            by_pair[(str(entry["left"]), str(entry["right"]))] = entry
+
+    ordered_entries: list[dict[str, Any]] = []
+    for k in range(iface_count):
+        pair = (layers[k].id, layers[k + 1].id)
+        if pair not in by_pair:
+            raise CapabilityError(f"unsupported_classical_1d_dc: missing electrical interface for {pair[0]}->{pair[1]}")
+        ordered_entries.append(by_pair[pair])
+
+    bands = binding.band_structure
+    configured = binding.intrinsic_product_m6
+    vt = binding.thermal_voltage_V
+    temp = binding.temperature_K
+
+    if topology == "deduplicated":
+        if charge_closure != "off":
+            raise CapabilityError(
+                "unsupported_classical_1d_dc: settings.interface_charge_closure requires two_sided_trace topology"
+            )
+        if equilibrium_occupancies is not None:
+            raise ValueError("equilibrium_occupancies applies only to equilibrium_referenced two_sided_trace")
+
+        bare_specs: list[DeduplicatedBareSRHSpec] = []
+        defect_specs: list[DeduplicatedDefectSRHSpec] = []
+        te_specs: list[DeduplicatedThermionicFaceSpec] = []
+
+        for k, entry in enumerate(ordered_entries):
+            plane = geometry.interfaces[k]
+            if plane.shared_node is None or not (2 <= plane.shared_node <= geometry.node_count - 3):
+                raise CapabilityError("unsupported_classical_1d_dc: deduplicated interface requires an interior shared node")
+            idx = int(plane.shared_node)
+            face = idx - 1
+
+            left_p = dict(layers[k].parameters)
+            a_star_n = resolve_layer_richardson(
+                float(cast(float, left_p["A_star_n"])),
+                float(cast(float, left_p["Nc300"])),
+                temp,
+            )
+            a_star_p = resolve_layer_richardson(
+                float(cast(float, left_p["A_star_p"])),
+                float(cast(float, left_p["Nv300"])),
+                temp,
+            )
+            delta_ec = float(
+                bands.physical_electron_affinity_eV[face]
+                - bands.physical_electron_affinity_eV[face + 1]
+            )
+            delta_ev = float(
+                (bands.physical_electron_affinity_eV[face] + bands.physical_band_gap_eV[face])
+                - (bands.physical_electron_affinity_eV[face + 1] + bands.physical_band_gap_eV[face + 1])
+            )
+            cap_e = a_star_n > 0.0 and abs(delta_ec) > TE_BARRIER_THRESHOLD_EV
+            cap_h = a_star_p > 0.0 and abs(delta_ev) > TE_BARRIER_THRESHOLD_EV
+            if cap_e or cap_h:
+                te_specs.append(
+                    DeduplicatedThermionicFaceSpec(
+                        interface_index=k,
+                        face=face,
+                        delta_Ec_eV=delta_ec,
+                        delta_Ev_eV=delta_ev,
+                        a_star_n_A_m2_K2=a_star_n,
+                        a_star_p_A_m2_K2=a_star_p,
+                        cap_electron=cap_e,
+                        cap_hole=cap_h,
+                    )
+                )
+
+            defect = entry.get("defect")
+            raw_vn = entry.get("v_n")
+            raw_vp = entry.get("v_p")
+            if defect is None:
+                vn = 0.0 if raw_vn is None else float(raw_vn)
+                vp = 0.0 if raw_vp is None else float(raw_vp)
+                if not (math.isfinite(vn) and math.isfinite(vp)) or vn < 0.0 or vp < 0.0:
+                    raise CapabilityError(f"interfaces.{entry['id']}: velocities must be finite and non-negative")
+                if vn > 0.0 or vp > 0.0:
+                    bare_specs.append(
+                        DeduplicatedBareSRHSpec(
+                            interface_index=k,
+                            node=idx,
+                            v_n_m_s=vn,
+                            v_p_m_s=vp,
+                            ni_sq_m6=float(configured[idx]),
+                            n1_m3=float(binding.srh_n1_m3[idx]),
+                            p1_m3=float(binding.srh_p1_m3[idx]),
+                        )
+                    )
+            else:
+                kinetics = defect["kinetics"]
+                d_spec = InterfaceDefectSpec(
+                    areal_density_m2=float(defect["total_density_m2"]),
+                    trap_depth_eV=float(defect["trap_depth_eV"]),
+                    energy_reference=defect["energy_reference"],
+                    sigma_n_m2=float(kinetics["sigma_n_m2"]),
+                    sigma_p_m2=float(kinetics["sigma_p_m2"]),
+                    v_th_n_m_s=float(kinetics["thermal_velocity_n_m_s"]),
+                    v_th_p_m_s=float(kinetics["thermal_velocity_p_m_s"]),
+                    calibration_factor=float(defect["calibration_factor"]),
+                )
+                vn, vp = d_spec.effective_capture_velocities_m_s()
+                i_l, i_r = idx - 1, idx + 1
+                refs = resolve_interface_defect_references(
+                    left_role=layers[k].role,
+                    right_role=layers[k + 1].role,
+                    left_chi_phys_eV=float(bands.physical_electron_affinity_eV[i_l]),
+                    left_Eg_phys_eV=float(bands.physical_band_gap_eV[i_l]),
+                    left_Nc_m3=float(binding.conduction_dos_m3[i_l]),
+                    left_Nv_m3=float(binding.valence_dos_m3[i_l]),
+                    right_chi_phys_eV=float(bands.physical_electron_affinity_eV[i_r]),
+                    right_Eg_phys_eV=float(bands.physical_band_gap_eV[i_r]),
+                    right_Nc_m3=float(binding.conduction_dos_m3[i_r]),
+                    right_Nv_m3=float(binding.valence_dos_m3[i_r]),
+                    thermal_voltage_V=vt,
+                    trap_depth_eV=d_spec.trap_depth_eV,
+                    energy_reference=d_spec.energy_reference,
+                )
+                _, pl_eq = doping_equilibrium_densities(
+                    float(binding.donor_density_m3[i_l]),
+                    float(binding.acceptor_density_m3[i_l]),
+                    float(configured[i_l]),
+                )
+                nr_eq, _ = doping_equilibrium_densities(
+                    float(binding.donor_density_m3[i_r]),
+                    float(binding.acceptor_density_m3[i_r]),
+                    float(configured[i_r]),
+                )
+                plane_prm = None
+                if plane_clos:
+                    ref_node = i_l if refs.reference_side == "left" else i_r
+                    depth_below_cb = (
+                        d_spec.trap_depth_eV
+                        if d_spec.energy_reference == "below_conduction_band"
+                        else refs.reference_gap_eV - d_spec.trap_depth_eV
+                    )
+                    plane_prm = build_plane_closure_params(
+                        chi_left_folded_eV=float(bands.transport_electron_affinity_eV[i_l]),
+                        chi_right_folded_eV=float(bands.transport_electron_affinity_eV[i_r]),
+                        valence_left_folded_eV=float(
+                            bands.transport_electron_affinity_eV[i_l]
+                            + bands.transport_band_gap_eV[i_l]
+                        ),
+                        valence_right_folded_eV=float(
+                            bands.transport_electron_affinity_eV[i_r]
+                            + bands.transport_band_gap_eV[i_r]
+                        ),
+                        Nc_ref_m3=float(binding.conduction_dos_m3[ref_node]),
+                        Nv_ref_m3=float(binding.valence_dos_m3[ref_node]),
+                        chi_ref_phys_eV=float(bands.physical_electron_affinity_eV[ref_node]),
+                        trap_depth_below_ref_cb_eV=depth_below_cb,
+                        thermal_voltage_V=vt,
+                    )
+                if vn > 0.0 or vp > 0.0 or plane_clos or plane_proj:
+                    defect_specs.append(
+                        DeduplicatedDefectSRHSpec(
+                            interface_index=k,
+                            node=idx,
+                            v_n_m_s=vn,
+                            v_p_m_s=vp,
+                            ni_sq_eff_m6=float(nr_eq * pl_eq),
+                            n1_m3=refs.n1_midgap_symmetric_m3,
+                            p1_m3=refs.p1_midgap_symmetric_m3,
+                            plane_params=plane_prm,
+                        )
+                    )
+
+        if (plane_proj or plane_clos) and not defect_specs:
+            raise CapabilityError(
+                "unsupported_classical_1d_dc: interface_plane_projection/closure requires at least one interface defect"
+            )
+
+        if not bare_specs and not defect_specs and not te_specs:
+            return None
+
+        manifest = {
+            "schema": "compiled_interface_model_1d_v1",
+            "topology": "deduplicated",
+            "plane_projection": plane_proj,
+            "plane_closure": plane_clos,
+            "plane_generation": plane_gen,
+            "te_softness": te_softness,
+            "te_regularization_mode": te_regularization_mode,
+            "bare_srh": [
+                [s.interface_index, s.node, s.v_n_m_s, s.v_p_m_s, s.ni_sq_m6, s.n1_m3, s.p1_m3]
+                for s in bare_specs
+            ],
+            "defect_srh": [
+                [
+                    s.interface_index,
+                    s.node,
+                    s.v_n_m_s,
+                    s.v_p_m_s,
+                    s.ni_sq_eff_m6,
+                    s.n1_m3,
+                    s.p1_m3,
+                    None
+                    if s.plane_params is None
+                    else [
+                        s.plane_params.bn_L,
+                        s.plane_params.bn_R,
+                        s.plane_params.bp_L,
+                        s.plane_params.bp_R,
+                        s.plane_params.ni_s_sq_m6,
+                        s.plane_params.n1_s_m3,
+                        s.plane_params.p1_s_m3,
+                        s.plane_params.s_supply_m_s,
+                    ],
+                ]
+                for s in defect_specs
+            ],
+            "thermionic_faces": [
+                [
+                    s.interface_index,
+                    s.face,
+                    s.delta_Ec_eV,
+                    s.delta_Ev_eV,
+                    s.a_star_n_A_m2_K2,
+                    s.a_star_p_A_m2_K2,
+                    s.cap_electron,
+                    s.cap_hole,
+                ]
+                for s in te_specs
+            ],
+        }
+        iface_sha = hashlib.sha256(
+            json.dumps(manifest, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest()
+        return CompiledInterfaceModel1D(
+            topology="deduplicated",
+            identity_sha256=iface_sha,
+            bare_srh=tuple(bare_specs),
+            defect_srh=tuple(defect_specs),
+            thermionic_faces=tuple(te_specs),
+            plane_projection=plane_proj,
+            plane_closure=plane_clos,
+            plane_generation=plane_gen,
+            te_softness=te_softness,
+            te_regularization_mode=te_regularization_mode,
+        )
+
+    # Two-sided trace topology
+    if plane_proj or plane_clos or plane_gen:
+        raise CapabilityError(
+            "unsupported_classical_1d_dc: deduplicated plane projection/closure flags cannot be combined with two_sided_trace"
+        )
+
+    provisional_specs: list[tuple[int, int, int, int, TraceElectrostatics, TwoSidedInterfacePhysics, float]] = []
+    has_any_defect = False
+    for k, entry in enumerate(ordered_entries):
+        plane = geometry.interfaces[k]
+        l_node, r_node = int(plane.left_node), int(plane.right_node)
+        face = l_node
+        if r_node != l_node + 1 or l_node <= 0 or r_node >= geometry.node_count - 1:
+            raise CapabilityError("unsupported_classical_1d_dc: two_sided_trace requires adjacent interior bulk nodes")
+
+        left_p = dict(layers[k].parameters)
+        right_p = dict(layers[k + 1].parameters)
+        a_n_l = resolve_layer_richardson(float(cast(float, left_p["A_star_n"])), float(cast(float, left_p["Nc300"])), temp)
+        a_n_r = resolve_layer_richardson(float(cast(float, right_p["A_star_n"])), float(cast(float, right_p["Nc300"])), temp)
+        a_p_l = resolve_layer_richardson(float(cast(float, left_p["A_star_p"])), float(cast(float, left_p["Nv300"])), temp)
+        a_p_r = resolve_layer_richardson(float(cast(float, right_p["A_star_p"])), float(cast(float, right_p["Nv300"])), temp)
+        rich_n = min(a_n_l, a_n_r)
+        rich_p = min(a_p_l, a_p_r)
+        if rich_n <= 0.0 or rich_p <= 0.0:
+            raise CapabilityError(
+                f"interfaces.{entry['id']}: two_sided_trace requires positive A_star_n and A_star_p on both adjacent layers"
+            )
+
+        defect = entry.get("defect")
+        raw_vn = entry.get("v_n")
+        raw_vp = entry.get("v_p")
+        if defect is None:
+            vn = 0.0 if raw_vn is None else float(raw_vn)
+            vp = 0.0 if raw_vp is None else float(raw_vp)
+            if charge_closure == "equilibrium_referenced":
+                raise CapabilityError(
+                    f"interfaces.{entry['id']}: equilibrium_referenced charge closure requires a canonical microscopic defect on every electrical interface"
+                )
+            if vn != 0.0 or vp != 0.0:
+                raise CapabilityError(
+                    f"interfaces.{entry['id']}: two_sided_trace recombination requires an explicit interface defect to define two-sided emission densities"
+                )
+            n1_l = p1_l = n1_r = p1_r = 0.0
+            trap_density_m2 = 0.0
+        else:
+            has_any_defect = True
+            kinetics = defect["kinetics"]
+            cal = float(defect["calibration_factor"])
+            state_cal = float(defect["iface_state_calibration_factor"])
+            if charge_closure == "equilibrium_referenced":
+                if cal != 1.0 or state_cal != 1.0:
+                    raise CapabilityError(
+                        f"interfaces.{entry['id']}: equilibrium_referenced charge closure forbids empirical interface calibration factors"
+                    )
+                micro_pair = tuple(float(v) for v in entry["microscopic_capture_velocities_m_s"])
+                if raw_vn is not None and raw_vp is not None and not (
+                    math.isclose(float(raw_vn), micro_pair[0], rel_tol=1.0e-12, abs_tol=0.0)
+                    and math.isclose(float(raw_vp), micro_pair[1], rel_tol=1.0e-12, abs_tol=0.0)
+                ):
+                    raise CapabilityError(
+                        f"interfaces.{entry['id']}: compatibility SRV {(raw_vn, raw_vp)!r} does not match microscopic sigma*v_th*N_t {micro_pair!r}"
+                    )
+            d_spec = InterfaceDefectSpec(
+                areal_density_m2=float(defect["total_density_m2"]),
+                trap_depth_eV=float(defect["trap_depth_eV"]),
+                energy_reference=defect["energy_reference"],
+                sigma_n_m2=float(kinetics["sigma_n_m2"]),
+                sigma_p_m2=float(kinetics["sigma_p_m2"]),
+                v_th_n_m_s=float(kinetics["thermal_velocity_n_m_s"]),
+                v_th_p_m_s=float(kinetics["thermal_velocity_p_m_s"]),
+                calibration_factor=cal,
+            )
+            vn, vp = d_spec.effective_capture_velocities_m_s()
+            refs = resolve_interface_defect_references(
+                left_role=layers[k].role,
+                right_role=layers[k + 1].role,
+                left_chi_phys_eV=float(bands.physical_electron_affinity_eV[l_node]),
+                left_Eg_phys_eV=float(bands.physical_band_gap_eV[l_node]),
+                left_Nc_m3=float(binding.conduction_dos_m3[l_node]),
+                left_Nv_m3=float(binding.valence_dos_m3[l_node]),
+                right_chi_phys_eV=float(bands.physical_electron_affinity_eV[r_node]),
+                right_Eg_phys_eV=float(bands.physical_band_gap_eV[r_node]),
+                right_Nc_m3=float(binding.conduction_dos_m3[r_node]),
+                right_Nv_m3=float(binding.valence_dos_m3[r_node]),
+                thermal_voltage_V=vt,
+                trap_depth_eV=d_spec.trap_depth_eV,
+                energy_reference=d_spec.energy_reference,
+                require_in_gap=(charge_closure == "equilibrium_referenced"),
+            )
+            n1_l, p1_l = refs.n1_left_m3, refs.p1_left_m3
+            n1_r, p1_r = refs.n1_right_m3, refs.p1_right_m3
+            trap_density_m2 = d_spec.areal_density_m2
+
+        trace_elec = TraceElectrostatics.from_plane(
+            plane,
+            float(eps_r_node[l_node]),
+            float(eps_r_node[r_node]),
+        )
+        phys = TwoSidedInterfacePhysics(
+            thermal_voltage_V=vt,
+            temperature_K=temp,
+            D_n_left_m2_s=float(binding.electron_diffusivity_m2_s[l_node]),
+            D_n_right_m2_s=float(binding.electron_diffusivity_m2_s[r_node]),
+            D_p_left_m2_s=float(binding.hole_diffusivity_m2_s[l_node]),
+            D_p_right_m2_s=float(binding.hole_diffusivity_m2_s[r_node]),
+            N_C_left_m3=float(binding.conduction_dos_m3[l_node]),
+            N_C_right_m3=float(binding.conduction_dos_m3[r_node]),
+            N_V_left_m3=float(binding.valence_dos_m3[l_node]),
+            N_V_right_m3=float(binding.valence_dos_m3[r_node]),
+            richardson_n_A_m2_K2=rich_n,
+            richardson_p_A_m2_K2=rich_p,
+            conduction_band_step_eV=float(
+                bands.physical_electron_affinity_eV[l_node]
+                - bands.physical_electron_affinity_eV[r_node]
+            ),
+            hole_transport_step_eV=float(
+                (bands.physical_electron_affinity_eV[r_node] + bands.physical_band_gap_eV[r_node])
+                - (bands.physical_electron_affinity_eV[l_node] + bands.physical_band_gap_eV[l_node])
+            ),
+            transmission=interface_transmission,
+            surface_recombination_velocity_n_m_s=vn,
+            surface_recombination_velocity_p_m_s=vp,
+            n1_left_m3=n1_l,
+            n1_right_m3=n1_r,
+            p1_left_m3=p1_l,
+            p1_right_m3=p1_r,
+        )
+        provisional_specs.append((k, face, l_node, r_node, trace_elec, phys, trap_density_m2))
+
+    eq_occ: list[float] | None = None
+    if charge_closure == "equilibrium_referenced":
+        if not has_any_defect:
+            raise CapabilityError(
+                "unsupported_classical_1d_dc: equilibrium_referenced charge closure requires interface defects"
+            )
+        if equilibrium_occupancies is not None:
+            if len(equilibrium_occupancies) != iface_count:
+                raise ValueError("equilibrium_occupancies must match the number of electrical interfaces")
+            eq_occ = [float(v) for v in equilibrium_occupancies]
+            if any(not math.isfinite(v) or not 0.0 <= v <= 1.0 for v in eq_occ):
+                raise ValueError("equilibrium_occupancies must lie in [0, 1]")
+        else:
+            u_dark = _solve_dark_uncharged_two_sided_equilibrium(
+                device_id=device_id,
+                geometry=geometry,
+                binding=binding,
+                poisson=poisson,
+                electron_diffusivity=electron_diffusivity,
+                hole_diffusivity=hole_diffusivity,
+                generation=generation,
+                recombination=recombination,
+                channels=channels,
+                phi_left_V=phi_left_V,
+                built_in_V=built_in_V,
+                fermi_eV=fermi_eV,
+                reference_phi=reference_phi,
+                reference_n=reference_n,
+                reference_p=reference_p,
+                additional_recombination=additional_recombination,
+                field_transport=field_transport,
+                provisional_specs=provisional_specs,
+            )
+            count_nodes = geometry.node_count
+            phi_eq = u_dark[:count_nodes]
+            zn_eq = u_dark[count_nodes:2 * count_nodes]
+            zp_eq = u_dark[2 * count_nodes:]
+            shift_eq = (phi_eq - reference_phi) / vt
+            n_eq = reference_n * np.exp(shift_eq + zn_eq)
+            p_eq = reference_p * np.exp(-shift_eq - zp_eq)
+            eq_occ = []
+            for _, _, l_node, r_node, trace_elec, phys, _ in provisional_specs:
+                dark_qss = solve_two_sided_interface_qss(
+                    trace_elec,
+                    phys,
+                    TwoSidedBulkState(
+                        phi_left_V=float(phi_eq[l_node]),
+                        phi_right_V=float(phi_eq[r_node]),
+                        n_left_m3=float(n_eq[l_node]),
+                        p_left_m3=float(p_eq[l_node]),
+                        n_right_m3=float(n_eq[r_node]),
+                        p_right_m3=float(p_eq[r_node]),
+                        electron_electrochemical_step=float(zn_eq[r_node] - zn_eq[l_node]),
+                        hole_electrochemical_step=float(-(zp_eq[r_node] - zp_eq[l_node])),
+                    ),
+                )
+                if dark_qss.occupancy is None:
+                    eq_occ.append(0.0)
+                else:
+                    eq_occ.append(float(dark_qss.occupancy))
+    elif equilibrium_occupancies is not None:
+        raise ValueError("equilibrium_occupancies requires settings.interface_charge_closure='equilibrium_referenced'")
+
+    two_sided_specs: list[TwoSidedInterfaceBindingSpec] = []
+    manifest_two_sided: list[object] = []
+    for idx_spec, (k, face, l_node, r_node, trace_elec, phys, trap_nt) in enumerate(provisional_specs):
+        charge_obj: EquilibriumReferencedSheetCharge | None = None
+        wl = wr = 0.0
+        if eq_occ is not None:
+            charge_obj = EquilibriumReferencedSheetCharge(
+                equilibrium_occupancy=eq_occ[idx_spec],
+                trap_density_m2=trap_nt,
+            )
+            wl, wr = sheet_charge_row_weights(
+                trace_elec.eps_r_left,
+                trace_elec.left_distance_m,
+                trace_elec.eps_r_right,
+                trace_elec.right_distance_m,
+            )
+        two_sided_specs.append(
+            TwoSidedInterfaceBindingSpec(
+                interface_index=k,
+                face=face,
+                left_node=l_node,
+                right_node=r_node,
+                trace_electrostatics=trace_elec,
+                physics=phys,
+                charge=charge_obj,
+                weight_left=wl,
+                weight_right=wr,
+            )
+        )
+        manifest_two_sided.append(
+            [
+                k,
+                face,
+                l_node,
+                r_node,
+                trace_elec.left_distance_m,
+                trace_elec.right_distance_m,
+                trace_elec.eps_r_left,
+                trace_elec.eps_r_right,
+                phys.richardson_n_A_m2_K2,
+                phys.richardson_p_A_m2_K2,
+                phys.conduction_band_step_eV,
+                phys.hole_transport_step_eV,
+                phys.transmission,
+                phys.surface_recombination_velocity_n_m_s,
+                phys.surface_recombination_velocity_p_m_s,
+                phys.n1_left_m3,
+                phys.n1_right_m3,
+                phys.p1_left_m3,
+                phys.p1_right_m3,
+                None if charge_obj is None else [charge_obj.equilibrium_occupancy, charge_obj.trap_density_m2, wl, wr],
+            ]
+        )
+
+    manifest_ts = {
+        "schema": "compiled_interface_model_1d_v1",
+        "topology": "two_sided_trace",
+        "charge_closure": charge_closure,
+        "two_sided": manifest_two_sided,
+    }
+    iface_sha = hashlib.sha256(
+        json.dumps(manifest_ts, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+    return CompiledInterfaceModel1D(
+        topology="two_sided_trace",
+        identity_sha256=iface_sha,
+        two_sided=tuple(two_sided_specs),
+    )
 
 
 def _layer_input(layer: PreparedLayer) -> LayerParameterInput:
@@ -200,6 +868,11 @@ def compile_device_1d(
     *,
     intervals_per_layer: int | Sequence[int] = 24,
     additional_recombination: LocalRecombinationModel | None = None,
+    interface_topology: InterfaceTopologyName | None = None,
+    te_softness: float = 0.02,
+    te_regularization_mode: TERegularizationName = "legacy_logistic",
+    interface_transmission: float = 1.0,
+    equilibrium_occupancies: Sequence[float] | None = None,
 ) -> CompiledDevice1D:
     """Cold compile genuine resolved configuration; no legacy/test execution.
 
@@ -210,10 +883,31 @@ def compile_device_1d(
     """
     if not isinstance(prepared, PreparedDevice):
         raise TypeError("compile_device_1d requires an existing PreparedDevice")
+    if interface_topology is not None and interface_topology not in ("deduplicated", "two_sided_trace"):
+        raise ValueError("interface_topology must be 'deduplicated', 'two_sided_trace', or None")
+    if te_regularization_mode not in ("legacy_logistic", "compact_support"):
+        raise ValueError("te_regularization_mode must be 'legacy_logistic' or 'compact_support'")
+    if isinstance(te_softness, bool) or not math.isfinite(float(te_softness)) or float(te_softness) < 0.0:
+        raise ValueError("te_softness must be a finite non-negative float")
+    if (
+        isinstance(interface_transmission, bool)
+        or not math.isfinite(float(interface_transmission))
+        or not 0.0 < float(interface_transmission) <= 1.0
+    ):
+        raise ValueError("interface_transmission must lie in (0, 1]")
+
     data = prepared.to_mapping()
     settings = data["settings"]
     layers = tuple(layer for layer in prepared.layers if layer.role != "substrate")
     unsupported(prepared, data, layers)
+    resolved_topology: InterfaceTopologyName = (
+        interface_topology
+        if interface_topology is not None
+        else ("two_sided_trace" if settings["interface_charge_closure"] == "equilibrium_referenced" else "deduplicated")
+    )
+    if resolved_topology == "two_sided_trace" and len(layers) < 2:
+        raise CapabilityError("unsupported_classical_1d_dc: two_sided_trace requires at least two electrical layers")
+
     grid = {entry["layer"]: entry for entry in data["electrical_grid"]}
     if isinstance(intervals_per_layer, bool):
         raise ValueError("intervals_per_layer must be an integer or integer sequence")
@@ -234,9 +928,15 @@ def compile_device_1d(
             counts[index] *= p["grading_N_mult"]
     alphas = [grid.get(layer.id, {}).get("alpha", 3.0) for layer in layers]
     thicknesses = [layer.thickness for layer in layers]
-    nodes = multilayer_grid(list(zip(thicknesses, counts)), alpha=alphas)
+    interface_positions: np.ndarray = np.cumsum(thicknesses, dtype=float)[:-1]
+    base_nodes = multilayer_grid(list(zip(thicknesses, counts)), alpha=alphas)
+    if resolved_topology == "two_sided_trace":
+        nodes = remove_shared_interface_nodes(base_nodes, interface_positions)
+        geometry = build_geometry(TWO_SIDED_TRACE_V1, nodes, interface_positions)
+    else:
+        nodes = base_nodes
+        geometry = build_geometry(INTEGER_ENDPOINT_V1, nodes, interface_positions)
     masks = layer_node_masks(nodes, thicknesses, RIGHT_LAYER_WINS)
-    geometry = build_geometry(INTEGER_ENDPOINT_V1, nodes, np.cumsum(thicknesses)[:-1])
     binding = compile_layer_parameters(
         nodes, [_layer_input(layer) for layer in layers],
         temperature_K=settings["T"], temperature_scaling=True,
@@ -268,7 +968,8 @@ def compile_device_1d(
     configured = binding.intrinsic_product_m6
     if np.any(configured <= 0.0) or not np.all(np.isfinite(configured)) or np.max(np.abs(np.log(configured) - log_product)) > 1.0e-10:
         raise CapabilityError("inconsistent_intrinsic_product: configured ni and physical Nc/Nv/Eg do not share one Maxwell-Boltzmann equilibrium")
-    poisson = PoissonOperator1D.for_geometry(geometry, paint("eps_r"))
+    eps_r_node = paint("eps_r")
+    poisson = PoissonOperator1D.for_geometry(geometry, eps_r_node)
     coefficients = BulkRecombinationCoefficients(
         nodes.size, configured, paint("tau_n"), paint("tau_p"),
         binding.srh_n1_m3, binding.srh_p1_m3, binding.radiative_coefficient_m3_s,
@@ -324,6 +1025,36 @@ def compile_device_1d(
     )
     if all(channel.kind == "blocking" for channel in channels):
         raise CapabilityError("fully_blocking_contacts: a closed carrier inventory constraint is not bound in this DC slice")
+
+    interface_model = _bind_interfaces_1d(
+        device_id=data["id"],
+        prepared=prepared,
+        settings=settings,
+        layers=layers,
+        geometry=geometry,
+        binding=binding,
+        poisson=poisson,
+        electron_diffusivity=electron_diffusivity,
+        hole_diffusivity=hole_diffusivity,
+        generation=generation,
+        recombination=recombination,
+        channels=channels,
+        eps_r_node=eps_r_node,
+        reference_phi=reference_phi,
+        reference_n=reference_n,
+        reference_p=reference_p,
+        phi_left_V=phi_left,
+        built_in_V=built_in,
+        fermi_eV=fermi,
+        additional_recombination=additional_recombination,
+        field_transport=field_transport,
+        topology=resolved_topology,
+        te_softness=float(te_softness),
+        te_regularization_mode=te_regularization_mode,
+        interface_transmission=float(interface_transmission),
+        equilibrium_occupancies=equilibrium_occupancies,
+    )
+
     extra_id = None if additional_recombination is None else additional_recombination.model_id
     identity_parts: tuple[object, ...] = (
         "electrode_quasi_fermi_1d_v1", prepared.content_sha256, binding.sha256,
@@ -336,14 +1067,27 @@ def compile_device_1d(
             identity_parts += (LITERAL_ABOVE_VB_DOS_REFERENCE_V1,)
     if field_transport is not None:
         identity_parts += (field_transport.identity_sha256,)
+    if interface_model is not None:
+        identity_parts += (interface_model.identity_sha256,)
     identity = hashlib.sha256(json.dumps(
         identity_parts,
         separators=(",", ":"), allow_nan=False,
     ).encode()).hexdigest()
+    capabilities: tuple[str, ...] = (
+        "ion_free",
+        "classical_1d_dc",
+        "maxwell_boltzmann",
+        "semiconductor_work_function_contacts",
+        "bulk_srh_radiative_auger",
+    )
+    if interface_model is not None:
+        capabilities = capabilities + ("heterointerface_1d",)
     return CompiledDevice1D(
         data["id"], identity, geometry, binding, poisson,
         electron_diffusivity, hole_diffusivity,
         generation, recombination, channels, phi_left, built_in, fermi,
         reference_phi, reference_n, reference_p, additional_recombination,
+        capabilities=capabilities,
         field_transport=field_transport,
+        interface_model=interface_model,
     )
