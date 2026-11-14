@@ -51,12 +51,27 @@ from solarlab.discretization.stable_bernoulli import bernoulli_pair
 from solarlab.physics.statistics.band_potentials import BandStructure
 
 __all__ = [
-    "CarrierFaceFlux", "CarrierFaceFluxes", "carrier_particle_fluxes",
-    "electrochemical_step_from_densities", "electron_current_from_particle_flux",
-    "hole_current_from_particle_flux", "stable_sg_particle_flux",
+    "BAND_STEP_MODES",
+    "CarrierFaceFlux",
+    "CarrierFaceFluxes",
+    "HOLE_SEPARATE_INCREMENT_V1",
+    "LEGACY_SUMMED_POTENTIAL_V1",
+    "carrier_particle_fluxes",
+    "carrier_transport_potential_steps",
+    "electrochemical_step_from_densities",
+    "electron_current_from_particle_flux",
+    "hole_current_from_particle_flux",
+    "stable_sg_particle_flux",
 ]
 
 Q = ELEMENTARY_CHARGE_C
+
+LEGACY_SUMMED_POTENTIAL_V1 = "legacy_summed_potential_v1"
+HOLE_SEPARATE_INCREMENT_V1 = "hole_separate_increment_v1"
+BAND_STEP_MODES = (
+    LEGACY_SUMMED_POTENTIAL_V1,
+    HOLE_SEPARATE_INCREMENT_V1,
+)
 
 
 def _extreme_bernoulli_product(
@@ -206,13 +221,72 @@ def hole_current_from_particle_flux(flux: ArrayLike) -> NDArray[np.float64]:
     return result
 
 
-def _carrier_flux(density: NDArray[np.float64], potential: NDArray[np.float64],
+def carrier_transport_potential_steps(
+    phi: ArrayLike,
+    bands: BandStructure,
+    *,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    left_nodes: ArrayLike | None = None,
+    right_nodes: ArrayLike | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Face transport-potential increments ``(dpsi_n, dpsi_p)`` [V] oriented L -> R.
+
+    Under ``LEGACY_SUMMED_POTENTIAL_V1`` (default), nodal ``phi + chi_t`` and
+    ``phi + chi_t + Eg_t`` are formed before differencing for 0-ULP parity with
+    historical runs (preserving historical ``Final121`` native residual behavior).
+    Under ``HOLE_SEPARATE_INCREMENT_V1`` (``BandStepsV1``), electrostatic and
+    band-offset increments ``(d_phi) + (d_chi_t) + (d_Eg_t)`` are formed on each
+    face prior to summation so large constant ``chi_t + Eg_t`` offsets cannot
+    quantize small intra-layer ``d_phi`` steps.
+    """
+    if band_step_mode not in BAND_STEP_MODES:
+        raise ValueError(
+            f"unknown band_step_mode {band_step_mode!r}; expected one of {BAND_STEP_MODES}"
+        )
+    potential = np.asarray(phi, dtype=float)
+    chi_t = bands.transport_electron_affinity_eV
+    eg_t = bands.transport_band_gap_eV
+    if potential.shape != chi_t.shape or potential.ndim != 1 or potential.size < 2:
+        raise ValueError("phi must live on the 1-D band-structure nodes with size >= 2")
+    if not np.all(np.isfinite(potential)):
+        raise ValueError("phi must be finite on every node")
+    if (left_nodes is None) != (right_nodes is None):
+        raise ValueError("left_nodes and right_nodes must be provided together or omitted")
+
+    if left_nodes is not None and right_nodes is not None:
+        left = np.asarray(left_nodes, dtype=np.intp)
+        right = np.asarray(right_nodes, dtype=np.intp)
+        if left.ndim != 1 or right.shape != left.shape:
+            raise ValueError("left_nodes and right_nodes must share one 1-D face shape")
+        if band_step_mode == LEGACY_SUMMED_POTENTIAL_V1:
+            psi_n, psi_p = bands.transport_potentials(potential)
+            return psi_n[right] - psi_n[left], psi_p[right] - psi_p[left]
+        d_phi = potential[right] - potential[left]
+        d_chi = chi_t[right] - chi_t[left]
+        d_eg = eg_t[right] - eg_t[left]
+        dpsi_n_graph: NDArray[np.float64] = d_phi + d_chi
+        dpsi_p_graph: NDArray[np.float64] = (d_phi + d_chi) + d_eg
+        return dpsi_n_graph, dpsi_p_graph
+
+    if band_step_mode == LEGACY_SUMMED_POTENTIAL_V1:
+        psi_n, psi_p = bands.transport_potentials(potential)
+        return psi_n[1:] - psi_n[:-1], psi_p[1:] - psi_p[:-1]
+
+    d_phi = potential[1:] - potential[:-1]
+    d_chi = chi_t[1:] - chi_t[:-1]
+    d_eg = eg_t[1:] - eg_t[:-1]
+    dpsi_n: NDArray[np.float64] = d_phi + d_chi
+    dpsi_p: NDArray[np.float64] = (d_phi + d_chi) + d_eg
+    return dpsi_n, dpsi_p
+
+
+def _carrier_flux(density: NDArray[np.float64], potential_step_V: NDArray[np.float64],
                   coefficient: NDArray[np.float64], thermal_voltage_V: float,
                   energy_sign: float, electrochemical_step: ArrayLike | None) -> CarrierFaceFlux:
-    step = energy_sign * (potential[1:] - potential[:-1]) / thermal_voltage_V
+    step = energy_sign * potential_step_V / thermal_voltage_V
     result = stable_sg_particle_flux(density[:-1], density[1:], step, coefficient,
                                      electrochemical_step=electrochemical_step)
-    # D = s (psi_R - psi_L)/V_T, so dF/dpsi_R = s/V_T dF/dD and dF/dpsi_L = -s/V_T dF/dD.
+    # D = s dpsi/V_T, so dF/dphi_R = s/V_T dF/dD and dF/dphi_L = -s/V_T dF/dD.
     per_volt = energy_sign / thermal_voltage_V * result.energy_step_derivative
     return CarrierFaceFlux(
         flux=result.flux,
@@ -237,6 +311,7 @@ def carrier_particle_fluxes(
     *,
     electron_electrochemical_step: ArrayLike | None = None,
     hole_electrochemical_step: ArrayLike | None = None,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
 ) -> CarrierFaceFluxes:
     """Electron and hole particle fluxes along +x on the N-1 grid faces.
 
@@ -253,12 +328,14 @@ def carrier_particle_fluxes(
             or holes.shape != grid.shape or np.any(spacing <= 0.0)
             or not np.isfinite(thermal) or thermal <= 0.0):
         raise ValueError("flux inputs must share a strictly increasing node grid")
-    electron_potential, hole_potential = bands.transport_potentials(phi)
+    electron_step_V, hole_step_V = carrier_transport_potential_steps(
+        phi, bands, band_step_mode=band_step_mode
+    )
     k_n = np.asarray(D_n_face, dtype=float) / spacing
     k_p = np.asarray(D_p_face, dtype=float) / spacing
     return CarrierFaceFluxes(
-        electron=_carrier_flux(electrons, electron_potential, k_n, thermal, -1.0,
+        electron=_carrier_flux(electrons, electron_step_V, k_n, thermal, -1.0,
                                electron_electrochemical_step),
-        hole=_carrier_flux(holes, hole_potential, k_p, thermal, 1.0,
+        hole=_carrier_flux(holes, hole_step_V, k_p, thermal, 1.0,
                            hole_electrochemical_step),
     )

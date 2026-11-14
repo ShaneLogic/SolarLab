@@ -19,6 +19,8 @@ from solarlab.discretization import (
     VACUUM_PERMITTIVITY_F_M,
 )
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
+from solarlab.equations.dc_2d import DC2DProblem
+from solarlab.experiments.jv.steady import run_steady_jv
 from solarlab.experiments.transient import (
     TransientOptions,
     TransientProtocol,
@@ -494,4 +496,35 @@ def test_p08_02b_global_conservation_and_1d_2d_parity_on_physical_half_endpoint_
         jd_scale = max(float(np.max(np.abs(j_disp_1d))), float(np.max(np.abs(disp2_f - disp2_0)) / dt_s))
         assert np.max(np.abs(d2_contacts_0 - d1_contacts_0)) / d_scale <= 1e-13
         assert np.max(np.abs(j_disp_2d - j_disp_1d)) / jd_scale <= 1e-13
+
+
+def test_p08_02c_internal_coordinate_signs_vs_pv_readout_polarity_1d_and_2d() -> None:
+    """Internal +x/+y coordinate signs never flip; PV power-quadrant sign lives only in readout."""
+    prepared = load_device()
+    dev_1d = compile_device_1d(prepared, intervals_per_layer=(4, 4, 4))
+    jv = run_steady_jv(dev_1d, [0.0, 0.08], generation_scale=1.0)
+
+    # On p-i-n (p at x=0, n at x=L), voltage_polarity == +1.0; under illumination at V=0,
+    # electrons flow toward +x (F_n > 0 => J_n < 0) and holes toward -x (F_p < 0 => J_p < 0),
+    # so internal +x conduction current is strictly NEGATIVE while PV output readout is POSITIVE.
+    assert dev_1d.voltage_polarity == 1.0
+    assert np.all(jv.current_density_A_m2[0] < 0.0)
+    assert jv.output_current_A_m2[0] > 0.0
+    assert jv.output_current_A_m2[0] == -dev_1d.voltage_polarity * jv.current_density_A_m2[0, 0]
+    assert jv.metrics.short_circuit_current_A_m2 == jv.output_current_A_m2[0]
+
+    # 2D uniform column preserves exact same +y coordinate current sign on faces and terminals.
+    spatial = JV2DInput(
+        kind="jv_2d", lateral_length="0.6 um", Nx=2, Ny_per_layer=4, lateral_bc="neumann"
+    )
+    dev_2d = compile_device_2d(prepared, spatial)
+    prob_2d = DC2DProblem(dev_2d, 0.0, 1.0)
+    u2 = dev_2d.extrude_coordinates(jv.solutions[0].state.u)
+    j_term_2d = prob_2d.terminal_current_density_A_m2(u2)
+    fluxes_2d = prob_2d.fluxes(u2)
+    yf = dev_2d.geometry.x_face_count
+    j_cond_y = fluxes_2d.hole_current()[yf:] + fluxes_2d.electron_current()[yf:]
+    assert np.all(j_term_2d < 0.0)
+    assert np.all(j_cond_y < 0.0)
+    np.testing.assert_allclose(j_term_2d[0], jv.current_density_A_m2[0, 0], rtol=2e-4)
 

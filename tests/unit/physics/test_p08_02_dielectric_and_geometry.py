@@ -1,4 +1,4 @@
-"""Unit contracts for P08-02a sub-face series dielectric capacitance."""
+"""Unit contracts for P08-02a dielectric capacitance, P08-02b geometry, and P08-02c band steps."""
 
 from __future__ import annotations
 
@@ -47,11 +47,31 @@ from solarlab.physics.electrostatics import (
     rectangular_2d_face_capacitances,
     solve_electrostatic_traces,
 )
+from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.physics.electrostatics.gauss_assembly import gauss_balance_with_term_sink
 from solarlab.physics.generation.beer_lambert import BeerLambertBinding
 from solarlab.physics.recombination.interface import evaluate_shared_interface_trap
+from solarlab.physics.statistics.band_potentials import (
+    BandStructure,
+    LayerBandInput,
+    layered_band_structure,
+)
+from solarlab.physics.transport.drift_diffusion import (
+    BAND_STEP_MODES,
+    HOLE_SEPARATE_INCREMENT_V1,
+    LEGACY_SUMMED_POTENTIAL_V1,
+    legacy_carrier_face_currents,
+    legacy_carrier_face_jacobians,
+)
+from solarlab.physics.transport.electrochemical_flux import (
+    carrier_particle_fluxes,
+    carrier_transport_potential_steps,
+    electron_current_from_particle_flux,
+    hole_current_from_particle_flux,
+)
 
 EPS_0 = VACUUM_PERMITTIVITY_F_M
+Q = ELEMENTARY_CHARGE_C
 
 
 def _same_bits(a: np.ndarray, b: np.ndarray) -> bool:
@@ -552,4 +572,287 @@ def test_p08_02b_areal_sheet_trap_conversion_conserves_across_geometries() -> No
         int_cp = float(np.sum(geom.cell_measures_m * src_cp))
         assert abs(int_cn - total_electron_capture) / abs(total_electron_capture) <= 1e-14
         assert abs(int_cp - total_hole_capture) / abs(total_hole_capture) <= 1e-14
+
+
+def test_p08_02c_default_legacy_summed_potential_is_0_ulp_bit_identical() -> None:
+    """Default band_step_mode preserves 0-ULP bit-identity across M-class and N-class operators."""
+    assert BAND_STEP_MODES == (LEGACY_SUMMED_POTENTIAL_V1, HOLE_SEPARATE_INCREMENT_V1)
+    vt = 0.02585199102458495
+    layers = (
+        LayerBandInput(50.0e-9, 4.0, 3.2, 2.2e24, 1.8e25, role="etl"),
+        LayerBandInput(350.0e-9, 3.9, 1.55, 2.2e24, 1.8e25, role="absorber"),
+        LayerBandInput(150.0e-9, 2.15, 3.45, 2.0e25, 2.0e25, role="htl"),
+    )
+    x = multilayer_grid([(layer.thickness_m, 6) for layer in layers], alpha=2.0)
+    bands = layered_band_structure(x, layers, thermal_voltage_V=vt, fold_dos=True)
+    rng = np.random.default_rng(8023)
+    phi = np.linspace(0.0, 0.9, x.size) + 1e-4 * rng.normal(size=x.size)
+    n = np.exp(rng.uniform(25.0, 52.0, size=x.size))
+    p = np.exp(rng.uniform(25.0, 52.0, size=x.size))
+    dn = rng.uniform(1e-6, 5e-5, size=x.size - 1)
+    dp = rng.uniform(1e-6, 5e-5, size=x.size - 1)
+
+    jn_def, jp_def = legacy_carrier_face_currents(x, phi, n, p, dn, dp, vt, bands)
+    jn_leg, jp_leg = legacy_carrier_face_currents(
+        x, phi, n, p, dn, dp, vt, bands, band_step_mode=LEGACY_SUMMED_POTENTIAL_V1
+    )
+    assert _same_bits(jn_def, jn_leg)
+    assert _same_bits(jp_def, jp_leg)
+
+    jac_n_def, jac_p_def = legacy_carrier_face_jacobians(x, phi, n, p, dn, dp, vt, bands)
+    jac_n_leg, jac_p_leg = legacy_carrier_face_jacobians(
+        x, phi, n, p, dn, dp, vt, bands, band_step_mode=LEGACY_SUMMED_POTENTIAL_V1
+    )
+    assert _same_bits(jac_n_def.flux, jac_n_leg.flux)
+    assert _same_bits(jac_p_def.flux, jac_p_leg.flux)
+    assert _same_bits(jac_p_def.potential_left_derivative, jac_p_leg.potential_left_derivative)
+
+    fl_def = carrier_particle_fluxes(x, phi, n, p, dn, dp, vt, bands)
+    fl_leg = carrier_particle_fluxes(
+        x, phi, n, p, dn, dp, vt, bands, band_step_mode=LEGACY_SUMMED_POTENTIAL_V1
+    )
+    assert _same_bits(fl_def.electron.flux, fl_leg.electron.flux)
+    assert _same_bits(fl_def.hole.flux, fl_leg.hole.flux)
+    assert _same_bits(fl_def.hole.energy_step, fl_leg.hole.energy_step)
+    assert _same_bits(
+        fl_def.hole.left_potential_derivative, fl_leg.hole.left_potential_derivative
+    )
+
+    # Graph-pair mode matches 1D consecutive-node mode identically on (0..N-2, 1..N-1).
+    left_idx = np.arange(x.size - 1, dtype=np.intp)
+    right_idx = np.arange(1, x.size, dtype=np.intp)
+    for mode in BAND_STEP_MODES:
+        dn_1d, dp_1d = carrier_transport_potential_steps(phi, bands, band_step_mode=mode)
+        dn_g, dp_g = carrier_transport_potential_steps(
+            phi, bands, band_step_mode=mode, left_nodes=left_idx, right_nodes=right_idx
+        )
+        assert _same_bits(dn_1d, dn_g)
+        assert _same_bits(dp_1d, dp_g)
+
+    with pytest.raises(ValueError, match="band_step_mode"):
+        carrier_transport_potential_steps(phi, bands, band_step_mode="unknown_v9")
+
+
+def test_p08_02c_hole_separate_increment_v1_jacobian_and_sub_uv_precision() -> None:
+    """HOLE_SEPARATE_INCREMENT_V1 preserves exact d(step)/d(phi) = +/-1/V_T and sub-nV accuracy."""
+    vt = 0.02585199102458495
+    layers = (
+        LayerBandInput(40.0e-9, 4.0, 3.2, 2.2e24, 1.8e25, role="etl"),
+        LayerBandInput(160.0e-9, 3.9, 1.55, 2.2e24, 1.8e25, role="absorber"),
+        LayerBandInput(80.0e-9, 2.2, 3.4, 2.0e25, 2.0e25, role="htl"),
+    )
+    x = multilayer_grid([(layer.thickness_m, 3) for layer in layers], alpha=1.8)
+    bands = layered_band_structure(x, layers, thermal_voltage_V=vt, fold_dos=True)
+    rng = np.random.default_rng(12103)
+    phi = np.linspace(-0.15, 0.65, x.size) + 0.015 * rng.normal(size=x.size)
+    n = np.exp(rng.uniform(35.0, 48.0, size=x.size))
+    p = np.exp(rng.uniform(35.0, 48.0, size=x.size))
+    dn = rng.uniform(5e-6, 3e-5, size=x.size - 1)
+    dp = rng.uniform(5e-6, 3e-5, size=x.size - 1)
+
+    fluxes = carrier_particle_fluxes(
+        x, phi, n, p, dn, dp, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+    )
+    jac_n, jac_p = legacy_carrier_face_jacobians(
+        x, phi, n, p, dn, dp, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+    )
+
+    h_phi = 1.0e-7
+    for k in range(x.size):
+        phi_plus = phi.copy()
+        phi_minus = phi.copy()
+        phi_plus[k] += h_phi
+        phi_minus[k] -= h_phi
+        fp = carrier_particle_fluxes(
+            x, phi_plus, n, p, dn, dp, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+        )
+        fm = carrier_particle_fluxes(
+            x, phi_minus, n, p, dn, dp, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+        )
+        jn_p, jp_p = legacy_carrier_face_currents(
+            x, phi_plus, n, p, dn, dp, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+        )
+        jn_m, jp_m = legacy_carrier_face_currents(
+            x, phi_minus, n, p, dn, dp, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+        )
+        dstep_n_fd = (fp.electron.energy_step - fm.electron.energy_step) / (2.0 * h_phi)
+        dstep_p_fd = (fp.hole.energy_step - fm.hole.energy_step) / (2.0 * h_phi)
+        dfn_fd = (fp.electron.flux - fm.electron.flux) / (2.0 * h_phi)
+        dfp_fd = (fp.hole.flux - fm.hole.flux) / (2.0 * h_phi)
+        djn_fd = (jn_p - jn_m) / (2.0 * h_phi)
+        djp_fd = (jp_p - jp_m) / (2.0 * h_phi)
+
+        if k < x.size - 1:
+            # Node k is the LEFT node of face k: d(D_n)/d(phi_L) = +1/V_T, d(D_p)/d(phi_L) = -1/V_T.
+            assert abs(dstep_n_fd[k] - (1.0 / vt)) / (1.0 / vt) <= 2e-9
+            assert abs(dstep_p_fd[k] - (-1.0 / vt)) / (1.0 / vt) <= 2e-9
+            assert abs(dfn_fd[k] - fluxes.electron.left_potential_derivative[k]) <= 1e-8 * max(
+                abs(fluxes.electron.left_potential_derivative[k]), 1.0
+            )
+            assert abs(dfp_fd[k] - fluxes.hole.left_potential_derivative[k]) <= 1e-8 * max(
+                abs(fluxes.hole.left_potential_derivative[k]), 1.0
+            )
+            assert abs(djn_fd[k] - jac_n.potential_left_derivative[k]) <= 1e-8 * max(
+                abs(jac_n.potential_left_derivative[k]), 1.0
+            )
+            assert abs(djp_fd[k] - jac_p.potential_left_derivative[k]) <= 1e-8 * max(
+                abs(jac_p.potential_left_derivative[k]), 1.0
+            )
+        if k > 0:
+            # Node k is the RIGHT node of face k - 1: d(D_n)/d(phi_R) = -1/V_T, d(D_p)/d(phi_R) = +1/V_T.
+            f = k - 1
+            assert abs(dstep_n_fd[f] - (-1.0 / vt)) / (1.0 / vt) <= 2e-9
+            assert abs(dstep_p_fd[f] - (1.0 / vt)) / (1.0 / vt) <= 2e-9
+            assert abs(dfn_fd[f] - fluxes.electron.right_potential_derivative[f]) <= 1e-8 * max(
+                abs(fluxes.electron.right_potential_derivative[f]), 1.0
+            )
+            assert abs(dfp_fd[f] - fluxes.hole.right_potential_derivative[f]) <= 1e-8 * max(
+                abs(fluxes.hole.right_potential_derivative[f]), 1.0
+            )
+            assert abs(djn_fd[f] - jac_n.potential_right_derivative[f]) <= 1e-8 * max(
+                abs(jac_n.potential_right_derivative[f]), 1.0
+            )
+            assert abs(djp_fd[f] - jac_p.potential_right_derivative[f]) <= 1e-8 * max(
+                abs(jac_p.potential_right_derivative[f]), 1.0
+            )
+
+    # Sub-fV step inside chi_t + Eg_t = 5.6 eV HTL: N-class stable_sg_particle_flux + BandStepsV1!
+    x_htl = np.array([0.0, 1.0e-9])
+    bands_htl = BandStructure.without_dos_fold(np.array([2.2, 2.2]), np.array([3.4, 3.4]))
+    dphi_tiny = -3.0e-16  # < 0.5 * ulp(5.6 V) = 4.44e-16 V!
+    phi_htl = np.array([1.0e-4, 1.0e-4 + dphi_tiny])
+    na = 2.0e24
+    mu_p = 2.0e-4
+    dp_htl = np.array([mu_p * vt])
+    jp_exact = -Q * mu_p * na * ((phi_htl[1] - phi_htl[0]) / 1.0e-9)
+
+    fl_leg_tiny = carrier_particle_fluxes(
+        x_htl, phi_htl, np.ones(2), np.full(2, na), dp_htl, dp_htl, vt, bands_htl
+    )
+    fl_sep_tiny = carrier_particle_fluxes(
+        x_htl,
+        phi_htl,
+        np.ones(2),
+        np.full(2, na),
+        dp_htl,
+        dp_htl,
+        vt,
+        bands_htl,
+        band_step_mode=HOLE_SEPARATE_INCREMENT_V1,
+    )
+    # Legacy quantizes dpsi_p to an integer multiple of ulp(5.6 V) = 8.88e-16 V (>150% error),
+    # whereas N-class + HOLE_SEPARATE_INCREMENT_V1 recovers jp_exact to machine precision!
+    assert abs(fl_leg_tiny.hole_current()[0] - jp_exact) / abs(jp_exact) > 1.5
+    assert abs(fl_sep_tiny.hole_current()[0] - jp_exact) / abs(jp_exact) <= 1e-14
+
+
+def test_p08_02c_final121_class_quantization_eliminated_and_historical_verdict_preserved() -> None:
+    """BandStepsV1 drops Final121-class >1/3000 A/m^2 rounding to <=2e-5 A/m^2 while preserving default."""
+    # Historical citation (AGENTS.md & ArchitectureRefactorExecutionV1.md §19.35):
+    # Saved SCAPS fixed-state native residual screens recorded 8.79892088904392e-5 A/m^2 on Final61
+    # (passed <= 1/3000 A/m^2) and 4.010734989424907e-4 A/m^2 on Final121 (FAILED > 1/3000 A/m^2)
+    # under default LEGACY_SUMMED_POTENTIAL_V1. That historical failed criterion remains recorded
+    # as failed; default calls MUST keep LEGACY_SUMMED_POTENTIAL_V1 untouched!
+    screen_limit_a_m2 = 1.0 / 3000.0
+    vt = 0.02585199102458495
+    layers = (
+        LayerBandInput(50.0e-9, 4.0, 3.2, 2.2e24, 1.8e25, role="etl"),
+        LayerBandInput(400.0e-9, 3.9, 1.55, 2.2e24, 1.8e25, role="absorber"),
+        LayerBandInput(200.0e-9, 2.15, 3.45, 2.0e25, 2.0e25, role="htl"),
+    )
+    na = 1.0e24
+    mu_p = 2.0e-4
+    j0 = 240.0
+
+    def _htl_balances(intervals_per_layer: int) -> tuple[float, float, float, float]:
+        x = multilayer_grid([(layer.thickness_m, intervals_per_layer) for layer in layers], alpha=2.2)
+        bands = layered_band_structure(x, layers, thermal_voltage_V=vt, fold_dos=True)
+        htl_start = 2 * intervals_per_layer
+        # Exact steady drift solution in uniform quasi-neutral HTL (B(xi) - B(-xi) === -xi):
+        # true continuum and exact-arithmetic discrete SG hole balance is identically 0!
+        phi = 0.21 - (j0 / (Q * mu_p * na)) * (x - x[htl_start])
+        n = np.full_like(x, 1.0e10)
+        p = np.full_like(x, na)
+        d_face = np.full(x.size - 1, mu_p * vt)
+
+        # Default (no band_step_mode) MUST preserve historical LEGACY_SUMMED_POTENTIAL_V1 behavior.
+        _, jp_default = legacy_carrier_face_currents(x, phi, n, p, d_face, d_face, vt, bands)
+        _, jp_sep = legacy_carrier_face_currents(
+            x, phi, n, p, d_face, d_face, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+        )
+        fl_default = carrier_particle_fluxes(x, phi, n, p, d_face, d_face, vt, bands)
+        fl_sep = carrier_particle_fluxes(
+            x, phi, n, p, d_face, d_face, vt, bands, band_step_mode=HOLE_SEPARATE_INCREMENT_V1
+        )
+        m_def = float(np.sum(np.abs(jp_default[htl_start:-1] - jp_default[htl_start + 1 :])))
+        m_sep = float(np.sum(np.abs(jp_sep[htl_start:-1] - jp_sep[htl_start + 1 :])))
+        n_def = float(
+            np.sum(
+                np.abs(
+                    fl_default.hole_current()[htl_start:-1]
+                    - fl_default.hole_current()[htl_start + 1 :]
+                )
+            )
+        )
+        n_sep = float(
+            np.sum(
+                np.abs(
+                    fl_sep.hole_current()[htl_start:-1] - fl_sep.hole_current()[htl_start + 1 :]
+                )
+            )
+        )
+        return m_def, m_sep, n_def, n_sep
+
+    m61_def, m61_sep, n61_def, n61_sep = _htl_balances(20)  # N = 61
+    m121_def, m121_sep, n121_def, n121_sep = _htl_balances(40)  # N = 121
+
+    # N = 61 passes <= 1/3000 A/m^2 under default legacy summed potentials, while N = 121 FAILS it:
+    assert m61_def < screen_limit_a_m2 and n61_def < screen_limit_a_m2
+    assert m121_def > screen_limit_a_m2 and n121_def > screen_limit_a_m2
+
+    # Opt-in HOLE_SEPARATE_INCREMENT_V1 eliminates the 5.6 eV offset quantization (> 25x reduction):
+    assert m61_sep <= 2.0e-5 and n61_sep <= 2.0e-5
+    assert m121_sep <= 2.0e-5 and n121_sep <= 2.0e-5
+    assert m121_def / m121_sep > 25.0
+    assert n121_def / n121_sep > 25.0
+
+
+def test_p08_02c_internal_coordinate_orientation_invariants() -> None:
+    """Internal +x particle/current/displacement operators obey strict coordinate signs."""
+    vt = 0.02585199102458495
+    x = np.array([0.0, 2.0e-8, 5.0e-8])
+    bands = BandStructure.without_dos_fold(np.array([3.9, 3.9, 3.9]), np.array([1.55, 1.55, 1.55]))
+    phi_old = np.array([0.4, 0.15, 0.0])
+    phi_new = np.array([0.5, 0.20, 0.0])
+    n = np.array([5.0e21, 1.0e21, 2.0e20])
+    p = np.array([8.0e21, 2.0e21, 3.0e20])
+    d_face = np.array([1.0e-5, 1.0e-5])
+
+    for mode in BAND_STEP_MODES:
+        fl = carrier_particle_fluxes(
+            x, phi_old, n, p, d_face, d_face, vt, bands, band_step_mode=mode
+        )
+        jn_m, jp_m = legacy_carrier_face_currents(
+            x, phi_old, n, p, d_face, d_face, vt, bands, band_step_mode=mode
+        )
+        # Positive +x hole drift+diffusion => F_p > 0 and J_p = +q F_p > 0.
+        assert np.all(fl.hole.flux > 0.0)
+        assert _same_bits(fl.hole_current(), hole_current_from_particle_flux(fl.hole.flux))
+        assert np.all(fl.hole_current() > 0.0)
+        # Electron charge -q => J_n = -q F_n has opposite sign to F_n!
+        assert _same_bits(
+            fl.electron_current(), electron_current_from_particle_flux(fl.electron.flux)
+        )
+        assert np.all(np.sign(fl.electron_current()) == -np.sign(fl.electron.flux))
+        np.testing.assert_allclose(fl.electron_current(), jn_m, rtol=1e-13, atol=0.0)
+        np.testing.assert_allclose(fl.hole_current(), jp_m, rtol=1e-13, atol=0.0)
+
+    # Displacement D = -C (phi_R - phi_L) > 0 when phi decreases along +x; J_disp = (D_new - D_old)/dt.
+    geom = physical_half_endpoint_geometry(x, ())
+    op = PoissonOperator1D.for_geometry(geom, np.full(3, 10.0), layer_eps_r=(10.0,))
+    d_old = op.face_displacement(phi_old)
+    d_new = op.face_displacement(phi_new)
+    assert np.all(d_old > 0.0) and np.all(d_new > d_old)
+    j_disp = (d_new - d_old) / 1.0e-6
+    assert np.all(j_disp > 0.0)
 
