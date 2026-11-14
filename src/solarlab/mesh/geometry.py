@@ -50,24 +50,29 @@ from solarlab.mesh.grid import (
 
 __all__ = [
     "ControlVolumeGeometry1D", "GEOMETRY_NAMES", "HALF_ENDPOINT_V1", "INTEGER_ENDPOINT_V1",
-    "InterfacePlane", "NO_SHARED_NODES", "PHYSICAL_BOUNDARY_TWO_SIDED_V1", "PortFace",
-    "TWO_SIDED_TRACE_V1", "build_geometry", "dual_cell_faces", "half_endpoint_widths",
-    "half_endpoint_geometry", "integer_endpoint_geometry", "integer_endpoint_widths",
-    "physical_boundary_two_sided_geometry", "physical_cell_faces", "two_sided_trace_geometry",
-    "two_sided_trace_widths",
+    "InterfacePlane", "NO_SHARED_NODES", "PHYSICAL_BOUNDARY_TWO_SIDED_V1",
+    "PHYSICAL_HALF_ENDPOINT_V2", "PortFace", "TWO_SIDED_TRACE_V1",
+    "areal_interface_to_cell_source", "build_geometry", "dual_cell_faces",
+    "half_endpoint_widths", "half_endpoint_geometry", "integer_endpoint_geometry",
+    "integer_endpoint_widths", "physical_boundary_two_sided_geometry", "physical_cell_faces",
+    "physical_half_endpoint_geometry", "two_sided_trace_geometry", "two_sided_trace_widths",
 ]
 
 INTEGER_ENDPOINT_V1 = "legacy_mol_integer_endpoint_v1"
 HALF_ENDPOINT_V1 = "legacy_twod_half_endpoint_v1"
 TWO_SIDED_TRACE_V1 = "qf_two_sided_trace_integer_endpoint_v1"
 PHYSICAL_BOUNDARY_TWO_SIDED_V1 = "physical_boundary_two_sided_v1"
+PHYSICAL_HALF_ENDPOINT_V2 = "physical_half_endpoint_v2"
 GEOMETRY_NAMES = (
-    INTEGER_ENDPOINT_V1, HALF_ENDPOINT_V1, TWO_SIDED_TRACE_V1, PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+    INTEGER_ENDPOINT_V1, HALF_ENDPOINT_V1, TWO_SIDED_TRACE_V1,
+    PHYSICAL_BOUNDARY_TWO_SIDED_V1, PHYSICAL_HALF_ENDPOINT_V2,
 )
 NO_SHARED_NODES = "no_shared_nodes"
 # Geometries whose contact cells are geometric half cells; the other two weight
 # each contact node by its full adjacent interval.
-_GEOMETRIC_CONTACT_CELLS = frozenset({HALF_ENDPOINT_V1, PHYSICAL_BOUNDARY_TWO_SIDED_V1})
+_GEOMETRIC_CONTACT_CELLS = frozenset({
+    HALF_ENDPOINT_V1, PHYSICAL_BOUNDARY_TWO_SIDED_V1, PHYSICAL_HALF_ENDPOINT_V2,
+})
 
 # 1D devices are evaluated per unit cross-section: ports and faces have area
 # 1 m^2, cell measures are lengths and stored particles are per m^2.
@@ -295,6 +300,23 @@ class ControlVolumeGeometry1D(ImmutableArrays):
                         np.full(self.node_count - 1, self.face_area_m2), LENGTH, ONE,
                         cell_support, face_support)
 
+    def areal_to_cell_source(
+        self,
+        interface_index: int,
+        areal_quantity: float | None = None,
+        *,
+        side_quantities: tuple[float, float] | None = None,
+        partition: tuple[float, float] = (0.5, 0.5),
+    ) -> NDArray[np.float64]:
+        """Deposit an areal interface quantity onto ``self.cell_measures_m``."""
+        return areal_interface_to_cell_source(
+            self,
+            interface_index,
+            areal_quantity,
+            side_quantities=side_quantities,
+            partition=partition,
+        )
+
 
 def _planes(grid: NDArray[np.float64], positions: ArrayLike) -> tuple[InterfacePlane, ...]:
     stencils = build_interface_stencils(grid, positions) if np.asarray(positions).size else ()
@@ -351,14 +373,116 @@ def physical_boundary_two_sided_geometry(
                                    role_owner_convention=NO_SHARED_NODES)
 
 
+def physical_half_endpoint_geometry(
+    x: ArrayLike,
+    interface_positions: ArrayLike = (),
+) -> ControlVolumeGeometry1D:
+    """Physical half-endpoint control volumes ``w_i = b_{i+1} - b_i`` (P08-02b).
+
+    Contact outer faces lie at ``x[0]`` and ``x[-1]`` so ``sum(w) == L``.
+    Supports both deduplicated shared-node grids (``RIGHT_LAYER_WINS`` for both
+    material values and role masks, matching 1D compiled nodal arrays) and
+    two-sided grids whose interior cell faces lie on the true material planes.
+    """
+    grid = _strict_grid(x, minimum=2)
+    planes = _planes(grid, interface_positions)
+    if all(plane.shared_node is not None for plane in planes):
+        faces = dual_cell_faces(grid)
+        return ControlVolumeGeometry1D(
+            PHYSICAL_HALF_ENDPOINT_V2,
+            grid,
+            np.diff(faces),
+            faces,
+            planes,
+            material_owner_convention=RIGHT_LAYER_WINS,
+            role_owner_convention=RIGHT_LAYER_WINS,
+        )
+    if planes and all(plane.shared_node is None for plane in planes):
+        if grid.size < 3:
+            raise ValueError("two-sided physical geometry requires at least three grid nodes")
+        stencils = _two_sided_stencils(grid, interface_positions)
+        two_sided_planes = tuple(
+            InterfacePlane.from_stencil(i, stencil) for i, stencil in enumerate(stencils)
+        )
+        faces = physical_cell_faces(grid, interface_positions)
+        return ControlVolumeGeometry1D(
+            PHYSICAL_HALF_ENDPOINT_V2,
+            grid,
+            np.diff(faces),
+            faces,
+            two_sided_planes,
+            material_owner_convention=NO_SHARED_NODES,
+            role_owner_convention=NO_SHARED_NODES,
+        )
+    raise ValueError(
+        "physical_half_endpoint_v2 requires all interfaces to be either shared-node or two-sided"
+    )
+
+
+def areal_interface_to_cell_source(
+    geometry: ControlVolumeGeometry1D,
+    interface_index: int,
+    areal_quantity: float | None = None,
+    *,
+    side_quantities: tuple[float, float] | None = None,
+    partition: tuple[float, float] = (0.5, 0.5),
+) -> NDArray[np.float64]:
+    """Convert an areal interface quantity into volumetric cell density on ``geometry``.
+
+    Couples sheet-trap densities [m^-2], areal SRH rates [m^-2 s^-1], or sheet
+    charges [C m^-2] to ``geometry.cell_measures_m`` so ``sum(w * source)``
+    conserves the areal quantity across geometry changes.
+    """
+    if interface_index < 0 or interface_index >= len(geometry.interfaces):
+        raise ValueError("interface_index out of bounds for geometry.interfaces")
+    if (areal_quantity is None) == (side_quantities is None):
+        raise ValueError("pass exactly one of areal_quantity or side_quantities")
+    if side_quantities is not None:
+        if len(side_quantities) != 2:
+            raise ValueError("side_quantities must be a (left, right) pair")
+        a_left = float(side_quantities[0])
+        a_right = float(side_quantities[1])
+        if not (math.isfinite(a_left) and math.isfinite(a_right)):
+            raise ValueError("side_quantities must be finite")
+        total = a_left + a_right
+    else:
+        assert areal_quantity is not None
+        total = float(areal_quantity)
+        if not math.isfinite(total):
+            raise ValueError("areal_quantity must be finite")
+        if len(partition) != 2:
+            raise ValueError("partition must be a (left_weight, right_weight) pair")
+        p_left = float(partition[0])
+        p_right = float(partition[1])
+        if (
+            not (math.isfinite(p_left) and math.isfinite(p_right))
+            or p_left < 0.0
+            or p_right < 0.0
+            or abs((p_left + p_right) - 1.0) > 16.0 * np.finfo(float).eps
+        ):
+            raise ValueError("partition weights must be nonnegative and sum to 1")
+        a_left = total * p_left
+        a_right = total * p_right
+    source: NDArray[np.float64] = np.zeros(geometry.node_count, dtype=np.float64)
+    plane = geometry.interfaces[interface_index]
+    measures = geometry.cell_measures_m
+    if plane.shared_node is not None:
+        source[plane.shared_node] = total / float(measures[plane.shared_node])
+    else:
+        source[plane.left_node] = a_left / float(measures[plane.left_node])
+        source[plane.right_node] = a_right / float(measures[plane.right_node])
+    return frozen_array(source)
+
+
 def build_geometry(name: str, x: ArrayLike,
                    interface_positions: ArrayLike = ()) -> ControlVolumeGeometry1D:
-    """Build one named historical geometry; there is no default geometry."""
+    """Build one named historical or physical geometry; there is no default geometry."""
     builders = {
         INTEGER_ENDPOINT_V1: integer_endpoint_geometry,
         HALF_ENDPOINT_V1: half_endpoint_geometry,
         TWO_SIDED_TRACE_V1: two_sided_trace_geometry,
         PHYSICAL_BOUNDARY_TWO_SIDED_V1: physical_boundary_two_sided_geometry,
+        PHYSICAL_HALF_ENDPOINT_V2: physical_half_endpoint_geometry,
     }
     if name not in builders:
         raise ValueError(f"unknown historical geometry {name!r}")

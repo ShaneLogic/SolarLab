@@ -2,33 +2,51 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import hashlib
+import json
+
 import numpy as np
 from scipy.sparse import lil_matrix
 from scipy.sparse.linalg import spsolve
 
 from examples.research_1d.steady import load_device
+from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.compile_2d import compile_device_2d
 from solarlab.discretization import (
     LAYER_SERIES_CAPACITANCE_V2,
     NODAL_HARMONIC_DIELECTRIC_V1,
     VACUUM_PERMITTIVITY_F_M,
 )
+from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
+from solarlab.experiments.transient import (
+    TransientOptions,
+    TransientProtocol,
+    TransientResult1D,
+    solve_transient,
+)
 from solarlab.experiments.two_dimensional.inputs import JV2DInput
 from solarlab.mesh import (
     INTEGER_ENDPOINT_V1,
+    PHYSICAL_HALF_ENDPOINT_V2,
     RIGHT_LAYER_WINS,
     build_geometry,
     multilayer_grid,
     node_owner,
+    physical_half_endpoint_geometry,
 )
 from solarlab.mesh.geometry import half_endpoint_geometry
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.electrostatics import (
     PoissonFactorization,
     PoissonOperator1D,
+    contact_displacement,
     rectangular_2d_face_capacitances,
 )
+from solarlab.physics.generation.beer_lambert import BeerLambertBinding
+from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
 from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, solve_steady_state_2d
+from solarlab.solvers.time.backward_euler import inventory_m2
 
 EPS_0 = VACUUM_PERMITTIVITY_F_M
 
@@ -236,3 +254,244 @@ def test_p08_02a_compile_device_2d_heterojunction_refinement_improves_interface_
     assert err_coarse_v2 < err_coarse_v1
     assert err_mid_v2 < err_mid_v1
     assert err_mid_v2 < 0.6 * err_coarse_v2
+
+
+def test_p08_02b_global_conservation_and_1d_2d_parity_on_physical_half_endpoint_v2() -> None:
+    """PHYSICAL_HALF_ENDPOINT_V2 closes conservation <= 1e-13 and unifies 1D and 2D columns."""
+    prepared = load_device()
+    ny_per_layer = 4
+    intervals = (ny_per_layer,) * len(prepared.layers)
+    dev_int_1d = compile_device_1d(prepared, intervals_per_layer=intervals)
+
+    # Rebind the 1D compiled column onto PHYSICAL_HALF_ENDPOINT_V2 + coupled Poisson + generation.
+    iface_positions = [plane.position_m for plane in dev_int_1d.geometry.interfaces]
+    geom_v2 = physical_half_endpoint_geometry(dev_int_1d.nodes_m, iface_positions)
+    data = prepared.to_mapping()
+    alpha_node: np.ndarray = np.empty(dev_int_1d.node_count, dtype=np.float64)
+    eps_node: np.ndarray = np.empty(dev_int_1d.node_count, dtype=np.float64)
+    layer_eps: list[float] = []
+    for layer, mask in zip(prepared.layers, dev_int_1d.parameters.layer_masks):
+        params = dict(layer.parameters)
+        alpha_raw = params["alpha"]
+        eps_raw = params["eps_r"]
+        assert isinstance(alpha_raw, (int, float)) and not isinstance(alpha_raw, bool)
+        assert isinstance(eps_raw, (int, float)) and not isinstance(eps_raw, bool)
+        alpha_node[mask] = float(alpha_raw)
+        eps_node[mask] = float(eps_raw)
+        layer_eps.append(float(eps_raw))
+
+    phi_inc = data["settings"]["Phi"]
+    assert isinstance(phi_inc, (int, float)) and not isinstance(phi_inc, bool)
+    poisson_v2 = PoissonOperator1D.for_geometry(geom_v2, eps_node, layer_eps_r=layer_eps)
+    gen_v2 = BeerLambertBinding(dev_int_1d.nodes_m, alpha_node, float(phi_inc)).generation_profile(
+        geom_v2
+    )
+    sha_v2 = hashlib.sha256(
+        json.dumps(
+            (dev_int_1d.sha256, PHYSICAL_HALF_ENDPOINT_V2, LAYER_SERIES_CAPACITANCE_V2),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    dev_v2_1d = replace(
+        dev_int_1d,
+        sha256=sha_v2,
+        geometry=geom_v2,
+        poisson=poisson_v2,
+        generation=gen_v2,
+    )
+
+    opts_1d = SteadyOptions(continuity_tolerance_A_m2=1e-9)
+    opts_2d = Steady2DOptions(electronic=opts_1d)
+
+    # Solve 1D (both legacy INTEGER_ENDPOINT_V1 and new PHYSICAL_HALF_ENDPOINT_V2) at two operating points.
+    s1_v2_0 = solve_steady_state(dev_v2_1d, voltage_V=0.0, generation_scale=1.0, options=opts_1d)
+    s1_v2_f = solve_steady_state(
+        dev_v2_1d,
+        voltage_V=0.08,
+        generation_scale=1.0,
+        initial_state=s1_v2_0.state,
+        options=opts_1d,
+    )
+    s1_int_0 = solve_steady_state(dev_int_1d, voltage_V=0.0, generation_scale=1.0, options=opts_1d)
+    s1_int_f = solve_steady_state(
+        dev_int_1d,
+        voltage_V=0.08,
+        generation_scale=1.0,
+        initial_state=s1_int_0.state,
+        options=opts_1d,
+    )
+
+    # 1) BackwardEuler1DStep + step_accounting via solve_transient on AssembledDC1DProblem:
+    #    global particle and Maxwell total-current conservation <= 1e-13.
+    dt_s = 5.0e-6
+    protocol = TransientProtocol(
+        times_s=np.array([0.0, dt_s, 2.0 * dt_s]),
+        voltage_V=np.array([0.0, 0.02, 0.04]),
+        generation_scale=np.array([1.0, 1.0, 1.0]),
+    )
+    tr_options = TransientOptions(
+        poisson_tolerance=opts_1d.poisson_tolerance,
+        continuity_tolerance_A_m2=opts_1d.continuity_tolerance_A_m2,
+        contact_log_tolerance=opts_1d.contact_log_tolerance,
+        potential_step_V=opts_1d.potential_step_V,
+        quasi_fermi_step=opts_1d.quasi_fermi_step,
+        newton_budget=opts_1d.budget(),
+        max_steps=4,
+        wall_s=20.0,
+        predictor="previous",
+        convergence_policy=opts_1d.convergence_policy,
+    )
+    tr_result = solve_transient(
+        dev_v2_1d,
+        s1_v2_0,
+        protocol,
+        options=tr_options,
+        initial_options=opts_1d,
+        method="backward_euler",
+    )
+    assert isinstance(tr_result, TransientResult1D)
+    assert len(tr_result.attempts) == 2
+    for attempt in tr_result.attempts:
+        assert attempt.accepted and attempt.accounting is not None
+        acct = attempt.accounting
+        particles = np.asarray(acct["particle_fluxes_m2_s"], dtype=np.float64)
+        rate = np.asarray(acct["inventory_rate_m2_s"], dtype=np.float64)
+        pair_src = np.asarray(acct["net_pair_source_m2_s"], dtype=np.float64)
+        global_part = np.asarray(acct["global_particle_balance_m2_s"], dtype=np.float64)
+        global_charge = float(acct["global_charge_balance_A_m2"])  # type: ignore[arg-type]
+        maxwell_err = np.asarray(acct["maxwell_identity_error_A_m2"], dtype=np.float64)
+        maxwell_spread = float(acct["maxwell_spread_A_m2"])  # type: ignore[arg-type]
+        term_total = np.asarray(acct["terminal_total_current_density_A_m2"], dtype=np.float64)
+
+        part_scale = max(
+            float(np.max(np.abs(particles))),
+            float(np.max(np.abs(rate))),
+            float(np.max(np.abs(pair_src))),
+            1.0,
+        )
+        j_scale = max(float(np.max(np.abs(term_total))), 1.0)
+        assert np.max(np.abs(global_part)) / part_scale <= 1e-13
+        assert abs(global_charge) / j_scale <= 1e-13
+        assert np.max(np.abs(maxwell_err)) / j_scale <= 1e-13
+        assert maxwell_spread / j_scale <= 1e-13
+
+    # 2) 1D (PHYSICAL_HALF_ENDPOINT_V2) vs uniform-column 2D (Nx = 2 and Nx = 3):
+    #    exact J(V), carrier inventory, and contact displacement-current agreement.
+    prob_1d_0 = AssembledDC1DProblem(dev_v2_1d, voltage_V=0.0, generation_scale=1.0)
+    prob_1d_f = AssembledDC1DProblem(dev_v2_1d, voltage_V=0.08, generation_scale=1.0)
+    j1_v2_0 = prob_1d_0.contact_current_density(s1_v2_0.state.u)
+    j1_v2_f = prob_1d_f.contact_current_density(s1_v2_f.state.u)
+    j1_int_0 = AssembledDC1DProblem(
+        dev_int_1d, voltage_V=0.0, generation_scale=1.0
+    ).contact_current_density(s1_int_0.state.u)
+
+    inv1_0 = inventory_m2(dev_v2_1d, s1_v2_0.state)
+    rho1_0 = dev_v2_1d.charge_ledger(
+        s1_v2_0.state.electron_density_m3, s1_v2_0.state.hole_density_m3
+    ).space_charge_C_m3()
+    rho1_f = dev_v2_1d.charge_ledger(
+        s1_v2_f.state.electron_density_m3, s1_v2_f.state.hole_density_m3
+    ).space_charge_C_m3()
+    d1_contacts_0 = contact_displacement(
+        dev_v2_1d.poisson.face_displacement(s1_v2_0.state.potential_V),
+        rho1_0,
+        dev_v2_1d.geometry.cell_measures_m,
+    )
+    d1_contacts_f = contact_displacement(
+        dev_v2_1d.poisson.face_displacement(s1_v2_f.state.potential_V),
+        rho1_f,
+        dev_v2_1d.geometry.cell_measures_m,
+    )
+    j_disp_1d = (d1_contacts_f - d1_contacts_0) / dt_s
+
+    for nx in (2, 3):
+        spatial = JV2DInput(
+            kind="jv_2d",
+            lateral_length="0.6 um",
+            Nx=nx,
+            Ny_per_layer=ny_per_layer,
+            lateral_bc="neumann",
+        )
+        dev_2d = compile_device_2d(
+            prepared, spatial, stack_geometry=PHYSICAL_HALF_ENDPOINT_V2
+        )
+        # Seed 2D from the legacy INTEGER_ENDPOINT_V1 1D column PLUS a non-uniform lateral
+        # cos/sin perturbation so 2D Newton genuinely relaxes both laterally and geometrically!
+        def _perturbed_seed(col_u: np.ndarray, bias_v: float) -> np.ndarray:
+            y_norm = (dev_2d.column.nodes_m - dev_2d.column.nodes_m[0]) / np.ptp(dev_2d.column.nodes_m)
+            x_norm = (dev_2d.geometry.x_m - dev_2d.geometry.x_m[0]) / dev_2d.geometry.lateral_length_m
+            wave = np.sin(np.pi * y_norm)
+            wave[[0, -1]] = 0.0
+            u_init = dev_2d.extrude_coordinates(col_u)
+            n_tot = dev_2d.node_count
+            u_init[:n_tot] += (0.0007 * wave[:, None] * np.cos(np.pi * x_norm)[None, :]).ravel()
+            u_init[n_tot : 2 * n_tot] += (0.013 * wave[:, None] * np.sin(np.pi * x_norm)[None, :]).ravel()
+            u_init[2 * n_tot :] += (-0.011 * wave[:, None] * np.cos(2.0 * np.pi * x_norm)[None, :]).ravel()
+            return u_init
+
+        res_2d_0 = solve_steady_state_2d(
+            dev_2d,
+            voltage_V=0.0,
+            generation_scale=1.0,
+            initial_state=dev_2d.state(_perturbed_seed(s1_int_0.state.u, 0.0), voltage_V=0.0),
+            options=opts_2d,
+        )
+        res_2d_f = solve_steady_state_2d(
+            dev_2d,
+            voltage_V=0.08,
+            generation_scale=1.0,
+            initial_state=dev_2d.state(_perturbed_seed(s1_int_f.state.u, 0.08), voltage_V=0.08),
+            options=opts_2d,
+        )
+        assert res_2d_0.accepted and res_2d_0.state is not None and res_2d_0.diagnostics is not None
+        assert res_2d_f.accepted and res_2d_f.state is not None and res_2d_f.diagnostics is not None
+
+        j2_0 = np.asarray(res_2d_0.diagnostics["terminal_mean_current_density_A_m2"], dtype=np.float64)
+        j2_f = np.asarray(res_2d_f.diagnostics["terminal_mean_current_density_A_m2"], dtype=np.float64)
+        assert np.max(np.abs(j2_0 - j1_v2_0)) / np.max(np.abs(j1_v2_0)) <= 1e-13
+        assert np.max(np.abs(j2_f - j1_v2_f)) / np.max(np.abs(j1_v2_f)) <= 1e-13
+
+        # Legacy INTEGER_ENDPOINT_V1 disagrees with uniform-column 2D on the coarse grid!
+        inv1_int_0 = inventory_m2(dev_int_1d, s1_int_0.state)
+        assert np.max(np.abs(j2_0 - j1_int_0)) / np.max(np.abs(j2_0)) > 5e-7
+
+        vols_2d = dev_2d.geometry.contract_geometry.volumes
+        lx = dev_2d.geometry.lateral_length_m
+        inv2_n = float(np.sum(res_2d_0.state.electron_density_m3.ravel() * vols_2d) / lx)
+        inv2_p = float(np.sum(res_2d_0.state.hole_density_m3.ravel() * vols_2d) / lx)
+        assert abs(inv2_n - float(np.sum(inv1_0[0]))) / inv2_n <= 1e-13
+        assert abs(inv2_p - float(np.sum(inv1_0[1]))) / inv2_p <= 1e-13
+        assert abs(inv2_n - float(np.sum(inv1_int_0[0]))) / inv2_n > 0.01
+        assert abs(inv2_p - float(np.sum(inv1_int_0[1]))) / inv2_p > 0.01
+
+        # Contact displacement and displacement current parity between 1D and 2D columns.
+        g2 = dev_2d.geometry
+        disp2_0 = np.asarray(res_2d_0.diagnostics["face_displacement_C_m2"], dtype=np.float64)
+        disp2_f = np.asarray(res_2d_f.diagnostics["face_displacement_C_m2"], dtype=np.float64)
+        dy_0 = disp2_0[g2.x_face_count :].reshape(g2.ny - 1, g2.nx)
+        dy_f = disp2_f[g2.x_face_count :].reshape(g2.ny - 1, g2.nx)
+        rho2_0 = dev_2d.charge_ledger(
+            res_2d_0.state.electron_density_m3.ravel(), res_2d_0.state.hole_density_m3.ravel()
+        ).space_charge_C_m3().reshape(g2.shape)
+        rho2_f = dev_2d.charge_ledger(
+            res_2d_f.state.electron_density_m3.ravel(), res_2d_f.state.hole_density_m3.ravel()
+        ).space_charge_C_m3().reshape(g2.shape)
+        wy = g2.y_geometry.cell_measures_m
+        d2_contacts_0 = np.array(
+            [
+                float(np.sum((dy_0[0] - rho2_0[0] * wy[0]) * g2.x_widths_m) / lx),
+                float(np.sum((dy_0[-1] + rho2_0[-1] * wy[-1]) * g2.x_widths_m) / lx),
+            ]
+        )
+        d2_contacts_f = np.array(
+            [
+                float(np.sum((dy_f[0] - rho2_f[0] * wy[0]) * g2.x_widths_m) / lx),
+                float(np.sum((dy_f[-1] + rho2_f[-1] * wy[-1]) * g2.x_widths_m) / lx),
+            ]
+        )
+        j_disp_2d = (d2_contacts_f - d2_contacts_0) / dt_s
+        d_scale = float(np.max(np.abs(disp2_0)))
+        jd_scale = max(float(np.max(np.abs(j_disp_1d))), float(np.max(np.abs(disp2_f - disp2_0)) / dt_s))
+        assert np.max(np.abs(d2_contacts_0 - d1_contacts_0)) / d_scale <= 1e-13
+        assert np.max(np.abs(j_disp_2d - j_disp_1d)) / jd_scale <= 1e-13
+

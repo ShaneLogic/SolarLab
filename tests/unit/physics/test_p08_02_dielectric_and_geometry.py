@@ -24,11 +24,14 @@ from solarlab.mesh import (
     HALF_ENDPOINT_V1,
     INTEGER_ENDPOINT_V1,
     PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+    PHYSICAL_HALF_ENDPOINT_V2,
     RIGHT_LAYER_WINS,
     TWO_SIDED_TRACE_V1,
+    areal_interface_to_cell_source,
     build_geometry,
     multilayer_grid,
     node_owner,
+    physical_half_endpoint_geometry,
     remove_shared_interface_nodes,
 )
 from solarlab.mesh.geometry import half_endpoint_geometry
@@ -44,6 +47,9 @@ from solarlab.physics.electrostatics import (
     rectangular_2d_face_capacitances,
     solve_electrostatic_traces,
 )
+from solarlab.physics.electrostatics.gauss_assembly import gauss_balance_with_term_sink
+from solarlab.physics.generation.beer_lambert import BeerLambertBinding
+from solarlab.physics.recombination.interface import evaluate_shared_interface_trap
 
 EPS_0 = VACUUM_PERMITTIVITY_F_M
 
@@ -431,3 +437,119 @@ def test_p08_02a_interface_sheet_charge_jump_exact_across_nonuniform_subfaces() 
     assert abs(phi_rs - phi_if_exact) <= 1e-14
     assert abs((d_r_trace - d_l_trace) - sigma_sheet) / abs(sigma_sheet) <= 1e-14
     assert np.max(np.abs(phi_two - phi_piecewise(x_two))) <= 1e-14
+
+
+def test_p08_02b_physical_half_endpoint_v2_measures_gauss_and_generation_coupling() -> None:
+    """PHYSICAL_HALF_ENDPOINT_V2 couples w_i = b_{i+1}-b_i across Gauss and Beer-Lambert."""
+    thicknesses = (1.5e-7, 4.0e-7, 1.8e-7)
+    total_length = sum(thicknesses)
+    interfaces = (thicknesses[0], thicknesses[0] + thicknesses[1])
+    x_shared = multilayer_grid(list(zip(thicknesses, (6, 10, 5))), alpha=2.2)
+    eps_shared = np.array([3.5, 24.0, 9.0])[node_owner(x_shared, thicknesses, RIGHT_LAYER_WINS)]
+
+    # Historical INTEGER_ENDPOINT_V1 stays bit-identical with endpoint over-count.
+    geom_int = build_geometry(INTEGER_ENDPOINT_V1, x_shared, interfaces)
+    dx = np.diff(x_shared)
+    assert abs(geom_int.total_measure_m - (total_length + 0.5 * (dx[0] + dx[-1]))) <= 1e-21
+
+    # Shared-node PHYSICAL_HALF_ENDPOINT_V2: exact w_i = b_{i+1} - b_i, sum(w) == L.
+    geom_v2 = build_geometry(PHYSICAL_HALF_ENDPOINT_V2, x_shared, interfaces)
+    assert geom_v2.geometric_cells is True
+    assert _same_bits(geom_v2.cell_measures_m, np.diff(geom_v2.cell_faces_m))
+    assert abs(geom_v2.total_measure_m - total_length) / total_length <= 1e-15
+    assert geom_v2.material_owner_convention == RIGHT_LAYER_WINS
+    assert geom_v2.role_owner_convention == RIGHT_LAYER_WINS
+
+    op_v2 = PoissonOperator1D.for_geometry(geom_v2, eps_shared)
+    assert op_v2.dielectric_rule == LAYER_SERIES_CAPACITANCE_V2
+    assert _same_bits(op_v2.interior_widths_m, geom_v2.cell_measures_m[1:-1])
+
+    rng = np.random.default_rng(20261115)
+    phi = rng.normal(scale=0.4, size=x_shared.size)
+    rho = rng.normal(scale=2.0e4, size=x_shared.size)
+    balance = gauss_balance_with_term_sink(op_v2, geom_v2, phi, rho)
+    contacts = contact_displacement(op_v2.face_displacement(phi), rho, geom_v2.cell_measures_m)
+    assert _same_bits(balance[1:-1], op_v2.interior_residual(phi, rho))
+    assert _same_bits(np.array([balance[0], balance[-1]]), np.array([-contacts[0], contacts[1]]))
+
+    # Uncoupled interior widths must be refused by gauss_balance_with_term_sink.
+    bad_op = PoissonOperator1D.from_finite_volume(
+        op_v2.face_capacitance_F_m2,
+        op_v2.interior_widths_m * 1.01,
+        geometry_name=PHYSICAL_HALF_ENDPOINT_V2,
+    )
+    with pytest.raises(ValueError, match="interior measures"):
+        gauss_balance_with_term_sink(bad_op, geom_v2, phi, rho)
+
+    # Beer-Lambert generation coupled to PHYSICAL_HALF_ENDPOINT_V2 matches 2D y_geometry
+    # and closes exact absorbed photon budget.
+    alpha_uniform = np.full(x_shared.size, 8.0e6)
+    incident_flux = 2.5e21
+    bl = BeerLambertBinding(x_shared, alpha_uniform, incident_flux)
+    prof_v2 = bl.generation_profile(geom_v2)
+    prof_int = bl.generation_profile(geom_int)
+    prof_2d_y = bl.generation_profile(half_endpoint_geometry(x_shared, interfaces))
+    expected_absorbed = incident_flux * (1.0 - np.exp(-alpha_uniform[0] * total_length))
+    assert (
+        abs(float(np.sum(prof_v2.source_m3_s * geom_v2.cell_measures_m)) - expected_absorbed)
+        / expected_absorbed
+        <= 1e-14
+    )
+    # PHYSICAL_HALF_ENDPOINT_V2 fixes the 2x boundary cell dilution of INTEGER_ENDPOINT_V1.
+    assert abs(prof_v2.source_m3_s[0] - prof_2d_y.source_m3_s[0]) / prof_v2.source_m3_s[0] <= 1e-14
+    assert abs(prof_v2.source_m3_s[0] / prof_int.source_m3_s[0] - 2.0) < 1e-12
+
+    # Two-sided PHYSICAL_HALF_ENDPOINT_V2 places interior faces at the true material planes.
+    x_two = remove_shared_interface_nodes(x_shared, interfaces)
+    geom_two_v2 = physical_half_endpoint_geometry(x_two, interfaces)
+    assert _same_bits(geom_two_v2.cell_measures_m, np.diff(geom_two_v2.cell_faces_m))
+    assert abs(geom_two_v2.total_measure_m - total_length) / total_length <= 1e-15
+    for plane in geom_two_v2.interfaces:
+        assert geom_two_v2.cell_faces_m[plane.right_node] == plane.position_m
+
+
+def test_p08_02b_areal_sheet_trap_conversion_conserves_across_geometries() -> None:
+    """Areal sheet-trap density and capture rates conserve identically on cell_measures_m."""
+    thicknesses = (1.2e-7, 3.6e-7, 1.4e-7)
+    interfaces = (thicknesses[0], thicknesses[0] + thicknesses[1])
+    x_shared = multilayer_grid(list(zip(thicknesses, (5, 8, 5))), alpha=2.0)
+    x_two = remove_shared_interface_nodes(x_shared, interfaces)
+
+    trap_eval = evaluate_shared_interface_trap(
+        1.2e19,
+        4.5e15,
+        8.0e16,
+        2.3e18,
+        v_n_left_m_s=1.5e2,
+        v_p_left_m_s=8.0e1,
+        v_n_right_m_s=2.0e2,
+        v_p_right_m_s=1.1e2,
+        n1_left_m3=1.0e15,
+        p1_left_m3=2.0e15,
+        n1_right_m3=5.0e14,
+        p1_right_m3=3.0e15,
+        areal_density_m2=2.0e15,
+        equilibrium_occupancy=0.25,
+    )
+    cn_left, cp_left, cn_right, cp_right = (float(v) for v in trap_eval.capture_rates_m2_s)
+    total_electron_capture = cn_left + cn_right
+    total_hole_capture = cp_left + cp_right
+    assert abs(total_electron_capture - total_hole_capture) <= 1e-13 * abs(total_electron_capture)
+
+    for geom in (
+        build_geometry(INTEGER_ENDPOINT_V1, x_shared, interfaces),
+        build_geometry(HALF_ENDPOINT_V1, x_shared, interfaces),
+        build_geometry(PHYSICAL_HALF_ENDPOINT_V2, x_shared, interfaces),
+        build_geometry(PHYSICAL_BOUNDARY_TWO_SIDED_V1, x_two, interfaces),
+        build_geometry(PHYSICAL_HALF_ENDPOINT_V2, x_two, interfaces),
+    ):
+        src_nt = areal_interface_to_cell_source(geom, 0, 2.0e15, partition=(0.35, 0.65))
+        assert abs(float(np.sum(geom.cell_measures_m * src_nt)) - 2.0e15) / 2.0e15 <= 1e-15
+
+        src_cn = geom.areal_to_cell_source(1, side_quantities=(cn_left, cn_right))
+        src_cp = geom.areal_to_cell_source(1, side_quantities=(cp_left, cp_right))
+        int_cn = float(np.sum(geom.cell_measures_m * src_cn))
+        int_cp = float(np.sum(geom.cell_measures_m * src_cp))
+        assert abs(int_cn - total_electron_capture) / abs(total_electron_capture) <= 1e-14
+        assert abs(int_cp - total_hole_capture) / abs(total_hole_capture) <= 1e-14
+

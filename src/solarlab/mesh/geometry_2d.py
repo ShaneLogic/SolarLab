@@ -10,7 +10,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from solarlab.contracts import AREA, LENGTH, Geometry, frozen_array
-from solarlab.mesh.geometry import HALF_ENDPOINT_V1, ControlVolumeGeometry1D, half_endpoint_widths
+from solarlab.mesh.geometry import (
+    HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2, ControlVolumeGeometry1D,
+    half_endpoint_widths,
+)
 
 RECTANGULAR_HALF_ENDPOINT_2D_V1 = "rectangular_half_endpoint_neumann_2d_v1"
 RECTANGULAR_PERIODIC_2D_V1 = "rectangular_half_endpoint_periodic_2d_v1"
@@ -57,7 +60,7 @@ class RectangularGeometry2D:
             if x.size > 2:
                 widths[1:-1] = 0.5 * (dx[:-1] + dx[1:])
         y = self.y_geometry
-        if y.name != HALF_ENDPOINT_V1 or y.node_count < 3:
+        if y.name not in {HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2} or y.node_count < 3:
             raise ValueError("2D stack requires at least three nodes with physical half-endpoint cells")
         object.__setattr__(self, "x_m", x)
         object.__setattr__(self, "x_widths_m", frozen_array(widths))
@@ -81,6 +84,8 @@ class RectangularGeometry2D:
         object.__setattr__(self, "contract_geometry", geometry)
         object.__setattr__(self, "face_spacing_m", frozen_array(distances))
         digest = hashlib.sha256(self.name.encode())
+        if y.name != HALF_ENDPOINT_V1:
+            digest.update(y.name.encode())
         for value in (x, y.nodes_m, areas, pairs, measures, distances):
             digest.update(np.ascontiguousarray(value, dtype="<f8").tobytes())
         object.__setattr__(self, "sha256", digest.hexdigest())

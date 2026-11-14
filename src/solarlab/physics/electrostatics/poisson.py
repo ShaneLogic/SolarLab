@@ -34,8 +34,8 @@ from solarlab.discretization.face_average import (
 )
 from solarlab.mesh.geometry import (
     HALF_ENDPOINT_V1, INTEGER_ENDPOINT_V1, NO_SHARED_NODES,
-    PHYSICAL_BOUNDARY_TWO_SIDED_V1, TWO_SIDED_TRACE_V1, ControlVolumeGeometry1D,
-    dual_cell_faces,
+    PHYSICAL_BOUNDARY_TWO_SIDED_V1, PHYSICAL_HALF_ENDPOINT_V2,
+    TWO_SIDED_TRACE_V1, ControlVolumeGeometry1D, dual_cell_faces,
 )
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.mesh.grid import LEFT_LAYER_WINS, RIGHT_LAYER_WINS, build_interface_stencils
@@ -475,7 +475,9 @@ class PoissonOperator1D(ImmutableArrays):
             raise ValueError("permittivity must be given on the geometry nodes")
         if dielectric_rule is not None and dielectric_rule not in DIELECTRIC_RULES:
             raise ValueError(f"unknown dielectric rule {dielectric_rule!r}")
-        if dielectric_rule == LAYER_SERIES_CAPACITANCE_V2:
+        if dielectric_rule == LAYER_SERIES_CAPACITANCE_V2 or (
+            dielectric_rule is None and geometry.name == PHYSICAL_HALF_ENDPOINT_V2
+        ):
             return cls.from_layer_series_capacitance(
                 geometry, permittivity, layer_eps_r=layer_eps_r
             )

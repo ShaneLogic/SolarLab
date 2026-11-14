@@ -20,13 +20,16 @@ from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
 from solarlab.device.optical_generation_2d import bind_optical_generation_2d
 from solarlab.discretization.face_average import (
-    DIELECTRIC_RULES, NODAL_HARMONIC_DIELECTRIC_V1,
+    DIELECTRIC_RULES, LAYER_SERIES_CAPACITANCE_V2, NODAL_HARMONIC_DIELECTRIC_V1,
 )
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.dc_2d import CompiledDevice2D
 from solarlab.equations.field_transport_2d import bind_field_transport_2d
 from solarlab.experiments.two_dimensional.inputs import JV2DInput
-from solarlab.mesh.geometry import half_endpoint_geometry
+from solarlab.mesh.geometry import (
+    HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2, half_endpoint_geometry,
+    physical_half_endpoint_geometry,
+)
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.generation.beer_lambert import BeerLambertBinding
 from solarlab.units import normalize_quantity
@@ -42,7 +45,8 @@ def compile_device_2d(
     prepared: PreparedDevice,
     spatial: JV2DInput,
     *,
-    dielectric_rule: str = NODAL_HARMONIC_DIELECTRIC_V1,
+    dielectric_rule: str | None = None,
+    stack_geometry: str = HALF_ENDPOINT_V1,
 ) -> CompiledDevice2D:
     """Compile without a nonlinear solve or inferred geometric defaults.
 
@@ -54,8 +58,15 @@ def compile_device_2d(
     """
     if not isinstance(prepared, PreparedDevice) or not isinstance(spatial, JV2DInput):
         raise TypeError("compile_device_2d requires PreparedDevice and typed JV2DInput geometry")
-    if dielectric_rule not in DIELECTRIC_RULES:
-        raise ValueError(f"unknown 2D dielectric rule {dielectric_rule!r}")
+    if stack_geometry not in {HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2}:
+        raise ValueError(f"unsupported 2D stack_geometry {stack_geometry!r}")
+    resolved_dielectric = (
+        (LAYER_SERIES_CAPACITANCE_V2 if stack_geometry == PHYSICAL_HALF_ENDPOINT_V2 else NODAL_HARMONIC_DIELECTRIC_V1)
+        if dielectric_rule is None
+        else dielectric_rule
+    )
+    if resolved_dielectric not in DIELECTRIC_RULES:
+        raise ValueError(f"unknown 2D dielectric rule {resolved_dielectric!r}")
     for name in spatial.model_fields_set - _GEOMETRY_FIELDS:
         if getattr(spatial, name) is not None:
             raise CapabilityError("unsupported_classical_2d_dc: execution field " + name)
@@ -94,7 +105,12 @@ def compile_device_2d(
     if column.recombination.explicit_defects is not None:
         raise CapabilityError("unsupported_classical_2d_dc: explicit defect populations are not bound")
     length = normalize_quantity(spatial.lateral_length, "m")
-    y_geometry = half_endpoint_geometry(column.nodes_m, [plane.position_m for plane in column.geometry.interfaces])
+    interface_positions = [plane.position_m for plane in column.geometry.interfaces]
+    y_geometry = (
+        physical_half_endpoint_geometry(column.nodes_m, interface_positions)
+        if stack_geometry == PHYSICAL_HALF_ENDPOINT_V2
+        else half_endpoint_geometry(column.nodes_m, interface_positions)
+    )
     geometry = RectangularGeometry2D(
         np.linspace(0.0, length, spatial.Nx + 1), y_geometry, lateral_bc=spatial.lateral_bc
     )
@@ -135,8 +151,12 @@ def compile_device_2d(
         identity = hashlib.sha256(json.dumps((identity, optical.identity_sha256), separators=(",", ":")).encode()).hexdigest()
     if transport is not None:
         identity = hashlib.sha256(json.dumps((identity, transport.identity_sha256), separators=(",", ":")).encode()).hexdigest()
+    if stack_geometry != HALF_ENDPOINT_V1:
+        identity = hashlib.sha256(
+            json.dumps((identity, "stack_geometry", stack_geometry), separators=(",", ":")).encode()
+        ).hexdigest()
     layer_permittivity_y: tuple[float, ...] | None = None
-    if dielectric_rule != NODAL_HARMONIC_DIELECTRIC_V1:
+    if resolved_dielectric != NODAL_HARMONIC_DIELECTRIC_V1:
         layer_eps_list: list[float] = []
         for layer in prepared.layers:
             raw_eps = dict(layer.parameters)["eps_r"]
@@ -145,10 +165,10 @@ def compile_device_2d(
             layer_eps_list.append(float(raw_eps))
         layer_permittivity_y = tuple(layer_eps_list)
         identity = hashlib.sha256(
-            json.dumps((identity, "dielectric_rule", dielectric_rule), separators=(",", ":")).encode()
+            json.dumps((identity, "dielectric_rule", resolved_dielectric), separators=(",", ":")).encode()
         ).hexdigest()
     return CompiledDevice2D(
         identity, column, geometry, generation, eps, declaration,
         grain_recombination=grains, column_projection_json=projection, field_transport=transport,
-        dielectric_rule=dielectric_rule, layer_permittivity_y=layer_permittivity_y,
+        dielectric_rule=resolved_dielectric, layer_permittivity_y=layer_permittivity_y,
     )
