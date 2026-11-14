@@ -22,13 +22,16 @@ from solarlab.contracts import (
     FaceFlux, Layout, Support, TermSink, frozen_array,
 )
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
-from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M
+from solarlab.discretization.face_average import (
+    DIELECTRIC_RULES, NODAL_HARMONIC_DIELECTRIC_V1, VACUUM_PERMITTIVITY_F_M,
+)
 from solarlab.equations.dc_1d import CompiledDevice1D, quasi_fermi_potential_tangents
 from solarlab.equations.field_transport_2d import FieldTransport2D
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
 from solarlab.physics.contacts.exchange import CarrierExchangeChannel
 from solarlab.physics.electrostatics.charge import ChargeEntry, ChargeLedger
+from solarlab.physics.electrostatics.poisson import rectangular_2d_face_capacitances
 from solarlab.physics.generation.profile import GenerationProfile
 from solarlab.physics.recombination.bulk import RecombinationRate
 from solarlab.physics.recombination.reaction import (
@@ -91,6 +94,11 @@ class CompiledDevice2D:
     grain_recombination: GrainRecombinationModel2D | None = None
     column_projection_json: bytes | None = None
     field_transport: FieldTransport2D | None = None
+    dielectric_rule: str = NODAL_HARMONIC_DIELECTRIC_V1
+    layer_permittivity_y: tuple[float, ...] | None = None
+    lateral_permittivity_x: Vector | None = None
+    lateral_interfaces_m: tuple[float, ...] = ()
+    lateral_layer_permittivity_x: tuple[float, ...] | None = None
     band_structure: BandStructure = field(init=False)
     recombination: BulkRecombinationReaction = field(init=False)
     generation_source_m3_s: Vector = field(init=False)
@@ -142,11 +150,35 @@ class CompiledDevice2D:
                     or not np.array_equal(model.base_electron_diffusivity_m2_s, self.electron_diffusivity_faces_m2_s)
                     or not np.array_equal(model.base_hole_diffusivity_m2_s, self.hole_diffusivity_faces_m2_s)):
                 raise ValueError("field transport must match the exact2D grid, temperature and baseD")
-        dx_row = (np.diff(geometry.x_m) if geometry.lateral_bc == "neumann"
-                  else geometry.face_spacing_m[:geometry.nx])
-        horizontal_capacitance = (VACUUM_PERMITTIVITY_F_M * eps[:, None] / dx_row[None, :]).ravel()
-        object.__setattr__(self, "face_capacitance_F_m2", frozen_array(np.r_[
-            horizontal_capacitance, np.repeat(column.poisson.face_capacitance_F_m2, geometry.nx)]))
+        if self.dielectric_rule not in DIELECTRIC_RULES:
+            raise ValueError(f"unknown 2D dielectric rule {self.dielectric_rule!r}")
+        if (
+            self.dielectric_rule == NODAL_HARMONIC_DIELECTRIC_V1
+            and self.lateral_permittivity_x is None
+            and not self.lateral_interfaces_m
+            and self.lateral_layer_permittivity_x is None
+        ):
+            dx_row = (np.diff(geometry.x_m) if geometry.lateral_bc == "neumann"
+                      else geometry.face_spacing_m[:geometry.nx])
+            horizontal_capacitance = (VACUUM_PERMITTIVITY_F_M * eps[:, None] / dx_row[None, :]).ravel()
+            object.__setattr__(self, "face_capacitance_F_m2", frozen_array(np.r_[
+                horizontal_capacitance, np.repeat(column.poisson.face_capacitance_F_m2, geometry.nx)]))
+        else:
+            if self.lateral_permittivity_x is not None:
+                object.__setattr__(self, "lateral_permittivity_x", frozen_array(self.lateral_permittivity_x))
+            object.__setattr__(
+                self,
+                "face_capacitance_F_m2",
+                rectangular_2d_face_capacitances(
+                    geometry,
+                    eps,
+                    dielectric_rule=self.dielectric_rule,
+                    layer_eps_r_y=self.layer_permittivity_y,
+                    lateral_eps_r_x=self.lateral_permittivity_x,
+                    lateral_interfaces_m=self.lateral_interfaces_m,
+                    lateral_layer_eps_r_x=self.lateral_layer_permittivity_x,
+                ),
+            )
         faces = geometry.face_spacing_m.size
         object.__setattr__(self, "layout", Layout(
             (Support("cells", "cell", (self.node_count,)), Support("faces", "face", (faces,))), (),

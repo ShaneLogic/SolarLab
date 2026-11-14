@@ -19,6 +19,9 @@ from solarlab.device.grain_2d import bind_grain_regions_2d, grain_declarations
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
 from solarlab.device.optical_generation_2d import bind_optical_generation_2d
+from solarlab.discretization.face_average import (
+    DIELECTRIC_RULES, NODAL_HARMONIC_DIELECTRIC_V1,
+)
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.equations.dc_2d import CompiledDevice2D
 from solarlab.equations.field_transport_2d import bind_field_transport_2d
@@ -35,7 +38,12 @@ CLASSICAL_2D_PERIODIC_CONTACTS_V1 = "classical_mb_carrier_exchange_periodic_2d_d
 _GEOMETRY_FIELDS = frozenset({"kind", "lateral_length", "Nx", "Ny_per_layer", "lateral_bc", "microstructure"})
 
 
-def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledDevice2D:
+def compile_device_2d(
+    prepared: PreparedDevice,
+    spatial: JV2DInput,
+    *,
+    dielectric_rule: str = NODAL_HARMONIC_DIELECTRIC_V1,
+) -> CompiledDevice2D:
     """Compile without a nonlinear solve or inferred geometric defaults.
 
     Nx and Ny_per_layer are interval counts; all electrical layers receive
@@ -46,6 +54,8 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
     """
     if not isinstance(prepared, PreparedDevice) or not isinstance(spatial, JV2DInput):
         raise TypeError("compile_device_2d requires PreparedDevice and typed JV2DInput geometry")
+    if dielectric_rule not in DIELECTRIC_RULES:
+        raise ValueError(f"unknown 2D dielectric rule {dielectric_rule!r}")
     for name in spatial.model_fields_set - _GEOMETRY_FIELDS:
         if getattr(spatial, name) is not None:
             raise CapabilityError("unsupported_classical_2d_dc: execution field " + name)
@@ -125,5 +135,20 @@ def compile_device_2d(prepared: PreparedDevice, spatial: JV2DInput) -> CompiledD
         identity = hashlib.sha256(json.dumps((identity, optical.identity_sha256), separators=(",", ":")).encode()).hexdigest()
     if transport is not None:
         identity = hashlib.sha256(json.dumps((identity, transport.identity_sha256), separators=(",", ":")).encode()).hexdigest()
-    return CompiledDevice2D(identity, column, geometry, generation, eps, declaration,
-                            grain_recombination=grains, column_projection_json=projection, field_transport=transport)
+    layer_permittivity_y: tuple[float, ...] | None = None
+    if dielectric_rule != NODAL_HARMONIC_DIELECTRIC_V1:
+        layer_eps_list: list[float] = []
+        for layer in prepared.layers:
+            raw_eps = dict(layer.parameters)["eps_r"]
+            if isinstance(raw_eps, bool) or not isinstance(raw_eps, (int, float)):
+                raise ValueError(f"layer {layer.id!r} eps_r must be numeric")
+            layer_eps_list.append(float(raw_eps))
+        layer_permittivity_y = tuple(layer_eps_list)
+        identity = hashlib.sha256(
+            json.dumps((identity, "dielectric_rule", dielectric_rule), separators=(",", ":")).encode()
+        ).hexdigest()
+    return CompiledDevice2D(
+        identity, column, geometry, generation, eps, declaration,
+        grain_recombination=grains, column_projection_json=projection, field_transport=transport,
+        dielectric_rule=dielectric_rule, layer_permittivity_y=layer_permittivity_y,
+    )
