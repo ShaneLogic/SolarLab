@@ -75,7 +75,16 @@ from solarlab.physics.electrostatics.interface_traces import (
     sheet_charge_row_weights,
 )
 from solarlab.physics.generation.beer_lambert import BeerLambertBinding
+from solarlab.physics.generation.beer_lambert_spectral import (
+    SpectralBeerLambertBinding,
+)
 from solarlab.physics.generation.fixed import FixedGenerationProfile
+from solarlab.physics.generation.optical_binding import (
+    OpticalLayerSpec,
+    constant_index_optical_constants,
+)
+from solarlab.physics.generation.profile import ControlVolumes
+from solarlab.physics.generation.spectrum import SpectralPhotonFlux, sample_nk_table
 from solarlab.physics.interface_transport import (
     EquilibriumReferencedSheetCharge,
     TE_BARRIER_THRESHOLD_EV,
@@ -101,6 +110,9 @@ __all__ = ["CapabilityError", "CompiledDevice1D", "compile_device_1d", "unsuppor
 
 Q = ELEMENTARY_CHARGE_C
 InterfaceTopologyName = Literal["deduplicated", "two_sided_trace"]
+OpticalModelName = Literal["beer_lambert", "beer_lambert_spectral", "tmm"]
+_SPECTRAL_BL_BINDING_1D_V1 = "prepared_spectral_beer_lambert_1d_v1"
+_SPECTRAL_BL_BUDGET_RTOL = 1e-12
 
 
 class _LayerScalars(TypedDict):
@@ -136,7 +148,13 @@ class _LayerScalars(TypedDict):
     grading_char_length: float | None
 
 
-def unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[PreparedLayer, ...]) -> None:
+def unsupported(
+    prepared: PreparedDevice,
+    data: dict[str, Any],
+    layers: tuple[PreparedLayer, ...],
+    *,
+    optical_model: OpticalModelName | None = None,
+) -> None:
     settings = data["settings"]
     missing = []
     if settings["built_in_potential_mode"] != "semiconductor_work_function":
@@ -171,13 +189,37 @@ def unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[Pr
         missing.extend("tunnelling_channels." + name for name, channel in channels.items() if channel.get("enabled"))
     declaration = data["declaration"]
     spectral = declaration.get("spectrum") is not None
+    scalar_override = optical_model == "beer_lambert"
     if spectral and declaration.get("fixed_generation") is not None:
         missing.append("spectrum and fixed_generation are mutually exclusive")
+    if optical_model is not None and declaration.get("fixed_generation") is not None:
+        missing.append(
+            f"optical_model={optical_model!r} and fixed_generation are mutually exclusive"
+        )
+    if optical_model in ("beer_lambert_spectral", "tmm") and not spectral:
+        missing.append(
+            f"optical_model={optical_model!r}: requires an explicit spectrum resource"
+        )
     for layer in prepared.layers:
         if layer.role == "substrate":
             parameters = dict(layer.parameters)
-            if not spectral and (parameters["alpha"] != 0.0 or layer.optical is not None or parameters["n_optical"] is not None):
-                missing.append("layers." + layer.id + ": absorbing/optical substrate generation is not bound")
+            if scalar_override:
+                if parameters["alpha"] != 0.0:
+                    missing.append(
+                        "layers."
+                        + layer.id
+                        + ": scalar beer_lambert does not bind absorbing substrates"
+                    )
+            elif not spectral and (
+                parameters["alpha"] != 0.0
+                or layer.optical is not None
+                or parameters["n_optical"] is not None
+            ):
+                missing.append(
+                    "layers."
+                    + layer.id
+                    + ": absorbing/optical substrate generation is not bound"
+                )
     for layer in layers:
         parameters = dict(layer.parameters)
         prefix = "layers." + layer.id + "."
@@ -199,7 +241,9 @@ def unsupported(prepared: PreparedDevice, data: dict[str, Any], layers: tuple[Pr
         if any(parameters[name] is not None for name in ("trap_N_t_interface", "trap_N_t_bulk", "trap_decay_length")):
             missing.append(prefix + "trap_profile")
         if layer.cigs_graded_optics_json is not None or (
-            not spectral and (layer.optical is not None or parameters["n_optical"] is not None)
+            not spectral
+            and not scalar_override
+            and (layer.optical is not None or parameters["n_optical"] is not None)
         ):
             missing.append(prefix + "optical_material: requires an explicit spectrum; graded optics is not bound")
     if missing:
@@ -863,6 +907,139 @@ def _layer_input(layer: PreparedLayer) -> LayerParameterInput:
     )
 
 
+def _bind_spectral_beer_lambert_1d(
+    prepared: PreparedDevice,
+    control_volumes: ControlVolumes,
+) -> GenerationProfile:
+    """Bind single-pass spectral Beer-Lambert optics to 1D control volumes."""
+
+    data = prepared.to_mapping()
+    name = data["declaration"].get("spectrum")
+    if name is None:
+        raise CapabilityError(
+            "beer_lambert_spectral_1d requires an explicit spectrum resource"
+        )
+    if data["declaration"].get("fixed_generation") is not None:
+        raise CapabilityError(
+            "beer_lambert_spectral_1d: spectrum and fixed_generation "
+            "are mutually exclusive"
+        )
+    if data["settings"]["graded_optics"]:
+        raise CapabilityError("beer_lambert_spectral_1d: graded optics is not bound")
+    table = prepared.resources.get(name, "spectrum")
+    if table.units != ("m", "m^-3/s"):
+        raise CapabilityError(
+            "beer_lambert_spectral_1d requires spectral photon flux per metre, "
+            "not irradiance"
+        )
+    wavelengths_nm = table.array[:, 0] * 1e9
+    spectrum = SpectralPhotonFlux(wavelengths_nm, table.array[:, 1], table.source.id)
+    dependencies: dict[str, str] = {
+        "binding_convention": _SPECTRAL_BL_BINDING_1D_V1,
+        "prepared_device_sha256": prepared.content_sha256,
+        "spectrum_resource_sha256": table.content_sha256,
+        "temperature_K": str(data["settings"]["T"]),
+        "monochromatic_Phi_policy": "not_used_absolute_spectrum",
+    }
+    specs: list[OpticalLayerSpec] = []
+    for index, layer in enumerate(prepared.layers):
+        parameters = dict(layer.parameters)
+        incoherent = bool(parameters["incoherent"])
+        if incoherent and index > 0:
+            raise CapabilityError(
+                f"beer_lambert_spectral_1d: {layer.id}: only the front optical "
+                "layer may be incoherent"
+            )
+        if layer.cigs_graded_optics_json is not None:
+            raise CapabilityError(
+                f"beer_lambert_spectral_1d: {layer.id} has unsupported graded optics"
+            )
+        optical = layer.optical
+        if optical is not None:
+            if parameters["n_optical"] is not None:
+                raise CapabilityError(
+                    f"beer_lambert_spectral_1d: {layer.id} must select a table "
+                    "or constant index, not both"
+                )
+            native = optical.array
+            try:
+                n, k = sample_nk_table(
+                    native[:, 0] * 1e9,
+                    native[:, 1],
+                    native[:, 2],
+                    wavelengths_nm,
+                    material=optical.name,
+                )
+            except ValueError as error:
+                raise CapabilityError(
+                    f"beer_lambert_spectral_1d: {layer.id}: {error}"
+                ) from error
+            dependencies["nk_resource:" + layer.id] = optical.content_sha256
+        else:
+            if parameters["n_optical"] is None:
+                raise CapabilityError(
+                    f"beer_lambert_spectral_1d: {layer.id} needs explicit "
+                    "n_optical or an n-k resource"
+                )
+            n, k = constant_index_optical_constants(
+                wavelengths_nm,
+                absorption_coefficient_m1=cast(float, parameters["alpha"]),
+                refractive_index=cast(float, parameters["n_optical"]),
+            )
+        specs.append(
+            OpticalLayerSpec(
+                layer.id,
+                layer.thickness,
+                n,
+                k,
+                incoherent=incoherent,
+                electrical=layer.role != "substrate",
+            )
+        )
+    binding = SpectralBeerLambertBinding(
+        tuple(specs),
+        spectrum,
+        incidence="front",
+        dependencies=tuple(dependencies.items()),
+    )
+    try:
+        profile = binding.generation_profile(control_volumes)
+        budget = binding.photon_budget()
+    except ValueError as error:
+        raise CapabilityError("beer_lambert_spectral_1d: " + str(error)) from error
+    for value in (
+        profile.source_m3_s,
+        profile.absorbed_m2_s,
+        budget.reflectance,
+        budget.transmittance,
+        budget.layer_absorptance,
+        budget.dropped_multipass,
+    ):
+        if not np.all(np.isfinite(value)) or np.any(value < 0.0):
+            raise CapabilityError(
+                "beer_lambert_spectral_1d: generation and photon fractions "
+                "must be finite and nonnegative"
+            )
+    if np.max(np.abs(budget.spectral_closure_residual())) > _SPECTRAL_BL_BUDGET_RTOL:
+        raise CapabilityError(
+            "beer_lambert_spectral_1d: spectral photon accounting does not close"
+        )
+    tolerance = _SPECTRAL_BL_BUDGET_RTOL * budget.incident_m2_s
+    weighted_source = float(
+        np.sum(profile.source_m3_s * control_volumes.cell_measures_m)
+    )
+    if (
+        abs(profile.areal_generation_m2_s - budget.electrical_absorbed_m2_s)
+        > tolerance
+        or abs(weighted_source - budget.electrical_absorbed_m2_s) > tolerance
+    ):
+        raise CapabilityError(
+            "beer_lambert_spectral_1d: physical control volumes do not close "
+            "the electrical photon budget"
+        )
+    return profile
+
+
 def compile_device_1d(
     prepared: PreparedDevice,
     *,
@@ -873,6 +1050,7 @@ def compile_device_1d(
     te_regularization_mode: TERegularizationName = "legacy_logistic",
     interface_transmission: float = 1.0,
     equilibrium_occupancies: Sequence[float] | None = None,
+    optical_model: OpticalModelName | None = None,
 ) -> CompiledDevice1D:
     """Cold compile genuine resolved configuration; no legacy/test execution.
 
@@ -885,6 +1063,15 @@ def compile_device_1d(
         raise TypeError("compile_device_1d requires an existing PreparedDevice")
     if interface_topology is not None and interface_topology not in ("deduplicated", "two_sided_trace"):
         raise ValueError("interface_topology must be 'deduplicated', 'two_sided_trace', or None")
+    if optical_model is not None and optical_model not in (
+        "beer_lambert",
+        "beer_lambert_spectral",
+        "tmm",
+    ):
+        raise ValueError(
+            "optical_model must be 'beer_lambert', 'beer_lambert_spectral', "
+            "'tmm', or None"
+        )
     if te_regularization_mode not in ("legacy_logistic", "compact_support"):
         raise ValueError("te_regularization_mode must be 'legacy_logistic' or 'compact_support'")
     if isinstance(te_softness, bool) or not math.isfinite(float(te_softness)) or float(te_softness) < 0.0:
@@ -899,7 +1086,7 @@ def compile_device_1d(
     data = prepared.to_mapping()
     settings = data["settings"]
     layers = tuple(layer for layer in prepared.layers if layer.role != "substrate")
-    unsupported(prepared, data, layers)
+    unsupported(prepared, data, layers, optical_model=optical_model)
     resolved_topology: InterfaceTopologyName = (
         interface_topology
         if interface_topology is not None
@@ -987,6 +1174,12 @@ def compile_device_1d(
         if table.array.shape != (nodes.size, 2) or not np.array_equal(table.array[:, 0], nodes):
             raise CapabilityError("fixed_generation: resource coordinates must exactly match the compiled nodes; interpolation is not bound")
         generation = FixedGenerationProfile(table.array[:, 1], nodes.size).generation_profile(geometry)
+    elif optical_model == "beer_lambert":
+        generation = BeerLambertBinding(nodes, paint("alpha"), settings["Phi"]).generation_profile(geometry)
+    elif optical_model == "beer_lambert_spectral":
+        generation = _bind_spectral_beer_lambert_1d(prepared, geometry)
+    elif optical_model == "tmm":
+        generation = bind_optical_generation_1d(prepared, geometry).profile
     elif data["declaration"].get("spectrum") is not None:
         generation = bind_optical_generation_1d(prepared, geometry).profile
     else:

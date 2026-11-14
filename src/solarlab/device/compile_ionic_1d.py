@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import hashlib
 import json
 import math
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -38,6 +38,7 @@ def compile_ionic_device_1d(
     ion_domain_endpoints: tuple[str, str] | None = None,
     te_softness: float = 0.02,
     te_regularization_mode: TERegularizationName = "legacy_logistic",
+    optical_model: Literal["beer_lambert", "beer_lambert_spectral", "tmm"] | None = None,
 ) -> CompiledIonicDevice1D:
     """Compile independent or shared finite-site ions in one blocking layer.
 
@@ -124,6 +125,7 @@ def compile_ionic_device_1d(
         intervals_per_layer=intervals_per_layer,
         te_softness=te_softness,
         te_regularization_mode=te_regularization_mode,
+        optical_model=optical_model,
     )
     domain_index = layers.index(domain_layer)
     left = 0 if domain_index == 0 else component.geometry.interfaces[domain_index - 1].shared_node
@@ -201,6 +203,8 @@ def compile_ionic_device_1d(
         manifest["ion_charge_deposition"]["rule"] = "rho_ion=q*(W_P/W_e)*((P_positive-P0)-(P_negative-P0_neg)); separate historical negative charge group"
         manifest["state_layout"].update(size=3 * component.node_count + 2 * count,
                                         ion_species=["positive", "negative"], ion_species_count=2)
+    if optical_model is not None:
+        manifest["electronic_component"]["optical_model"] = optical_model
     encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":"), allow_nan=False)
     identity = hashlib.sha256(encoded.encode()).hexdigest()
     return CompiledIonicDevice1D(

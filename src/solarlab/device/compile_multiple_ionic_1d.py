@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 import hashlib
 import json
+from typing import Literal
 
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_ionic_1d import ION_INPUTS, compile_ionic_device_1d
@@ -23,6 +24,7 @@ def compile_multiple_ionic_device_1d(
     ion_domains: Sequence[tuple[str, tuple[str, str]]],
     te_softness: float = 0.02,
     te_regularization_mode: TERegularizationName = "legacy_logistic",
+    optical_model: Literal["beer_lambert", "beer_lambert_spectral", "tmm"] | None = None,
 ) -> CompiledMultipleIonicDevice1D:
     """Exactly two layer-wide blocking domains separated by inactive material.
 
@@ -80,6 +82,7 @@ def compile_multiple_ionic_device_1d(
             ion_domain_endpoints=endpoints,
             te_softness=te_softness,
             te_regularization_mode=te_regularization_mode,
+            optical_model=optical_model,
         )
         if components:
             if component.electronic_component.identity != components[0].electronic_component.identity:

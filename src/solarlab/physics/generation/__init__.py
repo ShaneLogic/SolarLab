@@ -1,11 +1,11 @@
-"""Optical generation constitutive layer (P04-07, values and DC).
+"""Optical generation constitutive layer (P04-07, P08-04, values and DC).
 
-Monochromatic Beer-Lambert, coherent transfer-matrix optics with an optional
-incoherent front substrate, explicitly supplied fixed generation arrays and
-tabulated spectra/optical constants. Generation is integrated per control
-volume (exact absorbed photons per cell) and divided by the caller's cell
-measures; optical bindings carry a content identity so a profile is never
-reused after its inputs change. Spectral Beer-Lambert is not provided (P08-04).
+Monochromatic Beer-Lambert, single-pass spectral control-volume Beer-Lambert,
+coherent transfer-matrix optics with an optional incoherent front substrate,
+explicitly supplied fixed generation arrays and tabulated spectra/optical
+constants. Generation is integrated per control volume (exact absorbed photons
+per cell) and divided by the caller's cell measures; optical bindings carry a
+content identity so a profile is never reused after its inputs change.
 """
 
 from solarlab.physics.generation.beer_lambert import (
@@ -14,6 +14,14 @@ from solarlab.physics.generation.beer_lambert import (
     beer_lambert_generation,
     beer_lambert_optical_depth,
     face_optical_depth,
+)
+from solarlab.physics.generation.beer_lambert_spectral import (
+    SPECTRAL_BEER_LAMBERT_MODEL_ID,
+    SpectralBeerLambertBinding,
+    spectral_beer_lambert_absorbed_photon_flux_per_cell,
+    spectral_beer_lambert_absorption_coefficients,
+    spectral_beer_lambert_absorption_profile,
+    spectral_beer_lambert_optical_depth,
 )
 from solarlab.physics.generation.fixed import (
     BASELINE_GENERATION_REFERENCE,
@@ -64,7 +72,9 @@ __all__ = [
     "OpticalLayerSpec",
     "OpticalStackBinding",
     "PhotonBudget",
+    "SPECTRAL_BEER_LAMBERT_MODEL_ID",
     "SPECTRAL_PHOTON_FLUX_UNIT",
+    "SpectralBeerLambertBinding",
     "SpectralPhotonFlux",
     "StaleGenerationProfileError",
     "TMMLayer",
@@ -79,6 +89,10 @@ __all__ = [
     "graded_slice_centres",
     "sample_nk_table",
     "sample_tabulated",
+    "spectral_beer_lambert_absorbed_photon_flux_per_cell",
+    "spectral_beer_lambert_absorption_coefficients",
+    "spectral_beer_lambert_absorption_profile",
+    "spectral_beer_lambert_optical_depth",
     "tmm_absorbed_photon_flux_per_cell",
     "tmm_absorption_profile",
     "tmm_cumulative_absorptance",
