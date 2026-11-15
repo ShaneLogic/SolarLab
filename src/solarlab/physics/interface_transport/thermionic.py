@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import math
-from typing import Literal, TypeAlias
+from typing import Final, Literal, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -44,11 +44,22 @@ from solarlab.physics.statistics.thermal import (
 __all__ = [
     "A_STAR_FREE_ELECTRON_A_M2_K2",
     "ELECTRON_MASS_KG",
+    "LEGACY_UNNORMALIZED_THERMIONIC_V1",
     "PLANCK_CONSTANT_J_S",
+    "RECIPROCAL_PHYSICAL_THERMIONIC_V2",
+    "ReciprocalThermionicCompositeEvaluation",
+    "ReciprocalThermionicEvaluation",
+    "SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1",
     "TE_BARRIER_THRESHOLD_EV",
+    "THERMIONIC_MODEL_VERSIONS",
     "ThermionicCapEvaluation",
+    "ThermionicCarrierKind",
+    "ThermionicCombinationMode",
+    "ThermionicModelVersion",
+    "ThermionicStatisticsKind",
     "TwoSidedCrossFluxEvaluation",
     "cap_particle_flux_thermionic",
+    "combine_sg_and_reciprocal_thermionic_flux",
     "effective_mass_from_dos",
     "emission_velocity",
     "fermi_dirac_one",
@@ -56,6 +67,10 @@ __all__ = [
     "fermi_dirac_zero",
     "fermi_richardson_flux",
     "is_free_electron_default",
+    "physical_barrier_steps_eV",
+    "physical_carrier_barrier_step_eV",
+    "reciprocal_richardson",
+    "reciprocal_thermionic_flux_m2_s",
     "resolve_layer_richardson",
     "richardson_from_dos",
     "scaps_thermionic_flux",
@@ -71,7 +86,26 @@ A_STAR_FREE_ELECTRON_A_M2_K2: float = (
 )
 TE_BARRIER_THRESHOLD_EV: float = 0.05
 
+LEGACY_UNNORMALIZED_THERMIONIC_V1: Final = "legacy_unnormalized_thermionic_v1"
+RECIPROCAL_PHYSICAL_THERMIONIC_V2: Final = "reciprocal_physical_thermionic_v2"
+SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1: Final = "scaps_effective_velocity_thermionic_v1"
+THERMIONIC_MODEL_VERSIONS = (
+    LEGACY_UNNORMALIZED_THERMIONIC_V1,
+    RECIPROCAL_PHYSICAL_THERMIONIC_V2,
+    SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
+)
+
 TERegularizationMode: TypeAlias = Literal["legacy_logistic", "compact_support"]
+ThermionicModelVersion: TypeAlias = Literal[
+    "legacy_unnormalized_thermionic_v1",
+    "reciprocal_physical_thermionic_v2",
+    "scaps_effective_velocity_thermionic_v1",
+]
+ThermionicCarrierKind: TypeAlias = Literal["electron", "hole"]
+ThermionicStatisticsKind: TypeAlias = Literal["maxwell_boltzmann", "fermi_dirac"]
+ThermionicCombinationMode: TypeAlias = Literal[
+    "hard", "legacy_logistic", "compact_support", "harmonic_series"
+]
 RealArray: TypeAlias = NDArray[np.float64]
 
 
@@ -687,3 +721,568 @@ def scaps_thermionic_flux(
     )
     scale = np.array([max(term_n_l, term_n_r), max(term_p_l, term_p_r)], dtype=np.float64)
     return TwoSidedCrossFluxEvaluation(cross, d_log, d_trace, scale)
+
+
+def reciprocal_richardson(
+    a_star_left_A_m2_K2: float,
+    a_star_right_A_m2_K2: float,
+) -> float:
+    """Return reciprocal Bethe/Richardson constant ``min(A*_left, A*_right)`` [A m^-2 K^-2].
+
+    Planar transverse crystal-momentum conservation restricts thermally emitted
+    carriers to the smaller transverse effective-mass disk on either side of the
+    heterointerface, guaranteeing symmetry under ``left <-> right`` swap and
+    eliminating spurious equilibrium emission across unequal effective masses.
+    """
+    left = float(a_star_left_A_m2_K2)
+    right = float(a_star_right_A_m2_K2)
+    if not (math.isfinite(left) and math.isfinite(right)) or left < 0.0 or right < 0.0:
+        raise ValueError("Richardson constants must be finite and non-negative")
+    return min(left, right)
+
+
+def physical_barrier_steps_eV(
+    *,
+    phi_left_V: float,
+    phi_right_V: float,
+    chi_phys_left_eV: float,
+    chi_phys_right_eV: float,
+    eg_phys_left_eV: float,
+    eg_phys_right_eV: float,
+) -> tuple[float, float]:
+    """Return ``(electron_step_eV, hole_step_eV)`` from unfolded physical band edges.
+
+    Uses true physical electron affinities and band gaps (free of DOS-folded
+    Scharfetter-Gummel drift potentials) together with the electrostatic step
+    ``phi_right_V - phi_left_V``. A positive return value denotes an upward
+    potential-energy barrier for the respective carrier moving ``left -> right``.
+    """
+    phi_l = float(phi_left_V)
+    phi_r = float(phi_right_V)
+    chi_l = float(chi_phys_left_eV)
+    chi_r = float(chi_phys_right_eV)
+    eg_l = float(eg_phys_left_eV)
+    eg_r = float(eg_phys_right_eV)
+    if not all(math.isfinite(v) for v in (phi_l, phi_r, chi_l, chi_r, eg_l, eg_r)):
+        raise ValueError("potentials and physical band parameters must be finite")
+    if eg_l <= 0.0 or eg_r <= 0.0:
+        raise ValueError("physical band gaps must be positive")
+    dphi = phi_r - phi_l
+    electron_step = (chi_l - chi_r) - dphi
+    hole_step = ((chi_r + eg_r) - (chi_l + eg_l)) + dphi
+    return electron_step, hole_step
+
+
+def physical_carrier_barrier_step_eV(
+    carrier: ThermionicCarrierKind,
+    *,
+    phi_left_V: float,
+    phi_right_V: float,
+    band_offset_eV: float,
+) -> tuple[float, float, float]:
+    """Return ``(barrier_step_eV, d_step_d_phi_left, d_step_d_phi_right)``.
+
+    ``band_offset_eV`` is the electrostatic-free physical band-edge offset
+    oriented for ``carrier`` moving ``left -> right``:
+    * ``carrier == "electron"``: ``chi_phys_left_eV - chi_phys_right_eV``;
+    * ``carrier == "hole"``: ``(chi_phys_right_eV + eg_phys_right_eV) - (chi_phys_left_eV + eg_phys_left_eV)``.
+    """
+    phi_l = float(phi_left_V)
+    phi_r = float(phi_right_V)
+    offset = float(band_offset_eV)
+    if not (math.isfinite(phi_l) and math.isfinite(phi_r) and math.isfinite(offset)):
+        raise ValueError("phi_left_V, phi_right_V, and band_offset_eV must be finite")
+    dphi = phi_r - phi_l
+    if carrier == "electron":
+        return offset - dphi, 1.0, -1.0
+    if carrier == "hole":
+        return offset + dphi, -1.0, 1.0
+    raise ValueError(f"unknown carrier {carrier!r}; expected 'electron' or 'hole'")
+
+
+def _symmetric_log_ratio(left: float, right: float) -> float:
+    """Return ``ln(right / left)`` with 0-ULP swap antisymmetry and no near-unity cancellation."""
+    diff = right - left
+    if diff == 0.0:
+        return 0.0
+    scale = max(left, right)
+    z = (diff / scale) / ((right / scale) + (left / scale))
+    if abs(z) <= 0.5:
+        return 2.0 * math.atanh(z)
+    return math.log(right) - math.log(left)
+
+
+def _boltzmann_over_barrier_supply(activity: float, reduced_barrier: float) -> float:
+    """Evaluate ``activity * exp(-reduced_barrier)`` without premature factor underflow."""
+    if reduced_barrier == 0.0:
+        return activity
+    if reduced_barrier <= 650.0:
+        return activity * math.exp(-reduced_barrier)
+    log_prod = math.log(activity) - reduced_barrier
+    if log_prod < -745.0:
+        return 0.0
+    return math.exp(log_prod)
+
+
+@dataclass(frozen=True, slots=True)
+class ReciprocalThermionicEvaluation:
+    """Constitutive evaluation of versioned 1D heterointerface thermionic emission (P08-03)."""
+
+    model_version: ThermionicModelVersion
+    carrier: ThermionicCarrierKind
+    statistics: ThermionicStatisticsKind
+    flux_m2_s: float
+    current_A_m2: float
+    one_way_scale_m2_s: float
+    barrier_step_eV: float
+    electrochemical_step: float
+    effective_richardson_A_m2_K2: float
+    transmission: float
+    d_flux_d_phi_left_m2_s_V: float
+    d_flux_d_phi_right_m2_s_V: float
+    d_flux_d_c_left_m_s: float
+    d_flux_d_c_right_m_s: float
+    d_flux_d_log_c_left_m2_s: float
+    d_flux_d_log_c_right_m2_s: float
+
+
+def reciprocal_thermionic_flux_m2_s(
+    c_left_m3: float,
+    c_right_m3: float,
+    *,
+    carrier: ThermionicCarrierKind,
+    phi_left_V: float,
+    phi_right_V: float,
+    band_offset_eV: float,
+    temperature_K: float,
+    a_star_left_A_m2_K2: float,
+    a_star_right_A_m2_K2: float | None = None,
+    dos_left_m3: float | None = None,
+    dos_right_m3: float | None = None,
+    transmission: float = 1.0,
+    statistics: ThermionicStatisticsKind = "maxwell_boltzmann",
+    model_version: ThermionicModelVersion = RECIPROCAL_PHYSICAL_THERMIONIC_V2,
+    thermal_voltage_V: float | None = None,
+    electrochemical_step: float | None = None,
+    barrier_corner_kbt: float = 0.25,
+) -> ReciprocalThermionicEvaluation:
+    """Evaluate versioned thermionic particle flux [m^-2 s^-1] and analytical Jacobians.
+
+    Under ``RECIPROCAL_PHYSICAL_THERMIONIC_V2``, separates:
+    1. True physical electrostatic + band-edge barrier ``barrier_step_eV``;
+    2. Per-side DOS activities ``(c_left / dos_left, c_right / dos_right)``;
+    3. Reciprocal Bethe/Richardson constant ``min(a_star_left, a_star_right)``;
+    4. Explicit transmission factor ``transmission`` in ``[0, 1]``;
+    5. Cancellation-free electrochemical difference ``electrochemical_step``.
+    """
+    c_l = float(c_left_m3)
+    c_r = float(c_right_m3)
+    temp = float(temperature_K)
+    trans = float(transmission)
+    if not (math.isfinite(c_l) and math.isfinite(c_r)) or c_l <= 0.0 or c_r <= 0.0:
+        raise ValueError("carrier densities must be finite and positive for reciprocal thermionic flux")
+    if not math.isfinite(temp) or temp <= 0.0:
+        raise ValueError("temperature_K must be finite and positive")
+    if not math.isfinite(trans) or not 0.0 <= trans <= 1.0:
+        raise ValueError("transmission must be finite and lie in [0, 1]")
+    vt = float(thermal_voltage(temp) if thermal_voltage_V is None else thermal_voltage_V)
+    if not math.isfinite(vt) or vt <= 0.0:
+        raise ValueError("thermal_voltage_V must be finite and positive")
+    if electrochemical_step is not None and not math.isfinite(float(electrochemical_step)):
+        raise ValueError("electrochemical_step must be finite when supplied")
+    corner = float(barrier_corner_kbt)
+    if not math.isfinite(corner) or corner < 0.0:
+        raise ValueError("barrier_corner_kbt must be finite and non-negative")
+
+    barrier_step, d_step_d_phi_l, d_step_d_phi_r = physical_carrier_barrier_step_eV(
+        carrier,
+        phi_left_V=phi_left_V,
+        phi_right_V=phi_right_V,
+        band_offset_eV=band_offset_eV,
+    )
+    current_sign = -Q if carrier == "electron" else Q
+
+    if model_version == LEGACY_UNNORMALIZED_THERMIONIC_V1:
+        if statistics != "maxwell_boltzmann":
+            raise ValueError("legacy_unnormalized_thermionic_v1 supports only maxwell_boltzmann")
+        a_left = float(a_star_left_A_m2_K2)
+        if not math.isfinite(a_left) or a_left < 0.0:
+            raise ValueError("a_star_left_A_m2_K2 must be finite and non-negative")
+        flux_leg, d_dl, d_dr = thermionic_emission_bound_m2_s(
+            c_l,
+            c_r,
+            barrier_step,
+            temp,
+            a_left,
+            dos_norm_m3=dos_left_m3,
+        )
+        flux_leg *= trans
+        d_dl *= trans
+        d_dr *= trans
+        term_l = d_dl * c_l
+        term_r = -d_dr * c_r
+        if barrier_step > 0.0:
+            g_step = -term_l / vt
+        elif barrier_step < 0.0:
+            g_step = -term_r / vt
+        else:
+            g_step = -0.5 * (term_l + term_r) / vt
+        ec_step = (
+            float(electrochemical_step)
+            if electrochemical_step is not None
+            else (_symmetric_log_ratio(c_l, c_r) + barrier_step / vt)
+        )
+        return ReciprocalThermionicEvaluation(
+            model_version=model_version,
+            carrier=carrier,
+            statistics=statistics,
+            flux_m2_s=flux_leg,
+            current_A_m2=current_sign * flux_leg,
+            one_way_scale_m2_s=max(term_l, term_r),
+            barrier_step_eV=barrier_step,
+            electrochemical_step=ec_step,
+            effective_richardson_A_m2_K2=a_left,
+            transmission=trans,
+            d_flux_d_phi_left_m2_s_V=g_step * d_step_d_phi_l,
+            d_flux_d_phi_right_m2_s_V=g_step * d_step_d_phi_r,
+            d_flux_d_c_left_m_s=d_dl,
+            d_flux_d_c_right_m_s=d_dr,
+            d_flux_d_log_c_left_m2_s=term_l,
+            d_flux_d_log_c_right_m2_s=-term_r,
+        )
+
+    if dos_left_m3 is None or dos_right_m3 is None:
+        raise ValueError(f"{model_version} requires explicit positive dos_left_m3 and dos_right_m3")
+    n_dos_l = float(dos_left_m3)
+    n_dos_r = float(dos_right_m3)
+    if not (math.isfinite(n_dos_l) and math.isfinite(n_dos_r)) or n_dos_l <= 0.0 or n_dos_r <= 0.0:
+        raise ValueError("dos_left_m3 and dos_right_m3 must be finite and positive")
+
+    a_right_raw = a_star_left_A_m2_K2 if a_star_right_A_m2_K2 is None else a_star_right_A_m2_K2
+    if model_version == RECIPROCAL_PHYSICAL_THERMIONIC_V2:
+        a_eff = reciprocal_richardson(a_star_left_A_m2_K2, a_right_raw)
+    elif model_version == SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1:
+        if statistics != "maxwell_boltzmann":
+            raise ValueError("scaps_effective_velocity_thermionic_v1 supports only maxwell_boltzmann")
+        a_l = float(a_star_left_A_m2_K2)
+        a_r = float(a_right_raw)
+        if not (math.isfinite(a_l) and math.isfinite(a_r)) or a_l < 0.0 or a_r < 0.0:
+            raise ValueError("Richardson constants must be finite and non-negative")
+        v_th_l = a_l * temp * temp / (Q * n_dos_l)
+        v_th_r = a_r * temp * temp / (Q * n_dos_r)
+        a_eff = (Q / (temp * temp)) * min(v_th_l, v_th_r) * math.sqrt(n_dos_l * n_dos_r)
+    else:
+        raise ValueError(f"unknown thermionic model_version {model_version!r}")
+
+    pref = trans * a_eff * temp * temp / Q
+    s_vt = barrier_step / vt
+    if corner == 0.0:
+        b_l = max(s_vt, 0.0)
+        b_r = max(-s_vt, 0.0)
+        w_l = 1.0 if barrier_step > 0.0 else (0.0 if barrier_step < 0.0 else 0.5)
+        w_r = 1.0 - w_l
+    else:
+        # Even C^infinity corner potential: b_l - b_r == s_vt identically (exact detailed balance),
+        # while d(b_l)/ds = expit(s_vt/corner) eliminates the non-equilibrium Jacobian jump at s_vt = 0.
+        corner_shift = corner * math.log1p(math.exp(-abs(s_vt) / corner))
+        b_l = max(s_vt, 0.0) + corner_shift
+        b_r = max(-s_vt, 0.0) + corner_shift
+        w_l = float(expit(s_vt / corner))
+        w_r = float(expit(-s_vt / corner))
+    act_l = c_l / n_dos_l
+    act_r = c_r / n_dos_r
+
+    if statistics == "maxwell_boltzmann":
+        sup_l = _boltzmann_over_barrier_supply(act_l, b_l)
+        sup_r = _boltzmann_over_barrier_supply(act_r, b_r)
+        if electrochemical_step is not None:
+            ec_step = float(electrochemical_step)
+            if ec_step > 0.0:
+                supply_diff = sup_r * math.expm1(-ec_step)
+            elif ec_step < 0.0:
+                supply_diff = -sup_l * math.expm1(ec_step)
+            else:
+                supply_diff = 0.0
+        else:
+            supply_diff = sup_l - sup_r
+            if sup_l > 0.0 and sup_r > 0.0:
+                ec_step = _symmetric_log_ratio(sup_l, sup_r)
+            else:
+                ec_step = _symmetric_log_ratio(act_l, act_r) + s_vt
+
+        flux = pref * supply_diff
+        d_log_l = pref * sup_l
+        d_log_r = -pref * sup_r
+        d_c_l = d_log_l / c_l
+        d_c_r = d_log_r / c_r
+        g_step = -pref * (w_l * sup_l + w_r * sup_r) / vt
+        scale_one_way = pref * max(sup_l, sup_r)
+    elif statistics == "fermi_dirac":
+        sup_l, dn_log_l, dn_bar_l, z_l = _one_way_fermi_dirac_supply(
+            c_l, n_dos_l, b_l * vt, vt
+        )
+        sup_r, dn_log_r, dn_bar_r, z_r = _one_way_fermi_dirac_supply(
+            c_r, n_dos_r, b_r * vt, vt
+        )
+        if electrochemical_step is not None:
+            ec_step = float(electrochemical_step)
+            delta_z = -ec_step
+        elif z_l <= -40.0 and z_r <= -40.0 and sup_l > 0.0 and sup_r > 0.0:
+            ec_step = _symmetric_log_ratio(sup_l, sup_r)
+            delta_z = -ec_step
+        else:
+            lr_l = math.log(act_l)
+            lr_r = math.log(act_r)
+            ex_l, _ = _eta_excess_from_log_ratio(lr_l)
+            ex_r, _ = _eta_excess_from_log_ratio(lr_r)
+            ec_step = _symmetric_log_ratio(act_l, act_r) + s_vt + (ex_r - ex_l)
+            delta_z = -ec_step
+
+        if z_l <= -38.0 and z_r <= -38.0:
+            if delta_z > 0.0:
+                supply_diff = -sup_l * math.expm1(-delta_z)
+            elif delta_z < 0.0:
+                supply_diff = sup_r * math.expm1(delta_z)
+            else:
+                supply_diff = 0.0
+        else:
+            supply_diff = _fermi_dirac_one_difference(z_l, z_r, delta_z, sup_l, sup_r)
+
+        flux = pref * supply_diff
+        d_log_l = pref * dn_log_l
+        d_log_r = -pref * dn_log_r
+        d_c_l = d_log_l / c_l
+        d_c_r = d_log_r / c_r
+        g_step = pref * (w_l * dn_bar_l + w_r * dn_bar_r)
+        scale_one_way = pref * max(sup_l, sup_r)
+    else:
+        raise ValueError(
+            f"unknown statistics {statistics!r}; expected 'maxwell_boltzmann' or 'fermi_dirac'"
+        )
+
+    return ReciprocalThermionicEvaluation(
+        model_version=model_version,
+        carrier=carrier,
+        statistics=statistics,
+        flux_m2_s=flux,
+        current_A_m2=current_sign * flux,
+        one_way_scale_m2_s=scale_one_way,
+        barrier_step_eV=barrier_step,
+        electrochemical_step=ec_step,
+        effective_richardson_A_m2_K2=a_eff,
+        transmission=trans,
+        d_flux_d_phi_left_m2_s_V=g_step * d_step_d_phi_l,
+        d_flux_d_phi_right_m2_s_V=g_step * d_step_d_phi_r,
+        d_flux_d_c_left_m_s=d_c_l,
+        d_flux_d_c_right_m_s=d_c_r,
+        d_flux_d_log_c_left_m2_s=d_log_l,
+        d_flux_d_log_c_right_m2_s=d_log_r,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ReciprocalThermionicCompositeEvaluation:
+    """Combined SG + reciprocal physical thermionic face flux and full Jacobians."""
+
+    combination_mode: ThermionicCombinationMode
+    flux_m2_s: float
+    current_A_m2: float
+    sg_flux_m2_s: float
+    thermionic: ReciprocalThermionicEvaluation
+    d_flux_d_phi_left_m2_s_V: float
+    d_flux_d_phi_right_m2_s_V: float
+    d_flux_d_c_left_m_s: float
+    d_flux_d_c_right_m_s: float
+    d_flux_d_log_c_left_m2_s: float
+    d_flux_d_log_c_right_m2_s: float
+
+
+def combine_sg_and_reciprocal_thermionic_flux(
+    sg_flux_m2_s: float,
+    *,
+    d_sg_d_phi_left_m2_s_V: float,
+    d_sg_d_phi_right_m2_s_V: float,
+    d_sg_d_c_left_m_s: float,
+    d_sg_d_c_right_m_s: float,
+    c_left_m3: float,
+    c_right_m3: float,
+    thermionic: ReciprocalThermionicEvaluation,
+    combination_mode: ThermionicCombinationMode = "harmonic_series",
+    te_softness: float = 0.05,
+) -> ReciprocalThermionicCompositeEvaluation:
+    """Combine face Scharfetter-Gummel and reciprocal thermionic fluxes with full tangents.
+
+    Includes exact chain-rule derivatives wrt ``(phi_left, phi_right, c_left, c_right)``
+    and ``(log c_left, log c_right)``. Under ``combination_mode="harmonic_series"``,
+    combines bulk drift-diffusion and interface emission conductances in series with
+    strictly positive smooth weights at every operating bias including ``m == 0``.
+    """
+    sg = float(sg_flux_m2_s)
+    c_l = float(c_left_m3)
+    c_r = float(c_right_m3)
+    soft = float(te_softness)
+    if not (math.isfinite(sg) and math.isfinite(c_l) and math.isfinite(c_r) and math.isfinite(soft)):
+        raise ValueError("flux, densities, and te_softness must be finite")
+    if c_l <= 0.0 or c_r <= 0.0:
+        raise ValueError("c_left_m3 and c_right_m3 must be positive")
+    if soft < 0.0:
+        raise ValueError("te_softness must be non-negative")
+
+    te = thermionic.flux_m2_s
+    a_sg = abs(sg)
+    a_te = abs(te)
+    sign_sg = math.copysign(1.0, sg)
+    sign_te = 0.0 if te == 0.0 else math.copysign(1.0, te)
+    sign_pair = 1.0 if (sg == 0.0 and te == 0.0) else sign_sg * sign_te
+    current_sign = -Q if thermionic.carrier == "electron" else Q
+
+    g_sg = 0.5 * (abs(float(d_sg_d_c_left_m_s) * c_l) + abs(float(d_sg_d_c_right_m_s) * c_r))
+    g_te = 0.5 * (
+        abs(thermionic.d_flux_d_log_c_left_m2_s) + abs(thermionic.d_flux_d_log_c_right_m2_s)
+    )
+
+    if combination_mode == "harmonic_series":
+        g_sum = g_sg + g_te
+        if g_sum == 0.0:
+            flux = math.copysign(0.0, sg)
+            w_sg = 0.0
+            w_te = 0.0
+        elif a_sg <= 1.0e-6 * g_sg and a_te <= 1.0e-6 * g_te:
+            # Exact C^infinity Taylor-exact asymptotic form around m = 0:
+            # u*v/(u+v) == theta0^2 * u + (1 - theta0)^2 * v + O(m^3), avoiding 0/0 and 1-ULP noise.
+            theta0 = g_te / g_sum
+            w_sg = theta0 * theta0
+            w_te = (1.0 - theta0) * (1.0 - theta0)
+            flux = w_sg * sg + w_te * te
+        elif sg * te > 0.0:
+            denom_st = sg + te
+            theta = te / denom_st
+            flux = theta * sg
+            w_sg = theta * theta
+            w_te = (1.0 - theta) * (1.0 - theta)
+        elif a_sg == 0.0 or a_te == 0.0:
+            flux = math.copysign(0.0, sg)
+            theta0 = g_te / g_sum
+            w_sg = theta0 * theta0
+            w_te = (1.0 - theta0) * (1.0 - theta0)
+        else:
+            a_sum = a_sg + a_te
+            theta = a_te / a_sum
+            flux = math.copysign(theta * a_sg, sg)
+            w_sg = theta * theta
+            w_te = sign_pair * (1.0 - theta) * (1.0 - theta)
+    elif combination_mode == "hard" or soft == 0.0:
+        if a_sg == 0.0 and a_te == 0.0:
+            flux = math.copysign(0.0, sg)
+            if g_sg <= g_te:
+                w_sg, w_te = 1.0, 0.0
+            else:
+                w_sg, w_te = 0.0, 1.0
+        elif a_sg <= a_te:
+            flux = sg
+            w_sg, w_te = 1.0, 0.0
+        else:
+            flux = math.copysign(a_te, sg)
+            w_sg, w_te = 0.0, sign_pair
+    elif combination_mode == "legacy_logistic":
+        if a_sg <= 1.0e-12 * g_sg and a_te <= 1.0e-12 * g_te:
+            g_sum = g_sg + g_te
+            if g_sum == 0.0:
+                w_sg, w_te = 0.5, 0.0
+            else:
+                t0 = (g_sg - g_te) / (soft * g_sum)
+                if t0 > 40.0:
+                    weight0 = 1.0
+                elif t0 < -40.0:
+                    weight0 = 0.0
+                else:
+                    weight0 = 1.0 / (1.0 + math.exp(-t0))
+                w_sg, w_te = 1.0 - weight0, weight0
+            flux = w_sg * sg + w_te * te
+        else:
+            denom = soft * (a_sg + a_te) + 1.0e-300
+            t_arg = (a_sg - a_te) / denom
+            if t_arg > 40.0:
+                weight = 1.0
+                dw_dt = 0.0
+            elif t_arg < -40.0:
+                weight = 0.0
+                dw_dt = 0.0
+            else:
+                weight = 1.0 / (1.0 + math.exp(-t_arg))
+                dw_dt = weight * (1.0 - weight)
+            magnitude = weight * a_te + (1.0 - weight) * a_sg
+            denom_sq = denom * denom
+            dt_da_sg = (denom - (a_sg - a_te) * soft) / denom_sq
+            dt_da_te = (-denom - (a_sg - a_te) * soft) / denom_sq
+            w_sg = (1.0 - weight) + (a_te - a_sg) * dw_dt * dt_da_sg
+            dm_da_te = weight + (a_te - a_sg) * dw_dt * dt_da_te
+            w_te = sign_pair * dm_da_te
+            flux = math.copysign(magnitude, sg)
+    elif combination_mode == "compact_support":
+        if a_sg <= 1.0e-12 * g_sg and a_te <= 1.0e-12 * g_te:
+            g_sum = g_sg + g_te
+            if g_sum == 0.0:
+                w_sg, w_te = 0.5, 0.0
+            else:
+                n0 = (g_sg - g_te) / (soft * g_sum)
+                if n0 <= -1.0:
+                    w_sg, w_te = 1.0, 0.0
+                elif n0 >= 1.0:
+                    w_sg, w_te = 0.0, 1.0
+                else:
+                    u0 = 0.5 * (n0 + 1.0)
+                    weight0 = 6.0 * u0**5 - 15.0 * u0**4 + 10.0 * u0**3
+                    w_sg, w_te = 1.0 - weight0, weight0
+            flux = w_sg * sg + w_te * te
+        else:
+            scale = soft * (a_sg + a_te)
+            normalized = (a_sg - a_te) / scale
+            if normalized <= -1.0:
+                magnitude = a_sg
+                w_sg = 1.0
+                dm_da_te = 0.0
+            elif normalized >= 1.0:
+                magnitude = a_te
+                w_sg = 0.0
+                dm_da_te = 1.0
+            else:
+                u = 0.5 * (normalized + 1.0)
+                weight = 6.0 * u**5 - 15.0 * u**4 + 10.0 * u**3
+                dw_du = 30.0 * u**2 * (1.0 - u) ** 2
+                scale_sq = scale * scale
+                dn_da_sg = 2.0 * soft * a_te / scale_sq
+                dn_da_te = -2.0 * soft * a_sg / scale_sq
+                dw_da_sg = 0.5 * dw_du * dn_da_sg
+                dw_da_te = 0.5 * dw_du * dn_da_te
+                magnitude = (1.0 - weight) * a_sg + weight * a_te
+                w_sg = (1.0 - weight) + (a_te - a_sg) * dw_da_sg
+                dm_da_te = weight + (a_te - a_sg) * dw_da_te
+            w_te = sign_pair * dm_da_te
+            flux = math.copysign(magnitude, sg)
+    else:
+        raise ValueError(
+            f"unknown combination_mode {combination_mode!r}; expected 'harmonic_series', "
+            "'compact_support', 'legacy_logistic', or 'hard'"
+        )
+
+    d_phi_l = w_sg * float(d_sg_d_phi_left_m2_s_V) + w_te * thermionic.d_flux_d_phi_left_m2_s_V
+    d_phi_r = w_sg * float(d_sg_d_phi_right_m2_s_V) + w_te * thermionic.d_flux_d_phi_right_m2_s_V
+    d_c_l = w_sg * float(d_sg_d_c_left_m_s) + w_te * thermionic.d_flux_d_c_left_m_s
+    d_c_r = w_sg * float(d_sg_d_c_right_m_s) + w_te * thermionic.d_flux_d_c_right_m_s
+    d_log_l = w_sg * (float(d_sg_d_c_left_m_s) * c_l) + w_te * thermionic.d_flux_d_log_c_left_m2_s
+    d_log_r = w_sg * (float(d_sg_d_c_right_m_s) * c_r) + w_te * thermionic.d_flux_d_log_c_right_m2_s
+
+    return ReciprocalThermionicCompositeEvaluation(
+        combination_mode=combination_mode,
+        flux_m2_s=flux,
+        current_A_m2=current_sign * flux,
+        sg_flux_m2_s=sg,
+        thermionic=thermionic,
+        d_flux_d_phi_left_m2_s_V=d_phi_l,
+        d_flux_d_phi_right_m2_s_V=d_phi_r,
+        d_flux_d_c_left_m_s=d_c_l,
+        d_flux_d_c_right_m_s=d_c_r,
+        d_flux_d_log_c_left_m2_s=d_log_l,
+        d_flux_d_log_c_right_m2_s=d_log_r,
+    )

@@ -24,25 +24,64 @@ then exactly the offset between the configured ``V_bi`` and the reservoirs
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal
 
 import numpy as np
 
-from solarlab.physics.contacts.potential import LEGACY_MANUAL, METAL_WORK_FUNCTION
+from solarlab.physics.contacts.potential import (
+    LEGACY_MANUAL,
+    METAL_WORK_FUNCTION,
+    SEMICONDUCTOR_WORK_FUNCTION,
+)
 from solarlab.physics.statistics.carriers import (
     MAXWELL_BOLTZMANN, CarrierStatistics, reduced_fermi_level_from_density,
 )
 
 __all__ = [
-    "CONTACT_THERMODYNAMIC_TOLERANCE_EV", "ContactEndpoint", "ContactThermodynamicAssessment",
-    "ContactThermodynamicError", "LEGACY_MANUAL_CONTACT_OFFSET",
-    "assess_contact_thermodynamics", "contact_quasi_fermi_levels",
+    "CONTACT_ALIGNMENT_CLASSES",
+    "CONTACT_THERMODYNAMIC_TOLERANCE_EV",
+    "ContactAlignmentClass",
+    "ContactEndpoint",
+    "ContactThermodynamicAssessment",
+    "ContactThermodynamicError",
+    "EXTERNAL_METAL_CONTACT_ALIGNMENT",
+    "FITTED_MANUAL_CONTACT_ALIGNMENT",
+    "LEGACY_MANUAL_CONTACT_OFFSET",
+    "PARAMETER_FREE_CONTACT_ALIGNMENT",
+    "assess_contact_thermodynamics",
+    "certify_parameter_free_contact_equilibrium",
+    "classify_contact_alignment_mode",
+    "contact_quasi_fermi_levels",
     "require_contact_thermodynamic_certificate",
 ]
 
 CONTACT_THERMODYNAMIC_TOLERANCE_EV = 5.0e-3
 LEGACY_MANUAL_CONTACT_OFFSET = "legacy_manual_v_bi_contact_offset"
+PARAMETER_FREE_CONTACT_ALIGNMENT: Final = "parameter_free_work_function"
+EXTERNAL_METAL_CONTACT_ALIGNMENT: Final = "external_metal_work_function"
+FITTED_MANUAL_CONTACT_ALIGNMENT: Final = "fitted_manual_potential"
+CONTACT_ALIGNMENT_CLASSES = (
+    PARAMETER_FREE_CONTACT_ALIGNMENT,
+    EXTERNAL_METAL_CONTACT_ALIGNMENT,
+    FITTED_MANUAL_CONTACT_ALIGNMENT,
+)
 AssessmentStatus = Literal["certified", "inconsistent", "compatible_unverified", "not_assessable"]
+ContactAlignmentClass = Literal[
+    "parameter_free_work_function",
+    "external_metal_work_function",
+    "fitted_manual_potential",
+]
+
+
+def classify_contact_alignment_mode(built_in_potential_mode: str) -> ContactAlignmentClass:
+    """Separate parameter-free semiconductor work-function alignment from fitted/external modes."""
+    if built_in_potential_mode == SEMICONDUCTOR_WORK_FUNCTION:
+        return PARAMETER_FREE_CONTACT_ALIGNMENT
+    if built_in_potential_mode == METAL_WORK_FUNCTION:
+        return EXTERNAL_METAL_CONTACT_ALIGNMENT
+    if built_in_potential_mode == LEGACY_MANUAL:
+        return FITTED_MANUAL_CONTACT_ALIGNMENT
+    raise ValueError(f"unknown built-in-potential mode {built_in_potential_mode!r}")
 
 
 class ContactThermodynamicError(ValueError):
@@ -91,6 +130,14 @@ class ContactThermodynamicAssessment:
     @property
     def certified(self) -> bool:
         return self.status == "certified"
+
+    @property
+    def alignment_class(self) -> ContactAlignmentClass:
+        return classify_contact_alignment_mode(self.built_in_potential_mode)
+
+    @property
+    def is_parameter_free(self) -> bool:
+        return self.built_in_potential_mode == SEMICONDUCTOR_WORK_FUNCTION
 
 
 def contact_quasi_fermi_levels(
@@ -273,3 +320,22 @@ def require_contact_thermodynamic_certificate(
             f"{assessment.message}{label}"
         )
     return assessment
+
+
+def certify_parameter_free_contact_equilibrium(
+    assessment: ContactThermodynamicAssessment,
+) -> ContactThermodynamicAssessment:
+    """Require both the 5.0 meV thermodynamic certificate and parameter-free mode.
+
+    Refuses fitted ``legacy_manual`` or externally imposed ``metal_work_function``
+    contact modes even when tuned within 5.0 meV, ensuring parameter-free physical
+    contact equilibrium provenance is never conflated with fitted offsets.
+    """
+    certified = require_contact_thermodynamic_certificate(assessment)
+    if not certified.is_parameter_free:
+        raise ContactThermodynamicError(
+            "parameter-free contact equilibrium requires built_in_potential_mode="
+            f"{SEMICONDUCTOR_WORK_FUNCTION!r}, got {certified.built_in_potential_mode!r} "
+            f"({certified.alignment_class})"
+        )
+    return certified
