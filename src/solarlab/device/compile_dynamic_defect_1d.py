@@ -795,10 +795,15 @@ def compile_dynamic_defect_device_1d(
             trap_data = LegacyBulkTrapInput.model_validate(
                 json.loads(layer.bulk_trap_distribution_json.decode())
             ).resolved_data(dict(layer.parameters)["Eg"])
-            layer_species.setdefault(index, []).append(
-                _species_from_legacy_bulk_trap(layer.id, trap_data)
-            )
-            cleared_legacy_traps.add(layer.id)
+            sp_legacy = _species_from_legacy_bulk_trap(layer.id, trap_data)
+            if dynamic_bulk_defects and sp_legacy.charge_transition == "neutral":
+                refusals.append(
+                    f"layers.{layer.id}.bulk_trap_distribution: "
+                    "neutral charge_transition is refused for dynamic bulk trap storage DOFs"
+                )
+            else:
+                layer_species.setdefault(index, []).append(sp_legacy)
+                cleared_legacy_traps.add(layer.id)
         if layer.defects and layer.defect_model != "explicit_quasi_steady":
             refusals.append(
                 f"layers.{layer.id}.bulk_defects: an explicit inventory requires explicit_quasi_steady"
@@ -820,6 +825,12 @@ def compile_dynamic_defect_device_1d(
                 continue
 
             item = item_obj.to_mapping()
+            if dynamic_bulk_defects and item["charge_transition"] == "neutral":
+                refusals.append(
+                    f"layers.{layer.id}.bulk_defects.{item['id']}: "
+                    "neutral charge_transition is refused for dynamic bulk trap storage DOFs"
+                )
+                continue
             neutral_simple = (
                 not dynamic_bulk_defects
                 and item["charge_transition"] == "neutral"
@@ -848,6 +859,12 @@ def compile_dynamic_defect_device_1d(
     ]:
         raise CapabilityError(
             "unsupported_dynamic_defect_1d: equilibrium_referenced requires interface_charge_rebaseline_acknowledged=True"
+        )
+    if dynamic_interface_defects and closure != "equilibrium_referenced":
+        raise CapabilityError(
+            "unsupported_dynamic_defect_1d: dynamic_interface_defects=True requires "
+            "interface_charge_closure='equilibrium_referenced' and "
+            "interface_charge_rebaseline_acknowledged=True"
         )
     if dynamic_interface_defects and interface_topology == "deduplicated":
         raise CapabilityError(
@@ -1382,14 +1399,12 @@ def compile_dynamic_defect_device_1d(
                 continue
             f_eq = eq_occ_by_iface[tspec.interface_index]
             trap_nt = float(defect["total_density_m2"])
-            wl = wr = 0.0
-            if closure == "equilibrium_referenced":
-                wl, wr = sheet_charge_row_weights(
-                    tspec.trace_electrostatics.eps_r_left,
-                    tspec.trace_electrostatics.left_distance_m,
-                    tspec.trace_electrostatics.eps_r_right,
-                    tspec.trace_electrostatics.right_distance_m,
-                )
+            wl, wr = sheet_charge_row_weights(
+                tspec.trace_electrostatics.eps_r_left,
+                tspec.trace_electrostatics.left_distance_m,
+                tspec.trace_electrostatics.eps_r_right,
+                tspec.trace_electrostatics.right_distance_m,
+            )
             trap_spec = DynamicInterfaceTrapSpec(
                 interface_id=str(entry["id"]),
                 left_node=tspec.left_node,
@@ -1403,7 +1418,7 @@ def compile_dynamic_defect_device_1d(
                 n1_right_m3=float(tspec.physics.n1_right_m3),
                 p1_right_m3=float(tspec.physics.p1_right_m3),
                 equilibrium_occupancy=f_eq,
-                equilibrium_referenced_charge=(closure == "equilibrium_referenced"),
+                equilibrium_referenced_charge=True,
             )
             interface_traps.append(
                 DynamicInterfaceTrapBinding1D(

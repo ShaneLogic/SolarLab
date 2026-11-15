@@ -758,6 +758,10 @@ def solve_interface_defect_transient(
         raise DynamicDefectTransientCapabilityError(
             "solve_interface_defect_transient requires equilibrium_referenced interface charge"
         )
+    if not bool(settings.get("interface_charge_rebaseline_acknowledged", False)):
+        raise DynamicDefectTransientCapabilityError(
+            "solve_interface_defect_transient requires interface_charge_rebaseline_acknowledged=True"
+        )
 
     try:
         compiled = compile_dynamic_defect_device_1d(
@@ -809,6 +813,15 @@ def solve_bulk_defect_ion_transient(
         raise DynamicDefectTransientCapabilityError(
             "solve_bulk_defect_ion_transient excludes interface defects"
         )
+    for ly in prepared.layers:
+        if ly.role == "substrate":
+            continue
+        for raw_bd in ly.defects:
+            bd_map = raw_bd.to_mapping()
+            if str(bd_map.get("charge_transition", "")) == "neutral":
+                raise DynamicDefectTransientCapabilityError(
+                    f"layers.{ly.id}.{bd_map['id']}: charge-coupled bulk-ion transient rejects neutral transitions"
+                )
     ion_layer = _single_ion_layer(prepared)
     try:
         compiled = compile_dynamic_defect_device_1d(
@@ -852,6 +865,15 @@ def solve_interface_defect_ion_transient(
     if _require_uncalibrated_interface_defects(prepared) < 1:
         raise DynamicDefectTransientCapabilityError(
             "solve_interface_defect_ion_transient requires at least one microscopic interface defect"
+        )
+    settings = prepared.to_mapping()["settings"]
+    if str(settings.get("interface_charge_closure", "off")) != "equilibrium_referenced":
+        raise DynamicDefectTransientCapabilityError(
+            "solve_interface_defect_ion_transient requires equilibrium_referenced interface charge"
+        )
+    if not bool(settings.get("interface_charge_rebaseline_acknowledged", False)):
+        raise DynamicDefectTransientCapabilityError(
+            "solve_interface_defect_ion_transient requires interface_charge_rebaseline_acknowledged=True"
         )
     ion_layer = _single_ion_layer(prepared)
     try:

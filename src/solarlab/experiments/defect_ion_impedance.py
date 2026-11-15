@@ -90,7 +90,15 @@ class DefectIonImpedanceOptions:
 
 @dataclass(frozen=True)
 class DefectIonImpedanceResult:
-    """Coupled and species-frozen small-signal spectra about one DC working state."""
+    """Coupled and species-frozen small-signal spectra about one DC working state.
+
+    ``maximum_maxwell_spread_A_m2_V`` summarizes total-current continuity across
+    the physically charge-conserving PDE sweeps (``coupled`` and ``frozen_ions``).
+    ``frozen_traps`` and ``frozen_ions_and_traps`` clamp trap occupancy
+    perturbations ``df = 0`` while retaining linearized carrier capture
+    perturbations ``dC_n != dC_p`` as ``omega -> inf`` asymptotic reference
+    closures rather than finite-frequency Maxwell-conserving PDEs.
+    """
 
     capability: DefectIonCapability
     device: CompiledDynamicDefectDevice1D
@@ -270,8 +278,6 @@ def solve_defect_ion_impedance(
         max(
             np.max(coupled.maxwell_spread_A_m2_V),
             np.max(frozen_ions.maxwell_spread_A_m2_V),
-            np.max(frozen_traps.maxwell_spread_A_m2_V),
-            np.max(frozen_both.maxwell_spread_A_m2_V),
         )
     )
     max_inv = 0.0

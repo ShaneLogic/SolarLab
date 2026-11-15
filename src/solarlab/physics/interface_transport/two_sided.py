@@ -231,6 +231,8 @@ class TwoSidedInterfaceQSSResult:
     normalized_residual: float
     evaluations: int
     converged: bool
+    bulk_flux_jacobian_qf: RealArray | None = None
+    bulk_flux_common_qf: RealArray | None = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +260,10 @@ class ChargedTwoSidedInterfaceQSSResult:
     normalized_carrier_residual: float
     evaluations: int
     converged: bool
+    bulk_flux_jacobian_qf: RealArray | None = None
+    bulk_flux_common_qf: RealArray | None = None
+    sheet_charge_jacobian_qf: RealArray | None = None
+    sheet_charge_common_qf: RealArray | None = None
 
 
 def _two_prod(a: float, b: float) -> tuple[float, float]:
@@ -295,6 +301,48 @@ def _safe_scaled_density(bulk_density: float, shift: float) -> float:
     return math.exp(log_target)
 
 
+def _stabilize_bulk_flux_sensitivity(
+    jac_raw: RealArray,
+    *,
+    d_bulk_u: RealArray,
+    j_u: RealArray,
+    d_cap_log: RealArray,
+    d_cap_total: RealArray,
+    d_cross_total: RealArray,
+) -> RealArray:
+    """Eliminate stiff-reservoir IFT cancellation while preserving exact Kirchhoff sum.
+
+    At a converged trace state ``bulk_L - cross - cap_L == 0`` and
+    ``bulk_R + cross - cap_R == 0``, so ``bulk_L + bulk_R == cap_L + cap_R``
+    identically. Evaluating ``d_bulk_u @ du`` directly on a heavily doped side
+    amplifies float64 ``du`` rounding by ``|d_bulk_u| ~ 1e27``. Selecting the
+    series bottleneck among ``(left_sg, cross_te, right_sg)`` and recovering the
+    stiff side from exact conservation eliminates that amplification symmetrically.
+    """
+    out = np.array(jac_raw, dtype=np.float64, copy=True)
+    for c_idx, row_l, row_r in ((0, _N_LEFT, _N_RIGHT), (1, _P_LEFT, _P_RIGHT)):
+        g_l = abs(float(d_bulk_u[row_l, row_l]))
+        g_r = abs(float(d_bulk_u[row_r, row_r]))
+        g_c_l = abs(float((d_bulk_u[row_l, row_l] - j_u[row_l, row_l]) - d_cap_log[row_l, row_l]))
+        g_c_r = abs(float((j_u[row_r, row_r] - d_bulk_u[row_r, row_r]) + d_cap_log[row_r, row_r]))
+        g_c = max(g_c_l, g_c_r)
+        cap_sum = d_cap_total[row_l] + d_cap_total[row_r]
+        if g_c < 0.5 * min(g_l, g_r):
+            out[row_l] = d_cross_total[c_idx] + d_cap_total[row_l]
+            out[row_r] = -d_cross_total[c_idx] + d_cap_total[row_r]
+        elif g_l < 0.5 * g_r:
+            out[row_l] = jac_raw[row_l]
+            out[row_r] = cap_sum - jac_raw[row_l]
+        elif g_r < 0.5 * g_l:
+            out[row_r] = jac_raw[row_r]
+            out[row_l] = cap_sum - jac_raw[row_r]
+        else:
+            err = 0.5 * ((jac_raw[row_l] + jac_raw[row_r]) - cap_sum)
+            out[row_l] = jac_raw[row_l] - err
+            out[row_r] = jac_raw[row_r] - err
+    return out
+
+
 def _trace_and_bulk_log_maps(thermal_voltage_V: float) -> tuple[RealArray, RealArray]:
     """Chain-rule maps ``∂log(state)/∂phi_t`` (4x2) and ``∂log(state)/∂bulk`` (4x6) at fixed ``u_delta``."""
     inv_vt = 1.0 / float(thermal_voltage_V)
@@ -317,6 +365,60 @@ def _trace_and_bulk_log_maps(thermal_voltage_V: float) -> tuple[RealArray, RealA
         dtype=np.float64,
     )
     return m_trace, m_bulk
+
+
+_M_BULK_QF: RealArray = np.array(
+    [
+        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ],
+    dtype=np.float64,
+)
+
+_QF_COMMON_MAP: RealArray = np.array(
+    [
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+    ],
+    dtype=np.float64,
+)
+
+_M_BULK_COMMON: RealArray = _M_BULK_QF @ _QF_COMMON_MAP
+
+
+def _qf_transform_matrix(thermal_voltage_V: float) -> RealArray:
+    """Map ``(dphi_L, dphi_R, du_nL, du_pL, du_nR, du_pR)`` to bulk coordinates."""
+    inv_vt = 1.0 / float(thermal_voltage_V)
+    return np.array(
+        [
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+            [inv_vt, 0.0, 1.0, 0.0, 0.0, 0.0],
+            [-inv_vt, 0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, inv_vt, 0.0, 0.0, 1.0, 0.0],
+            [0.0, -inv_vt, 0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _carrier_j_coords_qf(
+    j_coords_u: RealArray,
+    d_bulk_coords_u: RealArray,
+    thermal_voltage_V: float,
+) -> tuple[RealArray, RealArray]:
+    """Return ``(d_bulk_coords_qf, j_coords_qf)`` without ``m_bulk`` potential cancellation."""
+    t_qf = _qf_transform_matrix(thermal_voltage_V)
+    d_bulk_qf = d_bulk_coords_u @ t_qf
+    j_qf = np.array(d_bulk_qf, dtype=np.float64, copy=True)
+    j_qf[:, 2:] += (j_coords_u - d_bulk_coords_u)[:, 2:]
+    return d_bulk_qf, j_qf
 
 
 def _electrostatic_seed_drops(
@@ -873,29 +975,87 @@ def solve_two_sided_interface_qss(
     d_trace_d_bulk[1, 0] = w_l
     d_trace_d_bulk[1, 1] = w_r
 
-    j_bulk_total_u = j_coords_u + j_trace_u @ d_trace_d_bulk
-    ift_row = np.maximum(np.max(np.abs(j_u), axis=1), float(np.finfo(np.float64).tiny))
-    du_d_bulk = _equilibrated_solve(
-        j_u / ift_row[:, np.newaxis],
-        -(j_bulk_total_u / ift_row[:, np.newaxis]),
+    d_bulk_qf, j_coords_qf = _carrier_j_coords_qf(
+        j_coords_u, d_bulk_coords_u, physics.thermal_voltage_V
     )
-    bulk_flux_jac = d_bulk_coords_u + d_bulk_trace_u @ d_trace_d_bulk + d_bulk_u @ du_d_bulk
+    d_bulk_com = d_bulk_qf @ _QF_COMMON_MAP
+    j_bulk_total_u = j_coords_u + j_trace_u @ d_trace_d_bulk
+    j_qf_total_u = j_coords_qf + j_trace_u @ d_trace_d_bulk
+    j_com_total_u = j_qf_total_u @ _QF_COMMON_MAP
+    ift_row = np.maximum(np.max(np.abs(j_u), axis=1), float(np.finfo(np.float64).tiny))
+    du_all_qss = _equilibrated_solve(
+        j_u / ift_row[:, np.newaxis],
+        -np.column_stack((j_bulk_total_u, j_qf_total_u, j_com_total_u)) / ift_row[:, np.newaxis],
+    )
+    du_d_bulk = du_all_qss[:, :6]
+    du_qf = du_all_qss[:, 6:12]
+    du_com = du_all_qss[:, 12:14]
+    bulk_flux_jac_raw = d_bulk_coords_u + d_bulk_trace_u @ d_trace_d_bulk + d_bulk_u @ du_d_bulk
+    bulk_flux_qf_raw = d_bulk_qf + d_bulk_trace_u @ d_trace_d_bulk + d_bulk_u @ du_qf
+    bulk_flux_com_raw = d_bulk_com + d_bulk_u @ du_com
+    m_trace, m_bulk = _trace_and_bulk_log_maps(physics.thermal_voltage_V)
+    d_log_state_d_bulk = m_bulk + m_trace @ d_trace_d_bulk + du_d_bulk
+    d_log_state_qf = _M_BULK_QF + m_trace @ d_trace_d_bulk + du_qf
+    d_log_state_com = _M_BULK_COMMON + du_com
 
     if trap is None:
         occupancy: float | None = None
         occ_jac: RealArray = np.zeros(6, dtype=np.float64)
+        d_cap_log_qss: RealArray = np.zeros((_STATE_SIZE, _STATE_SIZE), dtype=np.float64)
+        d_cap_tot_qss: RealArray = np.zeros((_STATE_SIZE, 6), dtype=np.float64)
+        d_cap_tot_qf: RealArray = np.zeros((_STATE_SIZE, 6), dtype=np.float64)
+        d_cap_tot_com: RealArray = np.zeros((_STATE_SIZE, 2), dtype=np.float64)
     else:
-        m_trace, m_bulk = _trace_and_bulk_log_maps(physics.thermal_voltage_V)
-        d_log_state_d_bulk = m_bulk + m_trace @ d_trace_d_bulk + du_d_bulk
         occupancy = trap.occupancy
         df_dlog = trap.d_occupancy_d_densities_m3 * state
         occ_jac = df_dlog @ d_log_state_d_bulk
+        d_cap_log_qss = trap.d_capture_d_densities_m_s * state[np.newaxis, :]
+        d_cap_tot_qss = d_cap_log_qss @ d_log_state_d_bulk
+        d_cap_tot_qf = d_cap_log_qss @ d_log_state_qf
+        d_cap_tot_com = d_cap_log_qss @ d_log_state_com
+
+    d_rhs_qss = (
+        (d_bulk_coords_u - j_coords_u)
+        + (d_bulk_trace_u - j_trace_u) @ d_trace_d_bulk
+        + (d_bulk_u - j_u) @ du_d_bulk
+    )
+    d_rhs_qf = (
+        (d_bulk_qf - j_coords_qf)
+        + (d_bulk_trace_u - j_trace_u) @ d_trace_d_bulk
+        + (d_bulk_u - j_u) @ du_qf
+    )
+    d_rhs_com = (d_bulk_com - (j_coords_qf @ _QF_COMMON_MAP)) + (d_bulk_u - j_u) @ du_com
+    bulk_flux_jac = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_jac_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_u,
+        d_cap_log=d_cap_log_qss,
+        d_cap_total=d_cap_tot_qss,
+        d_cross_total=d_rhs_qss[:2] - d_cap_tot_qss[:2],
+    )
+    bulk_flux_jac_qf = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_qf_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_u,
+        d_cap_log=d_cap_log_qss,
+        d_cap_total=d_cap_tot_qf,
+        d_cross_total=d_rhs_qf[:2] - d_cap_tot_qf[:2],
+    )
+    bulk_flux_com_qf = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_com_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_u,
+        d_cap_log=d_cap_log_qss,
+        d_cap_total=d_cap_tot_com,
+        d_cross_total=d_rhs_com[:2] - d_cap_tot_com[:2],
+    )
 
     converged = bool(
         (sol.success or best_norm <= residual_tolerance)
         and best_norm <= residual_tolerance
         and np.all(np.isfinite(du_d_bulk))
         and np.all(np.isfinite(bulk_flux_jac))
+        and np.all(np.isfinite(bulk_flux_jac_qf))
     )
     if fail_on_residual and not converged:
         raise RuntimeError(
@@ -914,6 +1074,8 @@ def solve_two_sided_interface_qss(
         normalized_residual=best_norm,
         evaluations=eval_count,
         converged=converged,
+        bulk_flux_jacobian_qf=bulk_flux_jac_qf,
+        bulk_flux_common_qf=bulk_flux_com_qf,
     )
 
 
@@ -1206,22 +1368,89 @@ def solve_charged_two_sided_interface_qss(
     norm_elec = float(np.max(norm_vec[:2]))
     norm_carrier = float(np.max(norm_vec[2:]))
 
-    ift_row = np.maximum(np.max(np.abs(j_local_u), axis=1), float(np.finfo(np.float64).tiny))
-    sensitivity_u = _equilibrated_solve(
-        j_local_u / ift_row[:, np.newaxis],
-        -(j_bulk_u / ift_row[:, np.newaxis]),
+    d_sheet_d_log = trap.d_sheet_charge_d_densities_C_m * state
+    d_bulk_qf, j_carrier_qf = _carrier_j_coords_qf(
+        j_bulk_u[2:, :], d_bulk_coords_u, physics.thermal_voltage_V
     )
+    d_bulk_com = d_bulk_qf @ _QF_COMMON_MAP
+    j_bulk_qf: RealArray = np.zeros((6, 6), dtype=np.float64)
+    j_bulk_qf[1, 0] = -c_l
+    j_bulk_qf[1, 1] = -c_r
+    j_bulk_qf[1, 2:] = -d_sheet_d_log
+    j_bulk_qf[2:, :] = j_carrier_qf
+    j_bulk_com = j_bulk_qf @ _QF_COMMON_MAP
+
+    ift_row = np.maximum(np.max(np.abs(j_local_u), axis=1), float(np.finfo(np.float64).tiny))
+    sens_all = _equilibrated_solve(
+        j_local_u / ift_row[:, np.newaxis],
+        -np.column_stack((j_bulk_u, j_bulk_qf, j_bulk_com)) / ift_row[:, np.newaxis],
+    )
+    sensitivity_u = sens_all[:, :6]
+    sens_qf = sens_all[:, 6:12]
+    sens_com = sens_all[:, 12:14]
     d_phi_t_d_bulk = sensitivity_u[:2, :]
     d_u_d_bulk = sensitivity_u[2:, :]
-    bulk_flux_jac = (
+    d_phi_t_qf = sens_qf[:2, :]
+    d_u_qf = sens_qf[2:, :]
+    d_phi_t_com = sens_com[:2, :]
+    d_u_com = sens_com[2:, :]
+    bulk_flux_jac_raw = (
         d_bulk_coords_u
         + d_bulk_trace_u @ d_phi_t_d_bulk
         + d_bulk_u @ d_u_d_bulk
     )
+    bulk_flux_qf_raw = d_bulk_qf + d_bulk_trace_u @ d_phi_t_qf + d_bulk_u @ d_u_qf
+    bulk_flux_com_raw = d_bulk_com + d_bulk_trace_u @ d_phi_t_com + d_bulk_u @ d_u_com
     m_trace, m_bulk = _trace_and_bulk_log_maps(physics.thermal_voltage_V)
     d_log_state_d_bulk = m_bulk + m_trace @ d_phi_t_d_bulk + d_u_d_bulk
-    d_sheet_d_log = trap.d_sheet_charge_d_densities_C_m * state
+    d_log_state_qf = _M_BULK_QF + m_trace @ d_phi_t_qf + d_u_qf
+    d_log_state_com = _M_BULK_COMMON + m_trace @ d_phi_t_com + d_u_com
+    d_cap_log_ch = trap.d_capture_d_densities_m_s * state[np.newaxis, :]
+    d_cap_tot_ch = d_cap_log_ch @ d_log_state_d_bulk
+    d_cap_tot_qf = d_cap_log_ch @ d_log_state_qf
+    d_cap_tot_com = d_cap_log_ch @ d_log_state_com
+    d_rhs_ch = (
+        (d_bulk_coords_u - j_bulk_u[2:, :])
+        + (d_bulk_trace_u - j_local_u[2:, :2]) @ d_phi_t_d_bulk
+        + (d_bulk_u - j_local_u[2:, 2:]) @ d_u_d_bulk
+    )
+    d_rhs_qf = (
+        (d_bulk_qf - j_carrier_qf)
+        + (d_bulk_trace_u - j_local_u[2:, :2]) @ d_phi_t_qf
+        + (d_bulk_u - j_local_u[2:, 2:]) @ d_u_qf
+    )
+    d_rhs_com = (
+        (d_bulk_com - (j_carrier_qf @ _QF_COMMON_MAP))
+        + (d_bulk_trace_u - j_local_u[2:, :2]) @ d_phi_t_com
+        + (d_bulk_u - j_local_u[2:, 2:]) @ d_u_com
+    )
+    bulk_flux_jac = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_jac_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_local_u[2:, 2:],
+        d_cap_log=d_cap_log_ch,
+        d_cap_total=d_cap_tot_ch,
+        d_cross_total=d_rhs_ch[:2] - d_cap_tot_ch[:2],
+    )
+    bulk_flux_jac_qf = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_qf_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_local_u[2:, 2:],
+        d_cap_log=d_cap_log_ch,
+        d_cap_total=d_cap_tot_qf,
+        d_cross_total=d_rhs_qf[:2] - d_cap_tot_qf[:2],
+    )
+    bulk_flux_com_qf = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_com_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_local_u[2:, 2:],
+        d_cap_log=d_cap_log_ch,
+        d_cap_total=d_cap_tot_com,
+        d_cross_total=d_rhs_com[:2] - d_cap_tot_com[:2],
+    )
     sheet_jac_bulk = d_sheet_d_log @ d_log_state_d_bulk
+    sheet_jac_qf = d_sheet_d_log @ d_log_state_qf
+    sheet_com_qf = d_sheet_d_log @ d_log_state_com
     d_occ_d_log = trap.d_occupancy_d_densities_m3 * state
     occ_jac_bulk = d_occ_d_log @ d_log_state_d_bulk
 
@@ -1230,6 +1459,7 @@ def solve_charged_two_sided_interface_qss(
         and max(norm_elec, norm_carrier) <= residual_tolerance
         and np.all(np.isfinite(sensitivity_u))
         and np.all(np.isfinite(bulk_flux_jac))
+        and np.all(np.isfinite(bulk_flux_jac_qf))
         and np.all(np.isfinite(sheet_jac_bulk))
     )
     if fail_on_residual and not converged:
@@ -1254,6 +1484,10 @@ def solve_charged_two_sided_interface_qss(
         normalized_carrier_residual=norm_carrier,
         evaluations=eval_count,
         converged=converged,
+        bulk_flux_jacobian_qf=bulk_flux_jac_qf,
+        bulk_flux_common_qf=bulk_flux_com_qf,
+        sheet_charge_jacobian_qf=sheet_jac_qf,
+        sheet_charge_common_qf=sheet_com_qf,
     )
 
 
@@ -1287,6 +1521,10 @@ class FixedOccupancyTwoSidedResult:
     evaluations: int
     converged: bool
     one_minus_occupancy: float = 0.0
+    bulk_flux_jacobian_qf: RealArray | None = None
+    bulk_flux_common_qf: RealArray | None = None
+    trap_storage_rate_jacobian_qf: RealArray | None = None
+    trap_storage_rate_common_qf: RealArray | None = None
 
 
 def _fixed_occupancy_balance_terms(
@@ -1635,26 +1873,90 @@ def solve_fixed_occupancy_two_sided_interface(
     )
     d_trace_df = np.array([d_sigma_df / c_sum, d_sigma_df / c_sum], dtype=np.float64)
 
+    d_bulk_qf, j_coords_qf = _carrier_j_coords_qf(
+        j_coords_u, d_bulk_coords_u, physics.thermal_voltage_V
+    )
+    d_bulk_com = d_bulk_qf @ _QF_COMMON_MAP
     ift_row = np.maximum(np.max(np.abs(j_u), axis=1), float(np.finfo(np.float64).tiny))
     rhs_bulk = -(j_coords_u + j_trace_u @ d_trace_d_bulk)
     rhs_f = -(j_trace_u @ d_trace_df - d_cap_df)
+    rhs_qf = -(j_coords_qf + j_trace_u @ d_trace_d_bulk)
+    rhs_com = rhs_qf @ _QF_COMMON_MAP
     du_all = _equilibrated_solve(
         j_u / ift_row[:, np.newaxis],
-        np.column_stack((rhs_bulk, rhs_f)) / ift_row[:, np.newaxis],
+        np.column_stack((rhs_bulk, rhs_f, rhs_qf, rhs_com)) / ift_row[:, np.newaxis],
     )
     du_d_bulk = du_all[:, :6]
     du_df = du_all[:, 6]
+    du_qf = du_all[:, 7:13]
+    du_com = du_all[:, 13:15]
 
-    bulk_flux_jac = d_bulk_coords_u + d_bulk_trace_u @ d_trace_d_bulk + d_bulk_u @ du_d_bulk
-    bulk_flux_df = d_bulk_trace_u @ d_trace_df + d_bulk_u @ du_df
+    bulk_flux_jac_raw = d_bulk_coords_u + d_bulk_trace_u @ d_trace_d_bulk + d_bulk_u @ du_d_bulk
+    bulk_flux_df_raw = d_bulk_trace_u @ d_trace_df + d_bulk_u @ du_df
+    bulk_flux_qf_raw = d_bulk_qf + d_bulk_trace_u @ d_trace_d_bulk + d_bulk_u @ du_qf
+    bulk_flux_com_raw = d_bulk_com + d_bulk_u @ du_com
 
     m_trace, m_bulk = _trace_and_bulk_log_maps(physics.thermal_voltage_V)
     d_log_state_d_bulk = m_bulk + m_trace @ d_trace_d_bulk + du_d_bulk
     d_log_state_df = m_trace @ d_trace_df + du_df
+    d_log_state_qf = _M_BULK_QF + m_trace @ d_trace_d_bulk + du_qf
+    d_log_state_com = _M_BULK_COMMON + du_com
 
     vn = float(physics.surface_recombination_velocity_n_m_s)
     vp = float(physics.surface_recombination_velocity_p_m_s)
     n_l, p_l, n_r, p_r = (float(v) for v in state)
+    d_cap_log_fix = np.diag([vn * omf * n_l, vp * f * p_l, vn * omf * n_r, vp * f * p_r])
+    d_cap_tot_bulk = d_cap_log_fix @ d_log_state_d_bulk
+    d_cap_tot_qf = d_cap_log_fix @ d_log_state_qf
+    d_cap_tot_com = d_cap_log_fix @ d_log_state_com
+    d_rhs_fix_bulk = (
+        (d_bulk_coords_u - j_coords_u)
+        + (d_bulk_trace_u - j_trace_u) @ d_trace_d_bulk
+        + (d_bulk_u - j_u) @ du_d_bulk
+    )
+    d_rhs_fix_qf = (
+        (d_bulk_qf - j_coords_qf)
+        + (d_bulk_trace_u - j_trace_u) @ d_trace_d_bulk
+        + (d_bulk_u - j_u) @ du_qf
+    )
+    d_rhs_fix_com = (d_bulk_com - (j_coords_qf @ _QF_COMMON_MAP)) + (d_bulk_u - j_u) @ du_com
+    bulk_flux_jac = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_jac_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_u,
+        d_cap_log=d_cap_log_fix,
+        d_cap_total=d_cap_tot_bulk,
+        d_cross_total=d_rhs_fix_bulk[:2] - d_cap_tot_bulk[:2],
+    )
+    bulk_flux_jac_qf = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_qf_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_u,
+        d_cap_log=d_cap_log_fix,
+        d_cap_total=d_cap_tot_qf,
+        d_cross_total=d_rhs_fix_qf[:2] - d_cap_tot_qf[:2],
+    )
+    bulk_flux_com_qf = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_com_raw,
+        d_bulk_u=d_bulk_u,
+        j_u=j_u,
+        d_cap_log=d_cap_log_fix,
+        d_cap_total=d_cap_tot_com,
+        d_cross_total=d_rhs_fix_com[:2] - d_cap_tot_com[:2],
+    )
+    d_cap_df_log_part = d_cap_log_fix @ d_log_state_df
+    d_cap_tot_df = (d_cap_df_log_part + d_cap_df)[:, np.newaxis]
+    d_rhs_fix_df = ((d_bulk_trace_u - j_trace_u) @ d_trace_df + (d_bulk_u - j_u) @ du_df)[
+        :, np.newaxis
+    ]
+    bulk_flux_df = _stabilize_bulk_flux_sensitivity(
+        bulk_flux_df_raw[:, np.newaxis],
+        d_bulk_u=d_bulk_u,
+        j_u=j_u,
+        d_cap_log=d_cap_log_fix,
+        d_cap_total=d_cap_tot_df,
+        d_cross_total=d_rhs_fix_df[:2] - d_cap_df_log_part[:2, np.newaxis],
+    )[:, 0]
     filled = vn * (n_l + n_r) + vp * (physics.p1_left_m3 + physics.p1_right_m3)
     empty = vn * (physics.n1_left_m3 + physics.n1_right_m3) + vp * (p_l + p_r)
     denom = filled + empty
@@ -1667,12 +1969,15 @@ def solve_fixed_occupancy_two_sided_interface(
         dtype=np.float64,
     )
     sr_jac_bulk = d_sr_d_log @ d_log_state_d_bulk
+    sr_jac_qf = d_sr_d_log @ d_log_state_qf
+    sr_com_qf = d_sr_d_log @ d_log_state_com
     sr_df = float(-denom + d_sr_d_log @ d_log_state_df)
 
     converged = bool(
         (sol.success or best_norm <= residual_tolerance)
         and best_norm <= residual_tolerance
         and np.all(np.isfinite(bulk_flux_jac))
+        and np.all(np.isfinite(bulk_flux_jac_qf))
         and np.all(np.isfinite(bulk_flux_df))
         and np.all(np.isfinite(sr_jac_bulk))
         and math.isfinite(sr_df)
@@ -1703,4 +2008,8 @@ def solve_fixed_occupancy_two_sided_interface(
         evaluations=eval_count,
         converged=converged,
         one_minus_occupancy=float(omf),
+        bulk_flux_jacobian_qf=bulk_flux_jac_qf,
+        bulk_flux_common_qf=bulk_flux_com_qf,
+        trap_storage_rate_jacobian_qf=sr_jac_qf,
+        trap_storage_rate_common_qf=sr_com_qf,
     )

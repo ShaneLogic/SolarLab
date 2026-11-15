@@ -20,6 +20,7 @@ from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.assembly.dynamic_defects_1d import (
     AssembledDynamicDefect1DProblem,
     DynamicDefectSmallSignal1D,
+    DynamicDefectSteadyOptions,
     DynamicDefectStorage1D,
     dynamic_defect_system_1d,
     solve_dynamic_defect_steady_1d,
@@ -514,3 +515,122 @@ def test_compile_capability_refusals(defaults: DefaultCatalog) -> None:
     prep_mv = _resolve(mv_doc, defaults)
     with pytest.raises(CapabilityError, match="multivalent"):
         compile_dynamic_defect_device_1d(prep_mv, dynamic_bulk_defects=True)
+
+    # 4. Neutral bulk defect refused for dynamic storage DOFs, allowed as stationary QSS:
+    neutral_doc = _three_layer_doc(with_bulk=True, with_iface=False, with_ions=False)
+    neutral_doc["layers"][1]["bulk_defects"][0]["charge_transition"] = "neutral"
+    neutral_doc["layers"][1]["bulk_defects"][0]["neutral_reference"] = "all_occupancies"
+    prep_neutral = _resolve(neutral_doc, defaults)
+    with pytest.raises(CapabilityError, match="neutral"):
+        compile_dynamic_defect_device_1d(prep_neutral, dynamic_bulk_defects=True)
+    stat_neutral = compile_dynamic_defect_device_1d(prep_neutral, dynamic_bulk_defects=False)
+    assert stat_neutral.dynamic_bulk_traps is None
+    st_neutral = solve_dynamic_defect_steady_1d(stat_neutral, voltage_V=0.2, generation_scale=0.0)
+    assert st_neutral.converged
+
+    # 5. Uncharged interface defect (interface_charge_closure='off') refused for dynamic storage DOFs:
+    off_iface_doc = _three_layer_doc(with_bulk=False, with_iface=True, with_ions=False)
+    off_iface_doc["settings"]["interface_charge_closure"] = "off"
+    off_iface_doc["settings"]["interface_charge_rebaseline_acknowledged"] = False
+    prep_off_iface = _resolve(off_iface_doc, defaults)
+    with pytest.raises(CapabilityError, match="equilibrium_referenced"):
+        compile_dynamic_defect_device_1d(prep_off_iface, dynamic_interface_defects=True)
+    stat_off_iface = compile_dynamic_defect_device_1d(
+        prep_off_iface, dynamic_interface_defects=False
+    )
+    assert stat_off_iface.dynamic_interface_traps == ()
+
+
+def _reverse_to_nip_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    rev = copy.deepcopy(doc)
+    rev["id"] = f"nip_{doc['id']}"
+    rev["layers"] = list(reversed(rev["layers"]))
+    revs: list[dict[str, Any]] = []
+    for iface in reversed(rev["interfaces"]):
+        ni = copy.deepcopy(iface)
+        ni["left"], ni["right"] = iface["right"], iface["left"]
+        revs.append(ni)
+    rev["interfaces"] = revs
+    return rev
+
+
+@pytest.mark.parametrize(
+    ("with_bulk", "with_iface", "with_ions"),
+    [
+        (True, False, False),
+        (False, True, False),
+        (True, True, True),
+    ],
+)
+def test_dark_equilibrium_zero_volt_pin_and_nip_ac_passivity_and_fd_slope(
+    defaults: DefaultCatalog,
+    with_bulk: bool,
+    with_iface: bool,
+    with_ions: bool,
+) -> None:
+    """Verify dark 0 V passivity, 0 Hz FD slope, and Maxwell conservation on both p-i-n and n-i-p."""
+    freqs = np.array([0.0, 1.0e-2, 1.0, 1.0e3, 1.0e5])
+    dv = 1.0e-5
+    base_doc = _three_layer_doc(
+        with_bulk=with_bulk, with_iface=with_iface, with_ions=with_ions
+    )
+    y0_by_polarity: dict[str, float] = {}
+
+    for label, expected_pol, doc in (
+        ("pin", 1.0, base_doc),
+        ("nip", -1.0, _reverse_to_nip_doc(base_doc)),
+    ):
+        prep = _resolve(doc, defaults)
+        ion_kw: dict[str, Any] = (
+            {"ion_domain_layer": "abs", "ion_domain_endpoints": ("blocking", "blocking")}
+            if with_ions
+            else {}
+        )
+        dev = compile_dynamic_defect_device_1d(
+            prep,
+            intervals_per_layer=8,
+            dynamic_bulk_defects=with_bulk,
+            dynamic_interface_defects=with_iface,
+            **ion_kw,
+        )
+        assert dev.voltage_polarity == expected_pol
+        st0 = solve_dynamic_defect_steady_1d(
+            dev,
+            voltage_V=0.0,
+            generation_scale=0.0,
+            options=DynamicDefectSteadyOptions(residual_tolerance=1.0e-13),
+        )
+        ac = DynamicDefectSmallSignal1D(dev, st0.state)
+        sweep = ac.solve_sweep(freqs)
+
+        assert np.all(sweep.admittance_density_S_m2.real > 0.0)
+        assert sweep.admittance_density_S_m2[0].imag == pytest.approx(0.0, abs=1.0e-18)
+        assert float(np.max(sweep.maxwell_spread_A_m2_V[:2])) <= 1.0e-12
+        assert float(np.max(sweep.maxwell_spread_A_m2_V)) <= 1.0e-9
+
+        st_p = solve_dynamic_defect_steady_1d(
+            dev,
+            voltage_V=+dv,
+            generation_scale=0.0,
+            initial_u=dev.rebase_coordinates(st0.state.u, 0.0, +dv),
+            options=DynamicDefectSteadyOptions(residual_tolerance=1.0e-13),
+        )
+        st_m = solve_dynamic_defect_steady_1d(
+            dev,
+            voltage_V=-dv,
+            generation_scale=0.0,
+            initial_u=dev.rebase_coordinates(st0.state.u, 0.0, -dv),
+            options=DynamicDefectSteadyOptions(residual_tolerance=1.0e-13),
+        )
+        g_fd = (st_p.terminal_current_density_A_m2 - st_m.terminal_current_density_A_m2) / (
+            2.0 * dv
+        )
+        y0 = float(sweep.admittance_density_S_m2[0].real)
+        assert y0 == pytest.approx(g_fd, rel=1.0e-5)
+        y0_by_polarity[label] = y0
+
+    if not with_bulk or with_ions:
+        # Note: _three_layer_doc has symmetric layer thicknesses; when bulk trap is symmetric
+        # or interface-only, check mirror consistency on the interface-only case:
+        if not with_bulk and with_iface:
+            assert y0_by_polarity["pin"] == pytest.approx(y0_by_polarity["nip"], rel=1.0e-5)

@@ -142,7 +142,19 @@ def classify_dynamic_defect_capability(
             raise DynamicDefectImpedanceCapabilityError(
                 f"layers.{layer.id}: multivalent bulk defects do not expose dynamic single-level impedance modes"
             )
-        if layer.defects or layer.bulk_trap_distribution_json is not None:
+        if layer.bulk_trap_distribution_json is not None:
+            raw_legacy = json.loads(layer.bulk_trap_distribution_json.decode())
+            if str(raw_legacy.get("charge_transition", "")) == "neutral":
+                raise DynamicDefectImpedanceCapabilityError(
+                    f"layers.{layer.id}.bulk_trap_distribution: neutral bulk defects are refused for dynamic-defect impedance"
+                )
+            has_bulk = True
+        for raw_bd in layer.defects:
+            bd_map = raw_bd.to_mapping()
+            if str(bd_map.get("charge_transition", "")) == "neutral":
+                raise DynamicDefectImpedanceCapabilityError(
+                    f"layers.{layer.id}.{bd_map['id']}: neutral bulk defects are refused for dynamic-defect impedance"
+                )
             has_bulk = True
 
     has_interface = False
@@ -169,6 +181,17 @@ def classify_dynamic_defect_capability(
         ):
             raise DynamicDefectImpedanceCapabilityError(
                 f"interfaces.{entry['id']}: compatibility SRV disagrees with microscopic capture"
+            )
+
+    if has_interface:
+        settings = prepared.to_mapping()["settings"]
+        if str(settings.get("interface_charge_closure", "off")) != "equilibrium_referenced":
+            raise DynamicDefectImpedanceCapabilityError(
+                "dynamic interface-defect impedance requires interface_charge_closure='equilibrium_referenced'"
+            )
+        if not bool(settings.get("interface_charge_rebaseline_acknowledged", False)):
+            raise DynamicDefectImpedanceCapabilityError(
+                "dynamic interface-defect impedance requires interface_charge_rebaseline_acknowledged=True"
             )
 
     ion_layers = _active_ion_layers(prepared)

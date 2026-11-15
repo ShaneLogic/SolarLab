@@ -240,6 +240,19 @@ def _pin_doc(
     }
 
 
+def _reverse_to_nip(doc: dict[str, Any]) -> dict[str, Any]:
+    rev = copy.deepcopy(doc)
+    rev["id"] = f"nip_{doc['id']}"
+    rev["layers"] = list(reversed(rev["layers"]))
+    revs: list[dict[str, Any]] = []
+    for iface in reversed(rev["interfaces"]):
+        ni = copy.deepcopy(iface)
+        ni["left"], ni["right"] = iface["right"], iface["left"]
+        revs.append(ni)
+    rev["interfaces"] = revs
+    return rev
+
+
 def _two_layer_v1_transient_doc() -> dict[str, Any]:
     return {
         "schema_version": "solarlab.device-preparation.v1",
@@ -342,13 +355,27 @@ def test_capacitance_frequency_debye_analytics_masking_and_passivity(
             generation_scale=0.0,
         )
 
-    # End-to-end device C-f run:
+    # End-to-end device C-f run (both p-i-n and reversed n-i-p across bulk & interface traps):
     prep = _resolve(_pin_doc(with_bulk=True), defaults)
     dev_cf = run_defect_capacitance_frequency(
         prep, np.array([1.0, 100.0, 1.0e5]), intervals_per_layer=6
     )
     assert dev_cf.dark_equilibrium_passive is True
     assert np.all(dev_cf.capacitance_accepted)
+
+    for nip_doc in (
+        _reverse_to_nip(_pin_doc(with_bulk=True)),
+        _reverse_to_nip(_pin_doc(with_iface=True)),
+    ):
+        nip_cf = run_defect_capacitance_frequency(
+            _resolve(nip_doc, defaults),
+            np.array([1.0e-1, 10.0, 1.0e4]),
+            voltage_V=0.0,
+            generation_scale=0.0,
+            intervals_per_layer=6,
+        )
+        assert nip_cf.dark_equilibrium_passive is True
+        assert np.all(nip_cf.capacitance_accepted)
 
 
 def test_dynamic_defect_and_combined_ion_impedance_capabilities_and_execution(
@@ -391,6 +418,29 @@ def test_dynamic_defect_and_combined_ion_impedance_capabilities_and_execution(
     # Refusal: no defects:
     with pytest.raises(DynamicDefectImpedanceCapabilityError, match="requires an explicit"):
         classify_dynamic_defect_capability(_resolve(_pin_doc(), defaults))
+
+    # Refusal: neutral bulk defect has zero electrostatic coupling so cannot carry dynamic AC DOFs:
+    prep_neutral_bulk = _resolve(_pin_doc(with_bulk=True, bulk_transition="neutral"), defaults)
+    with pytest.raises(DynamicDefectImpedanceCapabilityError, match="neutral"):
+        classify_dynamic_defect_capability(prep_neutral_bulk)
+    with pytest.raises(DynamicDefectImpedanceCapabilityError, match="neutral"):
+        solve_bulk_defect_impedance(prep_neutral_bulk, [1.0, 100.0])
+
+    # Refusal: interface_charge_closure='off' refused across dynamic interface impedance & joint AC:
+    off_iface_doc = _pin_doc(with_iface=True)
+    off_iface_doc["settings"]["interface_charge_closure"] = "off"
+    off_iface_doc["settings"]["interface_charge_rebaseline_acknowledged"] = False
+    prep_off_iface = _resolve(off_iface_doc, defaults)
+    with pytest.raises(DynamicDefectImpedanceCapabilityError, match="equilibrium_referenced"):
+        classify_dynamic_defect_capability(prep_off_iface)
+    with pytest.raises(DynamicDefectImpedanceCapabilityError, match="equilibrium_referenced"):
+        solve_interface_defect_impedance(prep_off_iface, [1.0, 100.0])
+
+    off_joint_doc = _pin_doc(with_iface=True, with_ions=True)
+    off_joint_doc["settings"]["interface_charge_closure"] = "off"
+    off_joint_doc["settings"]["interface_charge_rebaseline_acknowledged"] = False
+    with pytest.raises(DefectIonImpedanceCapabilityError, match="equilibrium_referenced"):
+        solve_defect_ion_impedance(_resolve(off_joint_doc, defaults), [1.0, 100.0])
 
     # Refusal: solve_defect_ion_impedance on ion-free device:
     prep_bulk = _resolve(_pin_doc(with_bulk=True), defaults)
@@ -438,6 +488,39 @@ def test_dynamic_defect_and_combined_ion_impedance_capabilities_and_execution(
         == res_joint.frozen_ions_and_traps.working_state_digest
     )
     assert res_joint.maximum_ion_inventory_relative_per_V <= 1.0e-12
+    for sw in (res_joint.coupled, res_joint.frozen_ions):
+        assert np.all(sw.maxwell_spread_A_m2_V <= 1.0e-11 * np.abs(sw.admittance_density_S_m2))
+        assert np.all(sw.maxwell_spread_A_m2_V[:3] <= 1.0e-11)
+    assert res_joint.maximum_maxwell_spread_A_m2_V == max(
+        float(np.max(res_joint.coupled.maxwell_spread_A_m2_V)),
+        float(np.max(res_joint.frozen_ions.maxwell_spread_A_m2_V)),
+    )
+
+    # Dark 0 V reversed n-i-p impedance FD slope & Maxwell spread regression check:
+    nip_freqs = np.array([1.0e-2, 1.0, 1.0e3, 1.0e5])
+    res_nip_bulk = solve_bulk_defect_impedance(
+        _resolve(_reverse_to_nip(_pin_doc(with_bulk=True)), defaults),
+        nip_freqs,
+        voltage_V=0.0,
+        generation_scale=0.0,
+        options=DynamicDefectImpedanceOptions(intervals_per_layer=8, verify_zero_hz_fd=True),
+    )
+    assert res_nip_bulk.zero_hz_fd_relative_error is not None
+    assert res_nip_bulk.zero_hz_fd_relative_error <= 1.0e-5
+    assert np.all(res_nip_bulk.admittance_density_S_m2.real > 0.0)
+    assert float(np.max(res_nip_bulk.ac_sweep.maxwell_spread_A_m2_V)) <= 1.0e-9
+
+    res_nip_iface = solve_interface_defect_impedance(
+        _resolve(_reverse_to_nip(_pin_doc(with_iface=True)), defaults),
+        nip_freqs,
+        voltage_V=0.0,
+        generation_scale=0.0,
+        options=DynamicDefectImpedanceOptions(intervals_per_layer=8, verify_zero_hz_fd=True),
+    )
+    assert res_nip_iface.zero_hz_fd_relative_error is not None
+    assert res_nip_iface.zero_hz_fd_relative_error <= 1.0e-5
+    assert np.all(res_nip_iface.admittance_density_S_m2.real > 0.0)
+    assert float(np.max(res_nip_iface.ac_sweep.maxwell_spread_A_m2_V)) <= 1.0e-9
 
 
 def test_dynamic_defect_transients_and_narrow_gate_refusals(
@@ -484,13 +567,32 @@ def test_dynamic_defect_transients_and_narrow_gate_refusals(
     assert tr_v1.maximum_ion_inventory_relative_drift <= 1.0e-12
     assert tr_v1.interface_trap_occupancy.shape == (4, 1)
 
-    # D6-E1 bulk transient + neutral/Gaussian refusals:
+    # D6-E1 bulk transient + neutral/Gaussian refusals (both ion-free and ion-coupled):
     with pytest.raises(DynamicDefectTransientCapabilityError, match="neutral"):
         solve_bulk_defect_transient(
             _resolve(_pin_doc(with_bulk=True, bulk_transition="neutral"), defaults),
             times,
             volts,
         )
+    with pytest.raises(DynamicDefectTransientCapabilityError, match="neutral"):
+        solve_bulk_defect_ion_transient(
+            _resolve(
+                _pin_doc(with_bulk=True, bulk_transition="neutral", with_ions=True), defaults
+            ),
+            times,
+            volts,
+        )
+    off_tr_iface = _pin_doc(with_iface=True)
+    off_tr_iface["settings"]["interface_charge_closure"] = "off"
+    off_tr_iface["settings"]["interface_charge_rebaseline_acknowledged"] = False
+    with pytest.raises(DynamicDefectTransientCapabilityError, match="equilibrium_referenced"):
+        solve_interface_defect_transient(_resolve(off_tr_iface, defaults), times, volts)
+
+    off_tr_iface_ion = _pin_doc(with_iface=True, with_ions=True)
+    off_tr_iface_ion["settings"]["interface_charge_closure"] = "off"
+    off_tr_iface_ion["settings"]["interface_charge_rebaseline_acknowledged"] = False
+    with pytest.raises(DynamicDefectTransientCapabilityError, match="equilibrium_referenced"):
+        solve_interface_defect_ion_transient(_resolve(off_tr_iface_ion, defaults), times, volts)
     with pytest.raises(DynamicDefectTransientCapabilityError, match="single_level"):
         solve_bulk_defect_transient(
             _resolve(_pin_doc(with_bulk=True, bulk_kind="gaussian"), defaults),

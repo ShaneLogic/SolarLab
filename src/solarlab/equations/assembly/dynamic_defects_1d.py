@@ -100,16 +100,26 @@ from solarlab.physics.electrostatics import contact_displacement
 from solarlab.physics.interface_transport import (
     EquilibriumReferencedSheetCharge,
     TwoSidedBulkState,
+    cap_particle_flux_thermionic,
     solve_charged_two_sided_interface_qss,
     solve_fixed_occupancy_two_sided_interface,
     solve_two_sided_interface_qss,
 )
 from solarlab.physics.ions import DIFFUSION_ONLY_STERIC_V1, ion_face_flux, ion_face_flux_jacobian
+from solarlab.physics.recombination.interface import (
+    interface_srh_rate,
+    solve_plane_closure,
+)
 from solarlab.physics.transport.electrochemical_flux import (
     CarrierFaceFluxes,
     carrier_particle_fluxes,
 )
-from solarlab.solvers.linear import FrequencyOptions, FrequencySolution, solve_frequency_systems
+from solarlab.solvers.linear import (
+    FrequencyOptions,
+    FrequencySolution,
+    FrequencySolveError,
+    solve_frequency_systems,
+)
 from solarlab.solvers.nonlinear.problem import Matrix
 from solarlab.solvers.time.bdf import BDFStep, HistoryPoint, StorageProblem
 
@@ -205,7 +215,9 @@ def _populate_interfaces_with_dynamic_traps(
     model = device.interface_model
     if model is None and not dyn_device.dynamic_interface_traps:
         return True
-    if not dyn_device.dynamic_interface_traps:
+    if not dyn_device.dynamic_interface_traps and (
+        model is None or model.topology != "two_sided_trace"
+    ):
         return populate_interface_fields(device, elec_u, phi, n, p, fields)
 
     count = device.node_count
@@ -329,7 +341,8 @@ def _populate_interfaces_with_dynamic_traps(
                     )
                     fields[f"dyn_iface:{k}"] = fixed_res
                     bflux = fixed_res.bulk_flux_m2_s
-                    j_bulk = fixed_res.bulk_flux_jacobian_bulk
+                    j_bulk_qf = fixed_res.bulk_flux_jacobian_qf
+                    assert j_bulk_qf is not None
                     if itrap.has_sheet_charge:
                         sigma = fixed_res.incremental_sheet_charge_C_m2
                         g_port_val[l_node - 1] += itrap.weight_left * sigma
@@ -342,17 +355,18 @@ def _populate_interfaces_with_dynamic_traps(
                         tspec.charge,
                     )
                     bflux = charged.bulk_flux_m2_s
-                    j_bulk = charged.bulk_flux_jacobian_bulk
+                    j_bulk_qf = charged.bulk_flux_jacobian_qf
                     sigma = charged.incremental_sheet_charge_C_m2
-                    j_sigma = charged.sheet_charge_jacobian_bulk
+                    j_sigma_qf = charged.sheet_charge_jacobian_qf
+                    assert j_bulk_qf is not None and j_sigma_qf is not None
                     g_port_val[l_node - 1] += tspec.weight_left * sigma
                     g_port_val[r_node - 1] += tspec.weight_right * sigma
-                    s_phi_l = float(j_sigma[0] + (j_sigma[2] - j_sigma[3]) / thermal)
-                    s_phi_r = float(j_sigma[1] + (j_sigma[4] - j_sigma[5]) / thermal)
-                    s_zn_l = float(j_sigma[2])
-                    s_zn_r = float(j_sigma[4])
-                    s_zp_l = float(-j_sigma[3])
-                    s_zp_r = float(-j_sigma[5])
+                    s_phi_l = float(j_sigma_qf[0])
+                    s_phi_r = float(j_sigma_qf[1])
+                    s_zn_l = float(j_sigma_qf[2])
+                    s_zn_r = float(j_sigma_qf[4])
+                    s_zp_l = float(-j_sigma_qf[3])
+                    s_zp_r = float(-j_sigma_qf[5])
                     wl, wr = tspec.weight_left, tspec.weight_right
                     w_sum = wl + wr
                     g_left_phi[f] += wr * s_phi_l
@@ -374,14 +388,15 @@ def _populate_interfaces_with_dynamic_traps(
                         bulk,
                     )
                     bflux = uncharged.bulk_flux_m2_s
-                    j_bulk = uncharged.bulk_flux_jacobian_bulk
+                    j_bulk_qf = uncharged.bulk_flux_jacobian_qf
+                    assert j_bulk_qf is not None
 
                 e_flux[f] = float(bflux[0])
                 h_flux[f] = float(bflux[1])
-                e_ld[f] = float(j_bulk[0, 2]) / float(n[l_node])
-                e_rd[f] = float(j_bulk[0, 4]) / float(n[r_node])
-                h_ld[f] = float(j_bulk[1, 3]) / float(p[l_node])
-                h_rd[f] = float(j_bulk[1, 5]) / float(p[r_node])
+                e_ld[f] = float(j_bulk_qf[0, 2]) / float(n[l_node])
+                e_rd[f] = float(j_bulk_qf[0, 4]) / float(n[r_node])
+                h_ld[f] = float(j_bulk_qf[1, 3]) / float(p[l_node])
+                h_rd[f] = float(j_bulk_qf[1, 5]) / float(p[r_node])
                 e_port_val[r_node - 1] -= float(bflux[0] + bflux[2])
                 h_port_val[r_node - 1] -= float(bflux[1] + bflux[3])
 
@@ -389,25 +404,28 @@ def _populate_interfaces_with_dynamic_traps(
                     (0, 2, e_left_phi, e_right_phi, e_port_phi, e_left_zn, e_right_zn, e_port_zn, e_left_zp, e_right_zp, e_port_zp),
                     (1, 3, h_left_phi, h_right_phi, h_port_phi, h_left_zn, h_right_zn, h_port_zn, h_left_zp, h_right_zp, h_port_zp),
                 ):
-                    gl_phi = float(j_bulk[row_l, 0] + (j_bulk[row_l, 2] - j_bulk[row_l, 3]) / thermal)
-                    gr_phi = float(j_bulk[row_l, 1] + (j_bulk[row_l, 4] - j_bulk[row_l, 5]) / thermal)
-                    hl_phi = float(j_bulk[row_r, 0] + (j_bulk[row_r, 2] - j_bulk[row_r, 3]) / thermal)
-                    hr_phi = float(j_bulk[row_r, 1] + (j_bulk[row_r, 4] - j_bulk[row_r, 5]) / thermal)
-                    _scatter_two_sided_tangent(f, gl_phi, gr_phi, hl_phi, hr_phi, fl_phi, fr_phi, pd_phi)
                     _scatter_two_sided_tangent(
                         f,
-                        float(j_bulk[row_l, 2]),
-                        float(j_bulk[row_l, 4]),
-                        float(j_bulk[row_r, 2]),
-                        float(j_bulk[row_r, 4]),
+                        float(j_bulk_qf[row_l, 0]),
+                        float(j_bulk_qf[row_l, 1]),
+                        float(j_bulk_qf[row_r, 0]),
+                        float(j_bulk_qf[row_r, 1]),
+                        fl_phi, fr_phi, pd_phi,
+                    )
+                    _scatter_two_sided_tangent(
+                        f,
+                        float(j_bulk_qf[row_l, 2]),
+                        float(j_bulk_qf[row_l, 4]),
+                        float(j_bulk_qf[row_r, 2]),
+                        float(j_bulk_qf[row_r, 4]),
                         fl_zn, fr_zn, pd_zn,
                     )
                     _scatter_two_sided_tangent(
                         f,
-                        float(-j_bulk[row_l, 3]),
-                        float(-j_bulk[row_l, 5]),
-                        float(-j_bulk[row_r, 3]),
-                        float(-j_bulk[row_r, 5]),
+                        float(-j_bulk_qf[row_l, 3]),
+                        float(-j_bulk_qf[row_l, 5]),
+                        float(-j_bulk_qf[row_r, 3]),
+                        float(-j_bulk_qf[row_r, 5]),
                         fl_zp, fr_zp, pd_zp,
                     )
     except (RuntimeError, FloatingPointError, ValueError):
@@ -928,20 +946,20 @@ class DynamicInterfaceTrapRateTerm:
         if not derivatives:
             return {self.binding.block: FaceValue(flux)}
 
-        thermal = self.device.thermal_voltage_V
-        j_b = res.trap_storage_rate_jacobian_bulk
+        j_qf = res.trap_storage_rate_jacobian_qf
+        assert j_qf is not None
         sr_df = float(res.trap_storage_rate_derivative_occupancy)
         f_occ = float(res.occupancy)
         df_du = f_occ * float(res.one_minus_occupancy)
 
         # Face divergence scatters -flux to node 0 (left) and +flux to node 1 (right, constraint-dropped).
         # Thus -left_tangent lands in Row 0 vs left_node columns, and -right_tangent lands in Row 0 vs right_node columns!
-        d_phi_l = float(j_b[0] + (j_b[2] - j_b[3]) / thermal)
-        d_phi_r = float(j_b[1] + (j_b[4] - j_b[5]) / thermal)
-        d_zn_l = float(j_b[2])
-        d_zn_r = float(j_b[4])
-        d_zp_l = float(-j_b[3])
-        d_zp_r = float(-j_b[5])
+        d_phi_l = float(j_qf[0])
+        d_phi_r = float(j_qf[1])
+        d_zn_l = float(j_qf[2])
+        d_zn_r = float(j_qf[4])
+        d_zp_l = float(-j_qf[3])
+        d_zp_r = float(-j_qf[5])
         d_u_l = sr_df * df_du
 
         left: dict[str, Contribution] = {
@@ -1927,9 +1945,8 @@ def _damped_newton_solve(
         f_scaled = row_scale * F
         res_norm = float(np.max(np.abs(f_scaled)))
         if res_norm <= options.residual_tolerance and (
-            iteration == 1
-            or step_norm <= options.step_tolerance
-            or res_norm <= 1.0e-2 * options.residual_tolerance
+            step_norm <= options.step_tolerance
+            or res_norm <= 1.0e-4 * options.residual_tolerance
         ):
             return u, True, iteration - 1, res_norm, (0.0 if iteration == 1 else step_norm)
 
@@ -2264,7 +2281,13 @@ class DynamicDefectACSweepResult:
 
 @dataclass(frozen=True)
 class DynamicDefectSmallSignal1D:
-    """Exact small-signal AC linearization ``(J + i * omega * K) x = b`` about steady state."""
+    """Exact small-signal AC linearization ``(J + i * omega * K) x = b`` about steady state.
+
+    Uses the moving-reference boundary coordinate lift ``MOVING_LIFT`` so that
+    prescribed contact perturbations vanish in the linear solve and heavily
+    doped majority transport layers never suffer sparse Scharfetter-Gummel
+    diagonal cancellation on either ``p-i-n`` or ``n-i-p`` polarity.
+    """
 
     device: CompiledDynamicDefectDevice1D
     operating_state: DynamicDefectState1D
@@ -2272,6 +2295,8 @@ class DynamicDefectSmallSignal1D:
     problem: AssembledDynamicDefect1DProblem = field(init=False, repr=False)
     jacobian: csc_matrix = field(init=False, repr=False)
     storage_jacobian: csc_matrix = field(init=False, repr=False)
+    reference_direction_per_V: Vector = field(init=False, repr=False)
+    coordinate_lift_per_V: Vector = field(init=False, repr=False)
     working_state_digest: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -2288,11 +2313,407 @@ class DynamicDefectSmallSignal1D:
         object.__setattr__(self, "problem", prob)
         object.__setattr__(self, "jacobian", prob.jacobian(u0))
         object.__setattr__(self, "storage_jacobian", prob.storage_jacobian(u0))
+
+        comp = self.device.electronic_component
+        count = self.device.node_count
+        vt = self.device.thermal_voltage_V
+        before, after = comp.carrier_reference_energies(0.0), comp.carrier_reference_energies(1.0)
+        direction: Vector = np.zeros(self.device.state_size, dtype=np.float64)
+        for offset, zero, one in ((count, before[0], after[0]), (2 * count, before[1], after[1])):
+            direction[offset : offset + count] = -(one - zero) / vt
+        direction.setflags(write=False)
+        object.__setattr__(self, "reference_direction_per_V", direction)
+
+        lift: Vector = np.zeros(self.device.state_size, dtype=np.float64)
+        lift[count - 1] = -comp.voltage_polarity
+        for offset in (count, 2 * count):
+            for node in (0, count - 1):
+                lift[offset + node] = -lift[node] / vt + direction[offset + node]
+        lift.setflags(write=False)
+        object.__setattr__(self, "coordinate_lift_per_V", lift)
+
         object.__setattr__(
             self,
             "working_state_digest",
             sha256(np.ascontiguousarray(u0, dtype=np.float64).tobytes()).hexdigest(),
         )
+
+    def _base_sg_carrier_particles(
+        self, moving: ArrayLike, reference_drive: complex = 0.0
+    ) -> tuple[ComplexVector, ComplexVector, CarrierFaceFluxes]:
+        """Cancellation-free linearized SG particle fluxes across all faces."""
+        comp = self.device.electronic_component
+        N = self.device.node_count
+        vt = self.device.thermal_voltage_V
+        u0 = self.operating_state.u[: 3 * N]
+        phi0 = self.operating_state.electronic_state.potential_V
+        n0 = self.operating_state.electronic_state.electron_density_m3
+        p0 = self.operating_state.electronic_state.hole_density_m3
+
+        e_diff = comp.electron_diffusivity_faces_m2_s
+        h_diff = comp.hole_diffusivity_faces_m2_s
+        transport = None if comp.field_transport is None else comp.field_transport.evaluate(phi0)
+        if transport is not None:
+            e_diff = transport.electron_diffusivity_m2_s
+            h_diff = transport.hole_diffusivity_m2_s
+
+        base_fluxes = carrier_particle_fluxes(
+            comp.nodes_m,
+            phi0,
+            n0,
+            p0,
+            e_diff,
+            h_diff,
+            vt,
+            comp.parameters.band_structure,
+            electron_electrochemical_step=np.diff(u0[N : 2 * N]),
+            hole_electrochemical_step=-np.diff(u0[2 * N : 3 * N]),
+        )
+        before, after = comp.carrier_reference_energies(0.0), comp.carrier_reference_energies(1.0)
+        values_x = np.asarray(moving, dtype=np.complex128)
+        perts: list[ComplexVector] = []
+        for offset, dens, flx, sign, ref in (
+            (N, n0, base_fluxes.electron, 1.0, after[0] - before[0]),
+            (2 * N, p0, base_fluxes.hole, -1.0, after[1] - before[1]),
+        ):
+            drive = sign * np.diff(u0[offset : offset + N])
+            l_phi, _ = quasi_fermi_potential_tangents(flx, drive, sign, vt)
+            if transport is not None:
+                diff = (
+                    transport.electron_diffusivity_m2_s
+                    if offset == N
+                    else transport.hole_diffusivity_m2_s
+                )
+                d_diff = (
+                    transport.electron_d_diffusivity_d_field
+                    if offset == N
+                    else transport.hole_d_diffusivity_d_field
+                )
+                l_phi = l_phi + (flx.flux / diff) * d_diff / np.diff(comp.nodes_m)
+            l_z = sign * flx.left_density_derivative * dens[:-1]
+            z_blk = values_x[offset : offset + N]
+            pert = (
+                l_phi * (values_x[: N - 1] - values_x[1:N])
+                + l_z * (z_blk[:-1] - z_blk[1:])
+                + sign * flx.flux * (z_blk[1:] + (values_x[1:N] + ref * reference_drive) / vt)
+            )
+            perts.append(pert)
+        return perts[0], perts[1], base_fluxes
+
+    def _moving_voltage_partial(self) -> tuple[Vector, Vector]:
+        """Grouped ``F_V + J (c - r)`` and ``-K (c - r)`` for ``c = coordinate_lift_per_V``."""
+        dev = self.device
+        comp = dev.electronic_component
+        N = dev.node_count
+        vt = dev.thermal_voltage_V
+        w = comp.geometry.cell_measures_m
+        u0 = self.operating_state.u
+        moving = self.coordinate_lift_per_V
+
+        state_eval = self.problem.binding.assembler.state(u0, self.problem.inputs)
+        assert state_eval is not None
+
+        phi0 = self.operating_state.electronic_state.potential_V
+        n0 = self.operating_state.electronic_state.electron_density_m3
+        p0 = self.operating_state.electronic_state.hole_density_m3
+        before, after = comp.carrier_reference_energies(0.0), comp.carrier_reference_energies(1.0)
+        references = (after[0] - before[0], after[1] - before[1])
+
+        dlog_n: Vector = (moving[:N] + references[0]) / vt + moving[N : 2 * N]
+        dlog_p: Vector = -((moving[:N] + references[1]) / vt + moving[2 * N : 3 * N])
+        dlog_n[0] = dlog_n[N - 1] = 0.0
+        dlog_p[0] = dlog_p[N - 1] = 0.0
+        dn: Vector = n0 * dlog_n
+        dp: Vector = p0 * dlog_p
+
+        result: Vector = np.zeros(dev.state_size, dtype=np.float64)
+        storage_drive: Vector = np.zeros(dev.state_size, dtype=np.float64)
+
+        # 1. Gauss rows (0 .. N - 1):
+        drho_stat: Vector = np.zeros(N, dtype=np.float64)
+        d_rec_stat: Vector = np.zeros(N, dtype=np.float64)
+        if dev.stationary_defects is not None:
+            stat_ev = cast(StationaryDefectEvaluation1D, state_eval.field("stationary_defects"))
+            drho_stat = stat_ev.d_charge_dn_C * dn + stat_ev.d_charge_dp_C * dp
+            d_rec_stat = stat_ev.d_recombination_dn_s1 * dn + stat_ev.d_recombination_dp_s1 * dp
+
+        result[:N] = comp.poisson.jacobian() @ moving[:N] + comp.poisson.charge_jacobian() * (
+            Q * (dp - dn) + drho_stat
+        )
+        result[N - 1] += comp.voltage_polarity
+
+        # 2. Dynamic bulk trap capture into carriers + trap rate rows:
+        d_cap_n: Vector = np.zeros(N, dtype=np.float64)
+        d_cap_p: Vector = np.zeros(N, dtype=np.float64)
+        if dev.dynamic_bulk_traps is not None:
+            trap_ev = cast(DynamicBulkTrapEvaluation, state_eval.field("dynamic_bulk_traps"))
+            bt_nodes = dev.dynamic_bulk_traps.device_node_indices
+            np.add.at(d_cap_n, bt_nodes, trap_ev.d_electron_capture_dn_s1 * dn[bt_nodes])
+            np.add.at(d_cap_p, bt_nodes, trap_ev.d_hole_capture_dp_s1 * dp[bt_nodes])
+            sl_bt = dev.bulk_trap_slice
+            result[sl_bt] = w[bt_nodes] * (
+                trap_ev.d_trap_storage_rate_dn_s1 * dn[bt_nodes]
+                + trap_ev.d_trap_storage_rate_dp_s1 * dp[bt_nodes]
+            )
+
+        # 3. Carrier face fluxes and heterointerface channels:
+        dfn_c, dfp_c, base_fluxes = self._base_sg_carrier_particles(moving, 1.0)
+        dfn: Vector = np.real(dfn_c).copy()
+        dfp: Vector = np.real(dfp_c).copy()
+        e_iface_node: Vector = np.zeros(N, dtype=np.float64)
+        h_iface_node: Vector = np.zeros(N, dtype=np.float64)
+
+        if comp.interface_model is not None:
+            if comp.interface_model.topology == "deduplicated":
+                temp = float(comp.parameters.temperature_K)
+                for tf in comp.interface_model.thermionic_faces:
+                    f = tf.face
+                    if tf.cap_electron:
+                        cap_e = cap_particle_flux_thermionic(
+                            float(base_fluxes.electron.flux[f]),
+                            n_left_m3=float(n0[f]),
+                            n_right_m3=float(n0[f + 1]),
+                            delta_barrier_eV=tf.delta_Ec_eV,
+                            temperature_K=temp,
+                            a_star_A_m2_K2=tf.a_star_n_A_m2_K2,
+                            te_softness=comp.interface_model.te_softness,
+                            regularization_mode=comp.interface_model.te_regularization_mode,
+                        )
+                        dfn[f] = (
+                            cap_e.d_flux_d_sg_flux * dfn[f]
+                            + cap_e.d_flux_d_n_left_m_s * dn[f]
+                            + cap_e.d_flux_d_n_right_m_s * dn[f + 1]
+                        )
+                    if tf.cap_hole:
+                        cap_h = cap_particle_flux_thermionic(
+                            float(base_fluxes.hole.flux[f]),
+                            n_left_m3=float(p0[f]),
+                            n_right_m3=float(p0[f + 1]),
+                            delta_barrier_eV=tf.delta_Ev_eV,
+                            temperature_K=temp,
+                            a_star_A_m2_K2=tf.a_star_p_A_m2_K2,
+                            te_softness=comp.interface_model.te_softness,
+                            regularization_mode=comp.interface_model.te_regularization_mode,
+                        )
+                        dfp[f] = (
+                            cap_h.d_flux_d_sg_flux * dfp[f]
+                            + cap_h.d_flux_d_n_left_m_s * dp[f]
+                            + cap_h.d_flux_d_n_right_m_s * dp[f + 1]
+                        )
+                for bare in comp.interface_model.bare_srh:
+                    idx = bare.node
+                    srh = interface_srh_rate(
+                        float(n0[idx]),
+                        float(p0[idx]),
+                        v_n_m_s=bare.v_n_m_s,
+                        v_p_m_s=bare.v_p_m_s,
+                        ni_sq_m6=bare.ni_sq_m6,
+                        n1_m3=bare.n1_m3,
+                        p1_m3=bare.p1_m3,
+                        clamp_nonnegative=False,
+                    )
+                    dsink = -(
+                        float(np.real(srh.d_rate_dn_m_s)) * dn[idx]
+                        + float(np.real(srh.d_rate_dp_m_s)) * dp[idx]
+                    )
+                    e_iface_node[idx] += dsink
+                    h_iface_node[idx] += dsink
+                for dspec in comp.interface_model.defect_srh:
+                    idx = dspec.node
+                    i_l, i_0, i_r = idx - 1, idx, idx + 1
+                    if comp.interface_model.plane_closure and dspec.plane_params is not None:
+                        el_raw = (float(phi0[i_0]) - float(phi0[i_l])) / vt
+                        er_raw = (float(phi0[i_0]) - float(phi0[i_r])) / vt
+                        fl = math.exp(max(-500.0, min(500.0, el_raw)))
+                        fr = math.exp(max(-500.0, min(500.0, er_raw)))
+                        nl_p = float(n0[i_l]) * fl
+                        nr_p = float(n0[i_r]) * fr
+                        pl_p = float(p0[i_l]) / fl
+                        pr_p = float(p0[i_r]) / fr
+                        plane_res = solve_plane_closure(
+                            nl_p,
+                            nr_p,
+                            pl_p,
+                            pr_p,
+                            dspec.plane_params,
+                            dspec.v_n_m_s,
+                            dspec.v_p_m_s,
+                            allow_generation=comp.interface_model.plane_generation,
+                        )
+                        chi_l = 1.0 if -500.0 < el_raw < 500.0 else 0.0
+                        chi_r = 1.0 if -500.0 < er_raw < 500.0 else 0.0
+                        d_el = chi_l * (moving[i_0] - moving[i_l]) / vt
+                        d_er = chi_r * (moving[i_0] - moving[i_r]) / vt
+                        dsink = -(
+                            plane_res.d_rate_d_n_left_proj_m_s * nl_p * (dlog_n[i_l] + d_el)
+                            + plane_res.d_rate_d_n_right_proj_m_s * nr_p * (dlog_n[i_r] + d_er)
+                            + plane_res.d_rate_d_p_left_proj_m_s * pl_p * (dlog_p[i_l] - d_el)
+                            + plane_res.d_rate_d_p_right_proj_m_s * pr_p * (dlog_p[i_r] - d_er)
+                        )
+                    else:
+                        if comp.interface_model.plane_projection:
+                            en_raw = (float(phi0[i_0]) - float(phi0[i_r])) / vt
+                            ep_raw = (float(phi0[i_0]) - float(phi0[i_l])) / vt
+                            fac_n = math.exp(max(-500.0, min(500.0, en_raw)))
+                            fac_p = math.exp(-max(-500.0, min(500.0, ep_raw)))
+                            chi_en = 1.0 if -500.0 < en_raw < 500.0 else 0.0
+                            chi_ep = 1.0 if -500.0 < ep_raw < 500.0 else 0.0
+                        else:
+                            fac_n = fac_p = 1.0
+                            chi_en = chi_ep = 0.0
+                        n_eval = float(n0[i_r]) * fac_n
+                        p_eval = float(p0[i_l]) * fac_p
+                        ni_eval = dspec.ni_sq_eff_m6 * fac_n * fac_p
+                        srh = interface_srh_rate(
+                            n_eval,
+                            p_eval,
+                            v_n_m_s=dspec.v_n_m_s,
+                            v_p_m_s=dspec.v_p_m_s,
+                            ni_sq_m6=ni_eval,
+                            n1_m3=dspec.n1_m3,
+                            p1_m3=dspec.p1_m3,
+                            clamp_nonnegative=True,
+                        )
+                        d_en = chi_en * (moving[i_0] - moving[i_r]) / vt
+                        d_ep = chi_ep * (moving[i_0] - moving[i_l]) / vt
+                        denom = dspec.v_n_m_s * (n_eval + dspec.n1_m3) + dspec.v_p_m_s * (
+                            p_eval + dspec.p1_m3
+                        )
+                        unclamped = (
+                            dspec.v_n_m_s > 0.0
+                            and dspec.v_p_m_s > 0.0
+                            and denom > 1.0e-300
+                            and (n_eval * p_eval - ni_eval) >= 0.0
+                        )
+                        a_ni = (
+                            -(dspec.v_n_m_s * dspec.v_p_m_s / denom) * ni_eval
+                            if unclamped
+                            else 0.0
+                        )
+                        dsink = -(
+                            float(np.real(srh.d_rate_dn_m_s)) * n_eval * (dlog_n[i_r] + d_en)
+                            + float(np.real(srh.d_rate_dp_m_s)) * p_eval * (dlog_p[i_l] - d_ep)
+                            + a_ni * (d_en - d_ep)
+                        )
+                    e_iface_node[idx] += dsink
+                    h_iface_node[idx] += dsink
+            elif comp.interface_model.topology == "two_sided_trace":
+                dyn_idx_map = {
+                    it.interface_index: (pos, it)
+                    for pos, it in enumerate(dev.dynamic_interface_traps)
+                }
+                com_vec = np.array(
+                    [references[0] / vt, -references[1] / vt], dtype=np.float64
+                )
+                for tspec in comp.interface_model.two_sided:
+                    k = tspec.interface_index
+                    f = tspec.face
+                    ln, rn = tspec.left_node, tspec.right_node
+                    dfn[f] = 0.0
+                    dfp[f] = 0.0
+                    qf_rem = np.array(
+                        [
+                            moving[ln],
+                            moving[rn],
+                            moving[N + ln] if 0 < ln < N - 1 else (-moving[ln] / vt - com_vec[0]),
+                            -moving[2 * N + ln] if 0 < ln < N - 1 else (moving[ln] / vt - com_vec[1]),
+                            moving[N + rn] if 0 < rn < N - 1 else (-moving[rn] / vt - com_vec[0]),
+                            -moving[2 * N + rn] if 0 < rn < N - 1 else (moving[rn] / vt - com_vec[1]),
+                        ],
+                        dtype=np.float64,
+                    )
+                    if k in dyn_idx_map:
+                        pos, _ = dyn_idx_map[k]
+                        res = state_eval.field(f"dyn_iface:{k}")
+                        j_qf = res.bulk_flux_jacobian_qf
+                        j_com = res.bulk_flux_common_qf
+                        sr_qf = res.trap_storage_rate_jacobian_qf
+                        sr_com = res.trap_storage_rate_common_qf
+                        assert (
+                            j_qf is not None
+                            and j_com is not None
+                            and sr_qf is not None
+                            and sr_com is not None
+                        )
+                        dbflux = j_qf @ qf_rem + j_com @ com_vec
+                        row_it = dev.interface_trap_slices[pos].start
+                        result[row_it] = float(sr_qf @ qf_rem + sr_com @ com_vec)
+                    else:
+                        bulk = TwoSidedBulkState(
+                            phi_left_V=float(u0[ln]),
+                            phi_right_V=float(u0[rn]),
+                            n_left_m3=float(n0[ln]),
+                            p_left_m3=float(p0[ln]),
+                            n_right_m3=float(n0[rn]),
+                            p_right_m3=float(p0[rn]),
+                            electron_electrochemical_step=float(u0[N + rn] - u0[N + ln]),
+                            hole_electrochemical_step=float(-(u0[2 * N + rn] - u0[2 * N + ln])),
+                        )
+                        if tspec.charge is not None:
+                            qres = solve_charged_two_sided_interface_qss(
+                                tspec.trace_electrostatics, tspec.physics, bulk, tspec.charge
+                            )
+                            assert (
+                                qres.bulk_flux_jacobian_qf is not None
+                                and qres.bulk_flux_common_qf is not None
+                                and qres.sheet_charge_jacobian_qf is not None
+                                and qres.sheet_charge_common_qf is not None
+                            )
+                            dbflux = (
+                                qres.bulk_flux_jacobian_qf @ qf_rem
+                                + qres.bulk_flux_common_qf @ com_vec
+                            )
+                            dsig = float(
+                                qres.sheet_charge_jacobian_qf @ qf_rem
+                                + qres.sheet_charge_common_qf @ com_vec
+                            )
+                            if 0 < ln < N - 1:
+                                result[ln] += tspec.weight_left * dsig
+                            if 0 < rn < N - 1:
+                                result[rn] += tspec.weight_right * dsig
+                        else:
+                            ures = solve_two_sided_interface_qss(
+                                tspec.trace_electrostatics, tspec.physics, bulk
+                            )
+                            assert (
+                                ures.bulk_flux_jacobian_qf is not None
+                                and ures.bulk_flux_common_qf is not None
+                            )
+                            dbflux = (
+                                ures.bulk_flux_jacobian_qf @ qf_rem
+                                + ures.bulk_flux_common_qf @ com_vec
+                            )
+                    e_iface_node[ln] -= float(dbflux[0])
+                    e_iface_node[rn] -= float(dbflux[2])
+                    h_iface_node[ln] -= float(dbflux[1])
+                    h_iface_node[rn] -= float(dbflux[3])
+
+        # 4. Carrier continuity rows and carrier storage drive:
+        rate = self.problem.binding.electronic.recombination.rate(n0, p0, derivatives=True)
+        assert rate.d_rate_dn is not None and rate.d_rate_dp is not None
+        d_rec_base = rate.d_rate_dn * dn + rate.d_rate_dp * dp
+        src_n = -(d_rec_base + d_rec_stat + d_cap_n)
+        src_p = -(d_rec_base + d_rec_stat + d_cap_p)
+
+        for carrier, offset, flux_v, src_v, iface_v, d_dens, sign, ref in (
+            ("n", N, dfn, src_n, e_iface_node, dn, 1.0, references[0]),
+            ("p", 2 * N, dfp, src_p, h_iface_node, dp, -1.0, references[1]),
+        ):
+            rows = -np.diff(np.r_[0.0, flux_v, 0.0]) + w * src_v + iface_v
+            s_drive = w * d_dens
+            for side, node in (("left", 0), ("right", N - 1)):
+                if comp.channel(carrier, side).kind == "fixed_reservoir":
+                    rows[node] = sign * ((moving[node] + ref) / vt + moving[offset + node])
+                    s_drive[node] = 0.0
+            result[offset : offset + N] = rows
+            storage_drive[offset : offset + N] = s_drive
+
+        # 5. Mobile-ion potential coupling at contact endpoint:
+        if dev.ionic_component is not None:
+            sl_ion = dev.ion_slice
+            result[sl_ion] = self.jacobian[sl_ion, :N] @ moving[:N]
+
+        return result, storage_drive
 
     def species_partition(
         self,
@@ -2339,8 +2760,22 @@ class DynamicDefectSmallSignal1D:
         freeze_bulk_traps: bool = False,
         freeze_interface_traps: bool = False,
     ) -> DynamicDefectACSweepResult:
-        """Solve complex sparse small-signal AC sweep with selective species freezing."""
-        controls = FrequencyOptions() if options is None else options
+        """Solve complex sparse small-signal AC sweep with selective species freezing.
+
+        Note on diagnostic freezing closures:
+        ``freeze_ions=True`` clamps mobile-ion perturbations ``dP = 0`` and
+        remains a locally Maxwell-conserving PDE at every frequency. By
+        contrast, ``freeze_bulk_traps=True`` and ``freeze_interface_traps=True``
+        clamp trap occupancy perturbations ``df = 0`` while retaining linearized
+        carrier capture perturbations ``dC_n != dC_p`` as ``omega -> inf``
+        asymptotic reference operators rather than finite-frequency
+        Maxwell-conserving PDEs.
+        """
+        controls = (
+            FrequencyOptions(relative_tolerance=1.0e-14, max_refinements=4)
+            if options is None
+            else options
+        )
         freqs = np.asarray(frequencies_Hz, dtype=np.float64)
         if (
             freqs.ndim != 1
@@ -2356,6 +2791,41 @@ class DynamicDefectSmallSignal1D:
                 relative_tolerance=controls.relative_tolerance,
                 max_refinements=controls.max_refinements,
             )
+        fallback_controls = (
+            FrequencyOptions(max_frequencies=controls.max_frequencies, max_refinements=4)
+            if options is None
+            else None
+        )
+
+        def _solve_freq_batch(
+            j_mat: csc_matrix,
+            k_mat: csc_matrix,
+            rhs_vec: ComplexVector,
+            freq_vec: Vector,
+            rate_vec: ComplexVector,
+        ) -> tuple[FrequencySolution, ...]:
+            try:
+                return solve_frequency_systems(
+                    j_mat,
+                    k_mat,
+                    rhs_vec,
+                    freq_vec,
+                    options=controls,
+                    fixed_coordinates=known,
+                    rhs_rate=rate_vec,
+                )
+            except FrequencySolveError:
+                if fallback_controls is None:
+                    raise
+                return solve_frequency_systems(
+                    j_mat,
+                    k_mat,
+                    rhs_vec,
+                    freq_vec,
+                    options=fallback_controls,
+                    fixed_coordinates=known,
+                    rhs_rate=rate_vec,
+                )
 
         voltage = complex(voltage_phasor_V)
         if not np.isfinite(voltage) or voltage == 0.0:
@@ -2365,20 +2835,20 @@ class DynamicDefectSmallSignal1D:
         comp = dev.electronic_component
         N = dev.node_count
 
-        # Build base J, K with any frozen species pinned to 0 perturbation:
+        # Build base J, K with moving-boundary coordinate lift and any frozen species pinned to 0:
         j_base = self.jacobian.copy().tolil()
         k_base = self.storage_jacobian.copy().tolil()
 
-        rhs: ComplexVector = np.zeros(dev.state_size, dtype=np.complex128)
-        phi_right = complex(-comp.voltage_polarity * voltage)
-        rhs[N - 1] = phi_right
+        partial, storage_drive = self._moving_voltage_partial()
+        rhs: ComplexVector = (-partial * voltage).astype(np.complex128)
+        rhs_rate: ComplexVector = (storage_drive * voltage).astype(np.complex128)
 
-        known: dict[int, complex] = {0: 0.0j, N - 1: phi_right}
+        known: dict[int, complex] = {0: 0.0j, N - 1: 0.0j}
         for carrier, offset in (("n", N), ("p", 2 * N)):
             if comp.channel(carrier, "left").kind == "fixed_reservoir":
                 known[offset] = 0.0j
             if comp.channel(carrier, "right").kind == "fixed_reservoir":
-                known[offset + N - 1] = -phi_right / comp.thermal_voltage_V
+                known[offset + N - 1] = 0.0j
 
         frozen_indices: list[int] = []
         if dev.ionic_component is not None and freeze_ions:
@@ -2396,11 +2866,8 @@ class DynamicDefectSmallSignal1D:
             k_base.rows[idx], k_base.data[idx] = [], []
             known[idx] = 0.0j
             rhs[idx] = 0.0j
+            rhs_rate[idx] = 0.0j
 
-        j_csc = j_base.tocsc()
-        k_csc = k_base.tocsc()
-
-        # Split 0 Hz (if mobile ions are active, 0 Hz needs inventory constraint rows) vs f > 0 Hz:
         has_mobile_ions = dev.ionic_component is not None and not freeze_ions
         if has_mobile_ions:
             ion_dev: CompiledIonicDevice1D | TwoSidedIonicComponent1D | None = dev.ionic_component
@@ -2414,6 +2881,7 @@ class DynamicDefectSmallSignal1D:
                         j_base.rows[row], j_base.data[row] = nz.tolist(), grad[nz].tolist()
                         k_base.rows[row], k_base.data[row] = [], []
                         rhs[row] = 0.0j
+                        rhs_rate[row] = 0.0j
                 else:
                     diff_faces = getattr(ion_dev, sp + "_ion_diffusivity_faces_m2_s")
                     if np.all(diff_faces > 0.0):
@@ -2423,16 +2891,21 @@ class DynamicDefectSmallSignal1D:
                         j_base.rows[row0], j_base.data[row0] = nz.tolist(), grad[nz].tolist()
                         k_base.rows[row0], k_base.data[row0] = [], []
                         rhs[row0] = 0.0j
+                        rhs_rate[row0] = 0.0j
                     elif np.any(freqs == 0.0):
                         raise CapabilityError(
                             "0 Hz mobile ions require positive diffusivity across domain"
                         )
-            j_csc = j_base.tocsc()
-            k_csc = k_base.tocsc()
 
+        j_csc = j_base.tocsc()
+        k_csc = k_base.tocsc()
         solutions_by_idx = list(
-            solve_frequency_systems(
-                j_csc, k_csc, rhs, freqs, options=controls, fixed_coordinates=known
+            _solve_freq_batch(
+                j_csc,
+                k_csc,
+                rhs,
+                freqs,
+                rhs_rate,
             )
         )
 
@@ -2492,19 +2965,29 @@ class DynamicDefectSmallSignal1D:
         vt = dev.thermal_voltage_V
         u0 = self.operating_state.u
         x = sol.solution
+        lift = self.coordinate_lift_per_V
         omega = 2.0 * math.pi * sol.frequency_Hz
 
         state_eval = self.problem.binding.assembler.state(u0, self.problem.inputs)
         assert state_eval is not None
 
-        phi_x = x[:N]
-        zn_x = x[N : 2 * N]
-        zp_x = x[2 * N : 3 * N]
+        phi_x: ComplexVector = x[:N] + lift[:N] * voltage
+        before, after = comp.carrier_reference_energies(0.0), comp.carrier_reference_energies(1.0)
+        ref_n, ref_p = after[0] - before[0], after[1] - before[1]
+
+        dlog_n: ComplexVector = np.empty(N, dtype=np.complex128)
+        dlog_p: ComplexVector = np.empty(N, dtype=np.complex128)
+        dlog_n[0] = x[0] / vt + x[N]
+        dlog_n[N - 1] = x[N - 1] / vt + x[2 * N - 1]
+        dlog_n[1 : N - 1] = (x[1 : N - 1] + ref_n * voltage) / vt + x[N + 1 : 2 * N - 1]
+        dlog_p[0] = -(x[0] / vt + x[2 * N])
+        dlog_p[N - 1] = -(x[N - 1] / vt + x[3 * N - 1])
+        dlog_p[1 : N - 1] = -((x[1 : N - 1] + ref_p * voltage) / vt + x[2 * N + 1 : 3 * N - 1])
 
         n0 = self.operating_state.electronic_state.electron_density_m3
         p0 = self.operating_state.electronic_state.hole_density_m3
-        dn = n0 * (phi_x / vt + zn_x)
-        dp = -p0 * (phi_x / vt + zp_x)
+        dn: ComplexVector = n0 * dlog_n
+        dp: ComplexVector = p0 * dlog_p
 
         # 1. Dynamic bulk trap perturbations:
         if dev.dynamic_bulk_traps is not None:
@@ -2539,11 +3022,7 @@ class DynamicDefectSmallSignal1D:
         # 2. Stationary defect perturbations:
         if dev.stationary_defects is not None:
             stat_ev = cast(StationaryDefectEvaluation1D, state_eval.field("stationary_defects"))
-            drho_stat = (
-                stat_ev.d_charge_dphi_fixed_qf_C_m3_V * phi_x
-                + (stat_ev.d_charge_dn_C * n0) * zn_x
-                - (stat_ev.d_charge_dp_C * p0) * zp_x
-            )
+            drho_stat = stat_ev.d_charge_dn_C * dn + stat_ev.d_charge_dp_C * dp
             d_rec_stat = stat_ev.d_recombination_dn_s1 * dn + stat_ev.d_recombination_dp_s1 * dp
         else:
             drho_stat = np.zeros(N, dtype=np.complex128)
@@ -2567,55 +3046,51 @@ class DynamicDefectSmallSignal1D:
             dsigma_it = np.empty(0, dtype=np.complex128)
 
         # 4. Electronic face particle flux perturbations (grouping exact SG differences):
-        fluxes = self.problem.binding.electronic.transport.fluxes(state_eval)
-        transport = None if comp.field_transport is None else comp.field_transport.evaluate(u0[:N])
-        fn_pert: list[ComplexVector] = []
-        for offset, dens, flx, sign in (
-            (N, n0, fluxes.electron, 1.0),
-            (2 * N, p0, fluxes.hole, -1.0),
-        ):
-            drive = sign * np.diff(u0[offset : offset + N])
-            l_phi, _ = quasi_fermi_potential_tangents(flx, drive, sign, vt)
-            if transport is not None:
-                diff = (
-                    transport.electron_diffusivity_m2_s
-                    if offset == N
-                    else transport.hole_diffusivity_m2_s
-                )
-                d_diff = (
-                    transport.electron_d_diffusivity_d_field
-                    if offset == N
-                    else transport.hole_d_diffusivity_d_field
-                )
-                l_phi = l_phi + (flx.flux / diff) * d_diff / np.diff(comp.nodes_m)
-            l_z = sign * flx.left_density_derivative * dens[:-1]
-            z_blk = x[offset : offset + N]
-            pert = (
-                l_phi * (phi_x[:-1] - phi_x[1:])
-                + l_z * (z_blk[:-1] - z_blk[1:])
-                + sign * flx.flux * (z_blk[1:] + phi_x[1:] / vt)
-            )
-            fn_pert.append(pert)
-        dfn, dfp = fn_pert[0], fn_pert[1]
+        dfn_solve, dfp_solve, base_fluxes = self._base_sg_carrier_particles(x, 0.0)
+        dfn_lift, dfp_lift, _ = self._base_sg_carrier_particles(lift, 1.0)
+        dfn: ComplexVector = dfn_solve + dfn_lift * voltage
+        dfp: ComplexVector = dfp_solve + dfp_lift * voltage
 
         # Override thermionic / two-sided interface faces with their exact analytical tangents:
         if comp.interface_model is not None:
             if comp.interface_model.topology == "deduplicated":
+                temp = float(comp.parameters.temperature_K)
                 for tf in comp.interface_model.thermionic_faces:
                     f = tf.face
-                    dfn[f] = (
-                        state_eval.field("iface:e_left_phi")[f] * phi_x[f]
-                        + state_eval.field("iface:e_right_phi")[f] * phi_x[f + 1]
-                        + state_eval.field("iface:e_left_zn")[f] * zn_x[f]
-                        + state_eval.field("iface:e_right_zn")[f] * zn_x[f + 1]
-                    )
-                    dfp[f] = (
-                        state_eval.field("iface:h_left_phi")[f] * phi_x[f]
-                        + state_eval.field("iface:h_right_phi")[f] * phi_x[f + 1]
-                        + state_eval.field("iface:h_left_zp")[f] * zp_x[f]
-                        + state_eval.field("iface:h_right_zp")[f] * zp_x[f + 1]
-                    )
+                    if tf.cap_electron:
+                        cap_e = cap_particle_flux_thermionic(
+                            float(base_fluxes.electron.flux[f]),
+                            n_left_m3=float(n0[f]),
+                            n_right_m3=float(n0[f + 1]),
+                            delta_barrier_eV=tf.delta_Ec_eV,
+                            temperature_K=temp,
+                            a_star_A_m2_K2=tf.a_star_n_A_m2_K2,
+                            te_softness=comp.interface_model.te_softness,
+                            regularization_mode=comp.interface_model.te_regularization_mode,
+                        )
+                        dfn[f] = (
+                            cap_e.d_flux_d_sg_flux * dfn[f]
+                            + cap_e.d_flux_d_n_left_m_s * dn[f]
+                            + cap_e.d_flux_d_n_right_m_s * dn[f + 1]
+                        )
+                    if tf.cap_hole:
+                        cap_h = cap_particle_flux_thermionic(
+                            float(base_fluxes.hole.flux[f]),
+                            n_left_m3=float(p0[f]),
+                            n_right_m3=float(p0[f + 1]),
+                            delta_barrier_eV=tf.delta_Ev_eV,
+                            temperature_K=temp,
+                            a_star_A_m2_K2=tf.a_star_p_A_m2_K2,
+                            te_softness=comp.interface_model.te_softness,
+                            regularization_mode=comp.interface_model.te_regularization_mode,
+                        )
+                        dfp[f] = (
+                            cap_h.d_flux_d_sg_flux * dfp[f]
+                            + cap_h.d_flux_d_n_left_m_s * dp[f]
+                            + cap_h.d_flux_d_n_right_m_s * dp[f + 1]
+                        )
             elif comp.interface_model.topology == "two_sided_trace":
+                com_vec_obs = np.array([ref_n / vt, -ref_p / vt], dtype=np.float64)
                 dyn_idx_map = {
                     it.interface_index: (pos, it)
                     for pos, it in enumerate(dev.dynamic_interface_traps)
@@ -2624,19 +3099,31 @@ class DynamicDefectSmallSignal1D:
                     k = tspec.interface_index
                     f = tspec.face
                     ln, rn = tspec.left_node, tspec.right_node
+                    u_solve_vec = np.array(
+                        [x[ln], x[rn], x[N + ln], -x[2 * N + ln], x[N + rn], -x[2 * N + rn]],
+                        dtype=np.complex128,
+                    )
+                    qf_lift_rem = np.array(
+                        [
+                            lift[ln],
+                            lift[rn],
+                            lift[N + ln] if 0 < ln < N - 1 else (-lift[ln] / vt - com_vec_obs[0]),
+                            -lift[2 * N + ln] if 0 < ln < N - 1 else (lift[ln] / vt - com_vec_obs[1]),
+                            lift[N + rn] if 0 < rn < N - 1 else (-lift[rn] / vt - com_vec_obs[0]),
+                            -lift[2 * N + rn] if 0 < rn < N - 1 else (lift[rn] / vt - com_vec_obs[1]),
+                        ],
+                        dtype=np.float64,
+                    )
                     if k in dyn_idx_map:
-                        pos, itrap = dyn_idx_map[k]
+                        pos, _ = dyn_idx_map[k]
                         res = state_eval.field(f"dyn_iface:{k}")
-                        jb = res.bulk_flux_jacobian_bulk
+                        jb_qf = res.bulk_flux_jacobian_qf
+                        jb_com = res.bulk_flux_common_qf
+                        assert jb_qf is not None and jb_com is not None
                         dbf = res.bulk_flux_derivative_occupancy
-                        gl_e = (jb[0, 0] + (jb[0, 2] - jb[0, 3]) / vt) * phi_x[ln] + jb[0, 2] * zn_x[ln] - jb[0, 3] * zp_x[ln]
-                        gr_e = (jb[0, 1] + (jb[0, 4] - jb[0, 5]) / vt) * phi_x[rn] + jb[0, 4] * zn_x[rn] - jb[0, 5] * zp_x[rn]
-                        gl_h = (jb[1, 0] + (jb[1, 2] - jb[1, 3]) / vt) * phi_x[ln] + jb[1, 2] * zn_x[ln] - jb[1, 3] * zp_x[ln]
-                        gr_h = (jb[1, 1] + (jb[1, 4] - jb[1, 5]) / vt) * phi_x[rn] + jb[1, 4] * zn_x[rn] - jb[1, 5] * zp_x[rn]
-                        dfn[f] = gl_e + gr_e + float(dbf[0]) * df_it[pos]
-                        dfp[f] = gl_h + gr_h + float(dbf[1]) * df_it[pos]
+                        occ_term_n = float(dbf[0]) * df_it[pos]
+                        occ_term_p = float(dbf[1]) * df_it[pos]
                     else:
-                        # Reconstruct left-side bulk flux perturbation from bulk interface tangents:
                         bulk = TwoSidedBulkState(
                             phi_left_V=float(u0[ln]),
                             phi_right_V=float(u0[rn]),
@@ -2651,28 +3138,24 @@ class DynamicDefectSmallSignal1D:
                             qres = solve_charged_two_sided_interface_qss(
                                 tspec.trace_electrostatics, tspec.physics, bulk, tspec.charge
                             )
-                            jb = qres.bulk_flux_jacobian_bulk
+                            jb_qf = qres.bulk_flux_jacobian_qf
+                            jb_com = qres.bulk_flux_common_qf
                         else:
                             ures = solve_two_sided_interface_qss(
                                 tspec.trace_electrostatics, tspec.physics, bulk
                             )
-                            jb = ures.bulk_flux_jacobian_bulk
-                        dfn[f] = (
-                            (jb[0, 0] + (jb[0, 2] - jb[0, 3]) / vt) * phi_x[ln]
-                            + (jb[0, 1] + (jb[0, 4] - jb[0, 5]) / vt) * phi_x[rn]
-                            + jb[0, 2] * zn_x[ln]
-                            + jb[0, 4] * zn_x[rn]
-                            - jb[0, 3] * zp_x[ln]
-                            - jb[0, 5] * zp_x[rn]
-                        )
-                        dfp[f] = (
-                            (jb[1, 0] + (jb[1, 2] - jb[1, 3]) / vt) * phi_x[ln]
-                            + (jb[1, 1] + (jb[1, 4] - jb[1, 5]) / vt) * phi_x[rn]
-                            + jb[1, 2] * zn_x[ln]
-                            + jb[1, 4] * zn_x[rn]
-                            - jb[1, 3] * zp_x[ln]
-                            - jb[1, 5] * zp_x[rn]
-                        )
+                            jb_qf = ures.bulk_flux_jacobian_qf
+                            jb_com = ures.bulk_flux_common_qf
+                        assert jb_qf is not None and jb_com is not None
+                        occ_term_n = 0.0j
+                        occ_term_p = 0.0j
+                    lift_flux = jb_qf @ qf_lift_rem + jb_com @ com_vec_obs
+                    dfn[f] = complex(
+                        jb_qf[0] @ u_solve_vec + float(lift_flux[0]) * voltage + occ_term_n
+                    )
+                    dfp[f] = complex(
+                        jb_qf[1] @ u_solve_vec + float(lift_flux[1]) * voltage + occ_term_p
+                    )
 
         # Terminal electronic conduction currents:
         rate = self.problem.binding.electronic.recombination.rate(n0, p0, derivatives=True)
@@ -2811,14 +3294,27 @@ class DynamicDefectSmallSignal1D:
                     qres = solve_charged_two_sided_interface_qss(
                         tspec.trace_electrostatics, tspec.physics, bulk, tspec.charge
                     )
-                    js = qres.sheet_charge_jacobian_bulk
-                    dsig = (
-                        (js[0] + (js[2] - js[3]) / vt) * phi_x[ln]
-                        + (js[1] + (js[4] - js[5]) / vt) * phi_x[rn]
-                        + js[2] * zn_x[ln]
-                        + js[4] * zn_x[rn]
-                        - js[3] * zp_x[ln]
-                        - js[5] * zp_x[rn]
+                    js_qf = qres.sheet_charge_jacobian_qf
+                    js_com = qres.sheet_charge_common_qf
+                    assert js_qf is not None and js_com is not None
+                    com_l6 = np.array([ref_n / vt, -ref_p / vt], dtype=np.float64)
+                    u_s6 = np.array(
+                        [x[ln], x[rn], x[N + ln], -x[2 * N + ln], x[N + rn], -x[2 * N + rn]],
+                        dtype=np.complex128,
+                    )
+                    qf_l6 = np.array(
+                        [
+                            lift[ln],
+                            lift[rn],
+                            lift[N + ln] if 0 < ln < N - 1 else (-lift[ln] / vt - com_l6[0]),
+                            -lift[2 * N + ln] if 0 < ln < N - 1 else (lift[ln] / vt - com_l6[1]),
+                            lift[N + rn] if 0 < rn < N - 1 else (-lift[rn] / vt - com_l6[0]),
+                            -lift[2 * N + rn] if 0 < rn < N - 1 else (lift[rn] / vt - com_l6[1]),
+                        ],
+                        dtype=np.float64,
+                    )
+                    dsig = complex(
+                        js_qf @ u_s6 + float(js_qf @ qf_l6 + js_com @ com_l6) * voltage
                     )
                     cell_charge[ln] += tspec.weight_left * dsig
                     cell_charge[rn] += tspec.weight_right * dsig
