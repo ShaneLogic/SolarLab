@@ -23,11 +23,13 @@ from solarlab.physics.interface_transport.thermionic import (
 from solarlab.physics.interface_transport.two_sided import (
     ChargedTwoSidedInterfaceQSSResult,
     EquilibriumReferencedSheetCharge,
+    FixedOccupancyTwoSidedResult,
     TwoSidedBulkState,
     TwoSidedInterfacePhysics,
     TwoSidedInterfaceQSSResult,
     remove_shared_interface_nodes,
     solve_charged_two_sided_interface_qss,
+    solve_fixed_occupancy_two_sided_interface,
     solve_two_sided_interface_qss,
 )
 
@@ -36,6 +38,7 @@ __all__ = [
     "ChargedTwoSidedInterfaceQSSResult",
     "ELECTRON_MASS_KG",
     "EquilibriumReferencedSheetCharge",
+    "FixedOccupancyTwoSidedResult",
     "PLANCK_CONSTANT_J_S",
     "TE_BARRIER_THRESHOLD_EV",
     "ThermionicCapEvaluation",
@@ -56,6 +59,7 @@ __all__ = [
     "richardson_from_dos",
     "scaps_thermionic_flux",
     "solve_charged_two_sided_interface_qss",
+    "solve_fixed_occupancy_two_sided_interface",
     "solve_two_sided_interface_qss",
     "thermionic_emission_bound_m2_s",
 ]

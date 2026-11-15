@@ -41,11 +41,13 @@ from solarlab.physics.recombination.interface import (
 __all__ = [
     "ChargedTwoSidedInterfaceQSSResult",
     "EquilibriumReferencedSheetCharge",
+    "FixedOccupancyTwoSidedResult",
     "TwoSidedBulkState",
     "TwoSidedInterfacePhysics",
     "TwoSidedInterfaceQSSResult",
     "remove_shared_interface_nodes",
     "solve_charged_two_sided_interface_qss",
+    "solve_fixed_occupancy_two_sided_interface",
     "solve_two_sided_interface_qss",
 ]
 
@@ -1252,4 +1254,453 @@ def solve_charged_two_sided_interface_qss(
         normalized_carrier_residual=norm_carrier,
         evaluations=eval_count,
         converged=converged,
+    )
+
+
+@dataclass(frozen=True)
+class FixedOccupancyTwoSidedResult:
+    """Two-sided trace elimination at an explicit dynamic trap occupancy ``f``.
+
+    Used by unified dynamic-interface assembly (`P04-10`) where ``f`` is a
+    storage-bearing state variable rather than locally eliminated by QSS.
+    Provides exact IFT sensitivities wrt both the 6 bulk coordinates
+    ``(phi_L, phi_R, log n_L, log p_L, log n_R, log p_R)`` AND ``occupancy``.
+    """
+
+    phi_trace_left_V: float
+    phi_trace_right_V: float
+    state_m3: RealArray
+    bulk_flux_m2_s: RealArray
+    cross_flux_m2_s: RealArray
+    capture_flux_m2_s: RealArray
+    occupancy: float
+    qss_occupancy: float
+    relaxation_rate_s1: float
+    trap_storage_rate_m2_s: float
+    incremental_sheet_charge_C_m2: float
+    d_sheet_charge_df_C_m2: float
+    bulk_flux_jacobian_bulk: RealArray  # (4, 6)
+    bulk_flux_derivative_occupancy: RealArray  # (4,)
+    trap_storage_rate_jacobian_bulk: RealArray  # (6,)
+    trap_storage_rate_derivative_occupancy: float
+    normalized_residual: float
+    evaluations: int
+    converged: bool
+    one_minus_occupancy: float = 0.0
+
+
+def _fixed_occupancy_balance_terms(
+    u_delta: RealArray,
+    drop_left_V: float,
+    drop_right_V: float,
+    potential_jump_V: float,
+    geometry: TraceElectrostatics,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    occupancy: float,
+    one_minus_occupancy: float,
+) -> tuple[
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+    RealArray,
+]:
+    state = _state_from_u_delta(u_delta, drop_left_V, drop_right_V, physics, bulk)
+    bulk_flux, d_bulk_u, d_bulk_trace_u, d_bulk_coords_u = _bulk_sg_flux_and_derivatives_u(
+        u_delta, state, drop_left_V, drop_right_V, geometry, physics, bulk
+    )
+    vt_local = float(physics.thermal_voltage_V)
+    xi_l = float(drop_left_V) / vt_local
+    xi_r_from_bulk = -float(drop_right_V) / vt_local
+    base_log_to_dos = np.array(
+        [
+            math.log(float(bulk.n_left_m3) / float(physics.N_C_left_m3)) + xi_l,
+            math.log(float(bulk.p_left_m3) / float(physics.N_V_left_m3)) - xi_l,
+            math.log(float(bulk.n_right_m3) / float(physics.N_C_right_m3)) + xi_r_from_bulk,
+            math.log(float(bulk.p_right_m3) / float(physics.N_V_right_m3)) - xi_r_from_bulk,
+        ],
+        dtype=np.float64,
+    )
+    cross_eval = fermi_dirac_richardson_flux(
+        state,
+        phi_trace_left_V=0.0,
+        phi_trace_right_V=float(potential_jump_V),
+        conduction_band_step_eV=physics.conduction_band_step_eV,
+        hole_transport_step_eV=physics.hole_transport_step_eV,
+        N_C_left_m3=physics.N_C_left_m3,
+        N_C_right_m3=physics.N_C_right_m3,
+        N_V_left_m3=physics.N_V_left_m3,
+        N_V_right_m3=physics.N_V_right_m3,
+        richardson_n_A_m2_K2=physics.richardson_n_A_m2_K2,
+        richardson_p_A_m2_K2=physics.richardson_p_A_m2_K2,
+        temperature_K=physics.temperature_K,
+        thermal_voltage_V=physics.thermal_voltage_V,
+        transmission=physics.transmission,
+        base_log_to_dos=base_log_to_dos,
+        u_delta=u_delta,
+        electrochemical_steps=(
+            bulk.electron_electrochemical_step,
+            bulk.hole_electrochemical_step,
+        ),
+    )
+
+    vn = float(physics.surface_recombination_velocity_n_m_s)
+    vp = float(physics.surface_recombination_velocity_p_m_s)
+    f = float(occupancy)
+    omf = float(one_minus_occupancy)
+    n_l, p_l, n_r, p_r = (float(v) for v in state)
+    capture = np.array(
+        [
+            vn * _product_difference(n_l, omf, physics.n1_left_m3, f),
+            vp * _product_difference(p_l, f, physics.p1_left_m3, omf),
+            vn * _product_difference(n_r, omf, physics.n1_right_m3, f),
+            vp * _product_difference(p_r, f, physics.p1_right_m3, omf),
+        ],
+        dtype=np.float64,
+    )
+    d_cap_log = np.diag(
+        [
+            vn * omf * n_l,
+            vp * f * p_l,
+            vn * omf * n_r,
+            vp * f * p_r,
+        ]
+    )
+    d_cap_df = np.array(
+        [
+            -vn * (n_l + physics.n1_left_m3),
+            vp * (p_l + physics.p1_left_m3),
+            -vn * (n_r + physics.n1_right_m3),
+            vp * (p_r + physics.p1_right_m3),
+        ],
+        dtype=np.float64,
+    )
+
+    m_trace, m_bulk = _trace_and_bulk_log_maps(physics.thermal_voltage_V)
+    cross = cross_eval.cross_flux_m2_s
+    residual = np.array(
+        [
+            bulk_flux[_N_LEFT] - cross[0] - capture[_N_LEFT],
+            bulk_flux[_P_LEFT] - cross[1] - capture[_P_LEFT],
+            bulk_flux[_N_RIGHT] + cross[0] - capture[_N_RIGHT],
+            bulk_flux[_P_RIGHT] + cross[1] - capture[_P_RIGHT],
+        ],
+        dtype=np.float64,
+    )
+    j_u = d_bulk_u - d_cap_log
+    j_u[_N_LEFT, :] -= cross_eval.d_cross_d_log_state_m2_s[0, :]
+    j_u[_P_LEFT, :] -= cross_eval.d_cross_d_log_state_m2_s[1, :]
+    j_u[_N_RIGHT, :] += cross_eval.d_cross_d_log_state_m2_s[0, :]
+    j_u[_P_RIGHT, :] += cross_eval.d_cross_d_log_state_m2_s[1, :]
+
+    d_cross_trace_u = (
+        cross_eval.d_cross_d_trace_potentials_m2_s_V
+        + cross_eval.d_cross_d_log_state_m2_s @ m_trace
+    )
+    j_trace_u = d_bulk_trace_u - d_cap_log @ m_trace
+    j_trace_u[_N_LEFT, :] -= d_cross_trace_u[0, :]
+    j_trace_u[_P_LEFT, :] -= d_cross_trace_u[1, :]
+    j_trace_u[_N_RIGHT, :] += d_cross_trace_u[0, :]
+    j_trace_u[_P_RIGHT, :] += d_cross_trace_u[1, :]
+
+    d_cross_bulk_u = cross_eval.d_cross_d_log_state_m2_s @ m_bulk
+    j_coords_u = d_bulk_coords_u - d_cap_log @ m_bulk
+    j_coords_u[_N_LEFT, :] -= d_cross_bulk_u[0, :]
+    j_coords_u[_P_LEFT, :] -= d_cross_bulk_u[1, :]
+    j_coords_u[_N_RIGHT, :] += d_cross_bulk_u[0, :]
+    j_coords_u[_P_RIGHT, :] += d_cross_bulk_u[1, :]
+
+    return (
+        state,
+        bulk_flux,
+        cross,
+        capture,
+        residual,
+        j_u,
+        j_trace_u,
+        j_coords_u,
+        d_bulk_u,
+        d_bulk_trace_u,
+        d_bulk_coords_u,
+        d_cap_df,
+        cross_eval.one_way_scale_m2_s,
+    )
+
+
+def solve_fixed_occupancy_two_sided_interface(
+    geometry: TraceElectrostatics,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+    charge: EquilibriumReferencedSheetCharge,
+    *,
+    occupancy: float,
+    one_minus_occupancy: float | None = None,
+    occupancy_minus_equilibrium: float | None = None,
+    initial_state_m3: ArrayLike | None = None,
+    residual_tolerance: float = 1.0e-9,
+    max_evaluations: int = 200,
+    fail_on_residual: bool = True,
+) -> FixedOccupancyTwoSidedResult:
+    """Eliminate two-sided electrostatic + carrier traces at explicit occupancy ``f``."""
+    _positive(residual_tolerance, "residual_tolerance")
+    f = float(occupancy)
+    if not math.isfinite(f) or not 0.0 <= f <= 1.0:
+        raise ValueError("occupancy must lie in [0, 1]")
+    omf = 1.0 - f if one_minus_occupancy is None else float(one_minus_occupancy)
+    nt = float(charge.trap_density_m2)
+    df_eq = (
+        f - float(charge.equilibrium_occupancy)
+        if occupancy_minus_equilibrium is None
+        else float(occupancy_minus_equilibrium)
+    )
+    delta_sigma = -Q * nt * df_eq
+    d_sigma_df = -Q * nt
+
+    eff_geometry = TraceElectrostatics(
+        eps_r_left=geometry.eps_r_left,
+        eps_r_right=geometry.eps_r_right,
+        left_distance_m=geometry.left_distance_m,
+        right_distance_m=geometry.right_distance_m,
+        potential_jump_right_minus_left_V=geometry.potential_jump_right_minus_left_V,
+        fixed_sheet_charge_C_m2=float(geometry.fixed_sheet_charge_C_m2) + delta_sigma,
+    )
+    phi_t_l, phi_t_r = solve_electrostatic_traces(
+        eff_geometry, bulk.phi_left_V, bulk.phi_right_V
+    )
+    drop_l_0, drop_r_0, jump_0, _, _ = _electrostatic_seed_drops(eff_geometry, bulk)
+    zero_flux_seed = _zero_bulk_flux_seed(drop_l_0, drop_r_0, physics, bulk)
+
+    if initial_state_m3 is None:
+        seed = zero_flux_seed
+        u_seed_raw: NDArray[np.float64] = np.zeros(_STATE_SIZE, dtype=np.float64)
+    else:
+        seed = np.asarray(initial_state_m3, dtype=np.float64)
+        if seed.shape != (_STATE_SIZE,) or not np.all(np.isfinite(seed)) or np.any(seed <= 0.0):
+            raise ValueError("initial_state_m3 must contain four positive finite densities")
+        u_seed_raw = _u_delta_from_log_state(np.log(seed), drop_l_0, drop_r_0, physics, bulk)
+
+    density_ref = max(
+        float(np.max(seed)),
+        float(np.max(zero_flux_seed)),
+        physics.N_C_left_m3,
+        physics.N_C_right_m3,
+        physics.N_V_left_m3,
+        physics.N_V_right_m3,
+        physics.n1_left_m3,
+        physics.n1_right_m3,
+        physics.p1_left_m3,
+        physics.p1_right_m3,
+        1.0,
+    )
+    vt = float(physics.thermal_voltage_V)
+    xi_left = drop_l_0 / vt
+    xi_right = drop_r_0 / vt
+    base_log = np.array(
+        [
+            math.log(float(bulk.n_left_m3)) + xi_left,
+            math.log(float(bulk.p_left_m3)) - xi_left,
+            math.log(float(bulk.n_right_m3)) - xi_right,
+            math.log(float(bulk.p_right_m3)) + xi_right,
+        ],
+        dtype=np.float64,
+    )
+    log_lower = math.log(1.0e-100)
+    log_upper = math.log(density_ref) + math.log(1.0e12)
+    u_lower = np.maximum(log_lower - base_log, -490.0)
+    u_upper = np.minimum(log_upper - base_log, 490.0)
+    u_upper = np.maximum(u_upper, u_lower + 2.0)
+    u_seed = np.clip(u_seed_raw, u_lower + 0.5, u_upper - 0.5)
+
+    seed_terms = _fixed_occupancy_balance_terms(
+        u_seed, drop_l_0, drop_r_0, jump_0, eff_geometry, physics, bulk, f, omf
+    )
+    e_scale = max(
+        abs(float(seed_terms[1][_N_LEFT])),
+        abs(float(seed_terms[1][_N_RIGHT])),
+        abs(float(seed_terms[8][_N_LEFT, _N_LEFT])),
+        abs(float(seed_terms[8][_N_RIGHT, _N_RIGHT])),
+        abs(float(seed_terms[3][_N_LEFT])),
+        abs(float(seed_terms[3][_N_RIGHT])),
+        float(seed_terms[12][0]),
+        1.0,
+    )
+    h_scale = max(
+        abs(float(seed_terms[1][_P_LEFT])),
+        abs(float(seed_terms[1][_P_RIGHT])),
+        abs(float(seed_terms[8][_P_LEFT, _P_LEFT])),
+        abs(float(seed_terms[8][_P_RIGHT, _P_RIGHT])),
+        abs(float(seed_terms[3][_P_LEFT])),
+        abs(float(seed_terms[3][_P_RIGHT])),
+        float(seed_terms[12][1]),
+        1.0,
+    )
+    row_scale = np.array([e_scale, h_scale, e_scale, h_scale], dtype=np.float64)
+
+    def scaled_res(u_vec: RealArray) -> RealArray:
+        return (
+            _fixed_occupancy_balance_terms(
+                u_vec, drop_l_0, drop_r_0, jump_0, eff_geometry, physics, bulk, f, omf
+            )[4]
+            / row_scale
+        )
+
+    def scaled_jac(u_vec: RealArray) -> RealArray:
+        return (
+            _fixed_occupancy_balance_terms(
+                u_vec, drop_l_0, drop_r_0, jump_0, eff_geometry, physics, bulk, f, omf
+            )[5]
+            / row_scale[:, np.newaxis]
+        )
+
+    sol = least_squares(
+        scaled_res,
+        u_seed,
+        jac=scaled_jac,
+        bounds=(u_lower, u_upper),
+        x_scale="jac",
+        ftol=3.0e-16,
+        xtol=3.0e-16,
+        gtol=3.0e-16,
+        max_nfev=int(max_evaluations),
+    )
+    x_best = sol.x.copy()
+    eval_count = int(sol.nfev)
+
+    best_terms = _fixed_occupancy_balance_terms(
+        x_best, drop_l_0, drop_r_0, jump_0, eff_geometry, physics, bulk, f, omf
+    )
+    for _ in range(8):
+        p_row = np.maximum(np.max(np.abs(best_terms[5]), axis=1), float(np.finfo(np.float64).tiny))
+        p_norm = float(np.max(np.abs(best_terms[4] / p_row)))
+        if p_norm <= 1.0e-16:
+            break
+        try:
+            delta = -_equilibrated_solve(
+                best_terms[5] / p_row[:, np.newaxis],
+                best_terms[4] / p_row,
+            )
+        except np.linalg.LinAlgError:
+            break
+        if not np.all(np.isfinite(delta)):
+            break
+        cand = np.clip(x_best + delta, u_lower, u_upper)
+        cand_terms = _fixed_occupancy_balance_terms(
+            cand, drop_l_0, drop_r_0, jump_0, eff_geometry, physics, bulk, f, omf
+        )
+        eval_count += 1
+        cand_norm = float(np.max(np.abs(cand_terms[4] / p_row)))
+        if cand_norm < p_norm or float(np.max(np.abs(delta))) <= 1.0e-15:
+            x_best = cand
+            best_terms = cand_terms
+            if float(np.max(np.abs(delta))) <= 1.0e-15:
+                break
+        else:
+            break
+
+    (
+        state,
+        bulk_flux,
+        cross_flux,
+        capture_flux,
+        residual,
+        j_u,
+        j_trace_u,
+        j_coords_u,
+        d_bulk_u,
+        d_bulk_trace_u,
+        d_bulk_coords_u,
+        d_cap_df,
+        _,
+    ) = best_terms
+    best_norm = float(np.max(np.abs(residual / row_scale)))
+
+    c_l = EPS_0 * float(geometry.eps_r_left) / float(geometry.left_distance_m)
+    c_r = EPS_0 * float(geometry.eps_r_right) / float(geometry.right_distance_m)
+    c_sum = c_l + c_r
+    w_l = c_l / c_sum
+    w_r = c_r / c_sum
+
+    d_trace_d_bulk = np.array(
+        [[w_l, w_r, 0.0, 0.0, 0.0, 0.0], [w_l, w_r, 0.0, 0.0, 0.0, 0.0]],
+        dtype=np.float64,
+    )
+    d_trace_df = np.array([d_sigma_df / c_sum, d_sigma_df / c_sum], dtype=np.float64)
+
+    ift_row = np.maximum(np.max(np.abs(j_u), axis=1), float(np.finfo(np.float64).tiny))
+    rhs_bulk = -(j_coords_u + j_trace_u @ d_trace_d_bulk)
+    rhs_f = -(j_trace_u @ d_trace_df - d_cap_df)
+    du_all = _equilibrated_solve(
+        j_u / ift_row[:, np.newaxis],
+        np.column_stack((rhs_bulk, rhs_f)) / ift_row[:, np.newaxis],
+    )
+    du_d_bulk = du_all[:, :6]
+    du_df = du_all[:, 6]
+
+    bulk_flux_jac = d_bulk_coords_u + d_bulk_trace_u @ d_trace_d_bulk + d_bulk_u @ du_d_bulk
+    bulk_flux_df = d_bulk_trace_u @ d_trace_df + d_bulk_u @ du_df
+
+    m_trace, m_bulk = _trace_and_bulk_log_maps(physics.thermal_voltage_V)
+    d_log_state_d_bulk = m_bulk + m_trace @ d_trace_d_bulk + du_d_bulk
+    d_log_state_df = m_trace @ d_trace_df + du_df
+
+    vn = float(physics.surface_recombination_velocity_n_m_s)
+    vp = float(physics.surface_recombination_velocity_p_m_s)
+    n_l, p_l, n_r, p_r = (float(v) for v in state)
+    filled = vn * (n_l + n_r) + vp * (physics.p1_left_m3 + physics.p1_right_m3)
+    empty = vn * (physics.n1_left_m3 + physics.n1_right_m3) + vp * (p_l + p_r)
+    denom = filled + empty
+    f_qss = filled / denom if denom > 0.0 else f
+    relax = denom / nt if nt > 0.0 else 0.0
+    storage_rate = _product_difference(filled, omf, empty, f)
+
+    d_sr_d_log = np.array(
+        [vn * omf * n_l, -vp * f * p_l, vn * omf * n_r, -vp * f * p_r],
+        dtype=np.float64,
+    )
+    sr_jac_bulk = d_sr_d_log @ d_log_state_d_bulk
+    sr_df = float(-denom + d_sr_d_log @ d_log_state_df)
+
+    converged = bool(
+        (sol.success or best_norm <= residual_tolerance)
+        and best_norm <= residual_tolerance
+        and np.all(np.isfinite(bulk_flux_jac))
+        and np.all(np.isfinite(bulk_flux_df))
+        and np.all(np.isfinite(sr_jac_bulk))
+        and math.isfinite(sr_df)
+    )
+    if fail_on_residual and not converged:
+        raise RuntimeError(
+            f"fixed-occupancy two-sided interface did not certify: residual={best_norm:.6g}"
+        )
+
+    return FixedOccupancyTwoSidedResult(
+        phi_trace_left_V=float(phi_t_l),
+        phi_trace_right_V=float(phi_t_r),
+        state_m3=state,
+        bulk_flux_m2_s=bulk_flux,
+        cross_flux_m2_s=cross_flux,
+        capture_flux_m2_s=capture_flux,
+        occupancy=f,
+        qss_occupancy=float(f_qss),
+        relaxation_rate_s1=float(relax),
+        trap_storage_rate_m2_s=float(storage_rate),
+        incremental_sheet_charge_C_m2=float(delta_sigma),
+        d_sheet_charge_df_C_m2=float(d_sigma_df),
+        bulk_flux_jacobian_bulk=bulk_flux_jac,
+        bulk_flux_derivative_occupancy=bulk_flux_df,
+        trap_storage_rate_jacobian_bulk=sr_jac_bulk,
+        trap_storage_rate_derivative_occupancy=sr_df,
+        normalized_residual=best_norm,
+        evaluations=eval_count,
+        converged=converged,
+        one_minus_occupancy=float(omf),
     )
