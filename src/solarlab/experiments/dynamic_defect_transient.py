@@ -302,6 +302,7 @@ def _solve_bdf_step_newton(
     u[0] = phi_l
     u[N - 1] = phi_r
 
+    step_norm = math.inf
     for iteration in range(max_iterations + 1):
         try:
             f = np.asarray(step.residual(u), dtype=np.float64)
@@ -313,7 +314,12 @@ def _solve_bdf_step_newton(
         row_max = np.asarray(np.abs(jac).max(axis=1).todense()).ravel()
         row_scale = np.where(row_max > 0.0, 1.0 / row_max, 1.0)
         fs = row_scale * f
-        if float(np.max(np.abs(fs))) <= tolerance:
+        res_norm = float(np.max(np.abs(fs)))
+        if res_norm <= tolerance and (
+            step_norm <= 1.0e-9
+            or res_norm == 0.0
+            or (iteration >= 8 and res_norm <= 1.0e-5 * tolerance)
+        ):
             return u, True
         if iteration == max_iterations:
             break
@@ -346,6 +352,7 @@ def _solve_bdf_step_newton(
             if np.all(np.isfinite(f_try)):
                 m_try = float(np.linalg.norm(row_scale * f_try))
                 if m_try <= (1.0 - 1.0e-4 * alpha) * merit or m_try <= tolerance:
+                    step_norm = float(np.max(np.abs(u_try - u)))
                     u = u_try
                     accepted = True
                     break

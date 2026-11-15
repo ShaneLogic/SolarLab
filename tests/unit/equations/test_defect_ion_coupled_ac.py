@@ -551,6 +551,14 @@ def _reverse_to_nip_doc(doc: dict[str, Any]) -> dict[str, Any]:
         ni["left"], ni["right"] = iface["right"], iface["left"]
         revs.append(ni)
     rev["interfaces"] = revs
+    if "contacts" in doc:
+        rev_contacts: list[dict[str, Any]] = []
+        for contact in reversed(doc["contacts"]):
+            nc = copy.deepcopy(contact)
+            nc["side"] = "right" if contact["side"] == "left" else "left"
+            nc["id"] = f"nip_{contact['id']}"
+            rev_contacts.append(nc)
+        rev["contacts"] = rev_contacts
     return rev
 
 
@@ -634,3 +642,67 @@ def test_dark_equilibrium_zero_volt_pin_and_nip_ac_passivity_and_fd_slope(
         # or interface-only, check mirror consistency on the interface-only case:
         if not with_bulk and with_iface:
             assert y0_by_polarity["pin"] == pytest.approx(y0_by_polarity["nip"], rel=1.0e-5)
+
+
+@pytest.mark.parametrize(
+    ("with_bulk", "with_iface", "minority_velocity"),
+    [
+        (True, False, 1.0e-2),
+        (False, True, 1.0e-2),
+        (True, False, 0.0),
+    ],
+)
+def test_selective_and_blocking_contacts_dc_ac_pin_and_nip(
+    defaults: DefaultCatalog,
+    with_bulk: bool,
+    with_iface: bool,
+    minority_velocity: float,
+) -> None:
+    """Selective (S_n, S_p) and minority-blocking contacts preserve DC sign/conservation and dark 0 V AC FD."""
+    base_doc = _three_layer_doc(with_bulk=with_bulk, with_iface=with_iface, with_ions=False)
+    base_doc["contacts"] = [
+        {"id": "c_left", "side": "left", "layer": "htl", "S_n": minority_velocity, "S_p": 1.0e5},
+        {"id": "c_right", "side": "right", "layer": "etl", "S_n": 1.0e5, "S_p": minority_velocity},
+    ]
+    freqs = np.array([0.0, 1.0e-2, 10.0, 1.0e4])
+    dv = 1.0e-5
+
+    for expected_pol, doc in ((1.0, base_doc), (-1.0, _reverse_to_nip_doc(base_doc))):
+        prep = _resolve(doc, defaults)
+        dev = compile_dynamic_defect_device_1d(
+            prep,
+            intervals_per_layer=6,
+            dynamic_bulk_defects=with_bulk,
+            dynamic_interface_defects=with_iface,
+        )
+        assert dev.voltage_polarity == expected_pol
+
+        st_fwd = solve_dynamic_defect_steady_1d(dev, voltage_V=0.60, generation_scale=0.0)
+        assert st_fwd.terminal_current_density_A_m2 > 0.0
+        assert st_fwd.maxwell_spread_A_m2 <= 1.0e-10
+
+        st_rev = solve_dynamic_defect_steady_1d(dev, voltage_V=-0.25, generation_scale=0.0)
+        assert st_rev.terminal_current_density_A_m2 < 0.0
+        assert st_rev.maxwell_spread_A_m2 <= 1.0e-10
+
+        st0 = solve_dynamic_defect_steady_1d(dev, voltage_V=0.0, generation_scale=0.0)
+        sweep = DynamicDefectSmallSignal1D(dev, st0.state).solve_sweep(freqs)
+        assert np.all(sweep.admittance_density_S_m2.real > 0.0)
+        assert float(np.max(sweep.maxwell_spread_A_m2_V)) <= 1.0e-10
+
+        st_p = solve_dynamic_defect_steady_1d(
+            dev,
+            voltage_V=+dv,
+            generation_scale=0.0,
+            initial_u=dev.rebase_coordinates(st0.state.u, 0.0, +dv),
+        )
+        st_m = solve_dynamic_defect_steady_1d(
+            dev,
+            voltage_V=-dv,
+            generation_scale=0.0,
+            initial_u=dev.rebase_coordinates(st0.state.u, 0.0, -dv),
+        )
+        g_fd = (st_p.terminal_current_density_A_m2 - st_m.terminal_current_density_A_m2) / (
+            2.0 * dv
+        )
+        assert float(sweep.admittance_density_S_m2[0].real) == pytest.approx(g_fd, rel=1.0e-5)

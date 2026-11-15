@@ -14,10 +14,12 @@ from threadpoolctl import threadpool_limits
 
 from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device
+from solarlab.device.compile_dynamic_defect_1d import compile_dynamic_defect_device_1d
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.defects import MetastablePreparationInput
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
+from solarlab.equations.assembly.dynamic_defects_1d import solve_dynamic_defect_steady_1d
 from solarlab.experiments.capacitance_frequency import (
     DefectCFError,
     DefectCFOptions,
@@ -34,6 +36,7 @@ from solarlab.experiments.dynamic_defect_impedance import (
     DynamicDefectImpedanceOptions,
     classify_dynamic_defect_capability,
     solve_bulk_defect_impedance,
+    solve_dynamic_defect_impedance,
     solve_interface_defect_impedance,
 )
 from solarlab.experiments.dynamic_defect_transient import (
@@ -250,6 +253,14 @@ def _reverse_to_nip(doc: dict[str, Any]) -> dict[str, Any]:
         ni["left"], ni["right"] = iface["right"], iface["left"]
         revs.append(ni)
     rev["interfaces"] = revs
+    if "contacts" in doc:
+        rev_contacts: list[dict[str, Any]] = []
+        for contact in reversed(doc["contacts"]):
+            nc = copy.deepcopy(contact)
+            nc["side"] = "right" if contact["side"] == "left" else "left"
+            nc["id"] = f"nip_{contact['id']}"
+            rev_contacts.append(nc)
+        rev["contacts"] = rev_contacts
     return rev
 
 
@@ -762,3 +773,65 @@ def test_metastable_preparation_frozen_jv_and_operator_split_transient(
     assert tr.scientific_qualification is False
     assert tr.certificate.passed is True
     assert tr.certificate.maximum_charge_transfer_relative_error <= 1.0e-10
+
+
+@pytest.mark.parametrize(
+    ("with_bulk", "with_iface"),
+    [
+        (True, False),
+        (False, True),
+    ],
+)
+def test_selective_contacts_pin_and_nip_dc_impedance_and_transient(
+    defaults: DefaultCatalog,
+    with_bulk: bool,
+    with_iface: bool,
+) -> None:
+    """Selective (S_n, S_p) p-i-n and n-i-p stacks pass DC sign/spread, dark 0 V FD impedance, and transient conservation."""
+    pin_doc = _pin_doc(with_bulk=with_bulk, with_iface=with_iface)
+    pin_doc["contacts"] = [
+        {"id": "c_left", "side": "left", "layer": "htl", "S_n": 1.0e-2, "S_p": 1.0e5},
+        {"id": "c_right", "side": "right", "layer": "etl", "S_n": 1.0e5, "S_p": 1.0e-2},
+    ]
+    freqs = np.array([1.0e-2, 10.0, 1.0e4])
+    times = np.array([0.0, 1.0e-6, 1.0e-4, 1.0e-2])
+    volts = np.array([0.0, 0.45, 0.45, 0.0])
+
+    for expected_pol, doc in ((1.0, pin_doc), (-1.0, _reverse_to_nip(pin_doc))):
+        prep = _resolve(doc, defaults)
+        comp = compile_dynamic_defect_device_1d(
+            prep,
+            intervals_per_layer=6,
+            dynamic_bulk_defects=with_bulk,
+            dynamic_interface_defects=with_iface,
+        )
+        assert comp.voltage_polarity == expected_pol
+
+        st_fwd = solve_dynamic_defect_steady_1d(comp, voltage_V=0.60, generation_scale=0.0)
+        assert st_fwd.terminal_current_density_A_m2 > 0.0
+        assert st_fwd.maxwell_spread_A_m2 <= 1.0e-10
+
+        st_rev = solve_dynamic_defect_steady_1d(comp, voltage_V=-0.25, generation_scale=0.0)
+        assert st_rev.terminal_current_density_A_m2 < 0.0
+        assert st_rev.maxwell_spread_A_m2 <= 1.0e-10
+
+        imp = solve_dynamic_defect_impedance(
+            prep,
+            freqs,
+            voltage_V=0.0,
+            generation_scale=0.0,
+            options=DynamicDefectImpedanceOptions(intervals_per_layer=6, verify_zero_hz_fd=True),
+        )
+        assert imp.zero_hz_fd_relative_error is not None
+        assert imp.zero_hz_fd_relative_error <= 1.0e-5
+        assert np.all(imp.admittance_density_S_m2.real > 0.0)
+        assert float(np.max(imp.ac_sweep.maxwell_spread_A_m2_V)) <= 1.0e-10
+
+        tr_fn = solve_bulk_defect_transient if with_bulk else solve_interface_defect_transient
+        tr = tr_fn(
+            prep,
+            times,
+            volts,
+            options=DynamicDefectTransientOptions(intervals_per_layer=6, bdf_order=2),
+        )
+        assert tr.maximum_maxwell_spread_A_m2 <= 1.0e-9

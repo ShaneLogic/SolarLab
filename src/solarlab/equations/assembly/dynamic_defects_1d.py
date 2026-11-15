@@ -1667,13 +1667,14 @@ class AssembledDynamicDefect1DProblem:
                 if ch.kind == "fixed_reservoir":
                     exch = float(c_flux[face]) + orient * float(w[node] * src[node])
                 else:
-                    exch_term = self.binding.electronic.exchanges[(carrier, side)]
+                    block = ELECTRON if carrier == "n" else HOLE
+                    exch_term = self.binding.electronic.exchanges[(block, side)]
                     offset = N if carrier == "n" else 2 * N
                     raw_exch, _ = exch_term.exchange(
                         float(values[node]), float(values[offset + node]), self.voltage_V
                     )
-                    # CarrierExchange returns outward particle flux; orient along +x:
-                    exch = -raw_exch if side == "left" else raw_exch
+                    # CarrierExchange.exchange already multiplies by outward_normal (+x oriented):
+                    exch = raw_exch
                 j_term += q_sign * exch
             terminals.append(j_term)
 
@@ -1849,12 +1850,13 @@ def dynamic_defect_step_accounting(step: BDFStep, u: ArrayLike) -> dict[str, Any
             if ch.kind == "fixed_reservoir":
                 exch = float(c_flux[face]) + orient * float(w[node] * src[node] - dstorage_dt[node])
             else:
-                exch_term = prob.binding.electronic.exchanges[(carrier, side)]
+                block = ELECTRON if carrier == "n" else HOLE
+                exch_term = prob.binding.electronic.exchanges[(block, side)]
                 offset = N if carrier == "n" else 2 * N
                 raw_exch, _ = exch_term.exchange(
                     float(values[node]), float(values[offset + node]), prob.voltage_V
                 )
-                exch = -raw_exch if side == "left" else raw_exch
+                exch = raw_exch
             j_term += q_sign * exch
         terminals.append(j_term)
 
@@ -1945,8 +1947,7 @@ def _damped_newton_solve(
         f_scaled = row_scale * F
         res_norm = float(np.max(np.abs(f_scaled)))
         if res_norm <= options.residual_tolerance and (
-            step_norm <= options.step_tolerance
-            or res_norm <= 1.0e-4 * options.residual_tolerance
+            step_norm <= options.step_tolerance or res_norm == 0.0
         ):
             return u, True, iteration - 1, res_norm, (0.0 if iteration == 1 else step_norm)
 
@@ -2004,7 +2005,8 @@ def _damped_newton_solve(
             rs = np.where(rm > 0.0, 1.0 / rm, 1.0)
             res_norm = float(np.max(np.abs(rs * sys_end.F)))
             if res_norm <= options.residual_tolerance and (
-                step_norm <= options.step_tolerance or res_norm <= 1.0e-2 * options.residual_tolerance
+                step_norm <= options.step_tolerance
+                or (iteration >= 8 and res_norm <= 1.0e-4 * options.residual_tolerance)
             ):
                 return u, True, iteration, res_norm, step_norm
 
