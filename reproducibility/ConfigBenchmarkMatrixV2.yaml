@@ -853,8 +853,8 @@ sources:
   source_commit: e3eee454b1cf61ff43e2cb668035be0527dacdd3
 - id: src/solarlab/config/legacy_fields.py
   path: src/solarlab/config/legacy_fields.py
-  sha256: 7c53be9d2d83d1635aef5e1193f1f97b756a964c532806002b4514e10f521cf7
-  source_commit: 19ac67122ab4e449d7121d7af08596f8c2d3eec0
+  sha256: 96e37576395198f522e0f8c9b5ab09c62a7d63007ac6b824db2a42217e5306e2
+  source_commit: ae6c5aee899abae29bbc560fb28de24ba5301731
 - id: src/solarlab/device/inputs.py
   path: src/solarlab/device/inputs.py
   sha256: f616d30f584930276635b8d099fafff736c9bf840e1d48a20eb9bbbb60debddf
@@ -1635,7 +1635,7 @@ entries:
     resolver:
       source_id: src/solarlab/config/resolve_device.py
       symbol: resolve_device
-    content_sha256: 8c4c3a3161dd091a5d001f968a96eb3b1debb12c67d02f2399d9de308ed45503
+    content_sha256: d10a8c9d83778c3bd4f26b398475940966c1ba77012f3276500c9a03f3153a3c
     issues: []
   migration_notes:
   - source:
