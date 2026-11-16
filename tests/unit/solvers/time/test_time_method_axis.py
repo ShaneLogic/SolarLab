@@ -344,7 +344,7 @@ def test_the_frozen_profile_and_allowlist_are_the_reviewed_ones():
     assert sorted(ALLOWLIST.values()) == sorted([
         "E_dark_hold", "E_light_hold", "E_dark_voltage_ramp", "E_light_ramp_4", "E_light_ramp_8", "E_light_ramp_16",
         "E_voltage_ramp_4", "E_voltage_ramp_8", "E_voltage_ramp_16", "E_saved_packet"])
-    assert time_method.ALLOWLIST_SHA256 == "faaaf7cb92862de77d8bb48ba15d9552fdb988d1df493b2ebe7b2cddb247dbae"
+    assert time_method.ALLOWLIST_SHA256 == "dc59b84bd046d6d857981728241caadbed1e42ceb992f81576addc7b12431495"
 
 
 def test_scope_content_refuses_a_value_it_cannot_encode():

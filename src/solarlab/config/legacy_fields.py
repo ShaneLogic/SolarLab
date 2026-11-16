@@ -85,7 +85,7 @@ INLINE_LOADER_BINDING = {
 }
 JV_HINT_CONSUMER_BINDINGS = (
     {"path": "web/src/workstation/panes/jv-pane.ts",
-     "sha256": "2b50f1819655ea89f2bd83baef4656e64ac9a2e680a5bf0ebfa4f8b74c125a06"},
+     "sha256": "a5b63f7bfdf0f951ea49fa9fa33e315d51bac05e532d66ed02a4cb07af938850"},
     {"path": "web/src/jv-waveform-controls.ts",
      "sha256": "9d9fdf0b6d9245d9707dac60f09177343e4e7ad6adb3391a016bad5d9a64d4e2"},
 )

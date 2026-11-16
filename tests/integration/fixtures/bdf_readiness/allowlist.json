@@ -30,7 +30,7 @@
  "device": {
   "config_sha256": "2003cd46e119c2c8ff324ffc11562c2e69cd32dc1e7cdeda43f22dfdd501e086",
   "intervals_per_layer": 12,
-  "content_sha256": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac"
+  "content_sha256": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1"
  },
  "capture": {
   "system": "Darwin",
@@ -46,9 +46,9 @@
  "envelopes": [
   {
    "case_id": "E_dark_hold",
-   "scope_sha256": "221e31f715757df14ebaaa73e4f2c2f879e6cb980a5fc483c7940a607b53cebf",
+   "scope_sha256": "0ac50dbd36e58217773463a00250520d17aed4e0ba27058b2d0d4019a0a08cd4",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "2146bc9c8266a0e6a2b1fac978232a17e6847b26affb901255b62c27708ee791",
     "protocol": "813c88451d629c420a753368dc0570e7c166130e8da26e58b7dbd171862a046a",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -115,9 +115,9 @@
   },
   {
    "case_id": "E_light_hold",
-   "scope_sha256": "59aca9ef958c68f5c179afe0ea59817d51d66b519af65aeaff6c847d545a03c3",
+   "scope_sha256": "67ab993b820dc4e8f30dad963354af04ab3440b164926e92177418d7bd56f7a6",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
     "protocol": "aa2a8c23095cf5c1f020a5246ec6bff5487507f56adbbc674fdff1dedea87e85",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -184,9 +184,9 @@
   },
   {
    "case_id": "E_dark_voltage_ramp",
-   "scope_sha256": "7dace99e619ecddd410121309ea5443a16f832720e90fb22781b8b3be591b2a5",
+   "scope_sha256": "8a9602518d2ebdc3f12d13f627b6c4561c5ac8748d8391355ea2314cde84b588",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "2146bc9c8266a0e6a2b1fac978232a17e6847b26affb901255b62c27708ee791",
     "protocol": "03673360ca7baf7c4d2c0122631764dd0f6b99163c7c63d6dde9940159e2ca4f",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -253,9 +253,9 @@
   },
   {
    "case_id": "E_light_ramp_4",
-   "scope_sha256": "608051152d7f5b41bdbb9d227f4cb69f6b5d37e0f9be13d9cc5b09fc1c214d33",
+   "scope_sha256": "b8deddb08c4e9a836930ffacf8587a43e31d6057fe7c089c1a23a6795469361b",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
     "protocol": "e9a2a4a2ce13370f928c749800c8db8425bc5b88b878602cb06c627257098682",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -322,9 +322,9 @@
   },
   {
    "case_id": "E_voltage_ramp_4",
-   "scope_sha256": "cdadc98646e0665667b9b26ef5ddc294bb89b1434faca40498f2bc3855cbff63",
+   "scope_sha256": "fe20d57689805abedd663af99790ed24f267af9d5ffff0b31d4d1c65574e62b8",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "6a5ecb883c056be909cf9cafd9f3755449fe2b08e20e0dfd5e44bc0536b82e49",
     "protocol": "a89197bc7fa0b472e5968ab15ebb3f56147b39a3b49f6a6aff19d70a1d9a1652",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -391,9 +391,9 @@
   },
   {
    "case_id": "E_light_ramp_8",
-   "scope_sha256": "700083da5b3e5dcbc3eec176f91830b27290491a363a8204e5336772f38dcd27",
+   "scope_sha256": "6697fade77e85c744e1f37cf119e5f72f81066b7c03fe1e1f3f9a806559e0d54",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
     "protocol": "07ad2898d0714b8aa587fb1e833f36cf155e8568f8f73c9bacf3b030ad1a5b3f",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -472,9 +472,9 @@
   },
   {
    "case_id": "E_voltage_ramp_8",
-   "scope_sha256": "6e315c3f151c1a0744093a63f04229ddc76fa4995bbb0272c7c9eaf3097ec1e6",
+   "scope_sha256": "858a988f48596ef322590f62f5f1fd6eb3d48a1e516c6c5543cfda1277a13965",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "6a5ecb883c056be909cf9cafd9f3755449fe2b08e20e0dfd5e44bc0536b82e49",
     "protocol": "bf98884538495964633878d5e040b677466703b4c1b3f8ec1ac992eb77663aba",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -553,9 +553,9 @@
   },
   {
    "case_id": "E_light_ramp_16",
-   "scope_sha256": "a9364a002e141af1c09d252098eba75268136005d4755ddf6a76e954b13e5ca4",
+   "scope_sha256": "cd1e484022fc874cc405043a056d89f59fdce6c8de594fdb1d52dc9a5f2e7395",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
     "protocol": "d509d81b817ef0691ade9cbb24dfeda8e1ce5da31338889f722ad25eb0567371",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -658,9 +658,9 @@
   },
   {
    "case_id": "E_voltage_ramp_16",
-   "scope_sha256": "8e315434aa617005a75bb7224cebabf03830f05afe06782c38626c37f49c9af8",
+   "scope_sha256": "b4d010a6708ab44e74dd63af184647f59204c9793618cd06c147f83d9a782beb",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "6a5ecb883c056be909cf9cafd9f3755449fe2b08e20e0dfd5e44bc0536b82e49",
     "protocol": "8d96602a2fd3a5f5c45667f9ca31c8ff5487165f9fa72c6ab3f5f7d2c33c8dd6",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -763,9 +763,9 @@
   },
   {
    "case_id": "E_saved_packet",
-   "scope_sha256": "e79d312254e470a833c985f8304c6faf9df11c4fff139658175fdc1a983c0851",
+   "scope_sha256": "d37348bef4d23387aff7bf769e65908c18c8bd77c0c579c2228b19751c196e99",
    "components": {
-    "device": "dc17f907a7e40a1d31ead34d3bcb275134bf23b1f79659d61930fe020a3b9cac",
+    "device": "659882b0eb98e52483be23da26a8fc680f0ac8513def33bcb06910f85c440dc1",
     "initial_state": "469bb4ee7fbf6d9737d2c4b6acb80fcefe243561e0a5513657da3b9bff5709aa",
     "protocol": "9f86cabc9d07defbeeaf46ffb83e77849d9837a32f0730b044845f8089f67f0a",
     "drive": "99bb63aa817fc7a54d65f0b9461e4e7bf309ddf661c5afec7674d758e78ba4da",
@@ -825,6 +825,6 @@
    }
   }
  ],
- "allowlist_sha256": "faaaf7cb92862de77d8bb48ba15d9552fdb988d1df493b2ebe7b2cddb247dbae",
+ "allowlist_sha256": "dc59b84bd046d6d857981728241caadbed1e42ceb992f81576addc7b12431495",
  "qualification": false
 }

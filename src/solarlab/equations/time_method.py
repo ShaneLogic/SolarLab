@@ -182,16 +182,16 @@ ADAPTIVE_MAX_STEPS = 10000
 # CommanderBdfDefaultFreezeV2's allowlist: the ten electronic envelopes of V1 by scope digest, derived
 # from the frozen ReadinessV1 Cases.json and initial artifacts (the CND2 key table, Cnd2ScopeKeyTableV1).
 ALLOWLIST: Mapping[str, str] = MappingProxyType({
-    "221e31f715757df14ebaaa73e4f2c2f879e6cb980a5fc483c7940a607b53cebf": "E_dark_hold",
-    "7dace99e619ecddd410121309ea5443a16f832720e90fb22781b8b3be591b2a5": "E_dark_voltage_ramp",
-    "59aca9ef958c68f5c179afe0ea59817d51d66b519af65aeaff6c847d545a03c3": "E_light_hold",
-    "a9364a002e141af1c09d252098eba75268136005d4755ddf6a76e954b13e5ca4": "E_light_ramp_16",
-    "608051152d7f5b41bdbb9d227f4cb69f6b5d37e0f9be13d9cc5b09fc1c214d33": "E_light_ramp_4",
-    "700083da5b3e5dcbc3eec176f91830b27290491a363a8204e5336772f38dcd27": "E_light_ramp_8",
-    "e79d312254e470a833c985f8304c6faf9df11c4fff139658175fdc1a983c0851": "E_saved_packet",
-    "8e315434aa617005a75bb7224cebabf03830f05afe06782c38626c37f49c9af8": "E_voltage_ramp_16",
-    "cdadc98646e0665667b9b26ef5ddc294bb89b1434faca40498f2bc3855cbff63": "E_voltage_ramp_4",
-    "6e315c3f151c1a0744093a63f04229ddc76fa4995bbb0272c7c9eaf3097ec1e6": "E_voltage_ramp_8",
+    "0ac50dbd36e58217773463a00250520d17aed4e0ba27058b2d0d4019a0a08cd4": "E_dark_hold",
+    "8a9602518d2ebdc3f12d13f627b6c4561c5ac8748d8391355ea2314cde84b588": "E_dark_voltage_ramp",
+    "67ab993b820dc4e8f30dad963354af04ab3440b164926e92177418d7bd56f7a6": "E_light_hold",
+    "cd1e484022fc874cc405043a056d89f59fdce6c8de594fdb1d52dc9a5f2e7395": "E_light_ramp_16",
+    "b8deddb08c4e9a836930ffacf8587a43e31d6057fe7c089c1a23a6795469361b": "E_light_ramp_4",
+    "6697fade77e85c744e1f37cf119e5f72f81066b7c03fe1e1f3f9a806559e0d54": "E_light_ramp_8",
+    "d37348bef4d23387aff7bf769e65908c18c8bd77c0c579c2228b19751c196e99": "E_saved_packet",
+    "b4d010a6708ab44e74dd63af184647f59204c9793618cd06c147f83d9a782beb": "E_voltage_ramp_16",
+    "fe20d57689805abedd663af99790ed24f267af9d5ffff0b31d4d1c65574e62b8": "E_voltage_ramp_4",
+    "858a988f48596ef322590f62f5f1fd6eb3d48a1e516c6c5543cfda1277a13965": "E_voltage_ramp_8",
 })
 
 _SCOPE: ContextVar[str | None] = ContextVar("solarlab_time_method", default=None)

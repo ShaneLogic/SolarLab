@@ -183,6 +183,7 @@
         "scripts/benchmarks/coupled_device_prototype.py",
         "scripts/benchmarks/diagnose_r1_saved_failure.py",
         "scripts/benchmarks/g2_compare.py",
+        "scripts/benchmarks/g2_reference_be.py",
         "scripts/benchmarks/hysteresis_qualification.py",
         "scripts/benchmarks/hysteresis_reference.py",
         "scripts/benchmarks/interval_observation.py",
