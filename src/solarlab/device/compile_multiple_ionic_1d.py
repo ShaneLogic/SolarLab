@@ -15,6 +15,11 @@ from solarlab.device.resolved import PreparedDevice
 from solarlab.equations.dc_1d import CapabilityError, TERegularizationName
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D
 from solarlab.equations.multiple_ionic_1d import CompiledMultipleIonicDevice1D
+from solarlab.physics.interface_transport import (
+    ThermionicCombinationMode,
+    ThermionicModelVersion,
+)
+from solarlab.physics.transport.electrochemical_flux import LEGACY_SUMMED_POTENTIAL_V1
 
 __all__ = ["CompiledMultipleIonicDevice1D", "compile_multiple_ionic_device_1d"]
 
@@ -25,6 +30,11 @@ def compile_multiple_ionic_device_1d(
     te_softness: float = 0.02,
     te_regularization_mode: TERegularizationName = "legacy_logistic",
     optical_model: Literal["beer_lambert", "beer_lambert_spectral", "tmm"] | None = None,
+    dielectric_rule: str | None = None,
+    geometry_name: str | None = None,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    thermionic_mode: ThermionicModelVersion | None = None,
+    combination_mode: ThermionicCombinationMode | None = None,
 ) -> CompiledMultipleIonicDevice1D:
     """Exactly two layer-wide blocking domains separated by inactive material.
 
@@ -83,6 +93,11 @@ def compile_multiple_ionic_device_1d(
             te_softness=te_softness,
             te_regularization_mode=te_regularization_mode,
             optical_model=optical_model,
+            dielectric_rule=dielectric_rule,
+            geometry_name=geometry_name,
+            band_step_mode=band_step_mode,
+            thermionic_mode=thermionic_mode,
+            combination_mode=combination_mode,
         )
         if components:
             if component.electronic_component.identity != components[0].electronic_component.identity:

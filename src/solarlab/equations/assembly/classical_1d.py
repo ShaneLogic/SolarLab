@@ -334,6 +334,7 @@ class CarrierTransport:
             device.parameters.band_structure,
             electron_electrochemical_step=np.diff(state.block(ELECTRON)),
             hole_electrochemical_step=-np.diff(state.block(HOLE)),
+            band_step_mode=device.band_step_mode,
         )
 
     def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:

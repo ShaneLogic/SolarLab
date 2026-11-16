@@ -50,9 +50,15 @@ from solarlab.physics.electrostatics.interface_traces import TraceElectrostatics
 from solarlab.physics.generation.profile import GenerationProfile
 from solarlab.physics.interface_transport import (
     EquilibriumReferencedSheetCharge,
+    LEGACY_UNNORMALIZED_THERMIONIC_V1,
+    THERMIONIC_MODEL_VERSIONS,
+    ThermionicCombinationMode,
+    ThermionicModelVersion,
     TwoSidedBulkState,
     TwoSidedInterfacePhysics,
     cap_particle_flux_thermionic,
+    combine_sg_and_reciprocal_thermionic_flux,
+    reciprocal_thermionic_flux_m2_s,
     solve_charged_two_sided_interface_qss,
     solve_two_sided_interface_qss,
 )
@@ -67,8 +73,10 @@ from solarlab.physics.recombination.interface import (
 )
 from solarlab.physics.recombination.reaction import BulkRecombinationReaction
 from solarlab.physics.transport.electrochemical_flux import (
+    BAND_STEP_MODES,
     CarrierFaceFlux,
     CarrierFaceFluxes,
+    LEGACY_SUMMED_POTENTIAL_V1,
     carrier_particle_fluxes,
 )
 
@@ -176,6 +184,14 @@ class DeduplicatedThermionicFaceSpec:
     a_star_p_A_m2_K2: float
     cap_electron: bool
     cap_hole: bool
+    a_star_n_right_A_m2_K2: float | None = None
+    a_star_p_right_A_m2_K2: float | None = None
+    dos_n_left_m3: float | None = None
+    dos_n_right_m3: float | None = None
+    dos_p_left_m3: float | None = None
+    dos_p_right_m3: float | None = None
+    hole_band_offset_eV: float | None = None
+    transmission: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -284,6 +300,19 @@ class CompiledInterfaceModel1D:
     plane_generation: bool = False
     te_softness: float = 0.02
     te_regularization_mode: TERegularizationName = "legacy_logistic"
+    thermionic_mode: ThermionicModelVersion = LEGACY_UNNORMALIZED_THERMIONIC_V1
+    combination_mode: ThermionicCombinationMode | None = None
+
+    def __post_init__(self) -> None:
+        if self.thermionic_mode not in THERMIONIC_MODEL_VERSIONS:
+            raise ValueError(f"unknown thermionic_mode {self.thermionic_mode!r}")
+        if self.combination_mode is not None and self.combination_mode not in (
+            "harmonic_series",
+            "compact_support",
+            "legacy_logistic",
+            "hard",
+        ):
+            raise ValueError(f"unknown combination_mode {self.combination_mode!r}")
 
     @property
     def has_carrier_port(self) -> bool:
@@ -316,6 +345,8 @@ class CompiledInterfaceModel1D:
 
         zn = u[count:2 * count]
         zp = u[2 * count:]
+        ec_n_steps = np.diff(zn)
+        ec_p_steps = -np.diff(zp)
         base = carrier_particle_fluxes(
             device.nodes_m,
             phi,
@@ -325,15 +356,20 @@ class CompiledInterfaceModel1D:
             hole_diffusivity,
             thermal,
             device.parameters.band_structure,
-            electron_electrochemical_step=np.diff(zn),
-            hole_electrochemical_step=-np.diff(zp),
+            electron_electrochemical_step=ec_n_steps,
+            hole_electrochemical_step=ec_p_steps,
+            band_step_mode=device.band_step_mode,
         )
         e_flux = np.array(base.electron.flux, dtype=float, copy=True)
         e_ld = np.array(base.electron.left_density_derivative, dtype=float, copy=True)
         e_rd = np.array(base.electron.right_density_derivative, dtype=float, copy=True)
+        e_lpot = np.array(base.electron.left_potential_derivative, dtype=float, copy=True)
+        e_rpot = np.array(base.electron.right_potential_derivative, dtype=float, copy=True)
         h_flux = np.array(base.hole.flux, dtype=float, copy=True)
         h_ld = np.array(base.hole.left_density_derivative, dtype=float, copy=True)
         h_rd = np.array(base.hole.right_density_derivative, dtype=float, copy=True)
+        h_lpot = np.array(base.hole.left_potential_derivative, dtype=float, copy=True)
+        h_rpot = np.array(base.hole.right_potential_derivative, dtype=float, copy=True)
 
         face_count = count - 1
         interior_count = count - 2
@@ -394,70 +430,164 @@ class CompiledInterfaceModel1D:
         occupancies: Vector = np.full(iface_count, np.nan, dtype=float)
 
         if self.topology == "deduplicated":
+            comb_mode: ThermionicCombinationMode = (
+                "harmonic_series" if self.combination_mode is None else self.combination_mode
+            )
             for tf in self.thermionic_faces:
                 f = tf.face
-                if tf.cap_electron:
-                    cap_e = cap_particle_flux_thermionic(
-                        float(e_flux[f]),
-                        n_left_m3=float(n[f]),
-                        n_right_m3=float(n[f + 1]),
-                        delta_barrier_eV=tf.delta_Ec_eV,
-                        temperature_K=temp,
-                        a_star_A_m2_K2=tf.a_star_n_A_m2_K2,
-                        te_softness=self.te_softness,
-                        regularization_mode=self.te_regularization_mode,
-                    )
-                    e_flux[f] = cap_e.flux_m2_s
-                    e_ld[f] = cap_e.d_flux_d_sg_flux * e_ld[f] + cap_e.d_flux_d_n_left_m_s
-                    e_rd[f] = cap_e.d_flux_d_sg_flux * e_rd[f] + cap_e.d_flux_d_n_right_m_s
-                    if derivatives:
-                        e_left_phi[f] = (
-                            cap_e.d_flux_d_sg_flux * e_left_phi[f]
-                            + cap_e.d_flux_d_n_left_m_s * float(n[f]) / thermal
+                if self.thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1:
+                    if tf.cap_electron:
+                        cap_e = cap_particle_flux_thermionic(
+                            float(e_flux[f]),
+                            n_left_m3=float(n[f]),
+                            n_right_m3=float(n[f + 1]),
+                            delta_barrier_eV=tf.delta_Ec_eV,
+                            temperature_K=temp,
+                            a_star_A_m2_K2=tf.a_star_n_A_m2_K2,
+                            te_softness=self.te_softness,
+                            regularization_mode=self.te_regularization_mode,
                         )
-                        e_right_phi[f] = (
-                            cap_e.d_flux_d_sg_flux * e_right_phi[f]
-                            + cap_e.d_flux_d_n_right_m_s * float(n[f + 1]) / thermal
+                        e_flux[f] = cap_e.flux_m2_s
+                        e_ld[f] = cap_e.d_flux_d_sg_flux * e_ld[f] + cap_e.d_flux_d_n_left_m_s
+                        e_rd[f] = cap_e.d_flux_d_sg_flux * e_rd[f] + cap_e.d_flux_d_n_right_m_s
+                        if derivatives:
+                            e_left_phi[f] = (
+                                cap_e.d_flux_d_sg_flux * e_left_phi[f]
+                                + cap_e.d_flux_d_n_left_m_s * float(n[f]) / thermal
+                            )
+                            e_right_phi[f] = (
+                                cap_e.d_flux_d_sg_flux * e_right_phi[f]
+                                + cap_e.d_flux_d_n_right_m_s * float(n[f + 1]) / thermal
+                            )
+                            e_left_zn[f] = (
+                                cap_e.d_flux_d_sg_flux * e_left_zn[f]
+                                + cap_e.d_flux_d_n_left_m_s * float(n[f])
+                            )
+                            e_right_zn[f] = (
+                                cap_e.d_flux_d_sg_flux * e_right_zn[f]
+                                + cap_e.d_flux_d_n_right_m_s * float(n[f + 1])
+                            )
+                    if tf.cap_hole:
+                        cap_h = cap_particle_flux_thermionic(
+                            float(h_flux[f]),
+                            n_left_m3=float(p[f]),
+                            n_right_m3=float(p[f + 1]),
+                            delta_barrier_eV=tf.delta_Ev_eV,
+                            temperature_K=temp,
+                            a_star_A_m2_K2=tf.a_star_p_A_m2_K2,
+                            te_softness=self.te_softness,
+                            regularization_mode=self.te_regularization_mode,
                         )
-                        e_left_zn[f] = (
-                            cap_e.d_flux_d_sg_flux * e_left_zn[f]
-                            + cap_e.d_flux_d_n_left_m_s * float(n[f])
+                        h_flux[f] = cap_h.flux_m2_s
+                        h_ld[f] = cap_h.d_flux_d_sg_flux * h_ld[f] + cap_h.d_flux_d_n_left_m_s
+                        h_rd[f] = cap_h.d_flux_d_sg_flux * h_rd[f] + cap_h.d_flux_d_n_right_m_s
+                        if derivatives:
+                            h_left_phi[f] = (
+                                cap_h.d_flux_d_sg_flux * h_left_phi[f]
+                                - cap_h.d_flux_d_n_left_m_s * float(p[f]) / thermal
+                            )
+                            h_right_phi[f] = (
+                                cap_h.d_flux_d_sg_flux * h_right_phi[f]
+                                - cap_h.d_flux_d_n_right_m_s * float(p[f + 1]) / thermal
+                            )
+                            h_left_zp[f] = (
+                                cap_h.d_flux_d_sg_flux * h_left_zp[f]
+                                - cap_h.d_flux_d_n_left_m_s * float(p[f])
+                            )
+                            h_right_zp[f] = (
+                                cap_h.d_flux_d_sg_flux * h_right_zp[f]
+                                - cap_h.d_flux_d_n_right_m_s * float(p[f + 1])
+                            )
+                else:
+                    if tf.cap_electron:
+                        te_e = reciprocal_thermionic_flux_m2_s(
+                            float(n[f]),
+                            float(n[f + 1]),
+                            carrier="electron",
+                            phi_left_V=float(phi[f]),
+                            phi_right_V=float(phi[f + 1]),
+                            band_offset_eV=tf.delta_Ec_eV,
+                            temperature_K=temp,
+                            a_star_left_A_m2_K2=tf.a_star_n_A_m2_K2,
+                            a_star_right_A_m2_K2=tf.a_star_n_right_A_m2_K2,
+                            dos_left_m3=tf.dos_n_left_m3,
+                            dos_right_m3=tf.dos_n_right_m3,
+                            transmission=tf.transmission,
+                            statistics="maxwell_boltzmann",
+                            model_version=self.thermionic_mode,
+                            thermal_voltage_V=thermal,
+                            electrochemical_step=float(ec_n_steps[f]),
                         )
-                        e_right_zn[f] = (
-                            cap_e.d_flux_d_sg_flux * e_right_zn[f]
-                            + cap_e.d_flux_d_n_right_m_s * float(n[f + 1])
+                        comb_e = combine_sg_and_reciprocal_thermionic_flux(
+                            float(e_flux[f]),
+                            d_sg_d_phi_left_m2_s_V=float(e_lpot[f]),
+                            d_sg_d_phi_right_m2_s_V=float(e_rpot[f]),
+                            d_sg_d_c_left_m_s=float(e_ld[f]),
+                            d_sg_d_c_right_m_s=float(e_rd[f]),
+                            c_left_m3=float(n[f]),
+                            c_right_m3=float(n[f + 1]),
+                            thermionic=te_e,
+                            combination_mode=comb_mode,
+                            te_softness=self.te_softness,
                         )
-                if tf.cap_hole:
-                    cap_h = cap_particle_flux_thermionic(
-                        float(h_flux[f]),
-                        n_left_m3=float(p[f]),
-                        n_right_m3=float(p[f + 1]),
-                        delta_barrier_eV=tf.delta_Ev_eV,
-                        temperature_K=temp,
-                        a_star_A_m2_K2=tf.a_star_p_A_m2_K2,
-                        te_softness=self.te_softness,
-                        regularization_mode=self.te_regularization_mode,
-                    )
-                    h_flux[f] = cap_h.flux_m2_s
-                    h_ld[f] = cap_h.d_flux_d_sg_flux * h_ld[f] + cap_h.d_flux_d_n_left_m_s
-                    h_rd[f] = cap_h.d_flux_d_sg_flux * h_rd[f] + cap_h.d_flux_d_n_right_m_s
-                    if derivatives:
-                        h_left_phi[f] = (
-                            cap_h.d_flux_d_sg_flux * h_left_phi[f]
-                            - cap_h.d_flux_d_n_left_m_s * float(p[f]) / thermal
+                        e_flux[f] = comb_e.flux_m2_s
+                        e_ld[f] = comb_e.d_flux_d_c_left_m_s
+                        e_rd[f] = comb_e.d_flux_d_c_right_m_s
+                        e_lpot[f] = comb_e.d_flux_d_phi_left_m2_s_V
+                        e_rpot[f] = comb_e.d_flux_d_phi_right_m2_s_V
+                        if derivatives:
+                            te_qf_phi_l = (te_e.right_barrier_weight / thermal) * te_e.flux_m2_s
+                            te_qf_phi_r = (te_e.left_barrier_weight / thermal) * te_e.flux_m2_s
+                            e_left_phi[f] = comb_e.sg_weight * e_left_phi[f] + comb_e.te_weight * te_qf_phi_l
+                            e_right_phi[f] = comb_e.sg_weight * e_right_phi[f] + comb_e.te_weight * te_qf_phi_r
+                            e_left_zn[f] = comb_e.d_flux_d_log_c_left_m2_s
+                            e_right_zn[f] = comb_e.d_flux_d_log_c_right_m2_s
+                    if tf.cap_hole:
+                        h_offset = (
+                            -tf.delta_Ev_eV if tf.hole_band_offset_eV is None else tf.hole_band_offset_eV
                         )
-                        h_right_phi[f] = (
-                            cap_h.d_flux_d_sg_flux * h_right_phi[f]
-                            - cap_h.d_flux_d_n_right_m_s * float(p[f + 1]) / thermal
+                        te_h = reciprocal_thermionic_flux_m2_s(
+                            float(p[f]),
+                            float(p[f + 1]),
+                            carrier="hole",
+                            phi_left_V=float(phi[f]),
+                            phi_right_V=float(phi[f + 1]),
+                            band_offset_eV=h_offset,
+                            temperature_K=temp,
+                            a_star_left_A_m2_K2=tf.a_star_p_A_m2_K2,
+                            a_star_right_A_m2_K2=tf.a_star_p_right_A_m2_K2,
+                            dos_left_m3=tf.dos_p_left_m3,
+                            dos_right_m3=tf.dos_p_right_m3,
+                            transmission=tf.transmission,
+                            statistics="maxwell_boltzmann",
+                            model_version=self.thermionic_mode,
+                            thermal_voltage_V=thermal,
+                            electrochemical_step=float(ec_p_steps[f]),
                         )
-                        h_left_zp[f] = (
-                            cap_h.d_flux_d_sg_flux * h_left_zp[f]
-                            - cap_h.d_flux_d_n_left_m_s * float(p[f])
+                        comb_h = combine_sg_and_reciprocal_thermionic_flux(
+                            float(h_flux[f]),
+                            d_sg_d_phi_left_m2_s_V=float(h_lpot[f]),
+                            d_sg_d_phi_right_m2_s_V=float(h_rpot[f]),
+                            d_sg_d_c_left_m_s=float(h_ld[f]),
+                            d_sg_d_c_right_m_s=float(h_rd[f]),
+                            c_left_m3=float(p[f]),
+                            c_right_m3=float(p[f + 1]),
+                            thermionic=te_h,
+                            combination_mode=comb_mode,
+                            te_softness=self.te_softness,
                         )
-                        h_right_zp[f] = (
-                            cap_h.d_flux_d_sg_flux * h_right_zp[f]
-                            - cap_h.d_flux_d_n_right_m_s * float(p[f + 1])
-                        )
+                        h_flux[f] = comb_h.flux_m2_s
+                        h_ld[f] = comb_h.d_flux_d_c_left_m_s
+                        h_rd[f] = comb_h.d_flux_d_c_right_m_s
+                        h_lpot[f] = comb_h.d_flux_d_phi_left_m2_s_V
+                        h_rpot[f] = comb_h.d_flux_d_phi_right_m2_s_V
+                        if derivatives:
+                            te_qf_phi_l = -(te_h.right_barrier_weight / thermal) * te_h.flux_m2_s
+                            te_qf_phi_r = -(te_h.left_barrier_weight / thermal) * te_h.flux_m2_s
+                            h_left_phi[f] = comb_h.sg_weight * h_left_phi[f] + comb_h.te_weight * te_qf_phi_l
+                            h_right_phi[f] = comb_h.sg_weight * h_right_phi[f] + comb_h.te_weight * te_qf_phi_r
+                            h_left_zp[f] = -comb_h.d_flux_d_log_c_left_m2_s
+                            h_right_zp[f] = -comb_h.d_flux_d_log_c_right_m2_s
 
             for bare in self.bare_srh:
                 idx = bare.node
@@ -708,12 +838,16 @@ class CompiledInterfaceModel1D:
                 flux=e_flux,
                 left_density_derivative=e_ld,
                 right_density_derivative=e_rd,
+                left_potential_derivative=e_lpot,
+                right_potential_derivative=e_rpot,
             ),
             hole=replace(
                 base.hole,
                 flux=h_flux,
                 left_density_derivative=h_ld,
                 right_density_derivative=h_rd,
+                left_potential_derivative=h_lpot,
+                right_potential_derivative=h_rpot,
             ),
         )
         return InterfaceEvaluation1D(
@@ -783,10 +917,13 @@ class CompiledDevice1D:
     )
     field_transport: FieldTransport1D | None = None
     interface_model: CompiledInterfaceModel1D | None = None
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1
     _carrier_layout: Layout = field(init=False, repr=False)
     _carrier_geometry: Geometry = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.band_step_mode not in BAND_STEP_MODES:
+            raise ValueError(f"unknown band_step_mode {self.band_step_mode!r}")
         for name in (
             "electron_diffusivity_faces_m2_s",
             "hole_diffusivity_faces_m2_s",
@@ -1016,6 +1153,7 @@ class DC1DProblem:
             device.parameters.band_structure,
             electron_electrochemical_step=np.diff(values[count:2 * count]),
             hole_electrochemical_step=-np.diff(values[2 * count:]),
+            band_step_mode=device.band_step_mode,
         )
 
     def recombination_rate(self, n: Vector, p: Vector, *, derivatives: bool = True) -> RecombinationRate:

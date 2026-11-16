@@ -844,6 +844,8 @@ class ReciprocalThermionicEvaluation:
     d_flux_d_c_right_m_s: float
     d_flux_d_log_c_left_m2_s: float
     d_flux_d_log_c_right_m2_s: float
+    left_barrier_weight: float = 0.0
+    right_barrier_weight: float = 0.0
 
 
 def reciprocal_thermionic_flux_m2_s(
@@ -923,10 +925,13 @@ def reciprocal_thermionic_flux_m2_s(
         term_r = -d_dr * c_r
         if barrier_step > 0.0:
             g_step = -term_l / vt
+            w_leg_l, w_leg_r = 1.0, 0.0
         elif barrier_step < 0.0:
             g_step = -term_r / vt
+            w_leg_l, w_leg_r = 0.0, 1.0
         else:
             g_step = -0.5 * (term_l + term_r) / vt
+            w_leg_l, w_leg_r = 0.5, 0.5
         ec_step = (
             float(electrochemical_step)
             if electrochemical_step is not None
@@ -949,6 +954,8 @@ def reciprocal_thermionic_flux_m2_s(
             d_flux_d_c_right_m_s=d_dr,
             d_flux_d_log_c_left_m2_s=term_l,
             d_flux_d_log_c_right_m2_s=-term_r,
+            left_barrier_weight=w_leg_l,
+            right_barrier_weight=w_leg_r,
         )
 
     if dos_left_m3 is None or dos_right_m3 is None:
@@ -1077,6 +1084,8 @@ def reciprocal_thermionic_flux_m2_s(
         d_flux_d_c_right_m_s=d_c_r,
         d_flux_d_log_c_left_m2_s=d_log_l,
         d_flux_d_log_c_right_m2_s=d_log_r,
+        left_barrier_weight=w_l,
+        right_barrier_weight=w_r,
     )
 
 
@@ -1095,6 +1104,8 @@ class ReciprocalThermionicCompositeEvaluation:
     d_flux_d_c_right_m_s: float
     d_flux_d_log_c_left_m2_s: float
     d_flux_d_log_c_right_m2_s: float
+    sg_weight: float = 0.0
+    te_weight: float = 0.0
 
 
 def combine_sg_and_reciprocal_thermionic_flux(
@@ -1285,4 +1296,6 @@ def combine_sg_and_reciprocal_thermionic_flux(
         d_flux_d_c_right_m_s=d_c_r,
         d_flux_d_log_c_left_m2_s=d_log_l,
         d_flux_d_log_c_right_m2_s=d_log_r,
+        sg_weight=w_sg,
+        te_weight=w_te,
     )

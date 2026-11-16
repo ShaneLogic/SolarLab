@@ -27,7 +27,12 @@ from solarlab.contracts import (
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.discretization.bernoulli import bernoulli, bernoulli_derivative
 from solarlab.equations.dc_1d import CapabilityError, quasi_fermi_potential_tangents
-from solarlab.equations.dc_2d import CompiledDevice2D, State2D
+from solarlab.equations.dc_2d import (
+    CompiledDevice2D,
+    State2D,
+    evaluate_2d_carrier_face_fluxes,
+    has_prospective_2d_transport,
+)
 from solarlab.mesh.geometry_2d import RECTANGULAR_HALF_ENDPOINT_2D_V1, RectangularGeometry2D
 from solarlab.physics.electrostatics.charge import ChargeEntry, ChargeLedger
 from solarlab.physics.ions import (
@@ -772,6 +777,16 @@ class Ionic2DProblem:
         comp = self.device.electronic_component
         values = np.asarray(u, dtype=float)[:3 * comp.node_count]
         phi, n, p = comp.fields(values, voltage_V=self.voltage_V)
+        if has_prospective_2d_transport(comp):
+            return evaluate_2d_carrier_face_fluxes(
+                comp,
+                phi,
+                n,
+                p,
+                values[comp.node_count:2 * comp.node_count],
+                values[2 * comp.node_count:3 * comp.node_count],
+                derivatives=False,
+            ).fluxes
         left, right = comp.geometry.contract_geometry.pairs.T
         potentials = comp.band_structure.transport_potentials(phi)
         if comp.field_transport is not None:
@@ -1003,42 +1018,81 @@ class Ionic2DProblem:
         emit(d.ion_node_indices, 3 * count + np.arange(d.ion_node_count, dtype=np.intp), Q * ion_vol * dp_dy)
 
         # 2. Carrier transport + bulk/grain recombination + optional reabsorption + optional cross-node SRH
-        c_fluxes = self.carrier_fluxes(values)
         rate = self.recombination_rate(n, p, derivatives=True)
         assert rate.d_rate_dn is not None and rate.d_rate_dp is not None
         source_n = -np.asarray(rate.d_rate_dn) * n
         source_p = np.asarray(rate.d_rate_dp) * p
         source_phi = (source_n + source_p) / thermal
 
-        evaluated_transport = None if comp.field_transport is None else comp.field_transport.evaluate(phi)
-        for offset, sign, density, flux in (
-            (count, 1.0, n, c_fluxes.electron),
-            (2 * count, -1.0, p, c_fluxes.hole),
-        ):
-            drive = sign * (values[offset + right] - values[offset + left])
-            phi_left, phi_right = quasi_fermi_potential_tangents(flux, drive, sign, thermal)
-            if evaluated_transport is not None:
-                diff = (evaluated_transport.electron_diffusivity_m2_s if offset == count
-                        else evaluated_transport.hole_diffusivity_m2_s)
-                slope = (evaluated_transport.electron_d_diffusivity_d_field if offset == count
-                         else evaluated_transport.hole_d_diffusivity_d_field)
-                field_chain = (flux.flux / diff) * slope / comp.geometry.face_spacing_m
-                phi_left = phi_left + field_chain
-                phi_right = phi_right - field_chain
-            z_left = sign * flux.left_density_derivative * density[left]
-            z_right = sign * flux.right_density_derivative * density[right]
+        if has_prospective_2d_transport(comp):
+            prospective = evaluate_2d_carrier_face_fluxes(
+                comp,
+                phi,
+                n,
+                p,
+                values[count:2 * count],
+                values[2 * count:3 * count],
+                derivatives=True,
+            )
             fm = geom.face_measures
-            emit(offset + left, left, -fm * phi_left)
-            emit(offset + left, right, -fm * phi_right)
-            emit(offset + left, offset + left, -fm * z_left)
-            emit(offset + left, offset + right, -fm * z_right)
-            emit(offset + right, left, fm * phi_left)
-            emit(offset + right, right, fm * phi_right)
-            emit(offset + right, offset + left, fm * z_left)
-            emit(offset + right, offset + right, fm * z_right)
-            emit(offset + nodes, nodes, vol * source_phi)
-            emit(offset + nodes, count + nodes, vol * source_n)
-            emit(offset + nodes, 2 * count + nodes, vol * source_p)
+            for offset, phi_left, phi_right, z_left, z_right in (
+                (
+                    count,
+                    prospective.e_phi_left,
+                    prospective.e_phi_right,
+                    prospective.e_z_left,
+                    prospective.e_z_right,
+                ),
+                (
+                    2 * count,
+                    prospective.h_phi_left,
+                    prospective.h_phi_right,
+                    prospective.h_z_left,
+                    prospective.h_z_right,
+                ),
+            ):
+                emit(offset + left, left, -fm * phi_left)
+                emit(offset + left, right, -fm * phi_right)
+                emit(offset + left, offset + left, -fm * z_left)
+                emit(offset + left, offset + right, -fm * z_right)
+                emit(offset + right, left, fm * phi_left)
+                emit(offset + right, right, fm * phi_right)
+                emit(offset + right, offset + left, fm * z_left)
+                emit(offset + right, offset + right, fm * z_right)
+                emit(offset + nodes, nodes, vol * source_phi)
+                emit(offset + nodes, count + nodes, vol * source_n)
+                emit(offset + nodes, 2 * count + nodes, vol * source_p)
+        else:
+            c_fluxes = self.carrier_fluxes(values)
+            evaluated_transport = None if comp.field_transport is None else comp.field_transport.evaluate(phi)
+            for offset, sign, density, flux in (
+                (count, 1.0, n, c_fluxes.electron),
+                (2 * count, -1.0, p, c_fluxes.hole),
+            ):
+                drive = sign * (values[offset + right] - values[offset + left])
+                phi_left, phi_right = quasi_fermi_potential_tangents(flux, drive, sign, thermal)
+                if evaluated_transport is not None:
+                    diff = (evaluated_transport.electron_diffusivity_m2_s if offset == count
+                            else evaluated_transport.hole_diffusivity_m2_s)
+                    slope = (evaluated_transport.electron_d_diffusivity_d_field if offset == count
+                             else evaluated_transport.hole_d_diffusivity_d_field)
+                    field_chain = (flux.flux / diff) * slope / comp.geometry.face_spacing_m
+                    phi_left = phi_left + field_chain
+                    phi_right = phi_right - field_chain
+                z_left = sign * flux.left_density_derivative * density[left]
+                z_right = sign * flux.right_density_derivative * density[right]
+                fm = geom.face_measures
+                emit(offset + left, left, -fm * phi_left)
+                emit(offset + left, right, -fm * phi_right)
+                emit(offset + left, offset + left, -fm * z_left)
+                emit(offset + left, offset + right, -fm * z_right)
+                emit(offset + right, left, fm * phi_left)
+                emit(offset + right, right, fm * phi_right)
+                emit(offset + right, offset + left, fm * z_left)
+                emit(offset + right, offset + right, fm * z_right)
+                emit(offset + nodes, nodes, vol * source_phi)
+                emit(offset + nodes, count + nodes, vol * source_n)
+                emit(offset + nodes, 2 * count + nodes, vol * source_p)
 
         # Optional self-consistent radiative reabsorption nonlocal rank-1 coupling
         if d.radiative_reabsorption:

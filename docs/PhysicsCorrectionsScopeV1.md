@@ -1,7 +1,7 @@
 # Prospective Physics Corrections Scope (V1)
 
-**Task ID:** `P08-01` (Wave 3 Lead-In — Prospective Physics Questions, Falsification Citations & Executable Counterexamples)  
-**Baseline Branch / Commit:** `devel` @ `0b03de5028e2124e743483671de890278dd038de`  
+**Task ID:** `P08-01` (Wave 3 Lead-In — Prospective Physics Questions, Falsification Citations & Executable Counterexamples)
+**Baseline Branch / Commit:** `devel` @ `0b03de5028e2124e743483671de890278dd038de`
 **Executable Witness Suite:** `tests/refactor/test_p08_counterexamples.py`
 
 ---
@@ -199,3 +199,38 @@ All prospective **physical** corrections (`P`-class) are quarantined into Stage 
    - Core `solarlab` produces typed immutable results and reproducible `RunStore` bundles; ad-hoc plotting scripts remain outside `src/solarlab/`.
 4. **`RS` (`R1`) Research Lane Pinning (`V2` `D20`):**
    - `R1` execution and long-window `G2-R` / `RS-G7` qualification remain pinned to pre-`P08` model versions so prospective `P08` physics updates cannot invalidate or confound historical `R1` long-window evidence.
+
+---
+
+## 7. `P08-05` — Unified Opt-In Compiler Wiring, `v1 -> v2` Version Mapping & Gate `G8` Closeout
+
+### 7.1 Explicit `v1 -> v2` Model & Compiler Mapping (`P08_MODEL_VERSION_MAPPINGS`)
+
+`src/solarlab/physics/presets.py` (`P08_MODEL_VERSION_MAPPINGS`, `P08CompilerOptions`, `build_p08_model_registry`, `build_p08_preset`) and `src/solarlab/device/compile_1d.py` (`p08_identity_inputs`) bind every Stage `P08` physics correction to an explicit model-version upgrade (`v1 -> v2`) while keeping all five compilers (`compile_device_1d`, `compile_ionic_device_1d`, `compile_multiple_ionic_device_1d`, `compile_device_2d`, `compile_ionic_device_2d`) **0-ULP / 0-byte manifest-digest invariant** under default `v1`:
+
+| Item | Family | Pre-`P08` Default (`v1` `ModelRef` & Token) | Prospective Opt-In (`v2` `ModelRef` & Compiler Keyword) | Semantic Delta |
+| --- | --- | --- | --- | --- |
+| `P08-02a` | `electrostatics_face_permittivity` | `electrostatics.face_permittivity@v1` (`nodal_harmonic_dielectric_v1`) | `electrostatics.face_permittivity@v2` (`dielectric_rule="layer_series_capacitance_v2"`) | Replaces unweighted nodal harmonic face permittivity and shared-node right-layer bleed with exact sub-face material-extent series capacitance $C_f = \varepsilon_0 / (d_L/\varepsilon_L + d_R/\varepsilon_R)$ and 2D cell-parallel lateral permittivity. |
+| `P08-02b` | `control_volume_geometry` | `mesh.endpoint_control_volume@v1` (`legacy_mol_integer_endpoint_v1` in 1D; `legacy_twod_half_endpoint_v1` in 2D) | `mesh.endpoint_control_volume@v2` (`geometry_name="physical_half_endpoint_v2"` in 1D; `stack_geometry="physical_half_endpoint_v2"` in 2D) | Binds contact half-cells ($w_0 = dx_0/2, w_{N-1} = dx_{N-1}/2$, $\sum_i w_i = L$) simultaneously across storage, mobile ions, optical generation, Poisson contact displacement, and terminal ports. |
+| `P08-02c` | `band_step_differencing` | `transport.band_step_differencing@v1` (`legacy_summed_potential_v1`) | `transport.band_step_differencing@v2` (`band_step_mode="hole_separate_increment_v1"`) | Forms $(\Delta\phi + \Delta\chi_t) + \Delta E_{g,t}$ per face before summation in 1D/2D SG transport so $\sim 5.5\text{ eV}$ valence-band offsets do not quantize sub-mV electrostatic steps in binary64. |
+| `P08-03` | `interface_thermionic` | `interface_transport.thermionic_emission@v1` (`legacy_unnormalized_thermionic_v1`) | `prospective_interface_p08@v2` / `prospective_interface_p08_compact_support@v2` (`thermionic_mode="reciprocal_physical_thermionic_v2"`, `combination_mode="harmonic_series" \| "compact_support"`) | Separates unfolded physical band-edge barriers ($\chi_{\text{phys}}, E_{g,\text{phys}}$), per-side DOS activities ($c_L/N_L, c_R/N_R$), reciprocal $\tilde{A}^* = \min(A^*_L, A^*_R)$, transmission $\mathcal{T}$, and cancellation-free `expm1` electrochemical drive across both `deduplicated` and `two_sided_trace` (`statistics="maxwell_boltzmann"`) 1D/2D heterointerfaces. |
+| `P08-04` | `optical_generation` | `monochromatic_beer_lambert_1d@v1` (`"beer_lambert"` / coherent `"tmm"` per device declaration) | `spectral_control_volume_beer_lambert@v2` (`optical_model="beer_lambert_spectral"`) | Integrates wavelength-resolved $\alpha_\ell(\lambda) = 4\pi k_\ell(\lambda)/\lambda$ over exact physical control-volume optical depths with closed front-substrate + electrical + transmitted photon budget (`rtol <= 1e-12`). |
+
+### 7.2 Identity Separation, Certificate Non-Reuse & Historical Disable Tracking
+
+1. **Zero Drift on Default `v1`:** Calling any of the five compilers with default arguments (or `P08CompilerOptions()`) appends zero new manifest keys and preserves bit-for-bit identical `compiled.identity` SHA-256 digests, numerical residuals, and sparse Jacobians relative to the Wave 2 `N`-baseline (`refactor/wave2-n-baseline` @ `582f019ef5743d43546219590a5ae094ca300594`).
+2. **Deterministic `compiled.identity` & `H_physics` Invalidation on `v2`:** Activating any `P08` `v2` selector deterministically mutates both:
+   - `compiled.identity` (and `interface_model.identity_sha256` / `CompiledIonicDevice{1D,2D}.identity`), preventing `solve_transient`, `solve_impedance`, `solve_ionic_transient`, and `solve_ionic_impedance` from reusing a `v1` steady-state operating point or certificate on a `v2`-compiled device (`ValueError`); and
+   - `physics_identity(p08_identity_inputs(prepared, implementation, options=...)).sha256` (`H_physics`), while `build_p08_preset(P08CompilerOptions(), sources)` records all five `v2` `ModelRef`s in `historical_disables` so explicit `select_preset(..., overrides=...)` surfaces exact `reenabled_historical_mechanisms` provenance.
+
+### 7.3 Gate `G8` Closeout Disposition Matrix
+
+| `G8` Verification Requirement | Disposition | Executable Evidence / Enforcement |
+| --- | --- | --- |
+| One-commit-per-physics-fix isolation (`P08-01`..`P08-05`) | **Satisfied** | Separate isolated commits on `wave3/ws1-p08-05-compiler-wiring`: `P08-01` (`dab6e1c`), `P08-02a` (`8b00294`), `P08-02b` (`6ace4d0`), `P08-02c` (`521a9fb`), `P08-03` (`b9bec98`), `P08-04` (`958d0cc`), and `P08-05` compiler/registry closeout. |
+| Default `v1` 0-byte manifest & numerical parity with `582f019e` | **Satisfied** | `tests/integration/test_p08_05_compiler_wiring.py` pins exact `582f019e` SHA-256 hex digests across 1D (`deduplicated` & `two_sided_trace`), single/dual ionic 1D, 2D, and ionic 2D compilers. |
+| End-to-end `v2` 1D/2D DC, BE transient conservation, 0-ULP `Assembled` parity & spatial refinement | **Satisfied** | `test_p08_02_refinement_and_parity.py`, `test_p08_03_heterojunction_detailed_balance.py`, `test_spectral_beer_lambert_stress.py`, and `test_p08_05_compiler_wiring.py`. |
+| Preservation of historical `v1` verdicts & failed criteria (`AGENTS.md`) | **Enforced** | `scaps_mirror_v2` `6.024958093130e-3 eV` `legacy_manual_v_bi_contact_offset` remains `inconsistent` (`CONTACT_THERMODYNAMIC_TOLERANCE_EV = 5.0e-3` unrelaxed); historical `Final121` (`4.010735e-4 > 1/3000 A/m^2`), `CND2 V4` strict-scope (`not_passed`), and `R1 V53` step-309 (`failed`) remain unoverwritten. |
+| Permanent refusal of falsified closures (`interface_shared_occupancy`, bulk-node Gaussian $E_t$) | **Enforced** | `compile_device_1d`, `compile_device_2d`, and `compile_ionic_device_2d` raise `CapabilityError` pre-solve (`test_p08_counterexamples.py`, `test_p08_03_thermionic_and_contacts.py`, `test_p08_05_compiler_wiring.py`). |
+| Decoupled `RS` (`R1`) lane pre-`P08` baseline pinning (`V2` `D20`) | **Enforced** | `RS` remains pinned to `refactor/wave2-n-baseline` @ `582f019ef5743d43546219590a5ae094ca300594`; `solarlab_research.cbo_scan.enforce_pre_p08_cbo_pinning` rejects all `P08_V2_MODEL_REFS` (`InterfaceCBOScanError`) unless `allow_prospective_p08_models=True`. |
+| Deferred out-of-`P08` scope (`F14` kinks, dynamic $T(x,t)$ PDE, external `.gen` file loader) | **Demarcated (not counted as `passed`)** | Explicitly documented in §5.2 & §6; non-smooth AC switching manifolds fail closed via `CapabilityError`. |

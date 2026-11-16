@@ -40,7 +40,11 @@ from solarlab.equations.assembly.terms import (
     FaceValue, FieldValues, LocalValue, OperatingInputs, Term, TermValue,
 )
 from solarlab.equations.assembly.weighted import MEASURE
-from solarlab.equations.dc_2d import CompiledDevice2D
+from solarlab.equations.dc_2d import (
+    CompiledDevice2D,
+    evaluate_2d_carrier_face_fluxes,
+    has_prospective_2d_transport,
+)
 from solarlab.physics.contacts.boundary_flux import boundary_particle_flux
 from solarlab.physics.contacts.exchange import CarrierExchangeChannel
 from solarlab.physics.recombination.bulk import RecombinationRate
@@ -204,6 +208,10 @@ class CarrierTransport2D:
         d = self.device
         phi = state.field("potential_V")
         n, p = _density(state, ELECTRON), _density(state, HOLE)
+        if has_prospective_2d_transport(d):
+            return evaluate_2d_carrier_face_fluxes(
+                d, phi, n, p, state.block(ELECTRON), state.block(HOLE), derivatives=False
+            ).fluxes
         left, right = d.geometry.contract_geometry.pairs.T
         potentials = d.band_structure.transport_potentials(phi)
         electron_step = state.block(ELECTRON)[right] - state.block(ELECTRON)[left]
@@ -228,6 +236,30 @@ class CarrierTransport2D:
 
     def evaluate(self, state: EvaluationState, *, derivatives: bool) -> Mapping[str, TermValue]:
         d = self.device
+        if has_prospective_2d_transport(d):
+            ev = evaluate_2d_carrier_face_fluxes(
+                d,
+                state.field("potential_V"),
+                _density(state, ELECTRON),
+                _density(state, HOLE),
+                state.block(ELECTRON),
+                state.block(HOLE),
+                derivatives=derivatives,
+            )
+            if not derivatives:
+                return {ELECTRON: FaceValue(ev.fluxes.electron.flux), HOLE: FaceValue(ev.fluxes.hole.flux)}
+            return {
+                ELECTRON: FaceValue(
+                    ev.fluxes.electron.flux,
+                    {POTENTIAL: ev.e_phi_left, ELECTRON: ev.e_z_left},
+                    {POTENTIAL: ev.e_phi_right, ELECTRON: ev.e_z_right},
+                ),
+                HOLE: FaceValue(
+                    ev.fluxes.hole.flux,
+                    {POTENTIAL: ev.h_phi_left, HOLE: ev.h_z_left},
+                    {POTENTIAL: ev.h_phi_right, HOLE: ev.h_z_right},
+                ),
+            }
         fluxes = self.fluxes(state)
         if not derivatives:
             return {ELECTRON: FaceValue(fluxes.electron.flux), HOLE: FaceValue(fluxes.hole.flux)}

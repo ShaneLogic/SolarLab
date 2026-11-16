@@ -22,10 +22,13 @@ from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
 
+from solarlab.config.identity import BuildSource, IdentityInputs, ModelInputs
+from solarlab.config.model_parameters import device_topology, layer_parameter_source
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.device.resolved import PreparedDevice, PreparedLayer
 from solarlab.device.neutral_defects import LITERAL_ABOVE_VB_DOS_REFERENCE_V1, bind_neutral_defects
 from solarlab.device.optical_generation import bind_optical_generation_1d
+from solarlab.discretization.face_average import DIELECTRIC_RULES
 from solarlab.equations.dc_1d import (
     CapabilityError,
     CompiledDevice1D,
@@ -46,7 +49,11 @@ from solarlab.solvers.nonlinear.steady_1d import (
 from solarlab.equations.field_transport_1d import FieldTransport1D, bind_field_transport_1d
 from solarlab.physics.generation.profile import GenerationProfile
 from solarlab.mesh import (
+    GEOMETRY_NAMES,
+    HALF_ENDPOINT_V1,
     INTEGER_ENDPOINT_V1,
+    PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+    PHYSICAL_HALF_ENDPOINT_V2,
     RIGHT_LAYER_WINS,
     TWO_SIDED_TRACE_V1,
     build_geometry,
@@ -87,12 +94,24 @@ from solarlab.physics.generation.profile import ControlVolumes
 from solarlab.physics.generation.spectrum import SpectralPhotonFlux, sample_nk_table
 from solarlab.physics.interface_transport import (
     EquilibriumReferencedSheetCharge,
+    LEGACY_UNNORMALIZED_THERMIONIC_V1,
     TE_BARRIER_THRESHOLD_EV,
+    THERMIONIC_MODEL_VERSIONS,
+    ThermionicCombinationMode,
+    ThermionicModelVersion,
     TwoSidedBulkState,
     TwoSidedInterfacePhysics,
     remove_shared_interface_nodes,
     resolve_layer_richardson,
     solve_two_sided_interface_qss,
+)
+from solarlab.physics.presets import (
+    P08_MODEL_VERSION_MAPPINGS,
+    P08_SOURCE_PATHS,
+    P08CompilerOptions,
+    build_p08_model_registry,
+    build_p08_preset,
+    select_preset,
 )
 from solarlab.physics.recombination.interface import (
     InterfaceDefectSpec,
@@ -103,10 +122,23 @@ from solarlab.physics.recombination.reaction import (
     BulkRecombinationCoefficients,
     BulkRecombinationReaction,
 )
+from solarlab.physics.registry import CapabilityContext, Scope
+from solarlab.physics.semantic_projection import SemanticProjection
 from solarlab.physics.transport import legacy_face_diffusivity
+from solarlab.physics.transport.electrochemical_flux import (
+    BAND_STEP_MODES,
+    LEGACY_SUMMED_POTENTIAL_V1,
+)
 from solarlab.physics.transport.field_mobility_tangents import FieldMobilityCapabilityError
 
-__all__ = ["CapabilityError", "CompiledDevice1D", "compile_device_1d", "unsupported"]
+__all__ = [
+    "CapabilityError",
+    "CompiledDevice1D",
+    "bind_spectral_beer_lambert_1d",
+    "compile_device_1d",
+    "p08_identity_inputs",
+    "unsupported",
+]
 
 Q = ELEMENTARY_CHARGE_C
 InterfaceTopologyName = Literal["deduplicated", "two_sided_trace"]
@@ -270,6 +302,8 @@ def _solve_dark_uncharged_two_sided_equilibrium(
     additional_recombination: LocalRecombinationModel | None,
     field_transport: FieldTransport1D | None,
     provisional_specs: Sequence[tuple[int, int, int, int, TraceElectrostatics, TwoSidedInterfacePhysics, float]],
+    thermionic_mode: ThermionicModelVersion = LEGACY_UNNORMALIZED_THERMIONIC_V1,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
 ) -> np.ndarray:
     """Certify dark (V=0, G=0) charge-off two_sided_trace steady state for equilibrium_referenced."""
     uncharged_specs = tuple(
@@ -290,6 +324,7 @@ def _solve_dark_uncharged_two_sided_equilibrium(
         topology="two_sided_trace",
         identity_sha256="0" * 64,
         two_sided=uncharged_specs,
+        thermionic_mode=thermionic_mode,
     )
     prov_dev = CompiledDevice1D(
         device_id,
@@ -312,6 +347,7 @@ def _solve_dark_uncharged_two_sided_equilibrium(
         capabilities=("ion_free", "classical_1d_dc", "heterointerface_1d"),
         field_transport=field_transport,
         interface_model=prov_model,
+        band_step_mode=band_step_mode,
     )
     try:
         return solve_equilibrium(
@@ -355,6 +391,9 @@ def _bind_interfaces_1d(
     te_regularization_mode: TERegularizationName,
     interface_transmission: float,
     equilibrium_occupancies: Sequence[float] | None,
+    thermionic_mode: ThermionicModelVersion = LEGACY_UNNORMALIZED_THERMIONIC_V1,
+    combination_mode: ThermionicCombinationMode | None = None,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
 ) -> CompiledInterfaceModel1D | None:
     iface_count = len(layers) - 1
     charge_closure = str(settings["interface_charge_closure"])
@@ -407,6 +446,7 @@ def _bind_interfaces_1d(
             face = idx - 1
 
             left_p = dict(layers[k].parameters)
+            right_p = dict(layers[k + 1].parameters)
             a_star_n = resolve_layer_richardson(
                 float(cast(float, left_p["A_star_n"])),
                 float(cast(float, left_p["Nc300"])),
@@ -425,21 +465,56 @@ def _bind_interfaces_1d(
                 (bands.physical_electron_affinity_eV[face] + bands.physical_band_gap_eV[face])
                 - (bands.physical_electron_affinity_eV[face + 1] + bands.physical_band_gap_eV[face + 1])
             )
-            cap_e = a_star_n > 0.0 and abs(delta_ec) > TE_BARRIER_THRESHOLD_EV
-            cap_h = a_star_p > 0.0 and abs(delta_ev) > TE_BARRIER_THRESHOLD_EV
-            if cap_e or cap_h:
-                te_specs.append(
-                    DeduplicatedThermionicFaceSpec(
-                        interface_index=k,
-                        face=face,
-                        delta_Ec_eV=delta_ec,
-                        delta_Ev_eV=delta_ev,
-                        a_star_n_A_m2_K2=a_star_n,
-                        a_star_p_A_m2_K2=a_star_p,
-                        cap_electron=cap_e,
-                        cap_hole=cap_h,
+            if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1:
+                cap_e = a_star_n > 0.0 and abs(delta_ec) > TE_BARRIER_THRESHOLD_EV
+                cap_h = a_star_p > 0.0 and abs(delta_ev) > TE_BARRIER_THRESHOLD_EV
+                if cap_e or cap_h:
+                    te_specs.append(
+                        DeduplicatedThermionicFaceSpec(
+                            interface_index=k,
+                            face=face,
+                            delta_Ec_eV=delta_ec,
+                            delta_Ev_eV=delta_ev,
+                            a_star_n_A_m2_K2=a_star_n,
+                            a_star_p_A_m2_K2=a_star_p,
+                            cap_electron=cap_e,
+                            cap_hole=cap_h,
+                        )
                     )
+            else:
+                a_star_n_r = resolve_layer_richardson(
+                    float(cast(float, right_p["A_star_n"])),
+                    float(cast(float, right_p["Nc300"])),
+                    temp,
                 )
+                a_star_p_r = resolve_layer_richardson(
+                    float(cast(float, right_p["A_star_p"])),
+                    float(cast(float, right_p["Nv300"])),
+                    temp,
+                )
+                cap_e = min(a_star_n, a_star_n_r) > 0.0
+                cap_h = min(a_star_p, a_star_p_r) > 0.0
+                if cap_e or cap_h:
+                    te_specs.append(
+                        DeduplicatedThermionicFaceSpec(
+                            interface_index=k,
+                            face=face,
+                            delta_Ec_eV=delta_ec,
+                            delta_Ev_eV=delta_ev,
+                            a_star_n_A_m2_K2=a_star_n,
+                            a_star_p_A_m2_K2=a_star_p,
+                            cap_electron=cap_e,
+                            cap_hole=cap_h,
+                            a_star_n_right_A_m2_K2=a_star_n_r,
+                            a_star_p_right_A_m2_K2=a_star_p_r,
+                            dos_n_left_m3=float(binding.conduction_dos_m3[face]),
+                            dos_n_right_m3=float(binding.conduction_dos_m3[face + 1]),
+                            dos_p_left_m3=float(binding.valence_dos_m3[face]),
+                            dos_p_right_m3=float(binding.valence_dos_m3[face + 1]),
+                            hole_band_offset_eV=-delta_ev,
+                            transmission=interface_transmission,
+                        )
+                    )
 
             defect = entry.get("defect")
             raw_vn = entry.get("v_n")
@@ -547,7 +622,7 @@ def _bind_interfaces_1d(
         if not bare_specs and not defect_specs and not te_specs:
             return None
 
-        manifest = {
+        manifest: dict[str, Any] = {
             "schema": "compiled_interface_model_1d_v1",
             "topology": "deduplicated",
             "plane_projection": plane_proj,
@@ -597,6 +672,30 @@ def _bind_interfaces_1d(
                 for s in te_specs
             ],
         }
+        resolved_comb = (
+            None
+            if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1
+            else ("harmonic_series" if combination_mode is None else combination_mode)
+        )
+        if thermionic_mode != LEGACY_UNNORMALIZED_THERMIONIC_V1:
+            manifest["thermionic_mode"] = thermionic_mode
+            manifest["combination_mode"] = resolved_comb
+            manifest["interface_transmission"] = interface_transmission
+            manifest["thermionic_faces_v2"] = [
+                [
+                    s.interface_index,
+                    s.face,
+                    s.a_star_n_right_A_m2_K2,
+                    s.a_star_p_right_A_m2_K2,
+                    s.dos_n_left_m3,
+                    s.dos_n_right_m3,
+                    s.dos_p_left_m3,
+                    s.dos_p_right_m3,
+                    s.hole_band_offset_eV,
+                    s.transmission,
+                ]
+                for s in te_specs
+            ]
         iface_sha = hashlib.sha256(
             json.dumps(manifest, separators=(",", ":"), allow_nan=False).encode()
         ).hexdigest()
@@ -611,6 +710,8 @@ def _bind_interfaces_1d(
             plane_generation=plane_gen,
             te_softness=te_softness,
             te_regularization_mode=te_regularization_mode,
+            thermionic_mode=thermionic_mode,
+            combination_mode=resolved_comb,
         )
 
     # Two-sided trace topology
@@ -739,6 +840,24 @@ def _bind_interfaces_1d(
             n1_right_m3=n1_r,
             p1_left_m3=p1_l,
             p1_right_m3=p1_r,
+            thermionic_mode=thermionic_mode,
+            carrier_statistics=(
+                "fermi_dirac"
+                if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1
+                else "maxwell_boltzmann"
+            ),
+            a_star_n_left_A_m2_K2=(
+                None if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1 else a_n_l
+            ),
+            a_star_n_right_A_m2_K2=(
+                None if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1 else a_n_r
+            ),
+            a_star_p_left_A_m2_K2=(
+                None if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1 else a_p_l
+            ),
+            a_star_p_right_A_m2_K2=(
+                None if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1 else a_p_r
+            ),
         )
         provisional_specs.append((k, face, l_node, r_node, trace_elec, phys, trap_density_m2))
 
@@ -774,6 +893,8 @@ def _bind_interfaces_1d(
                 additional_recombination=additional_recombination,
                 field_transport=field_transport,
                 provisional_specs=provisional_specs,
+                thermionic_mode=thermionic_mode,
+                band_step_mode=band_step_mode,
             )
             count_nodes = geometry.node_count
             phi_eq = u_dark[:count_nodes]
@@ -859,12 +980,24 @@ def _bind_interfaces_1d(
             ]
         )
 
-    manifest_ts = {
+    manifest_ts: dict[str, Any] = {
         "schema": "compiled_interface_model_1d_v1",
         "topology": "two_sided_trace",
         "charge_closure": charge_closure,
         "two_sided": manifest_two_sided,
     }
+    if thermionic_mode != LEGACY_UNNORMALIZED_THERMIONIC_V1:
+        manifest_ts["thermionic_mode"] = thermionic_mode
+        manifest_ts["carrier_statistics"] = "maxwell_boltzmann"
+        manifest_ts["two_sided_richardson_sides"] = [
+            [
+                s.physics.a_star_n_left_A_m2_K2,
+                s.physics.a_star_n_right_A_m2_K2,
+                s.physics.a_star_p_left_A_m2_K2,
+                s.physics.a_star_p_right_A_m2_K2,
+            ]
+            for s in two_sided_specs
+        ]
     iface_sha = hashlib.sha256(
         json.dumps(manifest_ts, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
@@ -872,6 +1005,7 @@ def _bind_interfaces_1d(
         topology="two_sided_trace",
         identity_sha256=iface_sha,
         two_sided=tuple(two_sided_specs),
+        thermionic_mode=thermionic_mode,
     )
 
 
@@ -907,7 +1041,7 @@ def _layer_input(layer: PreparedLayer) -> LayerParameterInput:
     )
 
 
-def _bind_spectral_beer_lambert_1d(
+def bind_spectral_beer_lambert_1d(
     prepared: PreparedDevice,
     control_volumes: ControlVolumes,
 ) -> GenerationProfile:
@@ -1051,6 +1185,11 @@ def compile_device_1d(
     interface_transmission: float = 1.0,
     equilibrium_occupancies: Sequence[float] | None = None,
     optical_model: OpticalModelName | None = None,
+    dielectric_rule: str | None = None,
+    geometry_name: str | None = None,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    thermionic_mode: ThermionicModelVersion | None = None,
+    combination_mode: ThermionicCombinationMode | None = None,
 ) -> CompiledDevice1D:
     """Cold compile genuine resolved configuration; no legacy/test execution.
 
@@ -1071,6 +1210,29 @@ def compile_device_1d(
         raise ValueError(
             "optical_model must be 'beer_lambert', 'beer_lambert_spectral', "
             "'tmm', or None"
+        )
+    if dielectric_rule is not None and dielectric_rule not in DIELECTRIC_RULES:
+        raise ValueError(f"unknown dielectric_rule {dielectric_rule!r}")
+    if geometry_name is not None and geometry_name not in GEOMETRY_NAMES:
+        raise ValueError(f"unknown geometry_name {geometry_name!r}")
+    if band_step_mode not in BAND_STEP_MODES:
+        raise ValueError(f"unknown band_step_mode {band_step_mode!r}")
+    resolved_thermionic: ThermionicModelVersion = (
+        LEGACY_UNNORMALIZED_THERMIONIC_V1 if thermionic_mode is None else thermionic_mode
+    )
+    if resolved_thermionic not in THERMIONIC_MODEL_VERSIONS:
+        raise ValueError(f"unknown thermionic_mode {thermionic_mode!r}")
+    if combination_mode is not None and combination_mode not in (
+        "harmonic_series",
+        "compact_support",
+        "legacy_logistic",
+        "hard",
+    ):
+        raise ValueError(f"unknown combination_mode {combination_mode!r}")
+    if combination_mode is not None and resolved_thermionic == LEGACY_UNNORMALIZED_THERMIONIC_V1:
+        raise ValueError(
+            "combination_mode requires thermionic_mode='reciprocal_physical_thermionic_v2' "
+            "or 'scaps_effective_velocity_thermionic_v1'"
         )
     if te_regularization_mode not in ("legacy_logistic", "compact_support"):
         raise ValueError("te_regularization_mode must be 'legacy_logistic' or 'compact_support'")
@@ -1094,6 +1256,17 @@ def compile_device_1d(
     )
     if resolved_topology == "two_sided_trace" and len(layers) < 2:
         raise CapabilityError("unsupported_classical_1d_dc: two_sided_trace requires at least two electrical layers")
+    if geometry_name is not None:
+        if resolved_topology == "deduplicated" and geometry_name in (
+            TWO_SIDED_TRACE_V1,
+            PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+        ):
+            raise ValueError("deduplicated topology requires a shared-node geometry")
+        if resolved_topology == "two_sided_trace" and geometry_name in (
+            INTEGER_ENDPOINT_V1,
+            HALF_ENDPOINT_V1,
+        ):
+            raise ValueError("two_sided_trace topology requires a two-sided split geometry")
 
     grid = {entry["layer"]: entry for entry in data["electrical_grid"]}
     if isinstance(intervals_per_layer, bool):
@@ -1119,10 +1292,12 @@ def compile_device_1d(
     base_nodes = multilayer_grid(list(zip(thicknesses, counts)), alpha=alphas)
     if resolved_topology == "two_sided_trace":
         nodes = remove_shared_interface_nodes(base_nodes, interface_positions)
-        geometry = build_geometry(TWO_SIDED_TRACE_V1, nodes, interface_positions)
+        geom_token = TWO_SIDED_TRACE_V1 if geometry_name is None else geometry_name
+        geometry = build_geometry(geom_token, nodes, interface_positions)
     else:
         nodes = base_nodes
-        geometry = build_geometry(INTEGER_ENDPOINT_V1, nodes, interface_positions)
+        geom_token = INTEGER_ENDPOINT_V1 if geometry_name is None else geometry_name
+        geometry = build_geometry(geom_token, nodes, interface_positions)
     masks = layer_node_masks(nodes, thicknesses, RIGHT_LAYER_WINS)
     binding = compile_layer_parameters(
         nodes, [_layer_input(layer) for layer in layers],
@@ -1156,7 +1331,16 @@ def compile_device_1d(
     if np.any(configured <= 0.0) or not np.all(np.isfinite(configured)) or np.max(np.abs(np.log(configured) - log_product)) > 1.0e-10:
         raise CapabilityError("inconsistent_intrinsic_product: configured ni and physical Nc/Nv/Eg do not share one Maxwell-Boltzmann equilibrium")
     eps_r_node = paint("eps_r")
-    poisson = PoissonOperator1D.for_geometry(geometry, eps_r_node)
+    if dielectric_rule is None and geometry.name != PHYSICAL_HALF_ENDPOINT_V2:
+        poisson = PoissonOperator1D.for_geometry(geometry, eps_r_node)
+    else:
+        layer_eps_r = [float(cast(float, dict(layer.parameters)["eps_r"])) for layer in layers]
+        poisson = PoissonOperator1D.for_geometry(
+            geometry,
+            eps_r_node,
+            dielectric_rule=dielectric_rule,
+            layer_eps_r=layer_eps_r,
+        )
     coefficients = BulkRecombinationCoefficients(
         nodes.size, configured, paint("tau_n"), paint("tau_p"),
         binding.srh_n1_m3, binding.srh_p1_m3, binding.radiative_coefficient_m3_s,
@@ -1177,7 +1361,7 @@ def compile_device_1d(
     elif optical_model == "beer_lambert":
         generation = BeerLambertBinding(nodes, paint("alpha"), settings["Phi"]).generation_profile(geometry)
     elif optical_model == "beer_lambert_spectral":
-        generation = _bind_spectral_beer_lambert_1d(prepared, geometry)
+        generation = bind_spectral_beer_lambert_1d(prepared, geometry)
     elif optical_model == "tmm":
         generation = bind_optical_generation_1d(prepared, geometry).profile
     elif data["declaration"].get("spectrum") is not None:
@@ -1246,6 +1430,9 @@ def compile_device_1d(
         te_regularization_mode=te_regularization_mode,
         interface_transmission=float(interface_transmission),
         equilibrium_occupancies=equilibrium_occupancies,
+        thermionic_mode=resolved_thermionic,
+        combination_mode=combination_mode,
+        band_step_mode=band_step_mode,
     )
 
     extra_id = None if additional_recombination is None else additional_recombination.model_id
@@ -1262,6 +1449,18 @@ def compile_device_1d(
         identity_parts += (field_transport.identity_sha256,)
     if interface_model is not None:
         identity_parts += (interface_model.identity_sha256,)
+    if dielectric_rule is not None:
+        identity_parts += (("dielectric_rule", poisson.dielectric_rule),)
+    if band_step_mode != LEGACY_SUMMED_POTENTIAL_V1:
+        identity_parts += (("band_step_mode", band_step_mode),)
+    if resolved_thermionic != LEGACY_UNNORMALIZED_THERMIONIC_V1 or combination_mode is not None:
+        identity_parts += (
+            (
+                "thermionic_mode",
+                resolved_thermionic,
+                "harmonic_series" if combination_mode is None else combination_mode,
+            ),
+        )
     identity = hashlib.sha256(json.dumps(
         identity_parts,
         separators=(",", ":"), allow_nan=False,
@@ -1283,4 +1482,63 @@ def compile_device_1d(
         capabilities=capabilities,
         field_transport=field_transport,
         interface_model=interface_model,
+        band_step_mode=band_step_mode,
+    )
+
+
+def p08_identity_inputs(
+    prepared: PreparedDevice,
+    implementation: BuildSource,
+    *,
+    options: P08CompilerOptions | None = None,
+    problem: str = "dc",
+) -> IdentityInputs:
+    """Bind a PreparedDevice and P08 model selection into source-bound IdentityInputs.
+
+    Every P08 V2 option deterministically updates the selected ``ModelRef``
+    version (``1 -> 2``) and its immutable source evidence, ensuring ``H_physics``
+    (``physics_identity(inputs).sha256``) changes whenever any V2 model is active.
+    """
+    if type(prepared) is not PreparedDevice:
+        raise ValueError("an actual explicit PreparedDevice is required")
+    resolved_options = P08CompilerOptions() if options is None else options
+    by_id = {doc.id: doc for doc in implementation.files}
+    missing = [path for path in P08_SOURCE_PATHS if path not in by_id]
+    if missing:
+        raise ValueError("BuildSource is missing P08 source files: " + ", ".join(missing))
+    sources = {path: by_id[path] for path in P08_SOURCE_PATHS}
+    registry = build_p08_model_registry(sources)
+    preset = build_p08_preset(resolved_options, sources)
+    topology = device_topology(prepared)
+    param_sources = {
+        Scope("layer", (layer.id,)): layer_parameter_source(layer)
+        for layer in prepared.layers
+        if layer.id in topology.electrical_layer_ids
+    }
+    context = CapabilityContext(
+        1,
+        problem,
+        "solarlab_assembled",
+        "maxwell_boltzmann",
+        temperature_K=prepared.to_mapping()["settings"]["T"],
+    )
+    selected = select_preset(preset, registry, topology, context, param_sources)
+    projections = tuple(
+        SemanticProjection(
+            ref,
+            "all_values_v1",
+            (
+                sources[
+                    mapping.v1_source_path if ref == mapping.v1_model else mapping.v2_source_path
+                ],
+            ),
+        )
+        for mapping, ref in zip(P08_MODEL_VERSION_MAPPINGS, resolved_options.active_model_refs())
+    )
+    return IdentityInputs(
+        prepared,
+        selected.selection,
+        registry,
+        ModelInputs.from_mappings(defaults=dict(preset.defaults), overrides={}),
+        projections,
     )

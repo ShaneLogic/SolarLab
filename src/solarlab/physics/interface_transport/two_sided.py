@@ -32,7 +32,15 @@ from solarlab.physics.electrostatics.interface_traces import (
     sheet_charge_row_weights,
     solve_electrostatic_traces,
 )
-from solarlab.physics.interface_transport.thermionic import fermi_dirac_richardson_flux
+from solarlab.physics.interface_transport.thermionic import (
+    LEGACY_UNNORMALIZED_THERMIONIC_V1,
+    THERMIONIC_MODEL_VERSIONS,
+    ThermionicModelVersion,
+    ThermionicStatisticsKind,
+    TwoSidedCrossFluxEvaluation,
+    fermi_dirac_richardson_flux,
+    reciprocal_thermionic_flux_m2_s,
+)
 from solarlab.physics.recombination.interface import (
     SharedInterfaceTrapEvaluation,
     evaluate_shared_interface_trap,
@@ -135,6 +143,12 @@ class TwoSidedInterfacePhysics:
     n1_right_m3: float = 0.0
     p1_left_m3: float = 0.0
     p1_right_m3: float = 0.0
+    thermionic_mode: ThermionicModelVersion = LEGACY_UNNORMALIZED_THERMIONIC_V1
+    carrier_statistics: ThermionicStatisticsKind = "fermi_dirac"
+    a_star_n_left_A_m2_K2: float | None = None
+    a_star_n_right_A_m2_K2: float | None = None
+    a_star_p_left_A_m2_K2: float | None = None
+    a_star_p_right_A_m2_K2: float | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -167,6 +181,23 @@ class TwoSidedInterfacePhysics:
         for name in ("conduction_band_step_eV", "hole_transport_step_eV"):
             if not math.isfinite(float(getattr(self, name))):
                 raise ValueError(f"{name} must be finite")
+        if self.thermionic_mode not in THERMIONIC_MODEL_VERSIONS:
+            raise ValueError(
+                f"unknown thermionic_mode {self.thermionic_mode!r}; expected one of {THERMIONIC_MODEL_VERSIONS}"
+            )
+        if self.carrier_statistics not in ("maxwell_boltzmann", "fermi_dirac"):
+            raise ValueError(
+                f"unknown carrier_statistics {self.carrier_statistics!r}; expected 'maxwell_boltzmann' or 'fermi_dirac'"
+            )
+        for opt_name in (
+            "a_star_n_left_A_m2_K2",
+            "a_star_n_right_A_m2_K2",
+            "a_star_p_left_A_m2_K2",
+            "a_star_p_right_A_m2_K2",
+        ):
+            opt_val = getattr(self, opt_name)
+            if opt_val is not None:
+                _positive(opt_val, opt_name)
 
 
 @dataclass(frozen=True)
@@ -650,6 +681,149 @@ def _evaluate_trap_for_two_sided(
     )
 
 
+def _evaluate_two_sided_cross_flux(
+    state: RealArray,
+    *,
+    u_delta: RealArray,
+    drop_left_V: float,
+    drop_right_V: float,
+    potential_jump_V: float,
+    physics: TwoSidedInterfacePhysics,
+    bulk: TwoSidedBulkState,
+) -> TwoSidedCrossFluxEvaluation:
+    """Evaluate cross-interface thermionic emission under V1 (default) or opt-in V2."""
+    vt_local = float(physics.thermal_voltage_V)
+    xi_l = float(drop_left_V) / vt_local
+    xi_r_from_bulk = -float(drop_right_V) / vt_local
+    if physics.thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1:
+        base_log_to_dos = np.array(
+            [
+                math.log(float(bulk.n_left_m3) / float(physics.N_C_left_m3)) + xi_l,
+                math.log(float(bulk.p_left_m3) / float(physics.N_V_left_m3)) - xi_l,
+                math.log(float(bulk.n_right_m3) / float(physics.N_C_right_m3)) + xi_r_from_bulk,
+                math.log(float(bulk.p_right_m3) / float(physics.N_V_right_m3)) - xi_r_from_bulk,
+            ],
+            dtype=np.float64,
+        )
+        return fermi_dirac_richardson_flux(
+            state,
+            phi_trace_left_V=0.0,
+            phi_trace_right_V=float(potential_jump_V),
+            conduction_band_step_eV=physics.conduction_band_step_eV,
+            hole_transport_step_eV=physics.hole_transport_step_eV,
+            N_C_left_m3=physics.N_C_left_m3,
+            N_C_right_m3=physics.N_C_right_m3,
+            N_V_left_m3=physics.N_V_left_m3,
+            N_V_right_m3=physics.N_V_right_m3,
+            richardson_n_A_m2_K2=physics.richardson_n_A_m2_K2,
+            richardson_p_A_m2_K2=physics.richardson_p_A_m2_K2,
+            temperature_K=physics.temperature_K,
+            thermal_voltage_V=physics.thermal_voltage_V,
+            transmission=physics.transmission,
+            base_log_to_dos=base_log_to_dos,
+            u_delta=u_delta,
+            electrochemical_steps=(
+                bulk.electron_electrochemical_step,
+                bulk.hole_electrochemical_step,
+            ),
+        )
+
+    u0, u1, u2, u3 = (float(v) for v in u_delta)
+    log_n_l = math.log(float(bulk.n_left_m3)) + xi_l + u0
+    log_p_l = math.log(float(bulk.p_left_m3)) - xi_l + u1
+    log_n_r = math.log(float(bulk.n_right_m3)) + xi_r_from_bulk + u2
+    log_p_r = math.log(float(bulk.p_right_m3)) - xi_r_from_bulk + u3
+
+    ec_n_trace: float | None = None
+    ec_p_trace: float | None = None
+    if physics.carrier_statistics == "maxwell_boltzmann":
+        if (
+            bulk.electron_electrochemical_step is not None
+            and -690.0 < log_n_l < 700.0
+            and -690.0 < log_n_r < 700.0
+        ):
+            ec_n_trace = float(bulk.electron_electrochemical_step) + (u2 - u0)
+        if (
+            bulk.hole_electrochemical_step is not None
+            and -690.0 < log_p_l < 700.0
+            and -690.0 < log_p_r < 700.0
+        ):
+            ec_p_trace = float(bulk.hole_electrochemical_step) + (u3 - u1)
+
+    a_n_l = (
+        physics.richardson_n_A_m2_K2
+        if physics.a_star_n_left_A_m2_K2 is None
+        else physics.a_star_n_left_A_m2_K2
+    )
+    a_n_r = (
+        physics.richardson_n_A_m2_K2
+        if physics.a_star_n_right_A_m2_K2 is None
+        else physics.a_star_n_right_A_m2_K2
+    )
+    a_p_l = (
+        physics.richardson_p_A_m2_K2
+        if physics.a_star_p_left_A_m2_K2 is None
+        else physics.a_star_p_left_A_m2_K2
+    )
+    a_p_r = (
+        physics.richardson_p_A_m2_K2
+        if physics.a_star_p_right_A_m2_K2 is None
+        else physics.a_star_p_right_A_m2_K2
+    )
+
+    eval_n = reciprocal_thermionic_flux_m2_s(
+        float(state[_N_LEFT]),
+        float(state[_N_RIGHT]),
+        carrier="electron",
+        phi_left_V=0.0,
+        phi_right_V=float(potential_jump_V),
+        band_offset_eV=physics.conduction_band_step_eV,
+        temperature_K=physics.temperature_K,
+        a_star_left_A_m2_K2=a_n_l,
+        a_star_right_A_m2_K2=a_n_r,
+        dos_left_m3=physics.N_C_left_m3,
+        dos_right_m3=physics.N_C_right_m3,
+        transmission=physics.transmission,
+        statistics=physics.carrier_statistics,
+        model_version=physics.thermionic_mode,
+        thermal_voltage_V=physics.thermal_voltage_V,
+        electrochemical_step=ec_n_trace,
+    )
+    eval_p = reciprocal_thermionic_flux_m2_s(
+        float(state[_P_LEFT]),
+        float(state[_P_RIGHT]),
+        carrier="hole",
+        phi_left_V=0.0,
+        phi_right_V=float(potential_jump_V),
+        band_offset_eV=physics.hole_transport_step_eV,
+        temperature_K=physics.temperature_K,
+        a_star_left_A_m2_K2=a_p_l,
+        a_star_right_A_m2_K2=a_p_r,
+        dos_left_m3=physics.N_V_left_m3,
+        dos_right_m3=physics.N_V_right_m3,
+        transmission=physics.transmission,
+        statistics=physics.carrier_statistics,
+        model_version=physics.thermionic_mode,
+        thermal_voltage_V=physics.thermal_voltage_V,
+        electrochemical_step=ec_p_trace,
+    )
+    cross = np.array([eval_n.flux_m2_s, eval_p.flux_m2_s], dtype=np.float64)
+    d_log: RealArray = np.zeros((2, 4), dtype=np.float64)
+    d_log[0, _N_LEFT] = eval_n.d_flux_d_log_c_left_m2_s
+    d_log[0, _N_RIGHT] = eval_n.d_flux_d_log_c_right_m2_s
+    d_log[1, _P_LEFT] = eval_p.d_flux_d_log_c_left_m2_s
+    d_log[1, _P_RIGHT] = eval_p.d_flux_d_log_c_right_m2_s
+    d_trace = np.array(
+        [
+            [eval_n.d_flux_d_phi_left_m2_s_V, eval_n.d_flux_d_phi_right_m2_s_V],
+            [eval_p.d_flux_d_phi_left_m2_s_V, eval_p.d_flux_d_phi_right_m2_s_V],
+        ],
+        dtype=np.float64,
+    )
+    scale = np.array([eval_n.one_way_scale_m2_s, eval_p.one_way_scale_m2_s], dtype=np.float64)
+    return TwoSidedCrossFluxEvaluation(cross, d_log, d_trace, scale)
+
+
 def _carrier_balance_terms(
     u_delta: RealArray,
     drop_left_V: float,
@@ -678,39 +852,14 @@ def _carrier_balance_terms(
     bulk_flux, d_bulk_u, d_bulk_trace_u, d_bulk_coords_u = _bulk_sg_flux_and_derivatives_u(
         u_delta, state, drop_left_V, drop_right_V, geometry, physics, bulk
     )
-    vt_local = float(physics.thermal_voltage_V)
-    xi_l = float(drop_left_V) / vt_local
-    xi_r_from_bulk = -float(drop_right_V) / vt_local
-    base_log_to_dos = np.array(
-        [
-            math.log(float(bulk.n_left_m3) / float(physics.N_C_left_m3)) + xi_l,
-            math.log(float(bulk.p_left_m3) / float(physics.N_V_left_m3)) - xi_l,
-            math.log(float(bulk.n_right_m3) / float(physics.N_C_right_m3)) + xi_r_from_bulk,
-            math.log(float(bulk.p_right_m3) / float(physics.N_V_right_m3)) - xi_r_from_bulk,
-        ],
-        dtype=np.float64,
-    )
-    cross_eval = fermi_dirac_richardson_flux(
+    cross_eval = _evaluate_two_sided_cross_flux(
         state,
-        phi_trace_left_V=0.0,
-        phi_trace_right_V=float(potential_jump_V),
-        conduction_band_step_eV=physics.conduction_band_step_eV,
-        hole_transport_step_eV=physics.hole_transport_step_eV,
-        N_C_left_m3=physics.N_C_left_m3,
-        N_C_right_m3=physics.N_C_right_m3,
-        N_V_left_m3=physics.N_V_left_m3,
-        N_V_right_m3=physics.N_V_right_m3,
-        richardson_n_A_m2_K2=physics.richardson_n_A_m2_K2,
-        richardson_p_A_m2_K2=physics.richardson_p_A_m2_K2,
-        temperature_K=physics.temperature_K,
-        thermal_voltage_V=physics.thermal_voltage_V,
-        transmission=physics.transmission,
-        base_log_to_dos=base_log_to_dos,
         u_delta=u_delta,
-        electrochemical_steps=(
-            bulk.electron_electrochemical_step,
-            bulk.hole_electrochemical_step,
-        ),
+        drop_left_V=drop_left_V,
+        drop_right_V=drop_right_V,
+        potential_jump_V=potential_jump_V,
+        physics=physics,
+        bulk=bulk,
     )
     trap = _evaluate_trap_for_two_sided(state, physics, charge)
     if trap is None:
@@ -1556,39 +1705,14 @@ def _fixed_occupancy_balance_terms(
     bulk_flux, d_bulk_u, d_bulk_trace_u, d_bulk_coords_u = _bulk_sg_flux_and_derivatives_u(
         u_delta, state, drop_left_V, drop_right_V, geometry, physics, bulk
     )
-    vt_local = float(physics.thermal_voltage_V)
-    xi_l = float(drop_left_V) / vt_local
-    xi_r_from_bulk = -float(drop_right_V) / vt_local
-    base_log_to_dos = np.array(
-        [
-            math.log(float(bulk.n_left_m3) / float(physics.N_C_left_m3)) + xi_l,
-            math.log(float(bulk.p_left_m3) / float(physics.N_V_left_m3)) - xi_l,
-            math.log(float(bulk.n_right_m3) / float(physics.N_C_right_m3)) + xi_r_from_bulk,
-            math.log(float(bulk.p_right_m3) / float(physics.N_V_right_m3)) - xi_r_from_bulk,
-        ],
-        dtype=np.float64,
-    )
-    cross_eval = fermi_dirac_richardson_flux(
+    cross_eval = _evaluate_two_sided_cross_flux(
         state,
-        phi_trace_left_V=0.0,
-        phi_trace_right_V=float(potential_jump_V),
-        conduction_band_step_eV=physics.conduction_band_step_eV,
-        hole_transport_step_eV=physics.hole_transport_step_eV,
-        N_C_left_m3=physics.N_C_left_m3,
-        N_C_right_m3=physics.N_C_right_m3,
-        N_V_left_m3=physics.N_V_left_m3,
-        N_V_right_m3=physics.N_V_right_m3,
-        richardson_n_A_m2_K2=physics.richardson_n_A_m2_K2,
-        richardson_p_A_m2_K2=physics.richardson_p_A_m2_K2,
-        temperature_K=physics.temperature_K,
-        thermal_voltage_V=physics.thermal_voltage_V,
-        transmission=physics.transmission,
-        base_log_to_dos=base_log_to_dos,
         u_delta=u_delta,
-        electrochemical_steps=(
-            bulk.electron_electrochemical_step,
-            bulk.hole_electrochemical_step,
-        ),
+        drop_left_V=drop_left_V,
+        drop_right_V=drop_right_V,
+        potential_jump_V=potential_jump_V,
+        physics=physics,
+        bulk=bulk,
     )
 
     vn = float(physics.surface_recombination_velocity_n_m_s)

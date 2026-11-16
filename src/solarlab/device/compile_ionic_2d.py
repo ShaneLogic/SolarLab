@@ -12,7 +12,7 @@ from collections.abc import Mapping
 import hashlib
 import json
 import math
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -27,11 +27,21 @@ from solarlab.equations.ionic_2d import (
     CompiledIonicDevice2D, RadiativeReabsorptionSpec2D, TwoSidedInterfaceSRHCoupling2D,
 )
 from solarlab.experiments.two_dimensional.inputs import JV2DInput
-from solarlab.mesh.geometry import half_endpoint_geometry
+from solarlab.mesh.geometry import (
+    HALF_ENDPOINT_V1,
+    PHYSICAL_HALF_ENDPOINT_V2,
+    half_endpoint_geometry,
+    physical_half_endpoint_geometry,
+)
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.mesh.grid import LEFT_LAYER_WINS, node_owner
 from solarlab.physics.band_structure.temperature import ion_diffusivity_at_temperature
+from solarlab.physics.interface_transport import (
+    ThermionicCombinationMode,
+    ThermionicModelVersion,
+)
 from solarlab.physics.ions import DIFFUSION_ONLY_STERIC_V1, WHOLE_FLUX_STERIC_V1
+from solarlab.physics.transport.electrochemical_flux import LEGACY_SUMMED_POTENTIAL_V1
 
 __all__ = [
     "CompiledIonicDevice2D",
@@ -267,6 +277,13 @@ def compile_ionic_device_2d(
     ion_domain_layer: str | None = None,
     ion_domain_endpoints: tuple[str, str] | None = None,
     enable_radiative_reabsorption: bool | None = None,
+    dielectric_rule: str | None = None,
+    stack_geometry: str = HALF_ENDPOINT_V1,
+    geometry_name: str | None = None,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    thermionic_mode: ThermionicModelVersion | None = None,
+    combination_mode: ThermionicCombinationMode | None = None,
+    optical_model: Literal["beer_lambert", "beer_lambert_spectral", "tmm"] | None = None,
 ) -> CompiledIonicDevice2D:
     """Compile a 2D single-positive-ion device with four-side blocking boundaries."""
     if not isinstance(prepared, PreparedDevice) or not isinstance(spatial, JV2DInput):
@@ -380,7 +397,17 @@ def compile_ionic_device_2d(
         lateral_bc=spatial.lateral_bc,
         microstructure=spatial.microstructure,
     )
-    electronic_2d = compile_device_2d(component_prepared, geometry_spatial)
+    electronic_2d = compile_device_2d(
+        component_prepared,
+        geometry_spatial,
+        dielectric_rule=dielectric_rule,
+        stack_geometry=stack_geometry,
+        geometry_name=geometry_name,
+        band_step_mode=band_step_mode,
+        thermionic_mode=thermionic_mode,
+        combination_mode=combination_mode,
+        optical_model=optical_model,
+    )
     if any(ch.kind != "fixed_reservoir" for ch in electronic_2d.column.channels):
         raise CapabilityError(
             "selective_robin_ionic_2d_unsupported: 2D mobile-ion requires ohmic fixed-reservoir contacts"
@@ -400,7 +427,11 @@ def compile_ionic_device_2d(
     if left is None or right is None:
         raise CapabilityError("ionic_2d: domain endpoints require shared electrostatic stack nodes")
     row_indices: NDArray[np.intp] = np.arange(left, right + 1, dtype=np.intp)
-    ion_y_geometry = half_endpoint_geometry(electronic_2d.column.nodes_m[row_indices])
+    ion_y_geometry = (
+        physical_half_endpoint_geometry(electronic_2d.column.nodes_m[row_indices])
+        if electronic_2d.column.geometry.name == PHYSICAL_HALF_ENDPOINT_V2
+        else half_endpoint_geometry(electronic_2d.column.nodes_m[row_indices])
+    )
     ion_geometry = RectangularGeometry2D(electronic_2d.geometry.x_m, ion_y_geometry, lateral_bc="neumann")
     ion_count = ion_geometry.node_count
     ion_face_count = ion_geometry.face_spacing_m.size

@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Literal
 
 import numpy as np
 
 from solarlab.config.resolve_device import resolve_device
-from solarlab.device.compile_1d import compile_device_1d
+from solarlab.device.compile_1d import bind_spectral_beer_lambert_1d, compile_device_1d
 from solarlab.device.grain_2d import bind_grain_regions_2d, grain_declarations
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
@@ -32,7 +33,24 @@ from solarlab.mesh.geometry import (
 )
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.physics.generation.beer_lambert import BeerLambertBinding
+from solarlab.physics.interface_transport import (
+    LEGACY_UNNORMALIZED_THERMIONIC_V1,
+    ThermionicCombinationMode,
+    ThermionicModelVersion,
+)
+from solarlab.physics.transport.electrochemical_flux import (
+    BAND_STEP_MODES,
+    LEGACY_SUMMED_POTENTIAL_V1,
+)
 from solarlab.units import normalize_quantity
+
+__all__ = [
+    "CLASSICAL_2D_CONTACTS_V1",
+    "CLASSICAL_2D_DC_V1",
+    "CLASSICAL_2D_PERIODIC_CONTACTS_V1",
+    "CLASSICAL_2D_PERIODIC_DC_V1",
+    "compile_device_2d",
+]
 
 CLASSICAL_2D_DC_V1 = "classical_mb_fixed_reservoir_neumann_2d_dc_v1"
 CLASSICAL_2D_CONTACTS_V1 = "classical_mb_carrier_exchange_neumann_2d_dc_v1"
@@ -47,6 +65,11 @@ def compile_device_2d(
     *,
     dielectric_rule: str | None = None,
     stack_geometry: str = HALF_ENDPOINT_V1,
+    geometry_name: str | None = None,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    thermionic_mode: ThermionicModelVersion | None = None,
+    combination_mode: ThermionicCombinationMode | None = None,
+    optical_model: Literal["beer_lambert", "beer_lambert_spectral", "tmm"] | None = None,
 ) -> CompiledDevice2D:
     """Compile without a nonlinear solve or inferred geometric defaults.
 
@@ -58,10 +81,26 @@ def compile_device_2d(
     """
     if not isinstance(prepared, PreparedDevice) or not isinstance(spatial, JV2DInput):
         raise TypeError("compile_device_2d requires PreparedDevice and typed JV2DInput geometry")
-    if stack_geometry not in {HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2}:
-        raise ValueError(f"unsupported 2D stack_geometry {stack_geometry!r}")
+    if geometry_name is not None:
+        if geometry_name not in {HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2}:
+            raise ValueError(f"unsupported 2D geometry_name {geometry_name!r}")
+        if stack_geometry != HALF_ENDPOINT_V1 and stack_geometry != geometry_name:
+            raise ValueError("stack_geometry and geometry_name disagree")
+        effective_stack_geometry = geometry_name
+    else:
+        effective_stack_geometry = stack_geometry
+    if effective_stack_geometry not in {HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2}:
+        raise ValueError(f"unsupported 2D stack_geometry {effective_stack_geometry!r}")
+    if band_step_mode not in BAND_STEP_MODES:
+        raise ValueError(f"unknown 2D band_step_mode {band_step_mode!r}")
+    if optical_model is not None and optical_model not in (
+        "beer_lambert",
+        "beer_lambert_spectral",
+        "tmm",
+    ):
+        raise ValueError(f"unknown 2D optical_model {optical_model!r}")
     resolved_dielectric = (
-        (LAYER_SERIES_CAPACITANCE_V2 if stack_geometry == PHYSICAL_HALF_ENDPOINT_V2 else NODAL_HARMONIC_DIELECTRIC_V1)
+        (LAYER_SERIES_CAPACITANCE_V2 if effective_stack_geometry == PHYSICAL_HALF_ENDPOINT_V2 else NODAL_HARMONIC_DIELECTRIC_V1)
         if dielectric_rule is None
         else dielectric_rule
     )
@@ -78,15 +117,22 @@ def compile_device_2d(
         raise ValueError("Ny_per_layer must be at least two intervals")
     data = prepared.to_mapping()
     spectral = data["declaration"].get("spectrum") is not None
+    scalar_override = optical_model == "beer_lambert"
     if data["declaration"].get("fixed_generation") is not None:
         raise CapabilityError("unsupported_classical_2d_dc: spectral/fixed optical generation is not bound")
+    if optical_model in ("beer_lambert_spectral", "tmm") and not spectral:
+        raise CapabilityError(f"unsupported_classical_2d_dc: optical_model={optical_model!r} requires an explicit spectrum")
     if data["settings"]["band_grading"]:
         raise CapabilityError("unsupported_classical_2d_dc: graded bands are outside this first slice")
-    for layer in prepared.layers:
+    for idx_layer, layer in enumerate(prepared.layers):
         p = dict(layer.parameters)
-        if p["incoherent"]:
+        if p["incoherent"] and not (optical_model == "beer_lambert_spectral" and idx_layer == 0):
             raise CapabilityError("unsupported_classical_2d_dc: layers." + layer.id + ".incoherent optics is not bound")
-        if layer.role == "substrate" or (not spectral and (layer.optical is not None or p["n_optical"] is not None)):
+        if layer.role == "substrate" or (
+            not spectral
+            and not scalar_override
+            and (layer.optical is not None or p["n_optical"] is not None)
+        ):
             raise CapabilityError("unsupported_classical_2d_dc: optical-only/index layers are not bound")
         if any(p[name] != 0.0 for name in ("pf_gamma_n", "pf_gamma_p")):
             raise CapabilityError("unsupported_classical_2d_dc: field-dependent carrier mobility is not bound")
@@ -101,14 +147,37 @@ def compile_device_2d(
             "source_prepared_sha256": prepared.content_sha256,
             "coefficient_prepared_sha256": column_prepared.content_sha256,
             "removed_declaration": "grain_boundaries", "used_as_2d_result": False}, sort_keys=True).encode()
-    column = compile_device_1d(column_prepared, intervals_per_layer=(spatial.Ny_per_layer,) * len(prepared.layers))
+    has_column_p08 = (
+        geometry_name is not None
+        or band_step_mode != LEGACY_SUMMED_POTENTIAL_V1
+        or (thermionic_mode is not None and thermionic_mode != LEGACY_UNNORMALIZED_THERMIONIC_V1)
+        or combination_mode is not None
+        or optical_model is not None
+    )
+    if has_column_p08:
+        column = compile_device_1d(
+            column_prepared,
+            intervals_per_layer=(spatial.Ny_per_layer,) * len(prepared.layers),
+            dielectric_rule=dielectric_rule,
+            geometry_name=(
+                PHYSICAL_HALF_ENDPOINT_V2
+                if effective_stack_geometry == PHYSICAL_HALF_ENDPOINT_V2
+                else None
+            ),
+            band_step_mode=band_step_mode,
+            thermionic_mode=thermionic_mode,
+            combination_mode=combination_mode,
+            optical_model=optical_model,
+        )
+    else:
+        column = compile_device_1d(column_prepared, intervals_per_layer=(spatial.Ny_per_layer,) * len(prepared.layers))
     if column.recombination.explicit_defects is not None:
         raise CapabilityError("unsupported_classical_2d_dc: explicit defect populations are not bound")
     length = normalize_quantity(spatial.lateral_length, "m")
     interface_positions = [plane.position_m for plane in column.geometry.interfaces]
     y_geometry = (
         physical_half_endpoint_geometry(column.nodes_m, interface_positions)
-        if stack_geometry == PHYSICAL_HALF_ENDPOINT_V2
+        if effective_stack_geometry == PHYSICAL_HALF_ENDPOINT_V2
         else half_endpoint_geometry(column.nodes_m, interface_positions)
     )
     geometry = RectangularGeometry2D(
@@ -118,9 +187,16 @@ def compile_device_2d(
     for layer, mask in zip(prepared.layers, column.parameters.layer_masks):
         values = dict(layer.parameters)
         alpha[mask], eps[mask] = values["alpha"], values["eps_r"]
-    optical = bind_optical_generation_2d(prepared, geometry) if spectral else None
-    generation = (BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
-                  if optical is None else optical.optical_y.profile)
+    if optical_model == "beer_lambert_spectral":
+        optical = None
+        generation = bind_spectral_beer_lambert_1d(prepared, y_geometry)
+    elif optical_model == "beer_lambert":
+        optical = None
+        generation = BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
+    else:
+        optical = bind_optical_generation_2d(prepared, geometry) if (spectral or optical_model == "tmm") else None
+        generation = (BeerLambertBinding(column.nodes_m, alpha, data["settings"]["Phi"]).generation_profile(y_geometry)
+                      if optical is None else optical.optical_y.profile)
     grains = bind_grain_regions_2d(prepared, spatial, geometry)
     faceD = []
     for carrier in ("electron", "hole"):
@@ -151,9 +227,13 @@ def compile_device_2d(
         identity = hashlib.sha256(json.dumps((identity, optical.identity_sha256), separators=(",", ":")).encode()).hexdigest()
     if transport is not None:
         identity = hashlib.sha256(json.dumps((identity, transport.identity_sha256), separators=(",", ":")).encode()).hexdigest()
-    if stack_geometry != HALF_ENDPOINT_V1:
+    if effective_stack_geometry != HALF_ENDPOINT_V1:
         identity = hashlib.sha256(
-            json.dumps((identity, "stack_geometry", stack_geometry), separators=(",", ":")).encode()
+            json.dumps((identity, "stack_geometry", effective_stack_geometry), separators=(",", ":")).encode()
+        ).hexdigest()
+    if optical_model is not None:
+        identity = hashlib.sha256(
+            json.dumps((identity, "optical_model", optical_model), separators=(",", ":")).encode()
         ).hexdigest()
     layer_permittivity_y: tuple[float, ...] | None = None
     if resolved_dielectric != NODAL_HARMONIC_DIELECTRIC_V1:
