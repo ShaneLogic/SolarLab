@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from pathlib import Path
 import subprocess
 import time
 
@@ -12,7 +13,6 @@ import pytest
 
 from examples.research_1d.service import committed_implementation
 from examples.research_1d.steady import load_device
-from legacy_fixtures import LEGACY, ROOT
 from solarlab.config.device_import import import_standard_device
 from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.legacy_wire import prepare_legacy_wire
@@ -34,6 +34,9 @@ from solarlab_server.steady_preparation import SteadyPreparationContext, steady_
 from test_event_service import _HTTPServer as _BaseHTTPServer, _all_events, _blocks, _next_event
 
 pytestmark = pytest.mark.requires_clean_core
+
+ROOT = Path(__file__).resolve().parents[2]
+LEGACY = ROOT / "perovskite-sim/perovskite_sim"
 
 DEFAULT_PATHS = (
     "models/parameters.py",

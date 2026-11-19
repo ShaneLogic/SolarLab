@@ -147,7 +147,8 @@ def test_complete_actual_source_bundle_is_immutable_and_preserves_commit_meaning
     source, bundle = frozen
     assert bundle.profile == "target"
     assert not any(
-        item.path.startswith("site/perovskite_sim/") for item in bundle.files
+        item.path.startswith(("site/perovskite_sim/", "site/solarlab_server/legacy_engine/"))
+        for item in bundle.files
     )
     assert any(
         item.path == "site/solarlab_server/_web_dist/index.html"
@@ -360,7 +361,14 @@ def installation(frozen, tmp_path_factory):
     with zipfile.ZipFile(wheel) as zf:
         wnames = zf.namelist()
     assert not any(
-        n.startswith(("perovskite_sim/", "perovskite-sim/", "backend/"))
+        n.startswith(
+            (
+                "perovskite_sim/",
+                "perovskite-sim/",
+                "backend/",
+                "solarlab_server/legacy_engine/",
+            )
+        )
         for n in wnames
     ), wnames
     assert "solarlab/materials/data/default_catalog_v1.json" in wnames
@@ -368,7 +376,11 @@ def installation(frozen, tmp_path_factory):
     with tarfile.open(sdist) as tf:
         snames = tf.getnames()
     assert not any(
-        "perovskite-sim/" in n or "perovskite_sim/" in n for n in snames
+        "perovskite-sim/" in n
+        or "perovskite_sim/" in n
+        or "solarlab_server/legacy_engine/" in n
+        or n.endswith(("/web/src/api.ts", "/web/src/job-stream.ts"))
+        for n in snames
     ), snames
     assert any(n.endswith("/web/dist/index.html") for n in snames), snames
 
@@ -399,7 +411,8 @@ site = pathlib.Path(sys.argv[1])
 sys.path = [str(site)] + [p for p in sys.path if p]
 assert importlib.util.find_spec('perovskite_sim') is None
 assert importlib.util.find_spec('backend') is None
-for forbidden in ('perovskite_sim', 'backend'):
+assert importlib.util.find_spec('solarlab_server.legacy_engine') is None
+for forbidden in ('perovskite_sim', 'backend', 'solarlab_server.legacy_engine'):
     try:
         importlib.import_module(forbidden)
     except ModuleNotFoundError:

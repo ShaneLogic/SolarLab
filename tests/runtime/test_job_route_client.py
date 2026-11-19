@@ -45,15 +45,15 @@ await transpile('v2-job-client', [
   ["'./steady-jv-client'", "'./steady-jv-client.mjs'"],
   ["'./v2-workstation-client'", "'./v2-workstation-client.mjs'"],
 ]);
-await writeFile(`${outDir}/base.mjs`, `export const BASE = ${JSON.stringify(endpoint.replace(/\\/$/, ''))};`);
-await transpile('job-stream', [["'./api'", "'./base.mjs'"]]);
-
-// 1. Retained legacy job-stream.ts is explicitly refused with HTTP 410 and zero fallback.
-const legacyMod = await import(pathToFileURL(`${outDir}/job-stream.mjs`));
-await assert.rejects(
-  () => legacyMod.startJob('jv', null, {}, 'fixture:scaps'),
-  err => String(err.message).includes('410'),
-);
+// 1. Retired legacy POST /api/jobs route is explicitly refused with HTTP 410 and zero fallback.
+const legacyRes = await fetch(`${endpoint}api/jobs`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ kind: 'jv', config_name: 'fixture:scaps', params: {} }),
+});
+assert.equal(legacyRes.status, 410);
+const legacyBody = await legacyRes.json();
+assert.equal(legacyBody.detail?.code ?? legacyBody.code, 'legacy_execution_retired');
 
 // 2. Production V2 job client submits engine='solarlab' via POST /jobs and streams durable RunStore events.
 const { startJob, streamJobEvents } = await import(pathToFileURL(`${outDir}/v2-job-client.mjs`));

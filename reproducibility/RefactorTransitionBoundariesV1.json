@@ -20,7 +20,9 @@
   "execution_facade": {
     "id": "legacy-engine",
     "owner": "WS4",
-    "status": "implemented_W03",
+    "status": "historical",
+    "historical": true,
+    "retired_after_commit": "9358f24b31b642f8c6c1a9a3d46b0cbbfe7fc495",
     "module": "solarlab_server.legacy_engine",
     "path": "src/solarlab_server/legacy_engine/__init__.py",
     "symbol": "prepare_legacy_job",
@@ -209,7 +211,9 @@
         "web/src/job-stream.ts"
       ],
       "owner": "WS4",
-      "status": "retained_legacy_wire_clients",
+      "status": "historical",
+      "historical": true,
+      "retired_after_commit": "9358f24b31b642f8c6c1a9a3d46b0cbbfe7fc495",
       "replacement": "Registered product clients and the single reviewed user-entry switch",
       "exit_tasks": ["P06-06", "P09-02", "P09-03"]
     }

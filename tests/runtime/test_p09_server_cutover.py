@@ -358,15 +358,12 @@ def test_dockerfile_compose_and_production_web_sources_are_cut_over() -> None:
         assert "Dockerfile.backend" not in text
         assert "backend.main:app" not in text
 
-    retained_legacy_wire = {
-        ROOT / "web/src/api.ts",
-        ROOT / "web/src/job-stream.ts",
-    }
+    assert not (ROOT / "src/solarlab_server/legacy_engine").exists()
+    assert not (ROOT / "web/src/api.ts").exists()
+    assert not (ROOT / "web/src/job-stream.ts").exists()
     import_legacy_re = re.compile(r"""from\s+['"](?:\.\.?/)*(?:api|job-stream)['"]""")
     offenders: list[str] = []
     for ts_file in sorted((ROOT / "web/src").rglob("*.ts")):
-        if ts_file in retained_legacy_wire or ts_file.name.endswith(".test.ts"):
-            continue
         if import_legacy_re.search(ts_file.read_text()):
             offenders.append(str(ts_file.relative_to(ROOT)))
     assert offenders == []

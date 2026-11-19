@@ -1,10 +1,8 @@
 """P06-05 real spawn, bounded shared capacity, resume and exact result reuse."""
 
 from dataclasses import FrozenInstanceError, replace
-import hashlib
 import json
 import multiprocessing
-import os
 from pathlib import Path
 import random
 import struct
@@ -456,42 +454,6 @@ def test_real_parent_crash_preserves_completed_and_queued_points_and_explicit_ne
         assert [a["state"] for a in store.attempts("restart-1")] == ["failed", "succeeded"]
         assert terminals(store, "restart-1")[:1] == old_terminal
         assert artifact(store, "restart-1")[0] == bytes.fromhex(json.loads(executions[1].execution.initial_state.content)["words"])
-
-
-def test_real_legacy_facade_scan_matches_single_runs_serial_and_random_parallel(tmp_path):
-    from legacy_fixtures import make_job
-    from solarlab_server.legacy_engine import legacy_worker_binding
-
-    jobs = [make_job(arguments={"V_max": voltage})[0] for voltage in (.02, .03)]
-    limits = ResourceLimits(60., 1024**3, 64 * 1024**2, None, None)
-    records = [(RunSpec.from_binding("legacy", job.request, limits, job.execution), job.execution) for job in jobs]
-    evidence = []
-    with RunStore(tmp_path / "db") as store, ProcessSupervisor(store, tmp_path / "work", (legacy_worker_binding(),),
-        max_active=2, max_pending=1, shared_rss_bytes=4 * 1024**3, shared_output_bytes=512 * 1024**2) as supervisor:
-        originals = []
-        for i, job in enumerate(jobs):
-            h = job.submit(supervisor, f"single-{i}", limits)
-            returned = supervisor.wait(h, 65).data
-            assert returned["store_state"] == "succeeded", returned
-            originals.append(artifact(store, h.run_id, "legacy_result")[0])
-        for name, order, width in (("legacy-serial", [0, 1], 1), ("legacy-random", [1, 0], 2)):
-            spec, executions = declaration(name, records, order=order)
-            result = supervisor.scan(spec, executions=executions, max_in_flight=width).wait(125)
-            assert result["state"] == "succeeded", result
-            for point in result["points"]:
-                i = int(point["point_id"][1:])
-                content, _ = artifact(store, point["run_id"], "legacy_result")
-                assert content == originals[i]
-                assert point["initial_state"]["sha256"] == jobs[i].execution.execution.initial_state.sha256
-                assert point["result"]["worker_result"]["scientific_qualification"] is False
-                receipt = supervisor.wait(JobHandle(store.store_id, point["run_id"], point["attempt_id"]), 1).data
-                evidence.append({"scan": name, "point": point["point_id"], "bitwise_equal": True,
-                    "payload_sha256": hashlib.sha256(content).hexdigest(), "H_execution": point["H_execution"],
-                    "initial_state": point["initial_state"], "process": point["result"]["process"],
-                    "resources": receipt["resources"], "scientific_qualification": False})
-    path = os.environ.get("SOLARLAB_SCAN_EVIDENCE")
-    if path:
-        Path(path).write_bytes(canonical({"real_legacy_points": evidence}) + b"\n")
 
 
 def test_job_provenance_is_sealed_to_the_actual_manifest_and_claimed_attempt(make_spec, tmp_path):

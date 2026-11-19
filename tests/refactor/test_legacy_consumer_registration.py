@@ -64,9 +64,10 @@ def test_current_inventory_agrees_with_the_accepted_audit(
     current: tuple[dict[str, Any], dict[str, Any], tuple[Consumer, ...], dict[str, Any]],
 ) -> None:
     policy, previous, consumers, lanes = current
-    # Independent AcceptanceV2 / UnregisteredLegacyConsumersV1 inventory:
-    # 99 direct files (excluding backend-only support), 47 lane/executor pairs.
-    # Audit sha256: 31c7bbbf8a081000036333de6deb27c735441344470083679390ab9933ea0b55.
+    # Independent AcceptanceV2 / UnregisteredLegacyConsumersV1 inventory after
+    # retiring dead web/src/{api,job-stream}.ts post-9358f24b31b642f8c6c1a9a3d46b0cbbfe7fc495:
+    # 97 direct files (excluding backend-only support), 47 lane/executor pairs.
+    # Prior 99-file audit sha256: a79669a57c072f6dc35d976a05d4eed03ec59e9c3bedc6f7494a820144d852be.
     # A deliberate inventory change needs a refreshed audit; CI needs no archive.
     inventory = {
         "consumer_paths": sorted({consumer.path for consumer in consumers}),
@@ -74,13 +75,13 @@ def test_current_inventory_agrees_with_the_accepted_audit(
     }
     encoded = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == (
-        "a79669a57c072f6dc35d976a05d4eed03ec59e9c3bedc6f7494a820144d852be"
+        "9017bd64e66a007da3b2be043762fb6e3126c47ba8240a12bdb1ed1fb8b30c6e"
     )
     assert registration_violations(ROOT, policy, previous, consumers, lanes) == []
 
 
 @pytest.mark.parametrize("group_id", [
-    "legacy-notebooks", "retained-research-benchmark-tools", "legacy-browser-wire",
+    "legacy-notebooks", "retained-research-benchmark-tools",
 ])
 def test_removing_an_accepted_group_exposes_every_affected_consumer(
     current: tuple[dict[str, Any], dict[str, Any], tuple[Consumer, ...], dict[str, Any]],
