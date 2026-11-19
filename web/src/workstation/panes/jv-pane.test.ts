@@ -9,14 +9,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import figureReferenceJSON from '../../../../perovskite-sim/tests/fixtures/IonDiffusivityFigureReference.json?raw'
 
-vi.mock('../../job-stream', () => ({
+vi.mock('../../v2-job-client', () => ({
   startJob: vi.fn(),
   streamJobEvents: vi.fn(),
 }))
 
 import { mountJVPane } from './jv-pane'
 import type { DeviceConfig } from '../../types'
-import { startJob } from '../../job-stream'
+import { startJob } from '../../v2-job-client'
 import { mountExperimentPane } from './experiment-pane'
 
 const figureReference = JSON.parse(figureReferenceJSON)

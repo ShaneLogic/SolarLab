@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../job-stream', () => ({
+vi.mock('../../v2-job-client', () => ({
   startJob: vi.fn(),
   streamJobEvents: vi.fn(),
 }))
 
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import type { DeviceConfig } from '../../types'
 import { mountTPVPane } from './tpv-pane'
 

@@ -1,8 +1,9 @@
-"""Explicit execution registrations over the existing P03/P06 contracts.
+"""Explicit solarlab execution registrations over the P03/P06/P09 contracts.
 
 Factories and source bindings are supplied by trusted application code, never
-by HTTP. Declaration compatibility alone never authorizes execution: legacy
-drivers and the single classical steady adapter require separate installation.
+by HTTP. Declaration compatibility alone never authorizes execution: only
+explicitly installed solarlab worker adapters are admitted, with legacy engine
+execution and fallback forbidden.
 """
 from __future__ import annotations
 
@@ -12,9 +13,9 @@ import base64
 import hashlib
 import inspect
 import json
-import math
+import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,7 +29,6 @@ from solarlab.experiments.registry import ExperimentRegistry
 from solarlab.experiments.worker import ManifestBinding, ResourceLimits, RunSpec, WorkerBinding, WorkerRequest
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.registry import ModelRegistry, metadata_digest
-from solarlab_server.legacy_engine import LegacyJob, legacy_worker_binding
 from solarlab_server.steady_preparation import SteadyJobInput, SteadyPreparationContext, prepare_steady_input
 from solarlab_server.transient_preparation import TransientJobInput, TransientPreparationContext, prepare_transient_input
 from solarlab_server.ionic_transient_preparation import (
@@ -64,34 +64,9 @@ class JobSubmission(BaseModel):
     run_id: str = Field(pattern=r"^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,127}$")
     experiment_id: str = Field(min_length=1)
     version: int = Field(ge=1)
-    engine: Literal["legacy", "solarlab"]
+    engine: Literal["solarlab"]
     input: dict[str, Any]
     limits: BudgetInput
-
-
-@dataclass(frozen=True, slots=True)
-class LegacyRegistration:
-    experiment_id: str
-    version: int
-    driver: str
-    input_type: type[BaseModel]
-    prepare: Callable[[Any], LegacyJob]
-    legacy_kinds: tuple[str, ...] = ()
-    synchronous_paths: tuple[str, ...] = ()
-    engine: Literal["legacy"] = field(default="legacy", init=False)
-
-    def __post_init__(self) -> None:
-        if self.driver not in {"scaps_transient", "scaps_steady_state", "ion_hysteresis"}:
-            raise ValueError("only explicitly supported legacy facade drivers may be registered")
-        if (not inspect.isfunction(self.prepare) or self.prepare.__closure__ is not None
-                or self.prepare.__qualname__ != self.prepare.__name__ or self.prepare.__module__ == "__main__"):
-            raise ValueError("legacy preparation must be an explicit module-level source-bound factory")
-        if not issubclass(self.input_type, BaseModel) or self.input_type.model_config.get("extra") != "forbid":
-            raise ValueError("registered input models must refuse unknown fields")
-        object.__setattr__(self, "legacy_kinds", tuple(self.legacy_kinds))
-        object.__setattr__(self, "synchronous_paths", tuple(self.synchronous_paths))
-        if any(not p.startswith("/api/") or "{" in p for p in self.synchronous_paths):
-            raise ValueError("synchronous aliases require explicit fixed /api paths")
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +160,22 @@ class Steady2DRegistration:
             raise ValueError("2D steady requires its explicit installed v1 preparation context")
 
 
+Registration: TypeAlias = (
+    SteadyRegistration
+    | TransientRegistration
+    | IonicTransientRegistration
+    | IonicJVRegistration
+    | Steady2DRegistration
+)
+_REGISTRATION_TYPES = {
+    SteadyRegistration,
+    TransientRegistration,
+    IonicTransientRegistration,
+    IonicJVRegistration,
+    Steady2DRegistration,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionCatalog:
     """A source-checked table over the existing experiment/model declarations."""
@@ -192,7 +183,7 @@ class ExecutionCatalog:
     registry: ExperimentRegistry
     models: ModelRegistry
     sources: tuple[SourceDocument, ...]
-    registrations: tuple[LegacyRegistration | SteadyRegistration | TransientRegistration | IonicTransientRegistration | IonicJVRegistration | Steady2DRegistration, ...]
+    registrations: tuple[Registration, ...]
     expected_registry_sha256: str
     expected_model_sha256: str
     ceiling: ResourceLimits
@@ -203,33 +194,29 @@ class ExecutionCatalog:
         object.__setattr__(self, "sources", tuple(self.sources))
         object.__setattr__(self, "registrations", tuple(self.registrations))
         if (type(self.ceiling) is not ResourceLimits or not self.registrations
-                or any(type(r) not in {LegacyRegistration, SteadyRegistration, TransientRegistration, IonicTransientRegistration, IonicJVRegistration, Steady2DRegistration} for r in self.registrations)):
-            raise ValueError("explicit route registrations and a resource ceiling are required")
+                or any(type(r) not in _REGISTRATION_TYPES for r in self.registrations)):
+            raise ValueError("explicit solarlab route registrations and a resource ceiling are required")
         keys = [(r.experiment_id, r.version) for r in self.registrations]
-        aliases = [a for r in self.registrations for a in (*r.legacy_kinds, *r.synchronous_paths)]
-        if len(set(keys)) != len(keys) or len(set(aliases)) != len(aliases):
-            raise ValueError("ambiguous execution registration or legacy alias")
+        if len(set(keys)) != len(keys):
+            raise ValueError("ambiguous execution registration")
         self.verify()
         object.__setattr__(self, "schema", SourceDocument("solarlab.job-submission.schema.v1", canonical(JobSubmission.model_json_schema())))
         object.__setattr__(self, "document", SourceDocument("solarlab.execution-catalog.v1", canonical({
             "schema": "solarlab.execution-catalog.v1", "registry": self.registry.export(),
             "registry_sha256": self.registry.content_sha256, "model_registry_sha256": self.models.content_sha256,
             "job_schema_sha256": self.schema.sha256, "resource_ceiling": asdict(self.ceiling),
-            "legacy_facade_sha256": legacy_worker_binding().source_sha256,
             "bindings": [self._entry(r) for r in self.registrations]})))
 
-    def _models(self, registration: LegacyRegistration | SteadyRegistration | TransientRegistration | IonicTransientRegistration | IonicJVRegistration | Steady2DRegistration) -> ModelRegistry:
-        return self.models if isinstance(registration, LegacyRegistration) else registration.context.models
+    def _models(self, registration: Registration) -> ModelRegistry:
+        return registration.context.models
 
-    def _entry(self, registration: LegacyRegistration | SteadyRegistration | TransientRegistration | IonicTransientRegistration | IonicJVRegistration | Steady2DRegistration) -> dict[str, Any]:
+    def _entry(self, registration: Registration) -> dict[str, Any]:
         entry = {"experiment_id": registration.experiment_id, "version": registration.version,
             "engine": registration.engine, "input_schema": registration.input_type.model_json_schema(),
             "model_registry_sha256": self._models(registration).content_sha256,
             "legacy_kinds": list(registration.legacy_kinds),
             "synchronous_paths": list(registration.synchronous_paths), "scientific_qualification": False}
-        if isinstance(registration, LegacyRegistration):
-            entry.update(driver=registration.driver, scope="legacy_compatibility")
-        elif isinstance(registration, SteadyRegistration):
+        if isinstance(registration, SteadyRegistration):
             entry.update(driver="steady_jv", scope="static_classical_ion_free_1d_dc",
                 preparation_context=registration.context.export(),
                 worker_source_sha256=steady_jv_worker_binding().source_sha256)
@@ -262,9 +249,6 @@ class ExecutionCatalog:
         sources = tuple((s.id, s.content) for s in self.sources)
         self.models.verify_sources(sources, expected_sha256=self.expected_model_sha256)
         by_key = {(r.experiment_id, r.version): r for r in self.registrations}
-        # A mixed catalog must not relabel the steady worker's registry as the
-        # legacy registry (or vice versa). Uninstalled declarations still get
-        # the original startup verification against the catalog's base models.
         for definition in self.registry.definitions:
             registration = by_key.get((definition.id, definition.version))
             models = self.models if registration is None else self._models(registration)
@@ -274,9 +258,7 @@ class ExecutionCatalog:
         for registration in self.registrations:
             definition = self.registry.get(registration.experiment_id, registration.version)
             factory: Callable[..., Any]
-            if isinstance(registration, LegacyRegistration):
-                factory = registration.prepare
-            elif isinstance(registration, SteadyRegistration):
+            if isinstance(registration, SteadyRegistration):
                 factory = prepare_steady_input
             elif isinstance(registration, TransientRegistration):
                 registration.context.verify_sources()
@@ -296,22 +278,23 @@ class ExecutionCatalog:
                     or definition.parameter_schema.sha256 != metadata_digest(registration.input_type.model_json_schema())):
                 raise ValueError("loaded preparation/schema differs from the frozen registry")
 
-    def worker_binding(self, engine: Literal["legacy", "solarlab"] = "legacy", *,
+    def worker_binding(self, engine: Literal["solarlab"] = "solarlab", *,
                        experiment_id: str | None = None) -> WorkerBinding:
-        from solarlab_server.registered_worker import run_ionic_jv, run_ionic_transient, run_legacy, run_steady, run_steady_2d, run_transient
+        from solarlab_server.registered_worker import run_ionic_jv, run_ionic_transient, run_steady, run_steady_2d, run_transient
+        if engine != "solarlab":
+            raise ValueError("only engine='solarlab' is supported; legacy worker execution is retired")
         registrations = [r for r in self.registrations if r.engine == engine
                          and (experiment_id is None or r.experiment_id == experiment_id)]
         if not registrations:
             raise ValueError("engine has no explicit installed execution registration")
-        kinds = {"registered_legacy" if isinstance(r, LegacyRegistration) else
-                 "registered_steady" if isinstance(r, SteadyRegistration) else
+        kinds = {"registered_steady" if isinstance(r, SteadyRegistration) else
                  "registered_transient" if isinstance(r, TransientRegistration) else
                  "registered_ionic_transient" if isinstance(r, IonicTransientRegistration) else
                  "registered_ionic_jv" if isinstance(r, IonicJVRegistration) else "registered_steady_2d" for r in registrations}
         if len(kinds) != 1:
             raise ValueError("multiple workers are installed for this engine; select an explicit experiment_id")
         id, = kinds
-        function = {"registered_legacy": run_legacy, "registered_steady": run_steady,
+        function = {"registered_steady": run_steady,
                     "registered_transient": run_transient, "registered_ionic_transient": run_ionic_transient,
                     "registered_ionic_jv": run_ionic_jv, "registered_steady_2d": run_steady_2d}[id]
         return WorkerBinding.from_function(id, function,
@@ -324,6 +307,9 @@ class ExecutionCatalog:
 
     def prepare(self, submission: JobSubmission) -> tuple[RunSpec, ManifestBinding]:
         self.verify()
+        env_eq = os.environ.get("NEWCORE_EQUATIONS")
+        if env_eq is not None and env_eq != "assembled":
+            raise ValueError("production server execution requires NEWCORE_EQUATIONS='assembled'")
         registration = next((r for r in self.registrations if (r.experiment_id, r.version) ==
                              (submission.experiment_id, submission.version)), None)
         if registration is None:
@@ -346,18 +332,8 @@ class ExecutionCatalog:
                 maximum = wall_maximum
             if maximum is not None and (value is None or value > maximum):
                 raise ValueError("requested budget exceeds the service ceiling: " + key)
-        job: LegacyJob | SteadyJVJob | TransientJob | IonicTransientJob | IonicJVJob | Steady2DJob
-        if isinstance(registration, LegacyRegistration):
-            model = registration.input_type.model_validate(submission.input)
-            job = registration.prepare(model)
-            if type(job) is not LegacyJob or job.execution.engine.name != "legacy":
-                raise ValueError("registered factory did not prepare the explicit legacy facade")
-            behavior = job.execution.engine.behavior
-            if behavior is None or getattr(behavior, "driver", None) != registration.driver:
-                raise ValueError("registered driver differs from the complete execution manifest")
-            worker_id, request_kind = "registered_legacy", "legacy"
-            extra: dict[str, Any] = {}
-        elif isinstance(registration, SteadyRegistration):
+        job: SteadyJVJob | TransientJob | IonicTransientJob | IonicJVJob | Steady2DJob
+        if isinstance(registration, SteadyRegistration):
             if limits.accepted_steps is not None or limits.calls is not None:
                 raise ValueError("steady worker counters are unobserved; accepted_steps/calls budgets are unsupported")
             steady_input = SteadyJobInput.model_validate(submission.input)
@@ -403,6 +379,8 @@ class ExecutionCatalog:
                 raise ValueError("registered preparation did not return the explicit2D steady worker")
             worker_id, request_kind = "registered_steady_2d", "steady_2d"
             extra = {"device_id": steady_2d_input.device_id}
+        if dict(job.execution.environment).get("NEWCORE_EQUATIONS") != "assembled":
+            raise ValueError("production server execution requires the assembled equation implementation")
         models = self._models(registration)
         if job.execution.inputs.registry.content_sha256 != models.content_sha256:
             raise ValueError("prepared model registry differs from the server registry")
@@ -410,11 +388,6 @@ class ExecutionCatalog:
             job.execution.inputs.selection, models)
         if not preflight.declared_compatible:
             raise ValueError("experiment capability refused: " + "; ".join(preflight.declared_problems))
-        # The explicit installation admits this adapter only; declaration
-        # can_execute and scientific qualification are not changed.
-        # Ionic transport retains the accepted reader's exact core request.
-        # Its sole installed v1 route and unique prepared identity bind the
-        # HTTP experiment/device selection without another request schema.
         payload = job.request.request if isinstance(registration, (IonicTransientRegistration, IonicJVRegistration, Steady2DRegistration)) else SourceDocument(f"solarlab.registered-{request_kind}-request.v1", canonical({
             "experiment_id": submission.experiment_id, "version": submission.version, "engine": submission.engine,
             f"{request_kind}_request_id": job.request.request.id,
@@ -428,21 +401,15 @@ class ExecutionCatalog:
 class JobService:
     catalog: ExecutionCatalog
     supervisor: ProcessSupervisor
-    allow_legacy_routes: bool = False
-    synchronous_wait_seconds: float = 5.0
 
     def __post_init__(self) -> None:
         if type(self.catalog) is not ExecutionCatalog or type(self.supervisor) is not ProcessSupervisor:
             raise ValueError("an explicit catalog and shared process supervisor are required")
-        if type(self.allow_legacy_routes) is not bool:
-            raise ValueError("legacy route activation must be explicit")
-        if (type(self.synchronous_wait_seconds) not in {int, float}
-                or not math.isfinite(self.synchronous_wait_seconds) or self.synchronous_wait_seconds <= 0):
-            raise ValueError("synchronous compatibility wait must be positive and bounded")
 
     def submit(self, submission: JobSubmission) -> JobHandle:
         spec, execution = self.catalog.prepare(submission)
         return self.supervisor.submit(submission.run_id, spec.worker_id, spec.request, spec.limits, execution=execution)
+
 
 def legacy_job_id(handle: JobHandle) -> str:
     return base64.urlsafe_b64encode(canonical([handle.run_id, handle.attempt_id])).decode().rstrip("=")

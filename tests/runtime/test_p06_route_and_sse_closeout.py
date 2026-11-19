@@ -1,21 +1,18 @@
-"""P06-06 + P03-07 + P06-04 closeout: accepted YAML -> GET -> no-op editor save -> POST -> SSE -> readback."""
+"""P06-06 + P03-07 + P06-04 + P09-02 closeout: accepted YAML -> GET -> no-op editor save -> POST -> SSE -> readback."""
 from __future__ import annotations
 
 import hashlib
 import io
 import json
 import subprocess
-from typing import Literal
 import time
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
 import pytest
 
 from examples.research_1d.service import committed_implementation
 from examples.research_1d.steady import load_device
-from job_route_fixtures import Parameters
-from legacy_fixtures import LEGACY, ROOT, make_job
+from legacy_fixtures import LEGACY, ROOT
 from solarlab.config.device_import import import_standard_device
 from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.legacy_wire import prepare_legacy_wire
@@ -25,17 +22,14 @@ from solarlab.config.schema import configuration_schema_representation
 from solarlab.device.inputs import DeviceInput
 from solarlab.experiments.execution import JobHandle, ProcessSupervisor
 from solarlab.experiments.jv.worker import read_steady_jv_job, validate_steady_jv_scope
-from solarlab.experiments.registry import ExperimentDefinition, ExperimentRegistry
 from solarlab.experiments.worker import ResourceLimits, WorkerBinding
 from solarlab.io.artifacts import bytes_artifact
 from solarlab.io.run_bundle import RunBundle
 from solarlab.io.run_store import RunStore
 from solarlab.materials.resources import ResourceLibrary, ResourceTable
 from solarlab.materials.source import SourceDocument
-from solarlab.physics.registry import CapabilityRule, EvidenceRef
 from solarlab_server.configuration import ConfigurationPreviewContext
-from solarlab_server.job_service import ExecutionCatalog, JobService, JobSubmission, LegacyRegistration
-from solarlab_server.legacy_engine import legacy_worker_binding
+from solarlab_server.job_service import ExecutionCatalog, JobService, JobSubmission
 from solarlab_server.steady_preparation import SteadyPreparationContext, steady_execution_catalog
 from test_event_service import _HTTPServer as _BaseHTTPServer, _all_events, _blocks, _next_event
 
@@ -59,25 +53,6 @@ class _HTTPServer(_BaseHTTPServer):
         client = super().client()
         client.timeout = 30.0
         return client
-
-
-class ScapsBoundInput(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    device: None
-    config_path: Literal["fixture:scaps"]
-    expected_source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    expected_prepared_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    params: Parameters
-
-
-def prepare_scaps_jv(input: ScapsBoundInput):
-    job, _ = make_job(arguments=input.params.model_dump())
-    prepared = job.execution.inputs.prepared
-    if not prepared.sources or prepared.sources[0].sha256 != input.expected_source_sha256:
-        raise ValueError("SCAPS source sha256 differs from expected_source_sha256")
-    if prepared.content_sha256 != input.expected_prepared_sha256:
-        raise ValueError("SCAPS prepared_sha256 differs from expected_prepared_sha256")
-    return job
 
 
 def _slot_gate(request, context):
@@ -144,54 +119,6 @@ def _wire_headers() -> dict[str, str]:
         "Content-Type": "application/json",
         "X-Solarlab-Configuration-Schema": configuration_schema_representation()[1],
     }
-
-
-def _scaps_bound_catalog(ceiling: ResourceLimits) -> tuple[ExecutionCatalog, object]:
-    job, _ = make_job()
-    documents: dict[str, bytes] = {}
-
-    def reference(path: str, symbol: str = "") -> EvidenceRef:
-        documents[path] = (ROOT / path).read_bytes()
-        return EvidenceRef(
-            path + ("#" + symbol if symbol else ""),
-            hashlib.sha256(documents[path]).hexdigest(),
-            "source",
-        )
-
-    factory = reference("tests/runtime/test_p06_route_and_sse_closeout.py", "prepare_scaps_jv")
-    schema = json.dumps(
-        ScapsBoundInput.model_json_schema(), sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode()
-    documents["schema:scaps-bound-http-fixture"] = schema
-    schema_ref = EvidenceRef("schema:scaps-bound-http-fixture", hashlib.sha256(schema).hexdigest(), "source")
-    definition = ExperimentDefinition(
-        "jv",
-        1,
-        "Source-bound SCAPS YAML J-V route",
-        schema_ref,
-        reference("src/solarlab/experiments/worker.py", "WorkerResult"),
-        factory,
-        reference("src/solarlab_server/legacy_engine/__init__.py", "_run_legacy"),
-        "jv",
-        reference("web/src/workstation/panes/main-plot-pane.ts", "renderJV"),
-        CapabilityRule("scaps-bound-http-fixture", (1,), ("transient",), (factory,), backends=("metadata_only",)),
-    )
-    documents["physics/temperature.py"] = (LEGACY / "physics/temperature.py").read_bytes()
-    registry = ExperimentRegistry((definition,))
-    models = job.execution.inputs.registry
-    registration = LegacyRegistration(
-        "jv", 1, "scaps_transient", ScapsBoundInput, prepare_scaps_jv, legacy_kinds=("jv",)
-    )
-    catalog = ExecutionCatalog(
-        registry,
-        models,
-        tuple(SourceDocument(k, v) for k, v in documents.items()),
-        (registration,),
-        expected_registry_sha256=registry.content_sha256,
-        expected_model_sha256=models.content_sha256,
-        ceiling=ceiling,
-    )
-    return catalog, job
 
 
 def test_standard_yaml_get_noop_editor_save_post_steady_job_two_sse_cursors_and_restart_readback(
@@ -361,12 +288,10 @@ def test_standard_yaml_get_noop_editor_save_post_steady_job_two_sse_cursors_and_
                         queued_b = _next_event(blocks_b)
                         assert queued_a == queued_b and queued_a["kind"] == "queued"
 
-                        # Disconnect subscriber A while job is queued/about to run; compute MUST NOT cancel.
                         stream_a.close()
                         assert obs_a.finished.wait(3)
                         assert store.get_run(accepted["run_id"])["state"] == "queued"
 
-                        # Release slot gate so real cold steady_jv job runs to completion while subscriber B streams.
                         assert supervisor.cancel(gate_handle, reason="release_slot_for_e2e")
                         assert supervisor.wait(gate_handle, 10).data["store_state"] == "cancelled"
 
@@ -380,7 +305,6 @@ def test_standard_yaml_get_noop_editor_save_post_steady_job_two_sse_cursors_and_
                         assert all_b[-1]["kind"] == "terminal" and all_b[-1]["payload"]["state"] == "succeeded"
                         assert sum(e["kind"] == "terminal" for e in all_b) == 1
 
-                # Reconnect subscriber A with Last-Event-ID and verify gapless, duplicate-free replay.
                 with server.client() as reconnect_client:
                     with reconnect_client.stream(
                         "GET",
@@ -395,7 +319,6 @@ def test_standard_yaml_get_noop_editor_save_post_steady_job_two_sse_cursors_and_
                     )
                     assert ack.status_code == 204 and ack.content == b""
 
-                # 6. Verify HTTP result + 8 NPY array artifacts + manifest against read_steady_jv_job
                 job_handle = JobHandle(store.store_id, accepted["run_id"], accepted["attempt_id"])
                 receipt = supervisor.wait(job_handle, 10).data
                 assert receipt["store_state"] == "succeeded" and receipt["process_joined"]
@@ -413,7 +336,6 @@ def test_standard_yaml_get_noop_editor_save_post_steady_job_two_sse_cursors_and_
                         decoded = np.load(io.BytesIO(blob.content), allow_pickle=False)
                         assert decoded.tobytes() == loaded["arrays"][item["name"]].tobytes()
 
-    # 7. Read-only server restart readback (no JobService / no ProcessSupervisor)
     with _HTTPServer(database) as readonly_server, readonly_server.client() as reader:
         assert reader.get(accepted["result_url"]).json() == result_json
         with reader.stream("GET", accepted["events_url"]) as full_stream:
@@ -425,42 +347,51 @@ def test_standard_yaml_get_noop_editor_save_post_steady_job_two_sse_cursors_and_
         assert reader.post("/jobs", json=payload(), headers=_job_headers(catalog)).status_code == 503
 
 
-def test_scaps_yaml_get_noop_editor_save_post_legacy_job_and_orphan_recovery_readback(
-    tmp_path, legacy_defaults_and_resources
+def test_scaps_yaml_preview_legacy_refusal_solarlab_job_and_orphan_recovery_readback(
+    tmp_path, legacy_defaults_and_resources, standard_steady_bundle
 ):
     defaults, resources = legacy_defaults_and_resources
-    ceiling = ResourceLimits(30.0, 1024**3, 64 * 1024**2, None, None)
-    catalog, job = _scaps_bound_catalog(ceiling)
-    prepared = job.execution.inputs.prepared
-    scaps_source = prepared.sources[0]
+    yaml_source, steady_prepared, _, catalog, _ = standard_steady_bundle
+    scaps_source = SourceDocument(
+        "scaps-original.yaml", (ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml").read_bytes()
+    )
+    scaps_prepared = resolve_device(
+        import_scaps_device(scaps_source, id="legacy_job", defaults=defaults),
+        defaults,
+        resources,
+        sources=(scaps_source,),
+    )
     preview_ctx = ConfigurationPreviewContext(defaults, resources, (scaps_source,))
 
     database = (tmp_path / "scaps-chain-store").resolve()
     work = (tmp_path / "scaps-chain-work").resolve()
 
-    def scaps_submission(
-        run_id: str = "scaps-yaml-e2e",
+    def steady_submission(
+        run_id: str = "solarlab-bundle-e2e",
         *,
+        engine: str = "solarlab",
         source_sha256: str | None = None,
         prepared_sha256: str | None = None,
     ) -> dict:
         return {
             "schema_version": "solarlab.job-submission.v1",
             "run_id": run_id,
-            "experiment_id": "jv",
+            "experiment_id": "steady_jv",
             "version": 1,
-            "engine": "legacy",
+            "engine": engine,
             "input": {
-                "device": None,
-                "config_path": "fixture:scaps",
-                "expected_source_sha256": scaps_source.sha256 if source_sha256 is None else source_sha256,
-                "expected_prepared_sha256": prepared.content_sha256 if prepared_sha256 is None else prepared_sha256,
-                "params": {},
+                "device_id": "nip_steady",
+                "voltage_V": [0.0, 0.05],
+                "intervals_per_layer": 6,
+                "generation_scale": 1.0,
+                "incident_power_W_m2": None,
+                "expected_source_sha256": yaml_source.sha256 if source_sha256 is None else source_sha256,
+                "expected_prepared_sha256": steady_prepared.content_sha256 if prepared_sha256 is None else prepared_sha256,
             },
             "limits": {
-                "wall_seconds": 30.0,
-                "rss_bytes": 1024**3,
-                "output_bytes": 64 * 1024**2,
+                "wall_seconds": 60.0,
+                "rss_bytes": 1536 * 1024**2,
+                "output_bytes": 96 * 1024**2,
                 "accepted_steps": None,
                 "calls": None,
             },
@@ -469,7 +400,7 @@ def test_scaps_yaml_get_noop_editor_save_post_legacy_job_and_orphan_recovery_rea
     with RunStore(database) as store, ProcessSupervisor(
         store,
         work,
-        (catalog.worker_binding("legacy"), legacy_worker_binding()),
+        (catalog.worker_binding("solarlab"),),
         max_active=1,
         max_pending=2,
         shared_rss_bytes=3 * 1024**3,
@@ -495,7 +426,7 @@ def test_scaps_yaml_get_noop_editor_save_post_legacy_job_and_orphan_recovery_rea
                 )
                 assert dev_resp.status_code == 200
                 dev_json = dev_resp.json()
-                assert dev_json["identity"]["content_sha256"] == prepared.content_sha256
+                assert dev_json["identity"]["content_sha256"] == scaps_prepared.content_sha256
 
                 wire_resp = http.post(
                     "/configuration-preview/legacy-wire",
@@ -513,20 +444,25 @@ def test_scaps_yaml_get_noop_editor_save_post_legacy_job_and_orphan_recovery_rea
                 assert wire_json["report"]["differences"] == []
                 assert wire_json["documents"][0]["sha256"] == scaps_source.sha256
                 assert wire_json["documents"][0]["utf8"].encode("utf-8") == scaps_source.content
-                assert store.events() == []
 
-                # 2. Refusal on source / prepared SHA-256 mismatch before enqueue, then valid POST /jobs
+                # 2. Legacy engine & POST /api/jobs are refused before enqueue, as are SHA mismatches
                 assert (
-                    http.post("/jobs", json=scaps_submission(source_sha256="0" * 64), headers=_job_headers(catalog)).status_code
+                    http.post("/jobs", json=steady_submission(engine="legacy"), headers=_job_headers(catalog)).status_code
+                    == 422
+                )
+                assert http.post("/api/jobs", json={"kind": "jv", "device": None}).status_code == 410
+                assert (
+                    http.post("/jobs", json=steady_submission(source_sha256="0" * 64), headers=_job_headers(catalog)).status_code
                     == 422
                 )
                 assert (
-                    http.post("/jobs", json=scaps_submission(prepared_sha256="0" * 64), headers=_job_headers(catalog)).status_code
+                    http.post("/jobs", json=steady_submission(prepared_sha256="0" * 64), headers=_job_headers(catalog)).status_code
                     == 422
                 )
                 assert store.events() == []
 
-                sub_resp = http.post("/jobs", json=scaps_submission(), headers=_job_headers(catalog))
+                # 3. Valid V2 solarlab POST /jobs -> SSE -> verified readback
+                sub_resp = http.post("/jobs", json=steady_submission(), headers=_job_headers(catalog))
                 assert sub_resp.status_code == 202, sub_resp.text
                 accepted = sub_resp.json()
                 with http.stream("GET", accepted["events_url"]) as stream:
@@ -543,12 +479,11 @@ def test_scaps_yaml_get_noop_editor_save_post_legacy_job_and_orphan_recovery_rea
                 assert result_json["state"] == "succeeded"
                 assert result_json["result"]["worker_result"]["scientific_qualification"] is False
 
-        # 3. P06-04 crash-injection + orphan-only recovery + RunBundle + missing-committed-file HTTP 409 check
-        bundle_path = (tmp_path / "scaps-completed.slrun").resolve()
+        # 4. P06-04 crash-injection + orphan-only recovery + RunBundle + missing-committed-file HTTP 409 check
+        bundle_path = (tmp_path / "completed.slrun").resolve()
         bundle_pub = store.archive_run(accepted["run_id"], bundle_path)
         assert not bundle_pub["contains_active_database"]
 
-        # Inject a crashed attempt that published an uncommitted object AND left a half-written .part file.
         store.enqueue(
             "crashed-writer",
             opaque_identity={"H_input": "crash:i", "H_physics": "crash:p", "H_execution": "crash:e"},
@@ -577,7 +512,6 @@ def test_scaps_yaml_get_noop_editor_save_post_legacy_job_and_orphan_recovery_rea
         assert f"partial/{orphan_pub['artifact_id']}.part" in collected["removed_paths"]
         assert not orphan_obj.exists() and not half_part.exists()
 
-    # Committed HTTP run survives orphan cleanup intact in both read-only HTTP server and RunBundle!
     with RunBundle(bundle_path, expected_sha256=bundle_pub["sha256"]) as bundle:
         assert bundle.get_run()["state"] == "succeeded"
         assert len(bundle.events()) == len(events)
@@ -588,7 +522,6 @@ def test_scaps_yaml_get_noop_editor_save_post_legacy_job_and_orphan_recovery_rea
             resp = reader.get(item["content_url"])
             assert resp.status_code == 200 and hashlib.sha256(resp.content).hexdigest() == item["sha256"]
 
-    # Simulate missing indexed committed artifact on disk -> explicit HTTP 409 artifact_integrity (never silent!).
     target_artifact = result_json["artifacts"][0]
     committed_path = database / target_artifact["relative_path"]
     saved_bytes = committed_path.read_bytes()

@@ -3,7 +3,7 @@ import {
   getConfig,
   fetchOpticalMaterials,
   fetchLayerTemplates,
-} from './api'
+} from './v2-workstation-client'
 import { renderDeviceEditor, readDeviceEditor, setOpticalMaterialOptions } from './config-editor'
 import { mountStackVisualizer } from './stack/stack-visualizer'
 import { validate } from './stack/stack-validator'

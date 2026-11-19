@@ -1,4 +1,4 @@
-"""Existing TypeScript client against the shared loopback job service."""
+"""Live V2 TypeScript job client against the shared loopback solarlab_server."""
 import json
 import subprocess
 
@@ -6,65 +6,95 @@ import pytest
 
 from solarlab.experiments.execution import JobHandle
 from solarlab.io.run_store import RunStore
-from solarlab_server.job_service import JobService, legacy_job_target
+from solarlab_server.job_service import JobService
 from job_route_fixtures import ROOT
 from test_job_routes import _HTTPServer, registered as registered, supervisor
 
 pytestmark = pytest.mark.frontend
 
 
-def test_actual_old_typescript_client_consumes_the_live_new_adapter(tmp_path, registered):
+def test_actual_v2_typescript_client_executes_solarlab_job_and_retired_legacy_route_refuses(tmp_path, registered):
     registration, _ = registered
     with RunStore(tmp_path / "store") as store, supervisor(store, tmp_path / "work", registration) as pool:
-        with _HTTPServer(store.root, job_service=JobService(registration, pool, allow_legacy_routes=True)) as server:
-            # Only the test module's BASE import is bound to the actual loopback
-            # socket. The production TS client source is transpiled unchanged.
-            code = '''
-import {readFile, writeFile} from 'node:fs/promises';
-import {pathToFileURL} from 'node:url';
+        with _HTTPServer(store.root, job_service=JobService(registration, pool)) as server:
+            endpoint = f"http://127.0.0.1:{server.port}/"
+            code = """
+import { readFile, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
+
 const ts = (await import(pathToFileURL(process.argv[2]))).default;
-const source = await readFile(process.argv[3], 'utf8');
-const output = ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.ES2022}}).outputText;
-await writeFile(process.argv[4], output.replace("from './api'", "from './base.mjs'"));
-await writeFile(new URL('./base.mjs',pathToFileURL(process.argv[4])), `export const BASE=${JSON.stringify(process.argv[5])};`);
-globalThis.EventSource = class {
-  constructor(url) { this.events={}; this.abort=new AbortController(); this.run(url); }
-  addEventListener(name, fn) { (this.events[name]??=[]).push(fn); }
-  emit(name, value) { for (const fn of this.events[name]??[]) fn(value); }
-  close() { this.abort.abort(); }
-  async run(url) {
-    try {
-      const response=await fetch(url,{signal:this.abort.signal}); assert.equal(response.status,200);
-      const reader=response.body.getReader(), decoder=new TextDecoder(); let buffer='';
-      for (;;) {
-        const {done,value}=await reader.read(); if(done) break; buffer+=decoder.decode(value,{stream:true});
-        let at; while((at=buffer.indexOf('\\n\\n'))>=0) {
-          const block=buffer.slice(0,at); buffer=buffer.slice(at+2);
-          const fields=Object.fromEntries(block.split('\\n').filter(x=>!x.startsWith(':')).map(x=>{const p=x.indexOf(':');return [x.slice(0,p),x.slice(p+1).trimStart()]}));
-          if(fields.event) this.emit(fields.event,{data:fields.data});
-        }
-      }
-    } catch(error) { if(error.name!=='AbortError') this.emit('error',{}); }
-  }
-};
-const {startJob,streamJobEvents}=await import(pathToFileURL(process.argv[4]));
-const job=await startJob('jv',null,{},'fixture:scaps');
-let progress=0,result; let timer;
-await new Promise((resolve,reject)=>{
-  timer=setTimeout(()=>reject(Error('bounded client wait expired')),15000);
-  streamJobEvents(job,{onProgress:()=>progress++,onResult:value=>result=value,onError:reject,onDone:resolve});
-}).finally(()=>clearTimeout(timer));
-assert(progress>0); assert(result.artifacts.length>0); assert.equal(result.execution.worker_result.scientific_qualification,false);
-console.log(JSON.stringify({job,progress,result_received:true,done_received:true}));
-'''
-            program = tmp_path / "client-check.mjs"
+const srcRoot = process.argv[3];
+const outDir = process.argv[4];
+const endpoint = process.argv[5];
+
+async function transpile(relName, replacements = []) {
+  let code = await readFile(`${srcRoot}/${relName}.ts`, 'utf8');
+  for (const [from, to] of replacements) code = code.replaceAll(from, to);
+  const out = ts.transpileModule(code, {
+    compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ES2022 },
+  }).outputText;
+  await writeFile(`${outDir}/${relName}.mjs`, out);
+}
+
+await transpile('run-client');
+await transpile('steady-jv-client', [["'./run-client'", "'./run-client.mjs'"]]);
+await transpile('v2-workstation-client', [["import.meta.env.VITE_SOLARLAB_SERVICE_BASE", "undefined"]]);
+await transpile('v2-job-client', [
+  ["'./run-client'", "'./run-client.mjs'"],
+  ["'./steady-jv-client'", "'./steady-jv-client.mjs'"],
+  ["'./v2-workstation-client'", "'./v2-workstation-client.mjs'"],
+]);
+await writeFile(`${outDir}/base.mjs`, `export const BASE = ${JSON.stringify(endpoint.replace(/\\/$/, ''))};`);
+await transpile('job-stream', [["'./api'", "'./base.mjs'"]]);
+
+// 1. Retained legacy job-stream.ts is explicitly refused with HTTP 410 and zero fallback.
+const legacyMod = await import(pathToFileURL(`${outDir}/job-stream.mjs`));
+await assert.rejects(
+  () => legacyMod.startJob('jv', null, {}, 'fixture:scaps'),
+  err => String(err.message).includes('410'),
+);
+
+// 2. Production V2 job client submits engine='solarlab' via POST /jobs and streams durable RunStore events.
+const { startJob, streamJobEvents } = await import(pathToFileURL(`${outDir}/v2-job-client.mjs`));
+const handle = await startJob('jv', null, { n_points: 2, V_max: 0.05, N_grid: 18 }, null, endpoint);
+const decoded = JSON.parse(Buffer.from(handle.slice(3), 'base64').toString('utf8'));
+let progress = 0;
+let result;
+let timer;
+await new Promise((resolve, reject) => {
+  timer = setTimeout(() => reject(new Error('bounded client wait expired')), 15000);
+  streamJobEvents(handle, {
+    onProgress: () => { progress += 1; },
+    onResult: value => { result = value; },
+    onError: msg => reject(new Error(msg)),
+    onDone: () => resolve(undefined),
+  });
+}).finally(() => clearTimeout(timer));
+
+assert(progress > 0);
+assert.equal(result.scientific_qualification, false);
+assert.equal(result.execution_manifest.engine, 'solarlab');
+assert.deepEqual(result.V_fwd, [0, 0.05]);
+console.log(JSON.stringify({
+  runId: decoded.runId,
+  attemptId: decoded.attemptId,
+  progress,
+  scientific_qualification: result.scientific_qualification,
+}));
+"""
+            program = tmp_path / "v2-client-check.mjs"
             program.write_text(code)
-            command = ["node", str(program), str(ROOT / "web/node_modules/typescript/lib/typescript.js"),
-                str(ROOT / "web/src/job-stream.ts"), str(tmp_path / "job-stream.mjs"), f"http://127.0.0.1:{server.port}"]
+            command = [
+                "node",
+                str(program),
+                str(ROOT / "web/node_modules/typescript/lib/typescript.js"),
+                str(ROOT / "web/src"),
+                str(tmp_path),
+                endpoint,
+            ]
             actual = subprocess.run(command, capture_output=True, text=True, timeout=25)
             assert actual.returncode == 0, actual.stdout + actual.stderr
             record = json.loads(actual.stdout)
-            run_id, attempt_id = legacy_job_target(record["job"])
-            assert store.get_run(run_id)["state"] == "succeeded"
-            assert pool.wait(JobHandle(store.store_id, run_id, attempt_id), 3).data["process_joined"]
+            assert store.get_run(record["runId"])["state"] == "succeeded"
+            assert pool.wait(JobHandle(store.store_id, record["runId"], record["attemptId"]), 5).data["process_joined"]

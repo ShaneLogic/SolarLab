@@ -18,13 +18,12 @@ vi.mock('plotly.js-basic-dist-min', () => ({
   },
 }))
 
-vi.mock('../job-stream', () => ({
+vi.mock('../v2-job-client', () => ({
   startJob: mocks.startJob,
   streamJobEvents: mocks.streamJobEvents,
 }))
 
-vi.mock('../api', () => ({
-  BASE: '',
+vi.mock('../v2-workstation-client', () => ({
   listConfigs: mocks.listConfigs,
 }))
 

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   resize: vi.fn(),
 }))
 
-vi.mock('../../job-stream', () => ({
+vi.mock('../../v2-job-client', () => ({
   startJob: mocks.startJob,
   streamJobEvents: mocks.streamJobEvents,
 }))

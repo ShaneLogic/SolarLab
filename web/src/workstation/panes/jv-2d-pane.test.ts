@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../job-stream', () => ({
+vi.mock('../../v2-job-client', () => ({
   startJob: vi.fn(),
   streamJobEvents: vi.fn(),
 }))

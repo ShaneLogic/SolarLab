@@ -1,9 +1,11 @@
 import './style.css'
+import { resolveV2ServiceEndpoint } from './v2-workstation-client'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 
 async function mount() {
   const query = new URL(location.href).searchParams
+  const serviceBase = new URL(resolveV2ServiceEndpoint())
   if (query.get('view') === 'steady-2d') {
     const { mountSteady2DPanel } = await import('./panels/steady-2d')
     app.innerHTML = `<header class="workstation-header"><div><h1>SolarLab</h1><p>2D steady research</p></div>
@@ -11,12 +13,12 @@ async function mount() {
       <a class="btn btn-ghost" href="?view=transient">Ion-free transient</a>
       <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
       <a class="btn btn-ghost" href="?view=ionic-jv">Ionic J–V</a>
-      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="steady-2d"></main>`
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="steady-2d"></main>`
     const host = app.querySelector<HTMLElement>('#steady-2d')!
     host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
     const initial = query.get('storeId') && query.get('runId') && query.get('attemptId')
       ? { storeId: query.get('storeId')!, runId: query.get('runId')!, attemptId: query.get('attemptId')! } : undefined
-    const panel = mountSteady2DPanel(host, new URL('/steady-service/', location.origin), initial)
+    const panel = mountSteady2DPanel(host, serviceBase, initial)
     window.addEventListener('pagehide', () => panel.dispose(), { once: true })
     await panel.ready
   } else if (query.get('view') === 'ionic-jv') {
@@ -26,12 +28,12 @@ async function mount() {
       <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>
       <a class="btn btn-ghost" href="?view=transient">Ion-free transient</a>
       <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
-      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="ionic-jv"></main>`
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="ionic-jv"></main>`
     const host = app.querySelector<HTMLElement>('#ionic-jv')!
     host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
     const initial = query.get('storeId') && query.get('runId') && query.get('attemptId')
       ? { storeId: query.get('storeId')!, runId: query.get('runId')!, attemptId: query.get('attemptId')! } : undefined
-    const panel = mountIonicJVPanel(host, new URL('/steady-service/', location.origin), initial)
+    const panel = mountIonicJVPanel(host, serviceBase, initial)
     window.addEventListener('pagehide', () => panel.dispose(), { once: true })
     await panel.ready
   } else if (query.get('view') === 'ionic-transient') {
@@ -41,12 +43,12 @@ async function mount() {
       <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>
       <a class="btn btn-ghost" href="?view=transient">Ion-free transient</a>
       <a class="btn btn-ghost" href="?view=ionic-jv">Ionic J–V</a>
-      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="ionic-transient"></main>`
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="ionic-transient"></main>`
     const host = app.querySelector<HTMLElement>('#ionic-transient')!
     host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
     const initial = query.get('storeId') && query.get('runId') && query.get('attemptId')
       ? { storeId: query.get('storeId')!, runId: query.get('runId')!, attemptId: query.get('attemptId')! } : undefined
-    const panel = mountIonicTransientPanel(host, new URL('/steady-service/', location.origin), initial)
+    const panel = mountIonicTransientPanel(host, serviceBase, initial)
     window.addEventListener('pagehide', () => panel.dispose(), { once: true })
     await panel.ready
   } else if (query.get('view') === 'transient') {
@@ -56,12 +58,12 @@ async function mount() {
       <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>
       <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
       <a class="btn btn-ghost" href="?view=ionic-jv">Ionic J–V</a>
-      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="transient"></main>`
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="transient"></main>`
     const host = app.querySelector<HTMLElement>('#transient')!
     host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
     const initial = query.get('storeId') && query.get('runId') && query.get('attemptId')
       ? { storeId: query.get('storeId')!, runId: query.get('runId')!, attemptId: query.get('attemptId')! } : undefined
-    const panel = mountTransientPanel(host, new URL('/steady-service/', location.origin), initial)
+    const panel = mountTransientPanel(host, serviceBase, initial)
     window.addEventListener('pagehide', () => panel.dispose(), { once: true })
     await panel.ready
   } else if (query.get('view') === 'steady-jv') {
@@ -72,10 +74,10 @@ async function mount() {
       <a class="btn btn-ghost" href="?view=transient">Transient · new core</a>
       <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
       <a class="btn btn-ghost" href="?view=ionic-jv">Ionic J–V</a>
-      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="steady-dc"></main>`
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="steady-dc"></main>`
     const host = app.querySelector<HTMLElement>('#steady-dc')!
     host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
-    const panel = mountSteadyJVPanel(host, new URL('/steady-service/', location.origin))
+    const panel = mountSteadyJVPanel(host, serviceBase)
     window.addEventListener('pagehide', () => panel.dispose(), { once: true })
     await panel.ready
   } else if (query.get('view') === 'configuration') {
@@ -86,10 +88,10 @@ async function mount() {
       <a class="btn btn-ghost" href="?view=transient">Transient · new core</a>
       <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
       <a class="btn btn-ghost" href="?view=ionic-jv">Ionic J–V</a>
-      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="configuration-v2"></main>`
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="configuration-v2"></main>`
     const host = app.querySelector<HTMLElement>('#configuration-v2')!
     host.style.cssText = 'max-width:1440px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
-    const panel = mountConfigurationWorkstation(host, new URL('/steady-service/', location.origin))
+    const panel = mountConfigurationWorkstation(host, serviceBase)
     window.addEventListener('pagehide', () => panel.dispose(), { once: true })
     await panel.ready
   } else if (query.get('view') === 'stored-run' && query.get('storeId') && query.get('runId') && query.get('attemptId')) {
@@ -97,11 +99,11 @@ async function mount() {
     app.innerHTML = `<header class="workstation-header"><div><h1>SolarLab</h1><p>Stored Run Inspector</p></div>
       <a class="btn btn-ghost" href="?view=configuration">Configuration · V2 DTO</a>
       <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>
-      <a class="btn btn-ghost" href="?">Workspace / legacy experiments</a></header><main id="stored-run"></main>`
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="stored-run"></main>`
     const host = app.querySelector<HTMLElement>('#stored-run')!
     host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
     const panel = mountStoredRunPanel(host, {
-      endpoint: new URL('/steady-service/', location.origin),
+      endpoint: serviceBase,
       storeId: query.get('storeId')!,
       runId: query.get('runId')!,
       attemptId: query.get('attemptId')!,

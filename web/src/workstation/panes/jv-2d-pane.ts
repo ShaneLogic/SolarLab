@@ -7,7 +7,7 @@
  * as 1D J-V; subsequent phases (microstructure, dual ions, etc.) will add
  * inputs here as they are implemented.
  */
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import { describeActivePhysics } from '../../active-physics'

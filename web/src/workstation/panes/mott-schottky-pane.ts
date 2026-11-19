@@ -1,4 +1,4 @@
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import type { DeviceConfig, MottSchottkyResult } from '../../types'

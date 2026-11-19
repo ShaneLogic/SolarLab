@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mountDevicePanel } from './device-panel'
 import type { DeviceConfig, LayerConfig, SimulationModeName } from './types'
 
-vi.mock('./api', () => ({
+vi.mock('./v2-workstation-client', () => ({
   fetchOpticalMaterials: vi.fn().mockResolvedValue([]),
   fetchLayerTemplates: vi.fn().mockResolvedValue({}),
   listConfigs: vi.fn().mockResolvedValue([

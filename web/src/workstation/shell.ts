@@ -1,6 +1,6 @@
 import { ContentItem, GoldenLayout } from 'golden-layout'
 import type { LayoutConfig, ResolvedLayoutConfig } from 'golden-layout'
-import { getConfig, listConfigs } from '../api'
+import { getConfig, listConfigs } from '../v2-workstation-client'
 import type { Workspace, Device, Run, ExperimentKind } from './types'
 import {
   STORAGE_KEY,

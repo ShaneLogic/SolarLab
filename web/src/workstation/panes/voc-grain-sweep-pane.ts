@@ -5,7 +5,7 @@
  * entered as a CSV of nm values; τ_GB / GB width default to literature-typical
  * values for moderately passivated MAPbI3 (τ_GB = 1 ns, width = 10 nm).
  */
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import type { DeviceConfig, VocGrainSweepResult } from '../../types'

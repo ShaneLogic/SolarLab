@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   readDeviceEditor: vi.fn(),
 }))
 
-vi.mock('./api', () => ({
+vi.mock('./v2-workstation-client', () => ({
   fetchOpticalMaterials: vi.fn().mockResolvedValue([]),
   fetchLayerTemplates: vi.fn().mockResolvedValue({}),
   getConfig: mocks.getConfig,

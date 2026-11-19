@@ -1,22 +1,18 @@
-"""Opt-in old HTTP framing; durable sequence plus phase prevents terminal gaps."""
+"""Solver-free historical RunStore readback for old stored runs; legacy execution retired."""
 from __future__ import annotations
 
-from dataclasses import asdict
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 import json
 import math
 import struct
 from typing import Any
-import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
-from solarlab.experiments.execution import JobHandle
 from solarlab_server.events import attempt_record, event_stream, replay_cursor
-from solarlab_server.job_service import JobSubmission, legacy_job_target
-from solarlab_server.routes.jobs import body, service, submitted
+from solarlab_server.job_service import legacy_job_target
 from solarlab_server.routes.results import result_payload
 
 
@@ -51,7 +47,10 @@ def legacy_result(store: Any, run_id: str, attempt_id: str, maximum_bytes: int) 
     view = result_payload(store, run_id, attempt_id, maximum_bytes)
     payload = next((a for a in view["artifacts"] if a["name"] == "legacy_result"), None)
     if payload is not None and payload["size_bytes"] <= 256 * 1024:
-        result = _old_json(json.loads(store.read_artifact(payload["artifact_id"])))
+        decoded = json.loads(store.read_artifact(payload["artifact_id"]))
+        if isinstance(decoded, dict) and decoded.get("schema") == "solarlab.legacy-raw-result.v1" and "result" in decoded:
+            decoded = decoded["result"]
+        result = _old_json(decoded)
         if type(result) is not dict:
             result = {"value": result}
     else:
@@ -82,36 +81,28 @@ def legacy_cursor(store: Any, run_id: str, attempt_id: str, last: str | None) ->
 
 def install_legacy(app: FastAPI, *, max_artifact_bytes: int, event_page_size: int,
                    poll_interval: float, keepalive_interval: float) -> None:
-    async def submit_legacy(request: Request, *, fixed_key: tuple[str, int] | None = None) -> dict[str, Any]:
-        context = service(request)
-        if not context.allow_legacy_routes:
-            raise HTTPException(404, "legacy compatibility routes are not enabled")
-        value = await body(request)
-        if fixed_key is None:
-            if set(value) - {"kind", "device", "config_path", "params"} or "kind" not in value:
-                raise HTTPException(422, "legacy jobs require kind/device/config_path/params")
-            registration = next((r for r in context.catalog.registrations if value["kind"] in r.legacy_kinds), None)
-            parameters = {"device": value.get("device"), "config_path": value.get("config_path"), "params": value.get("params", {})}
-        else:
-            registration = next((r for r in context.catalog.registrations
-                                 if (r.experiment_id, r.version) == fixed_key), None)
-            parameters = {"device": value.get("device"), "config_path": value.get("config_path"),
-                          "params": {k: v for k, v in value.items() if k not in {"device", "config_path"}}}
-        if registration is None:
-            raise HTTPException(422, "legacy caller has not migrated; retain its original entry")
-        declaration = JobSubmission.model_validate({"schema_version": "solarlab.job-submission.v1", "run_id": uuid.uuid4().hex,
-            "experiment_id": registration.experiment_id, "version": registration.version, "engine": "legacy",
-            "input": parameters, "limits": asdict(context.catalog.ceiling)})
-        result = await run_in_threadpool(submitted, context, declaration)
-        return {**result, "status": "ok", "legacy_events_url": f"/api/jobs/{result['job_id']}/events"}
-
     @app.post("/api/jobs")
-    async def jobs(request: Request) -> JSONResponse:
-        return JSONResponse(await submit_legacy(request), status_code=202)
+    async def retired_jobs() -> JSONResponse:
+        raise HTTPException(
+            410,
+            detail={
+                "code": "legacy_execution_retired",
+                "message": "POST /api/jobs is retired; submit V2 jobs via POST /jobs with engine='solarlab'",
+            },
+        )
+
+    @app.get("/api/jobs/{job_id}/result")
+    def read_historical_result(request: Request, job_id: str) -> JSONResponse:
+        store = request.app.state.run_store
+        run_id, attempt_id = legacy_job_target(job_id)
+        return JSONResponse(
+            legacy_result(store, run_id, attempt_id, max_artifact_bytes),
+            headers={"X-RunStore-ID": store.store_id},
+        )
 
     @app.get("/api/jobs/{job_id}/events")
     async def events(request: Request, job_id: str, last_event_id: str | None = Header(None, alias="Last-Event-ID")) -> Response:
-        # A read-only restart needs no live execution service to replay old jobs.
+        # Read-only historical RunStore replay requires zero live execution service or legacy solver imports.
         store = request.app.state.run_store
         run_id, attempt_id = legacy_job_target(job_id)
         await run_in_threadpool(attempt_record, store, run_id, attempt_id)
@@ -145,21 +136,12 @@ def install_legacy(app: FastAPI, *, max_artifact_bytes: int, event_page_size: in
                 yield f"id: {sequence}.event\nevent: progress\ndata: {json.dumps(data, allow_nan=False)}\n\n"
         return StreamingResponse(stream(), media_type="text/event-stream", headers=headers)
 
-    context = app.state.job_service
-    if context is not None and context.allow_legacy_routes:
-        def endpoint(experiment_id: str, version: int) -> Callable[[Request], Awaitable[JSONResponse]]:
-            async def synchronous(request: Request) -> JSONResponse:
-                submitted_job = await submit_legacy(request, fixed_key=(experiment_id, version))
-                handle = JobHandle(submitted_job["store_id"], submitted_job["run_id"], submitted_job["attempt_id"])
-                try:
-                    receipt = await run_in_threadpool(context.supervisor.wait, handle, context.synchronous_wait_seconds)
-                except TimeoutError:
-                    return JSONResponse({**submitted_job, "status": "pending"}, status_code=202)
-                if receipt.data["store_state"] != "succeeded":
-                    return JSONResponse({"status": "error", "job": submitted_job, "result": receipt.data}, status_code=422)
-                result = await run_in_threadpool(legacy_result, context.supervisor.store, handle.run_id, handle.attempt_id, max_artifact_bytes)
-                return JSONResponse({"status": "ok", "result": result})
-            return synchronous
-        for registration in context.catalog.registrations:
-            for path in registration.synchronous_paths:
-                app.add_api_route(path, endpoint(registration.experiment_id, registration.version), methods=["POST"])
+    @app.post("/api/{retired_path:path}")
+    async def retired_synchronous(retired_path: str) -> JSONResponse:
+        raise HTTPException(
+            410,
+            detail={
+                "code": "legacy_execution_retired",
+                "message": f"POST /api/{retired_path} is retired; submit V2 jobs via POST /jobs with engine='solarlab'",
+            },
+        )

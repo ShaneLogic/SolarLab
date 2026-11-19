@@ -1,5 +1,5 @@
-import { listConfigs } from '../../api'
-import { startJob, streamJobEvents } from '../../job-stream'
+import { listConfigs } from '../../v2-workstation-client'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, readNum, numField } from '../../ui-helpers'
 import { mountTandemStackVisualizer } from '../../stack/tandem-stack-visualizer'

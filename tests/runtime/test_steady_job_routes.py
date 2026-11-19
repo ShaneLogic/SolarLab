@@ -286,26 +286,30 @@ def test_http_cancel_fences_attempt_and_stops_only_the_shared_owner(tmp_path, ca
             assert receipt["process_exit_observed"] and len(terminal_events(store, first.run_id)) == 1
 
 
-def test_mixed_catalog_keeps_legacy_and_steady_model_and_engine_bindings_separate(catalog):
-    from job_route_fixtures import catalog as legacy_catalog, request as legacy_request
+def test_mixed_catalog_keeps_steady_and_transient_bindings_separate_and_refuses_legacy_engine(catalog, context):
+    from examples.research_1d.transient_service import example_submission as transient_submission
+    from pydantic import ValidationError
     from solarlab.experiments.registry import ExperimentRegistry
+    from solarlab_server.transient_preparation import TransientPreparationContext, transient_execution_catalog
 
-    legacy, _ = legacy_catalog()
-    sources = {source.id: source for source in (*legacy.sources, *catalog.sources)}
-    declarations = ExperimentRegistry((*legacy.registry.definitions, *catalog.registry.definitions))
-    mixed = replace(legacy, registry=declarations, registrations=(*legacy.registrations, *catalog.registrations),
+    transient = transient_execution_catalog(
+        TransientPreparationContext((("research_1d", load_device()),), context.implementation, context.current_repository_head),
+        ceiling=limits(),
+    )
+    sources = {source.id: source for source in (*transient.sources, *catalog.sources)}
+    declarations = ExperimentRegistry((*transient.registry.definitions, *catalog.registry.definitions))
+    mixed = replace(transient, registry=declarations, registrations=(*transient.registrations, *catalog.registrations),
         sources=tuple(sources.values()), expected_registry_sha256=declarations.content_sha256, ceiling=limits())
-    legacy_spec, old = mixed.prepare(JobSubmission.model_validate(legacy_request()))
-    steady_spec, new = mixed.prepare(JobSubmission.model_validate(submission()))
-    assert legacy_spec.worker_id == "registered_legacy" and old.engine.name == "legacy"
-    assert steady_spec.worker_id == "registered_steady" and new.engine.name == "solarlab"
-    assert old.inputs.registry.content_sha256 != new.inputs.registry.content_sha256
-    assert not old.manifest.can_execute and not new.manifest.can_execute
-    for engine in ("legacy", "solarlab"):
-        assert mixed.worker_binding(engine).registry_sha256 == mixed.document.sha256
-    for data in ({**submission(), "engine": "legacy"}, {**legacy_request(), "engine": "solarlab"}):
-        with pytest.raises(ValueError, match="fallback is forbidden"):
-            mixed.prepare(JobSubmission.model_validate(data))
+    transient_spec, trans_binding = mixed.prepare(JobSubmission.model_validate(transient_submission()))
+    steady_spec, steady_binding = mixed.prepare(JobSubmission.model_validate(submission()))
+    assert transient_spec.worker_id == "registered_transient" and trans_binding.engine.name == "solarlab"
+    assert steady_spec.worker_id == "registered_steady" and steady_binding.engine.name == "solarlab"
+    assert not trans_binding.manifest.can_execute and not steady_binding.manifest.can_execute
+    assert {b.id for b in mixed.worker_bindings()} == {"registered_steady", "registered_transient"}
+    with pytest.raises(ValueError, match="only engine='solarlab' is supported"):
+        mixed.worker_binding("legacy")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        JobSubmission.model_validate({**submission(), "engine": "legacy"})
 
 
 def test_local_service_script_keeps_engine_imports_after_worker_isolation(tmp_path):

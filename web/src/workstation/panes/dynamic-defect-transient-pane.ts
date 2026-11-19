@@ -1,5 +1,5 @@
 import { dynamicDefectTransientEligibility } from '../../explicit-defect-capability'
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import type { DeviceConfig, DynamicDefectTransientResult } from '../../types'
 import { numField, readNum, setStatus } from '../../ui-helpers'

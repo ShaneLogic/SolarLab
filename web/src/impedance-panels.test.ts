@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   mountDevicePanel: vi.fn(),
 }))
 
-vi.mock('./job-stream', () => ({
+vi.mock('./v2-job-client', () => ({
   startJob: mocks.startJob,
   streamJobEvents: mocks.streamJobEvents,
 }))

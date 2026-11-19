@@ -1,23 +1,19 @@
-"""Explicit local routes over a read handle and optional shared execution owner.
+"""Explicit local routes over a read handle, optional shared execution owner, and optional SPA bundle.
 
 The factory has no import-time/file/network side effects. ASGI lifespan opens
 and closes its own handle to an EXISTING local RunStore; the coordinating
 writer remains external. Opening the reader never recovers attempts, cancels
-work, or starts a solver. Do not expose this unauthenticated preparation on a
-public interface: deployment/authentication and the production switch are
-separate integration work.
+work, or starts a solver.
 
 Runs and attempt records include stored opaque execution metadata and results.
 Event pages span a run's history; SSE URLs explicitly select one attempt.
-Submission requires an explicit source-checked execution catalog.
+Submission requires an explicit source-checked solarlab execution catalog.
 Server shutdown and subscriber disconnect never cancel the external owner.
-Only installed legacy routes and the classical steady adapter are admitted;
-unregistered experiments and broader scientific qualification are unavailable.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 import math
 from pathlib import Path
@@ -26,7 +22,8 @@ from typing import cast
 
 from fastapi import FastAPI, Request
 from starlette.concurrency import run_in_threadpool
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse
+from starlette.staticfiles import StaticFiles
 
 from solarlab.io.artifacts import ArtifactIntegrityError
 from solarlab.io.run_store import RunStore, StateConflict
@@ -47,12 +44,34 @@ def _store(request: Request) -> RunStore:
 _verified_artifact = verified_artifact  # Preserve the previous internal reader name.
 
 
+def _install_web_dist(app: FastAPI, dist_root: Path) -> None:
+    index_file = dist_root / "index.html"
+    assets_dir = dist_root / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="web_assets")
+
+    def _file_endpoint(target: Path, media_type: str | None = None) -> Callable[[], FileResponse]:
+        def serve() -> FileResponse:
+            return FileResponse(target, media_type=media_type)
+        return serve
+
+    app.add_api_route("/", _file_endpoint(index_file, "text/html; charset=utf-8"),
+                      methods=["GET"], include_in_schema=False)
+    app.add_api_route("/index.html", _file_endpoint(index_file, "text/html; charset=utf-8"),
+                      methods=["GET"], include_in_schema=False)
+    for item in sorted(dist_root.iterdir()):
+        if item.is_file() and item.name != "index.html" and not item.name.startswith("."):
+            app.add_api_route("/" + item.name, _file_endpoint(item),
+                              methods=["GET"], include_in_schema=False)
+
+
 def create_app(
     store_root: str | Path, *, event_page_size: int = 100,
     poll_interval: float = 0.1, keepalive_interval: float = 15.0,
     max_artifact_bytes: int = 16 * 1024**2,
     configuration_preview: ConfigurationPreviewContext | None = None,
     job_service: JobService | None = None,
+    web_dist_dir: str | Path | None = None,
 ) -> FastAPI:
     """Build a local reader; start/stop its owned handle with ASGI lifespan.
 
@@ -64,6 +83,8 @@ def create_app(
     and resource data through ``configuration_preview``; they never execute.
     ``job_service`` explicitly adds checked installed submissions through an
     existing shared supervisor. Its lifecycle is owned by the caller.
+    ``web_dist_dir`` optionally mounts compiled SPA static assets without
+    shadowing API routes.
     """
     if type(event_page_size) is not int or not 1 <= event_page_size <= 1000:
         raise ValueError("event_page_size must be between 1 and 1000")
@@ -81,6 +102,11 @@ def create_app(
         if type(job_service) is not JobService or job_service.supervisor.store.root != root:
             raise ValueError("job service must share this exact local store and external process owner")
         job_service.catalog.verify()
+    resolved_dist: Path | None = None
+    if web_dist_dir is not None:
+        resolved_dist = Path(web_dist_dir).resolve()
+        if not resolved_dist.is_dir() or not (resolved_dist / "index.html").is_file():
+            raise ValueError("web_dist_dir must be an existing directory containing index.html")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -98,6 +124,7 @@ def create_app(
     app.state.run_store = None
     app.state.configuration_preview = configuration_preview
     app.state.job_service = job_service
+    app.state.web_dist_dir = resolved_dist
     app.include_router(schema_router)
     app.include_router(configuration_router)
     app.include_router(materials_router)
@@ -128,4 +155,6 @@ def create_app(
         poll_interval=poll_interval, keepalive_interval=keepalive_interval, max_artifact_bytes=max_artifact_bytes)
     install_legacy(app, max_artifact_bytes=max_artifact_bytes, event_page_size=event_page_size,
                    poll_interval=poll_interval, keepalive_interval=keepalive_interval)
+    if resolved_dist is not None:
+        _install_web_dist(app, resolved_dist)
     return app

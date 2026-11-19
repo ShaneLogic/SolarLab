@@ -1,4 +1,4 @@
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { mountJVWaveformControls } from '../../jv-waveform-controls'
 import { setStatus, numField, readNum, checkField, readCheck } from '../../ui-helpers'

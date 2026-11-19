@@ -1,5 +1,5 @@
 import type { DeviceConfig } from '../types'
-import { checkUserConfigExists, saveUserConfig } from '../api'
+import { checkUserConfigExists, saveUserConfig } from '../v2-workstation-client'
 
 const FILENAME_RE = /^[a-zA-Z0-9_-]{1,64}$/
 const HTML_ESCAPE: Record<string, string> = {

@@ -1,6 +1,6 @@
 import Plotly from 'plotly.js-basic-dist-min'
 import { mountDevicePanel, type DevicePanel } from '../device-panel'
-import { startJob, streamJobEvents } from '../job-stream'
+import { startJob, streamJobEvents } from '../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../progress'
 import { appendWaveformEvidence, mountJVWaveformControls } from '../jv-waveform-controls'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'

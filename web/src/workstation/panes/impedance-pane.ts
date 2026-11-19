@@ -1,4 +1,4 @@
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { setNumberInputValue } from '../../number-input'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import {

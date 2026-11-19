@@ -183,7 +183,7 @@ export function mountConfigurationWorkstation(
         input: defaultDeviceInput(),
         onApply: input =>
           showPreview({
-            endpoint: previewEndpoint('configuration/preview/device'),
+            endpoint: previewEndpoint('configuration-preview/device'),
             kind: 'device',
             input: input as DeviceInput,
           }),
@@ -193,7 +193,7 @@ export function mountConfigurationWorkstation(
         input: defaultTandemInput(),
         onApply: input =>
           showPreview({
-            endpoint: previewEndpoint('configuration/preview/tandem'),
+            endpoint: previewEndpoint('configuration-preview/tandem'),
             kind: 'tandem',
             input: input as TandemInput,
           }),
@@ -203,7 +203,7 @@ export function mountConfigurationWorkstation(
         input: defaultJVExperimentInput(),
         onApply: input =>
           showPreview({
-            endpoint: previewEndpoint('configuration/preview/experiment'),
+            endpoint: previewEndpoint('configuration-preview/experiment'),
             kind: 'experiment',
             input,
           }),
@@ -213,7 +213,7 @@ export function mountConfigurationWorkstation(
         input: defaultSpatialExperimentInput(),
         onApply: input =>
           showPreview({
-            endpoint: previewEndpoint('configuration/preview/experiment'),
+            endpoint: previewEndpoint('configuration-preview/experiment'),
             kind: 'experiment',
             input,
           }),
@@ -223,7 +223,7 @@ export function mountConfigurationWorkstation(
         input: defaultSweepInput(),
         onApply: input =>
           showPreview({
-            endpoint: previewEndpoint('configuration/preview/sweep'),
+            endpoint: previewEndpoint('configuration-preview/sweep'),
             kind: 'sweep',
             input,
           }),
