@@ -12,13 +12,15 @@ from dataclasses import dataclass
 from solarlab.contracts.errors import ContractError
 
 __all__ = [
-    "AREA", "COULOMB", "ELEMENTARY_CHARGE_C", "KELVIN", "LENGTH", "ONE", "PARTICLE",
+    "AREA", "BOLTZMANN_CONSTANT_J_K", "COULOMB", "ELEMENTARY_CHARGE_C", "KELVIN", "LENGTH", "ONE", "PARTICLE",
     "SECOND", "Unit", "VOLT", "VOLUME",
 ]
 
-# Exact SI 2019 defining constant: converts particle counts/fluxes to charge,
-# J_s = z_s * q * F_s (V1 section 15.1). Same binary64 value as the legacy engine.
+# Exact SI 2019 defining constants: convert particle counts/fluxes to charge,
+# J_s = z_s * q * F_s (V1 section 15.1), and thermal energy k_B * T.
+# Same binary64 values as the legacy engine.
 ELEMENTARY_CHARGE_C = 1.602176634e-19
+BOLTZMANN_CONSTANT_J_K = 1.380649e-23
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,7 @@ from hashlib import sha256
 import json
 import math
 
-from perovskite_sim.constants import K_B, Q
+from solarlab.contracts.units import BOLTZMANN_CONSTANT_J_K as K_B, ELEMENTARY_CHARGE_C as Q
 
 SCHEMA = "solarlab.physical-tolerance.v1"
 WEIGHT_SCHEMA = "sksundae.ida.physical-affine-weights.v1"

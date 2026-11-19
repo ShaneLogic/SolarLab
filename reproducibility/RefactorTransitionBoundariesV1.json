@@ -191,7 +191,6 @@
         "scripts/benchmarks/interval_observation.py",
         "scripts/benchmarks/native_observation.py",
         "scripts/benchmarks/nonlocal_device.py",
-        "scripts/benchmarks/physical_tolerance.py",
         "scripts/benchmarks/precision_prototype.py"
       ],
       "owner": "RS",

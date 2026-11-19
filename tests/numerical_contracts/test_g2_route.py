@@ -665,6 +665,7 @@ def test_pipeline_supervision_BE4_context_runs_under_actual_launcher(tmp_path, m
     plan_path = Path(manifest["plan"]["path"])
     code = '''import json,sys,time
 from pathlib import Path
+sys.path.insert(0, str((Path.cwd() / "perovskite-sim").resolve()))
 from scripts.benchmarks import g2_reference_be as be,g2_route
 assert be.validate_route_supervision is g2_route._validate_supervision
 assert be.route_channel is g2_route._channel

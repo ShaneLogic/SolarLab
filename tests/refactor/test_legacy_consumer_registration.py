@@ -65,9 +65,9 @@ def test_current_inventory_agrees_with_the_accepted_audit(
 ) -> None:
     policy, previous, consumers, lanes = current
     # Independent AcceptanceV2 / UnregisteredLegacyConsumersV1 inventory after
-    # retiring dead web/src/{api,job-stream}.ts post-9358f24b31b642f8c6c1a9a3d46b0cbbfe7fc495:
-    # 97 direct files (excluding backend-only support), 47 lane/executor pairs.
-    # Prior 99-file audit sha256: a79669a57c072f6dc35d976a05d4eed03ec59e9c3bedc6f7494a820144d852be.
+    # retiring dead web/src/{api,job-stream}.ts and migrating physical_tolerance.py:
+    # 96 direct files (excluding backend-only support), 47 lane/executor pairs.
+    # Prior 97-file audit sha256: 9017bd64e66a007da3b2be043762fb6e3126c47ba8240a12bdb1ed1fb8b30c6e.
     # A deliberate inventory change needs a refreshed audit; CI needs no archive.
     inventory = {
         "consumer_paths": sorted({consumer.path for consumer in consumers}),
@@ -75,7 +75,7 @@ def test_current_inventory_agrees_with_the_accepted_audit(
     }
     encoded = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == (
-        "9017bd64e66a007da3b2be043762fb6e3126c47ba8240a12bdb1ed1fb8b30c6e"
+        "6fbe120128505ba567634c7a4249ad94ef49be3f4e430af03fe4eb95d72338c5"
     )
     assert registration_violations(ROOT, policy, previous, consumers, lanes) == []
 
