@@ -70,6 +70,7 @@ def compile_device_2d(
     thermionic_mode: ThermionicModelVersion | None = None,
     combination_mode: ThermionicCombinationMode | None = None,
     optical_model: Literal["beer_lambert", "beer_lambert_spectral", "tmm"] | None = None,
+    allow_legacy_benchmark_deck: bool = False,
 ) -> CompiledDevice2D:
     """Compile without a nonlinear solve or inferred geometric defaults.
 
@@ -81,6 +82,8 @@ def compile_device_2d(
     """
     if not isinstance(prepared, PreparedDevice) or not isinstance(spatial, JV2DInput):
         raise TypeError("compile_device_2d requires PreparedDevice and typed JV2DInput geometry")
+    if not isinstance(allow_legacy_benchmark_deck, bool):
+        raise TypeError("allow_legacy_benchmark_deck must be a bool")
     if geometry_name is not None:
         if geometry_name not in {HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2}:
             raise ValueError(f"unsupported 2D geometry_name {geometry_name!r}")
@@ -153,6 +156,7 @@ def compile_device_2d(
         or (thermionic_mode is not None and thermionic_mode != LEGACY_UNNORMALIZED_THERMIONIC_V1)
         or combination_mode is not None
         or optical_model is not None
+        or allow_legacy_benchmark_deck
     )
     if has_column_p08:
         column = compile_device_1d(
@@ -168,6 +172,7 @@ def compile_device_2d(
             thermionic_mode=thermionic_mode,
             combination_mode=combination_mode,
             optical_model=optical_model,
+            allow_legacy_benchmark_deck=allow_legacy_benchmark_deck,
         )
     else:
         column = compile_device_1d(column_prepared, intervals_per_layer=(spatial.Ny_per_layer,) * len(prepared.layers))
