@@ -853,8 +853,8 @@ sources:
   source_commit: e3eee454b1cf61ff43e2cb668035be0527dacdd3
 - id: src/solarlab/config/legacy_fields.py
   path: src/solarlab/config/legacy_fields.py
-  sha256: 96e37576395198f522e0f8c9b5ab09c62a7d63007ac6b824db2a42217e5306e2
-  source_commit: ae6c5aee899abae29bbc560fb28de24ba5301731
+  sha256: aa1a890c0c6dc4a58d324d6ff2d3f80d66356aea9ffff8d34250ef7517b3b79a
+  source_commit: c01afb72e92f756096cd230ac67dc5137abdc342
 - id: src/solarlab/device/inputs.py
   path: src/solarlab/device/inputs.py
   sha256: f616d30f584930276635b8d099fafff736c9bf840e1d48a20eb9bbbb60debddf
