@@ -61,7 +61,12 @@ class ReleaseFile:
             raise ValueError("release requires a known content role and bounded immutable bytes")
         prefix = next((value for value in ("src/", "perovskite-sim/") if self.source_path.startswith(value)
                        and self.source_path[len(value):].split("/")[0] in (*_PACKAGES, "perovskite_sim")), None)
-        expected = "site/" + self.source_path[len(prefix):] if prefix else "share/" + self.source_path
+        if prefix is not None:
+            expected = "site/" + self.source_path[len(prefix):]
+        elif self.source_path.startswith("web/dist/") and len(self.source_path) > len("web/dist/"):
+            expected = "site/solarlab_server/_web_dist/" + self.source_path[len("web/dist/"):]
+        else:
+            expected = "share/" + self.source_path
         if self.path != expected or self.role == "package" and prefix is None:
             raise ValueError("release source-to-install mapping is not the declared package/data layout")
 
@@ -202,6 +207,12 @@ def snapshot_release_bundle(
             source = path.relative_to(root).as_posix()
             target = f"site/{package}/" + path.relative_to(folder).as_posix()
             values[source] = ReleaseFile(source, target, required.pop(source, "package"), _contained(root, source).read_bytes())
+    web_dist = root / "web/dist"
+    if profile == "target" and web_dist.is_dir():
+        for path in _files(web_dist):
+            source = path.relative_to(root).as_posix()
+            target = "site/solarlab_server/_web_dist/" + path.relative_to(web_dist).as_posix()
+            values[source] = ReleaseFile(source, target, required.pop(source, "resource"), _contained(root, source).read_bytes())
     for source, role in required.items():
         values[source] = ReleaseFile(source, "share/" + relative_path(source), role, _contained(root, source).read_bytes())
     return ReleaseBundle(build_source_commit, profile, tuple(values.values()))

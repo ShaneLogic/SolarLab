@@ -28,6 +28,7 @@ import sys
 import time
 
 started = time.monotonic_ns()
+sys.path.insert(0, sys.argv[3])
 request = json.loads(sys.argv[2])
 assert all(os.environ.get(key) == value for key, value in request.items())
 from perovskite_sim.solver import mol
@@ -104,7 +105,8 @@ def test_opposed_contexts_preserve_all_words_in_concurrent_old_material_calls(sc
                                  VECLIB_MAXIMUM_THREADS="1", NUMEXPR_NUM_THREADS="1", PYTHONDONTWRITEBYTECODE="1")
         return subprocess.Popen(
             [sys.executable, "-I", "-B", "-c", _OBSERVER,
-             str(ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"), json.dumps(snapshot)],
+             str(ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml"), json.dumps(snapshot),
+             str(package_root.parent)],
             env=child_environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
 

@@ -1,0 +1,167 @@
+{
+  "default_catalog_sha256": "8de934eb0685b1d5fc4843002fceb4a8fdebdb4ac22896ec08a309991730130e",
+  "input": {
+    "contacts": [
+      {
+        "S_n": null,
+        "S_p": null,
+        "id": "contact_left",
+        "layer": "layer_0",
+        "side": "left"
+      },
+      {
+        "S_n": null,
+        "S_p": null,
+        "id": "contact_right",
+        "layer": "layer_2",
+        "side": "right"
+      }
+    ],
+    "electrical_grid": [],
+    "grain_boundaries": [],
+    "id": "calado2016_ion_sweep",
+    "interfaces": [
+      {
+        "id": "interface_0",
+        "left": "layer_0",
+        "right": "layer_1",
+        "v_n": "0.0",
+        "v_p": "0.0"
+      },
+      {
+        "id": "interface_1",
+        "left": "layer_1",
+        "right": "layer_2",
+        "v_n": "0.0",
+        "v_p": "0.0"
+      }
+    ],
+    "layers": [
+      {
+        "id": "layer_0",
+        "name": "p_contact",
+        "parameters": {
+          "B_rad": "1E-16",
+          "C_n": "0.0",
+          "C_p": "0.0",
+          "D_ion": "0.0",
+          "Eg": "0.0",
+          "N_A": "3E+23",
+          "N_D": "0.0",
+          "P0": "0.0",
+          "P_lim": "1E+30",
+          "alpha": "0.0",
+          "chi": "0.0",
+          "eps_r": "20.0",
+          "mu_n": "0.002",
+          "mu_p": "0.002",
+          "n1": "305",
+          "ni": "3.62E+12",
+          "p1": "4.36E+22",
+          "tau_n": "2E-15",
+          "tau_p": "2E-15"
+        },
+        "role": "HTL",
+        "thickness": "2.00E-7"
+      },
+      {
+        "id": "layer_1",
+        "name": "MAPbI3",
+        "parameters": {
+          "B_rad": "1E-16",
+          "C_n": "0.0",
+          "C_p": "0.0",
+          "D_ion": "2.585E-18",
+          "Eg": "0.0",
+          "N_A": "0.0",
+          "N_D": "0.0",
+          "P0": "1E+25",
+          "P_lim": "1E+30",
+          "alpha": "1E+5",
+          "chi": "0.0",
+          "eps_r": "20.0",
+          "mu_n": "0.002",
+          "mu_p": "0.002",
+          "n1": "3.62E+12",
+          "ni": "3.62E+12",
+          "p1": "3.62E+12",
+          "tau_n": "1.0",
+          "tau_p": "1.0"
+        },
+        "role": "absorber",
+        "thickness": "4.00E-7"
+      },
+      {
+        "id": "layer_2",
+        "name": "n_contact",
+        "parameters": {
+          "B_rad": "1E-16",
+          "C_n": "0.0",
+          "C_p": "0.0",
+          "D_ion": "0.0",
+          "Eg": "0.0",
+          "N_A": "0.0",
+          "N_D": "3E+23",
+          "P0": "0.0",
+          "P_lim": "1E+30",
+          "alpha": "0.0",
+          "chi": "0.0",
+          "eps_r": "20.0",
+          "mu_n": "0.002",
+          "mu_p": "0.002",
+          "n1": "4.36E+22",
+          "ni": "3.62E+12",
+          "p1": "305",
+          "tau_n": "2E-15",
+          "tau_p": "2E-15"
+        },
+        "role": "ETL",
+        "thickness": "2.00E-7"
+      }
+    ],
+    "schema_version": "solarlab.device-preparation.v1",
+    "settings": {
+      "Phi": "2.5E+22",
+      "T": 300,
+      "V_bi": "1.3",
+      "mode": "full"
+    },
+    "simulation_hints": {
+      "jv_sweep": {
+        "N_grid": 60,
+        "V_max": 1.2,
+        "n_points": 111,
+        "v_rate": 0.04,
+        "waveform": {
+          "branch_dwell_s": 0.5,
+          "dark_prep_s": 30.0,
+          "dark_seed_s": 120.0,
+          "schema_version": 1,
+          "start_voltage_V": -1.0,
+          "turnaround_dark": true,
+          "turnaround_s": 3.0,
+          "uniform_generation_rate_m3_s": 2.5e+27
+        },
+        "waveform_controls": {
+          "atol_m3": 1.0,
+          "rtol": 0.0001
+        }
+      },
+      "notes": "Internal ion-sweep figure reference; finite-time diagnostic."
+    },
+    "source_format": "standard"
+  },
+  "references": {},
+  "resource_library_sha256": "6082eb3300b024b07e638fb7fca29dd88119e4c2db0403346bcd4bfe9f9fa60a",
+  "schema_version": "solarlab.configuration.v2",
+  "source": {
+    "id": "calado2016_ion_sweep.yaml",
+    "sha256": "2b436f161a62c9edb2f0b1bbbcf0d2d6a5f27471d2a5d296952173c4baadea9c"
+  },
+  "sources": [
+    {
+      "id": "calado2016_ion_sweep.yaml",
+      "sha256": "2b436f161a62c9edb2f0b1bbbcf0d2d6a5f27471d2a5d296952173c4baadea9c"
+    }
+  ]
+}

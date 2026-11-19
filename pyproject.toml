@@ -41,6 +41,13 @@ dev = [
 ]
 notebook = ["jupyterlab>=4.0"]
 
+[project.scripts]
+solarlab = "solarlab.cli:main"
+solarlab-server = "solarlab.cli:server_main"
+solarlab-cbo-scan = "solarlab_research.scripts.cbo_scan:main"
+solarlab-r1-short-window = "solarlab_research.scripts.r1_short_window:main"
+solarlab-r1-verify-sources = "solarlab_research.scripts.r1_verify_sources:main"
+
 [tool.uv]
 # Preserve the observed transitive baseline as well as the direct pins above.
 # contourpy 1.4 requires 3.12; uv selects a compatible release on Python 3.11.
@@ -91,6 +98,7 @@ check_untyped_defs = true
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
+pythonpath = ["perovskite-sim"]
 testpaths = ["tests"]
 addopts = "-ra -m 'not slow'"
 markers = [
@@ -102,9 +110,9 @@ markers = [
     "validation: physics trend validation against literature windows (V_oc vs Eg, FF vs mobility, etc.)",
 ]
 
-# Transitional P03-01 build: one legacy source tree, explicitly mapped beside
-# the three new packages. P09-01 excludes the legacy engine from the release;
-# P09-03 retires its source only after every consumer has migrated.
+# Target P09-01 build: ship only first-party packages (solarlab,
+# solarlab_research, solarlab_server) plus prebuilt web/dist SPA assets when
+# present. Legacy perovskite-sim is excluded from both wheel and sdist.
 [tool.hatch.build]
 reproducible = true
 exclude = ["**/__pycache__/**", "**/*.pyc", "**/*.pyo", "**/.DS_Store"]
@@ -114,9 +122,11 @@ only-include = [
     "src/solarlab",
     "src/solarlab_research",
     "src/solarlab_server",
-    "perovskite-sim/perovskite_sim",
 ]
-sources = ["src", "perovskite-sim"]
+sources = ["src"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "src/solarlab/materials/wheel_hook.py"
 
 [tool.hatch.build.targets.sdist]
 only-include = [
@@ -129,9 +139,6 @@ only-include = [
     "src/solarlab",
     "src/solarlab_research",
     "src/solarlab_server",
-    "perovskite-sim/perovskite_sim",
-    "perovskite-sim/pyproject.toml",
-    "perovskite-sim/uv.lock",
     "tests/refactor/test_package_preparation.py",
     "tests/refactor/test_configuration_preparation.py",
     "tests/refactor/test_registry_preparation.py",
@@ -153,18 +160,16 @@ only-include = [
     "tests/refactor/test_package_boundaries.py",
     "tests/refactor/test_experiment_registry_startup.py",
     "tests/refactor/test_input_domain_closure.py",
-    "tests/refactor/test_legacy_behavior_execution.py",
-    "tests/refactor/test_legacy_execution_context.py",
     "tests/refactor/test_effective_behavior_identity.py",
     "tests/refactor/test_configuration_migration.py",
-    "tests/refactor/legacy_driver_observer.py",
     "tests/refactor/fixtures/r1_common_state_preparation.json",
     "tests/refactor/fixtures/r1_pair_common_state_preparation.json",
     "tests/refactor/fixtures/r1_execution_policy.json",
-    "perovskite-sim/tests/fixtures/OneDimensionalMechanismR1ReferenceBindingV1.json",
-    "perovskite-sim/tests/fixtures/configs/dynamic_interface_defect_ion_transient_absorber_only.yaml",
-    "perovskite-sim/reproducibility/OneDimensionalMechanismR1DynamicsInputV1.json",
     "reproducibility/RefactorTransitionBoundariesV1.json",
+    "reproducibility/ScapsComparisonContractV1.json",
+    "reproducibility/HysteresisReferenceContractV1.json",
+    "reproducibility/HysteresisReferenceContractV2.json",
+    "reproducibility/PerformanceCasesV1.json",
     "scripts/generate_configuration_schema.py",
     "web/src",
     "web/tests",
@@ -178,14 +183,6 @@ only-include = [
     "web/vitest.config.ts",
     "web/Dockerfile",
     "web/.gitignore",
-    "perovskite-sim/tests/fixtures/IonDiffusivityFigureReference.json",
-    "perovskite-sim/tests/fixtures/configs/cigs_graded_optics.yaml",
-    "perovskite-sim/tests/fixtures/configs/wkb_resolved_electron_barrier.yaml",
-    "perovskite-sim/tests/fixtures/configs/nip_MAPbI3.yaml",
-    "perovskite-sim/tests/fixtures/configs/tandem_lin2019.yaml",
-    "perovskite-sim/tests/fixtures/configs/nip_wideGap_FACs_1p77.yaml",
-    "perovskite-sim/tests/fixtures/configs/nip_SnPb_1p22.yaml",
-    "perovskite-sim/configs/scaps_mirror_v2.yaml",
     "tests/runtime/test_run_store.py",
     "tests/runtime/test_execution.py",
     "tests/runtime/execution_workers.py",
@@ -194,6 +191,9 @@ only-include = [
     "tests/runtime/test_configuration_schema_service.py",
     "tests/runtime/test_configuration_preview.py",
 ]
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "src/solarlab/materials/wheel_hook.py"
 
 [tool.importlinter]
 root_packages = ["solarlab", "solarlab_research", "solarlab_server"]
@@ -206,6 +206,12 @@ source_modules = ["solarlab"]
 forbidden_modules = [
     "solarlab_research", "solarlab_server", "perovskite_sim", "backend",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Research package has no legacy dependency"
+type = "forbidden"
+source_modules = ["solarlab_research"]
+forbidden_modules = ["perovskite_sim", "backend"]
 
 [[tool.importlinter.contracts]]
 name = "Companion packages are independent"
@@ -264,6 +270,6 @@ name = "Shared contracts do not import implementation layers"
 type = "layers"
 containers = ["solarlab"]
 layers = [
-    "config : device : materials : reproducibility : units : physics : experiments : sweeps : (io) : (mesh) : (discretization) : (equations) : (solvers)",
+    "config : device : materials : reproducibility : units : physics : experiments : sweeps : cli : (io) : (mesh) : (discretization) : (equations) : (solvers)",
     "(contracts)",
 ]

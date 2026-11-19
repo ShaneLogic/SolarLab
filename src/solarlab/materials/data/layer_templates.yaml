@@ -1,0 +1,340 @@
+# Layer template library for Phase 2b custom-stack builder.
+# Each entry: role, optical_material (or null), description, source, defaults.
+# Defaults come from cited published cells; tune at PR review if a stack
+# fails to converge during the manual verification pass.
+
+glass_substrate:
+  role: substrate
+  optical_material: glass
+  description: "BK7-equivalent glass substrate (1 mm) — front side"
+  source: "Schott BK7 datasheet"
+  defaults:
+    thickness: 1.0e-3
+    incoherent: true
+    eps_r: 4.6
+    mu_n: 0
+    mu_p: 0
+    ni: 0
+    N_D: 0
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 0
+    Eg: 9.0
+
+FTO_front_contact:
+  role: front_contact
+  optical_material: FTO
+  description: "F:SnO2 front contact on glass (degenerate semiconductor approx)"
+  source: "Filipic 2015, Opt. Express 23, A263"
+  defaults:
+    thickness: 5.0e-7
+    eps_r: 9.0
+    mu_n: 5.0e-3
+    mu_p: 1.0e-3
+    ni: 1.0e10
+    N_D: 1.0e26
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 4.4
+    Eg: 3.5
+    incoherent: false
+
+ITO_front_contact:
+  role: front_contact
+  optical_material: ITO
+  description: "Sn:In2O3 front contact (sputtered TCO, p-i-n stacks)"
+  source: "König 2014, Opt. Mater. Express 4, 689"
+  defaults:
+    thickness: 1.5e-7
+    eps_r: 9.0
+    mu_n: 4.0e-3
+    mu_p: 1.0e-3
+    ni: 1.0e10
+    N_D: 1.0e26
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 4.4
+    Eg: 3.5
+    incoherent: false
+
+TiO2_ETL:
+  role: ETL
+  optical_material: TiO2
+  description: "Compact TiO2 ETL for planar n-i-p perovskite cells"
+  source: "Liu et al. 2014, Nature 501, 395"
+  defaults:
+    thickness: 5.0e-8
+    eps_r: 30
+    mu_n: 1.0e-7
+    mu_p: 1.0e-7
+    ni: 1.0e10
+    N_D: 1.0e22
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-7
+    tau_p: 1.0e-7
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 4.0
+    Eg: 3.2
+    incoherent: false
+
+SnO2_ETL:
+  role: ETL
+  optical_material: SnO2
+  description: "Modern SnO2 ETL (replaces TiO2 in many n-i-p stacks)"
+  source: "Jiang et al. 2017, Nat. Energy 2, 16177"
+  defaults:
+    thickness: 5.0e-8
+    eps_r: 9
+    mu_n: 2.0e-3
+    mu_p: 2.0e-4
+    ni: 1.0e10
+    N_D: 1.0e23
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-7
+    tau_p: 1.0e-7
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 4.0
+    Eg: 3.6
+    incoherent: false
+
+C60_ETL:
+  role: ETL
+  optical_material: C60
+  description: "Fullerene C60 ETL for inverted (p-i-n) cells"
+  source: "Ren et al. 2015, Adv. Mater. 27, 6729"
+  defaults:
+    thickness: 3.0e-8
+    eps_r: 4.0
+    mu_n: 1.0e-6
+    mu_p: 1.0e-6
+    ni: 1.0e10
+    N_D: 1.0e21
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-7
+    tau_p: 1.0e-7
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 3.9
+    Eg: 1.7
+    incoherent: false
+
+PCBM_ETL:
+  role: ETL
+  optical_material: PCBM
+  description: "PCBM fullerene derivative ETL (alternative to C60 in p-i-n)"
+  source: "Ren et al. 2015, Adv. Mater. 27, 6729"
+  defaults:
+    thickness: 5.0e-8
+    eps_r: 4.0
+    mu_n: 1.0e-6
+    mu_p: 1.0e-6
+    ni: 1.0e10
+    N_D: 1.0e21
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-7
+    tau_p: 1.0e-7
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 3.9
+    Eg: 2.0
+    incoherent: false
+
+MAPbI3_absorber:
+  role: absorber
+  optical_material: MAPbI3
+  description: "Methylammonium lead iodide perovskite absorber (~400 nm)"
+  source: "Phillips et al. 2018, Sci. Rep. 8, 6473"
+  defaults:
+    thickness: 4.0e-7
+    eps_r: 24.1
+    mu_n: 2.0e-4
+    mu_p: 2.0e-4
+    ni: 1.0e12
+    N_D: 0
+    N_A: 0
+    D_ion: 1.0e-16
+    P_lim: 1.6e25
+    P0: 1.6e25
+    tau_n: 3.0e-9
+    tau_p: 3.0e-9
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 9.0e-17
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 4.0
+    Eg: 1.6
+    incoherent: false
+
+spiro_HTL:
+  role: HTL
+  optical_material: spiro_OMeTAD
+  description: "spiro-OMeTAD HTL (n-i-p stacks)"
+  source: "Saliba et al. 2016, Energy Environ. Sci. 9, 1989"
+  defaults:
+    thickness: 2.0e-7
+    eps_r: 3.0
+    mu_n: 1.0e-8
+    mu_p: 1.0e-8
+    ni: 1.0e10
+    N_D: 0
+    N_A: 1.0e22
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-7
+    tau_p: 1.0e-7
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 2.45
+    Eg: 3.0
+    incoherent: false
+
+PEDOT_PSS_HTL:
+  role: HTL
+  optical_material: PEDOT_PSS
+  description: "PEDOT:PSS HTL (p-i-n stacks)"
+  source: "Lee et al. 2018, J. Mater. Chem. A 6, 6105"
+  defaults:
+    thickness: 4.0e-8
+    eps_r: 3.0
+    mu_n: 1.0e-8
+    mu_p: 1.0e-8
+    ni: 1.0e10
+    N_D: 0
+    N_A: 1.0e22
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-7
+    tau_p: 1.0e-7
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 3.4
+    Eg: 1.6
+    incoherent: false
+
+Au_back_contact:
+  role: back_contact
+  optical_material: Au
+  description: "Gold back contact (degenerate semiconductor approx, n-i-p)"
+  source: "Johnson & Christy 1972, Phys. Rev. B 6, 4370"
+  defaults:
+    thickness: 1.0e-7
+    eps_r: 6.9
+    mu_n: 1.0e-3
+    mu_p: 1.0e-3
+    ni: 1.0e10
+    N_D: 0
+    N_A: 1.0e26
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 4.0
+    Eg: 3.0
+    incoherent: false
+
+Ag_back_contact:
+  role: back_contact
+  optical_material: Ag
+  description: "Silver back contact / reflector (p-i-n stacks)"
+  source: "Johnson & Christy 1972, Phys. Rev. B 6, 4370"
+  defaults:
+    thickness: 1.0e-7
+    eps_r: 6.0
+    mu_n: 1.0e-3
+    mu_p: 1.0e-3
+    ni: 1.0e10
+    N_D: 1.0e26
+    N_A: 0
+    D_ion: 0
+    P_lim: 0
+    P0: 0
+    tau_n: 1.0e-9
+    tau_p: 1.0e-9
+    n1: 1.0e10
+    p1: 1.0e10
+    B_rad: 0
+    C_n: 0
+    C_p: 0
+    alpha: 0
+    chi: 4.3
+    Eg: 3.0
+    incoherent: false

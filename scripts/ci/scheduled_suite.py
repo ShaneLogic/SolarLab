@@ -76,7 +76,6 @@ PACKAGE_ROOTS = {
     "solarlab": "src/solarlab",
     "solarlab_research": "src/solarlab_research",
     "solarlab_server": "src/solarlab_server",
-    "perovskite_sim": "perovskite-sim/perovskite_sim",
 }
 # These files contain individually expensive protocols or several old producers.
 # Split by test function; parameter reprs are not portable selector identities.

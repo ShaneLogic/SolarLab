@@ -163,21 +163,32 @@ jobs:
           "$UV_PROJECT_ENVIRONMENT/bin/python" -I -B - <<'PY'
           import importlib.metadata
           import importlib.resources
+          import importlib.util
           import pathlib
           import sys
           import solarlab
           import solarlab_research
           import solarlab_server
+          from solarlab.cli import main as cli_main
           from solarlab.config import behavior
+          from solarlab.materials import (
+              load_packaged_default_catalog,
+              load_packaged_resource_library,
+              load_packaged_template_library,
+          )
           from solarlab_server.app import create_app
-          from perovskite_sim.models.parameters import MaterialParams
 
           prefix = pathlib.Path(sys.prefix).resolve()
           for module in (solarlab, solarlab_research, solarlab_server):
               assert pathlib.Path(module.__file__).resolve().is_relative_to(prefix)
               assert importlib.resources.files(module).joinpath("py.typed").is_file()
-          assert MaterialParams.__module__ == "perovskite_sim.models.parameters"
+          assert importlib.util.find_spec("perovskite_sim") is None
+          assert importlib.util.find_spec("backend") is None
           assert create_app.__module__ == "solarlab_server.app"
+          assert cli_main.__module__ == "solarlab.cli"
+          assert load_packaged_default_catalog().content_sha256
+          assert load_packaged_resource_library().get("MAPbI3", "nk").shape[1] == 3
+          assert len(load_packaged_template_library().templates) > 0
           assert pathlib.Path(behavior.__file__).resolve().is_relative_to(prefix)
           assert importlib.metadata.version("solarlab") == "0.1.0"
           PY
