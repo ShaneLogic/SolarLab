@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 import json
 from pathlib import Path
+import subprocess
+import sys
 from types import ModuleType
 
 import pytest
@@ -239,3 +241,25 @@ def test_cli_check_install_steady_jv_and_server_launcher(
     )
     assert server_main(["--port", "8123"]) == 0
     assert received == [["--port", "8123"]]
+
+
+def test_cli_import_leaves_numpy_and_scipy_unloaded_for_spawn_workers() -> None:
+    """Ensure bin/solarlab-server (from solarlab.cli import server_main) never loads scipy before worker env."""
+    code = """
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from solarlab.cli import main, server_main
+assert callable(main) and callable(server_main)
+forbidden = {"numpy", "scipy", "perovskite_sim", "backend"}
+loaded = sorted(name for name in sys.modules if name.split(".")[0] in forbidden)
+assert loaded == [], f"unexpected eager imports on solarlab.cli load: {loaded}"
+print(json.dumps({"lazy_cli_import": True}))
+"""
+    proc = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", code, str(ROOT / "src")],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(proc.stdout.strip()) == {"lazy_cli_import": True}

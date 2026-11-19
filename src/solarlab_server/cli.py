@@ -208,24 +208,23 @@ def load_packaged_or_example_bundle(
     tuple[tuple[str, PreparedDevice], ...],
 ]:
     """Load packaged defaults/resources (when available) and prepare installed research_1d."""
-    from solarlab.config.device_import import import_standard_device
     from solarlab.config.resolve_device import resolve_device
     from solarlab.device.defaults import DefaultCatalog
     from solarlab.device.inputs import DeviceInput
-    from solarlab.materials.resources import ResourceLibrary
+    from solarlab.materials import (
+        load_packaged_default_catalog,
+        load_packaged_preset_device_mapping,
+        load_packaged_preset_sources,
+        load_packaged_resource_library,
+    )
     from solarlab.materials.source import SourceDocument
-
-    materials_mod = importlib.import_module("solarlab.materials")
-    load_defaults = getattr(materials_mod, "load_packaged_default_catalog", None)
-    load_resources = getattr(materials_mod, "load_packaged_resource_library", None)
-    load_presets = getattr(materials_mod, "load_packaged_preset_sources", None)
 
     resolved_root = Path(__file__).resolve().parents[2] if repo_root is None else repo_root
     example_json = resolved_root / "examples" / "research_1d" / "device.json"
 
-    defaults: DefaultCatalog | None = load_defaults() if callable(load_defaults) else None
-    resources: ResourceLibrary = load_resources() if callable(load_resources) else ResourceLibrary()
-    extra_presets: tuple[SourceDocument, ...] = tuple(load_presets()) if callable(load_presets) else ()
+    defaults: DefaultCatalog = load_packaged_default_catalog()
+    resources: ResourceLibrary = load_packaged_resource_library()
+    extra_presets: tuple[SourceDocument, ...] = tuple(load_packaged_preset_sources())
 
     yaml_doc = SourceDocument("research_1d.yaml", _baseline_research_1d_yaml())
     seen_ids = {yaml_doc.id}
@@ -236,8 +235,6 @@ def load_packaged_or_example_bundle(
         example_catalog = DefaultCatalog.from_mapping(
             {**parsed["default_catalog"], "evidence": [[json_source.id, json_source.sha256]]}
         )
-        if defaults is None:
-            defaults = example_catalog
         prepared = resolve_device(
             DeviceInput.model_validate(parsed["device"]),
             example_catalog,
@@ -246,12 +243,17 @@ def load_packaged_or_example_bundle(
         )
         return defaults, resources, (yaml_doc, *dedup_presets, json_source), (("research_1d", prepared),)
 
-    if defaults is None:
-        raise RuntimeError(
-            "packaged DefaultCatalog is unavailable and examples/research_1d/device.json was not found"
-        )
-    imported = import_standard_device(yaml_doc, id="research_1d", defaults=defaults)
-    prepared = resolve_device(imported, defaults, resources, sources=(yaml_doc,))
+    preset_map = load_packaged_preset_device_mapping("classical_pin")
+    preset_doc = next(
+        (doc for doc in extra_presets if doc.id == "classical_pin.device.json"),
+        SourceDocument("classical_pin.device.json", json.dumps(preset_map, sort_keys=True).encode()),
+    )
+    prepared = resolve_device(
+        DeviceInput.model_validate({**preset_map, "id": "research_1d"}),
+        defaults,
+        resources,
+        sources=(preset_doc,),
+    )
     return defaults, resources, (yaml_doc, *dedup_presets), (("research_1d", prepared),)
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from dataclasses import asdict
 import importlib
 import importlib.metadata
 import importlib.util
@@ -18,29 +19,10 @@ import inspect
 import json
 from pathlib import Path
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
-from dataclasses import asdict
-from solarlab.config.resolve_device import resolve_device
-from solarlab.config.schema import configuration_schema_representation
-from solarlab.device.compile_1d import CapabilityError, compile_device_1d
-from solarlab.device.defaults import DefaultCatalog
-from solarlab.device.inputs import DeviceInput
-from solarlab.device.resolved import PreparedDevice
-from solarlab.experiments.jv.steady import run_steady_jv
-from solarlab.io.run_store import RunStore
-from solarlab.materials import (
-    load_packaged_default_catalog,
-    load_packaged_preset_device_mapping,
-    load_packaged_preset_sources,
-    load_packaged_resource_library,
-    load_packaged_template_library,
-)
-from solarlab.materials.source import SourceDocument
-from solarlab.solvers.nonlinear.production import POISSON_CONTACT_BALANCE_V1
-from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyStateError
+if TYPE_CHECKING:
+    from solarlab.device.resolved import PreparedDevice
 
 __all__ = ["main", "server_main"]
 
@@ -55,6 +37,17 @@ def _package_version() -> str:
 def _load_prepared_device(
     *, preset: str, config_path: Path | None
 ) -> PreparedDevice:
+    from solarlab.config.resolve_device import resolve_device
+    from solarlab.device.defaults import DefaultCatalog
+    from solarlab.device.inputs import DeviceInput
+    from solarlab.materials import (
+        load_packaged_default_catalog,
+        load_packaged_preset_device_mapping,
+        load_packaged_preset_sources,
+        load_packaged_resource_library,
+    )
+    from solarlab.materials.source import SourceDocument
+
     defaults: DefaultCatalog = load_packaged_default_catalog()
     resources = load_packaged_resource_library()
     if config_path is not None:
@@ -91,6 +84,14 @@ def _load_prepared_device(
 
 
 def _cmd_check_install(args: argparse.Namespace) -> int:
+    from solarlab.config.schema import configuration_schema_representation
+    from solarlab.materials import (
+        load_packaged_default_catalog,
+        load_packaged_preset_sources,
+        load_packaged_resource_library,
+        load_packaged_template_library,
+    )
+
     defaults = load_packaged_default_catalog()
     resources = load_packaged_resource_library()
     templates = load_packaged_template_library()
@@ -123,6 +124,13 @@ _STEADY_JV_PRESETS: tuple[str, ...] = ("classical_pin",)
 
 
 def _cmd_steady_jv(args: argparse.Namespace) -> int:
+    import numpy as np
+
+    from solarlab.device.compile_1d import CapabilityError, compile_device_1d
+    from solarlab.experiments.jv.steady import run_steady_jv
+    from solarlab.solvers.nonlinear.production import POISSON_CONTACT_BALANCE_V1
+    from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, SteadyStateError
+
     try:
         if args.n_points < 2:
             raise ValueError("--n-points must be at least 2")
@@ -290,6 +298,13 @@ def server_main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Construct and verify the FastAPI application without starting uvicorn.",
     )
+    from solarlab.io.run_store import RunStore
+    from solarlab.materials import (
+        load_packaged_default_catalog,
+        load_packaged_preset_sources,
+        load_packaged_resource_library,
+    )
+
     args = parser.parse_args(list(argv) if argv is not None else None)
     store_root = args.store_dir.expanduser().resolve()
     if not (store_root / "store.sqlite3").is_file():

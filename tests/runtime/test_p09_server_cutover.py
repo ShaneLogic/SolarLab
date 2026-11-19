@@ -372,14 +372,122 @@ def test_dockerfile_compose_and_production_web_sources_are_cut_over() -> None:
 def test_pure_wheel_server_startup_without_examples_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Exercise build_default_server_components() and cli_main when examples/research_1d/device.json is absent."""
-    from solarlab_server.cli import build_default_server_components, main as cli_main
+    """Exercise pure-wheel research_1d compilation, spawn bootstrap via solarlab.cli, and steady_jv execution."""
+    from solarlab.device.compile_1d import compile_device_1d
+    from solarlab.device.compile_2d import compile_device_2d
+    from solarlab.experiments.two_dimensional.inputs import JV2DInput
+    from solarlab_server.cli import (
+        build_default_server_components,
+        load_packaged_or_example_bundle,
+        main as cli_main,
+    )
 
     assert not (tmp_path / "examples" / "research_1d" / "device.json").is_file()
+    _, _, _, devices = load_packaged_or_example_bundle(repo_root=tmp_path)
+    assert len(devices) == 1 and devices[0][0] == "research_1d"
+    pure_wheel_device = devices[0][1]
+    c1 = compile_device_1d(pure_wheel_device, intervals_per_layer=6)
+    c2 = compile_device_2d(
+        pure_wheel_device,
+        JV2DInput(kind="jv_2d", lateral_length="1e-6 m", Nx=4, Ny_per_layer=4, lateral_bc="neumann"),
+    )
+    assert c1.device_id == "research_1d" and bool(c2.identity)
+
     preview, catalog = build_default_server_components(repo_root=tmp_path)
     assert any(doc.id == "research_1d.yaml" for doc in preview.sources)
     assert "examples/research_1d/device.json" not in {doc.id for doc in preview.sources}
     assert {defn.id for defn in catalog.registry.definitions} == {"steady_jv", "transient_1d", "steady_2d"}
+
+    # Execute a real ProcessSupervisor ('spawn') worker from a file-backed __main__ script
+    # that imports `from solarlab.cli import server_main` at module top level (exact replica
+    # of bin/solarlab-server under Python spawn bootstrap) and uses pure-wheel repo_root=tmp_path.
+    entry_script = tmp_path / "solarlab_server_entry.py"
+    entry_script.write_text(
+        """from __future__ import annotations
+import json
+from pathlib import Path
+import sys
+from solarlab.cli import server_main
+
+assert callable(server_main)
+assert "scipy" not in sys.modules and "numpy" not in sys.modules
+
+if __name__ == "__main__":
+    from fastapi.testclient import TestClient
+    from solarlab.experiments.execution import JobHandle, ProcessSupervisor
+    from solarlab.io.run_store import RunStore
+    from solarlab_server.app import create_app
+    from solarlab_server.cli import build_default_server_components
+    from solarlab_server.job_service import JobService
+
+    work_base = Path(sys.argv[1]).resolve()
+    preview, catalog = build_default_server_components(repo_root=work_base)
+    headers = {
+        "X-Solarlab-Registry": catalog.document.sha256,
+        "X-Solarlab-Job-Schema": catalog.schema.sha256,
+    }
+    with RunStore(work_base / "spawn-store") as store, ProcessSupervisor(
+        store,
+        work_base / "spawn-work",
+        catalog.worker_bindings(),
+        max_active=1,
+        max_pending=2,
+        shared_rss_bytes=3 * 1024**3,
+        shared_output_bytes=384 * 1024**2,
+        poll_seconds=0.01,
+    ) as supervisor:
+        app = create_app(
+            store.root,
+            configuration_preview=preview,
+            job_service=JobService(catalog, supervisor),
+        )
+        with TestClient(app) as http:
+            sub = http.post(
+                "/jobs",
+                headers=headers,
+                json={
+                    "schema_version": "solarlab.job-submission.v1",
+                    "run_id": "pure-wheel-spawn-steady-1d",
+                    "experiment_id": "steady_jv",
+                    "version": 1,
+                    "engine": "solarlab",
+                    "input": {
+                        "device_id": "research_1d",
+                        "voltage_V": [0.0, 0.05],
+                        "intervals_per_layer": 6,
+                        "generation_scale": 1.0,
+                        "incident_power_W_m2": None,
+                    },
+                    "limits": {
+                        "wall_seconds": 30.0,
+                        "rss_bytes": 1536 * 1024**2,
+                        "output_bytes": 96 * 1024**2,
+                        "accepted_steps": None,
+                        "calls": None,
+                    },
+                },
+            )
+            assert sub.status_code == 202, sub.text
+            acc = sub.json()
+            receipt = supervisor.wait(JobHandle(store.store_id, acc["run_id"], acc["attempt_id"]), 60).data
+            assert receipt["store_state"] == "succeeded", receipt
+            res_doc = http.get(acc["result_url"]).json()
+            assert res_doc["state"] == "succeeded"
+            assert res_doc["result"]["worker_result"]["scientific_qualification"] is False
+            print(json.dumps({"spawn_worker_ok": True, "artifacts": len(res_doc["artifacts"])}))
+""",
+        encoding="utf-8",
+    )
+    spawn_proc = subprocess.run(
+        [sys.executable, "-B", str(entry_script), str(tmp_path)],
+        cwd=tmp_path,
+        env=_clean_env(),
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert spawn_proc.returncode == 0, spawn_proc.stdout + spawn_proc.stderr
+    assert json.loads(spawn_proc.stdout.strip().splitlines()[-1])["spawn_worker_ok"] is True
 
     orig_is_file = Path.is_file
 
