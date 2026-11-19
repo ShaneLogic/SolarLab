@@ -64,24 +64,42 @@ def test_current_inventory_agrees_with_the_accepted_audit(
     current: tuple[dict[str, Any], dict[str, Any], tuple[Consumer, ...], dict[str, Any]],
 ) -> None:
     policy, previous, consumers, lanes = current
-    # Independent AcceptanceV2 / UnregisteredLegacyConsumersV1 inventory after
-    # retiring dead web/src/{api,job-stream}.ts and migrating physical_tolerance.py:
-    # 96 direct files (excluding backend-only support), 47 lane/executor pairs.
+    # P09-03 consumer-closure audit after retiring all active WS1-WS5 product
+    # consumer groups and unpinned legacy notebooks/scripts (96 -> 49 explicit
+    # RS/witness files: 35 R1/RS mechanism scripts, 10 RS benchmark tools, and
+    # 4 read-only byte-pinned historical reference witnesses; 0 active product
+    # consumer groups; 47 lane/executor pairs).
+    # Prior 96-file pre-P09-03 audit sha256: 6fbe120128505ba567634c7a4249ad94ef49be3f4e430af03fe4eb95d72338c5.
     # Prior 97-file audit sha256: 9017bd64e66a007da3b2be043762fb6e3126c47ba8240a12bdb1ed1fb8b30c6e.
     # A deliberate inventory change needs a refreshed audit; CI needs no archive.
     inventory = {
         "consumer_paths": sorted({consumer.path for consumer in consumers}),
         "refinement_lanes": sorted((name, lane["executor"]) for name, lane in lanes.items()),
     }
+    assert len(inventory["consumer_paths"]) == 49
     encoded = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == (
-        "6fbe120128505ba567634c7a4249ad94ef49be3f4e430af03fe4eb95d72338c5"
+        "a7e0f7d81c4dcf78500a9e7f1e3a264b1074d52959c1799edb840479c20d6753"
     )
     assert registration_violations(ROOT, policy, previous, consumers, lanes) == []
 
 
+def test_zero_active_product_consumer_groups_remain(
+    current: tuple[dict[str, Any], dict[str, Any], tuple[Consumer, ...], dict[str, Any]],
+) -> None:
+    policy, _, _, _ = current
+    active_groups = [
+        group
+        for group in policy["consumer_groups"]
+        if not (group.get("historical") is True or group.get("status") == "historical")
+    ]
+    assert active_groups
+    assert all(group["owner"] == "RS" for group in active_groups)
+    assert all(group.get("inventory_scope") != SCRIPT_SCOPE for group in active_groups)
+
+
 @pytest.mark.parametrize("group_id", [
-    "legacy-notebooks", "retained-research-benchmark-tools",
+    "retained-research-benchmark-tools", "retained-historical-reference-witnesses",
 ])
 def test_removing_an_accepted_group_exposes_every_affected_consumer(
     current: tuple[dict[str, Any], dict[str, Any], tuple[Consumer, ...], dict[str, Any]],

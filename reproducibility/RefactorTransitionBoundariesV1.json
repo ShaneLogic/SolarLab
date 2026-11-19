@@ -117,16 +117,20 @@
       "id": "legacy-http-jobs",
       "paths": ["perovskite-sim/backend/main.py"],
       "owner": "WS4",
-      "status": "retained_legacy_execution",
-      "replacement": "solarlab_server.legacy_engine followed by qualified solarlab executors",
+      "status": "historical",
+      "historical": true,
+      "retired_after_commit": "e87cccff21976a546f516c5169db575824a1b00a",
+      "replacement": "solarlab_server V2 HTTP/SSE job and configuration routes",
       "exit_tasks": ["P06-06", "P09-03"]
     },
     {
       "id": "legacy-celery",
       "paths": ["perovskite-sim/backend/celery_app.py"],
       "owner": "WS4",
-      "status": "retained_optional_entry_no_broker_run_claim",
-      "replacement": "Explicit worker binding and supported queue policy",
+      "status": "historical",
+      "historical": true,
+      "retired_after_commit": "e87cccff21976a546f516c5169db575824a1b00a",
+      "replacement": "Explicit ProcessSupervisor worker bindings in solarlab_server",
       "exit_tasks": ["P06-04", "P06-06", "P09-03"]
     },
     {
@@ -138,8 +142,10 @@
       ],
       "inventory_scope": "All active script and registry executor entries in the P00 graph, not just these representative paths",
       "owner": "WS2/WS3; RS for research-qualified executors",
-      "status": "retained_legacy_executors",
-      "replacement": "Versioned experiment registry and explicit public executors",
+      "status": "historical",
+      "historical": true,
+      "retired_after_commit": "e87cccff21976a546f516c5169db575824a1b00a",
+      "replacement": "Versioned experiment registry, solarlab/solarlab-cbo-scan CLIs, and explicit public executors",
       "exit_tasks": ["P03-06", "P05-05", "P09-03"]
     },
     {
@@ -149,8 +155,10 @@
         "perovskite-sim/perovskite_sim/twod/experiments/jv_sweep_2d.py"
       ],
       "owner": "WS3/WS4",
-      "status": "retained_low_level_dependency_closure_pending",
-      "replacement": "Low-level geometry in solarlab.mesh; explicit public solver and experiment contracts",
+      "status": "historical",
+      "historical": true,
+      "retired_after_commit": "e87cccff21976a546f516c5169db575824a1b00a",
+      "replacement": "Low-level geometry in solarlab.mesh; explicit public 2D solver and experiment contracts",
       "exit_tasks": ["P06-01", "P06-02", "P09-03"]
     },
     {
@@ -158,13 +166,48 @@
       "paths": [
         "perovskite-sim/perovskite_sim/experiments/one_dimensional_mechanism_r1.py",
         "perovskite-sim/perovskite_sim/experiments/interface_defect_ion_transient.py",
-        "perovskite-sim/perovskite_sim/experiments/defect_ion_combined_impedance.py"
+        "perovskite-sim/perovskite_sim/experiments/defect_ion_combined_impedance.py",
+        "perovskite-sim/scripts/analyze_r1_v11_responses.py",
+        "perovskite-sim/scripts/analyze_r1_v12_responses.py",
+        "perovskite-sim/scripts/analyze_r1_v5_responses.py",
+        "perovskite-sim/scripts/check_r1_v7_precision_consumers.py",
+        "perovskite-sim/scripts/check_r1_v8_legacy.py",
+        "perovskite-sim/scripts/check_r1_v8_precision_consumers.py",
+        "perovskite-sim/scripts/check_r1_v8_replay.py",
+        "perovskite-sim/scripts/check_r1_v9_performance_equivalence.py",
+        "perovskite-sim/scripts/check_r1_v9_precision_consumers.py",
+        "perovskite-sim/scripts/check_r1_v9_replay.py",
+        "perovskite-sim/scripts/diagnose_one_dimensional_mechanism_r1_numerics.py",
+        "perovskite-sim/scripts/diagnose_one_dimensional_mechanism_r1_weak_flux.py",
+        "perovskite-sim/scripts/diagnose_r1_saved_iterates.py",
+        "perovskite-sim/scripts/diagnose_r1_v6_coupled_sensitivity.py",
+        "perovskite-sim/scripts/inspect_one_dimensional_mechanism_r1_history.py",
+        "perovskite-sim/scripts/probe_r1_v5_window_flux.py",
+        "perovskite-sim/scripts/probe_r1_v6_ion_precision.py",
+        "perovskite-sim/scripts/propagate_r1_saved_field_differences.py",
+        "perovskite-sim/scripts/r1_v23_storage_observation.py",
+        "perovskite-sim/scripts/run_one_dimensional_mechanism_r0.py",
+        "perovskite-sim/scripts/run_one_dimensional_mechanism_r1.py",
+        "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_controlled.py",
+        "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_physics_study.py",
+        "perovskite-sim/scripts/run_one_dimensional_mechanism_r1_stage_one.py",
+        "perovskite-sim/scripts/run_r1_v10_cases.py",
+        "perovskite-sim/scripts/run_r1_v11_cases.py",
+        "perovskite-sim/scripts/run_r1_v12_cases.py",
+        "perovskite-sim/scripts/run_r1_v4_representatives.py",
+        "perovskite-sim/scripts/run_r1_v5_cases.py",
+        "perovskite-sim/scripts/run_r1_v6_crosscode.py",
+        "perovskite-sim/scripts/run_r1_v7_prototype.py",
+        "perovskite-sim/scripts/run_r1_v8_ablation.py",
+        "perovskite-sim/scripts/run_r1_v8_prototype.py",
+        "perovskite-sim/scripts/run_r1_v9_prototype.py",
+        "perovskite-sim/scripts/verify_r1_v9_precision.py"
       ],
       "inventory_scope": "All precision, backend, replay, certificate and archive consumers in the P00 graph",
       "owner": "RS",
       "status": "retained_until_RS_exit; not deleted to close product G9P",
       "replacement": "solarlab_research public-contract migration with original certificate verification",
-      "exit_tasks": ["P07-01", "P07-05", "P09-03"]
+      "exit_tasks": ["P07-03", "P07-04", "P07-05"]
     },
     {
       "id": "legacy-notebooks",
@@ -175,8 +218,10 @@
         "perovskite-sim/notebooks/JvHysteresis.ipynb"
       ],
       "owner": "WS5",
-      "status": "retained_legacy_product_notebooks",
-      "replacement": "Reviewed notebook/experiment interfaces at the backend migration and the single user-entry switch",
+      "status": "historical",
+      "historical": true,
+      "retired_after_commit": "e87cccff21976a546f516c5169db575824a1b00a",
+      "replacement": "solarlab CLI, solarlab_server V2 workstation, and examples/research_{1d,2d}",
       "exit_tasks": ["P06-06", "P09-02", "P09-03"]
     },
     {
@@ -201,6 +246,25 @@
         "condition": "No retirement until explicit RS consumer-exit review; preserve original hashes, failures and qualification",
         "exit_owner": "RS",
         "label": "research-retained"
+      }
+    },
+    {
+      "id": "retained-historical-reference-witnesses",
+      "paths": [
+        "perovskite-sim/backend/main.py",
+        "perovskite-sim/backend/celery_app.py",
+        "perovskite-sim/scripts/run_scaps_full_regression.py",
+        "perovskite-sim/scripts/scaps_validation_figures.py"
+      ],
+      "owner": "RS",
+      "status": "retained_readonly_historical_witness_until_RS_and_archive_rebind",
+      "replacement": "solarlab_server V2 HTTP/SSE service and scripts/benchmarks/scaps_reference.py; retained strictly as byte-pinned read-only CI/reference/archive witnesses excluded from wheel and sdist",
+      "exit_tasks": ["P07-05"],
+      "witness_justification": {
+        "perovskite-sim/backend/main.py": "Byte-pinned in RefactorHysteresis/{D0,C0}/HistoryDiagnosticAttempt01/RunPlan.json, RefactorReferenceManifestV1.json, ConfigBenchmarkMatrixV2.yaml, NumericalRefinementRegistryV2.yaml, and test_spatial_protocol_preparation.py; zero active product execution.",
+        "perovskite-sim/backend/celery_app.py": "Byte-pinned in RefactorHysteresis/{D0,C0}/HistoryDiagnosticAttempt01/RunPlan.json and imported by the isolated legacy binding check in .github/workflows/ci.yml; zero active product execution.",
+        "perovskite-sim/scripts/run_scaps_full_regression.py": "Byte-pinned in reproducibility/RefactorReferenceManifestV1.json (verified by tests/refactor/test_reference_map.py); superseded for active verification by scripts/benchmarks/scaps_reference.py.",
+        "perovskite-sim/scripts/scaps_validation_figures.py": "Byte-pinned in reproducibility/RefactorReferenceManifestV1.json (verified by tests/refactor/test_reference_map.py); zero active product execution."
       }
     },
     {

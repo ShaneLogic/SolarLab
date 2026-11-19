@@ -220,9 +220,23 @@ def test_registered_legacy_boundaries_have_real_consumers_and_explicit_exits():
         assert adapter["symbol"] in module.__all__
         assert callable(getattr(module, adapter["symbol"]))
         assert adapter["exit_tasks"]
+    active_witness_paths = {
+        path
+        for group in value["consumer_groups"]
+        if not (group.get("historical") is True or group.get("status") == "historical")
+        for path in group["paths"]
+    }
     for group in value["consumer_groups"]:
         if group.get("historical") is True or group.get("status") == "historical":
-            assert all(not (ROOT / path).exists() for path in group["paths"])
+            assert group.get("retired_after_commit") in {
+                "9358f24b31b642f8c6c1a9a3d46b0cbbfe7fc495",
+                "e87cccff21976a546f516c5169db575824a1b00a",
+            }
+            for path in group["paths"]:
+                if path.startswith(legacy["source_root"] + "/") or path in active_witness_paths:
+                    assert (ROOT / path).is_file()
+                else:
+                    assert not (ROOT / path).exists(), f"{group['id']}: unretired path still exists: {path}"
             continue
         assert group["owner"] and group["exit_tasks"]
         assert all((ROOT / path).is_file() for path in group["paths"])
