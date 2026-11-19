@@ -32,6 +32,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
+import importlib.util
 import json
 import math
 import multiprocessing
@@ -50,15 +51,18 @@ from scipy.sparse.linalg import spsolve
 import yaml
 
 # Allow standalone ``python -I -B scripts/benchmarks/p09_candidate_validation.py``
-# execution by resolving repository ``src`` and ``scripts/benchmarks`` relative
-# to ``__file__`` when not already on ``sys.path``.
+# execution without shadowing an installed wheel in site-packages: only fall back
+# to repository ``src`` / root when ``solarlab`` or ``scripts`` is not importable.
 _THIS_FILE = Path(__file__).resolve()
 _BENCHMARKS_DIR = _THIS_FILE.parent
 _DEFAULT_REPO_ROOT = _BENCHMARKS_DIR.parents[1]
-for _candidate_sys_dir in (_DEFAULT_REPO_ROOT / "src", _DEFAULT_REPO_ROOT):
-    _dir_str = str(_candidate_sys_dir)
-    if _candidate_sys_dir.is_dir() and _dir_str not in sys.path:
-        sys.path.insert(0, _dir_str)
+if importlib.util.find_spec("solarlab") is None:
+    _src_dir = _DEFAULT_REPO_ROOT / "src"
+    if _src_dir.is_dir() and str(_src_dir) not in sys.path:
+        sys.path.insert(0, str(_src_dir))
+if importlib.util.find_spec("scripts") is None:
+    if _DEFAULT_REPO_ROOT.is_dir() and str(_DEFAULT_REPO_ROOT) not in sys.path:
+        sys.path.append(str(_DEFAULT_REPO_ROOT))
 
 from scripts.benchmarks.runtime_timing import (  # noqa: E402
     RuntimeTiming,
@@ -74,6 +78,7 @@ from scripts.benchmarks.scaps_reference import (  # noqa: E402
 from solarlab.config.device_import import import_standard_device  # noqa: E402
 from solarlab.config.resolve_device import resolve_device  # noqa: E402
 from solarlab.config.scaps_input import import_scaps_device  # noqa: E402
+from solarlab.contracts import frozen_array  # noqa: E402
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C  # noqa: E402
 from solarlab.device.compile_1d import (  # noqa: E402
     compile_device_1d,
@@ -95,6 +100,11 @@ from solarlab.equations.assembly.ionic_1d import (  # noqa: E402
     AssembledIonic1DProblem,
 )
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem  # noqa: E402
+from solarlab.equations.dc_2d import CompiledDevice2D, State2D  # noqa: E402
+from solarlab.equations.ionic_2d import (  # noqa: E402
+    RadiativeReabsorptionSpec2D,
+    recompute_g_with_rad_2d,
+)
 from solarlab.experiments.ionic_impedance import (  # noqa: E402
     IonicImpedanceOptions,
     solve_ionic_impedance,
@@ -111,8 +121,6 @@ from solarlab.experiments.two_dimensional.inputs import (  # noqa: E402
     MicrostructureInput,
 )
 from solarlab.experiments.two_dimensional.jv_sweep_2d import (  # noqa: E402
-    _bake_electronic_reabsorption_2d,
-    _dwell_time_grid,
     embed_frozen_ion_excess_2d,
     extract_snapshot_2d,
     project_prepared_for_electronic_2d,
@@ -216,18 +224,40 @@ def _max_rss_bytes() -> int:
     return raw * 1024
 
 
-def _assert_zero_legacy_modules() -> None:
-    loaded = sorted(
-        name
-        for name in sys.modules
-        if any(
-            name == prefix or name.startswith(prefix + ".")
-            for prefix in FORBIDDEN_MODULE_PREFIXES
+def _loaded_forbidden_legacy_modules() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            name
+            for name in sys.modules
+            if any(
+                name == prefix or name.startswith(prefix + ".")
+                for prefix in FORBIDDEN_MODULE_PREFIXES
+            )
         )
     )
-    if loaded:
+
+
+def _check_legacy_modules_entry(*, assert_zero_legacy_modules: bool) -> tuple[str, ...]:
+    loaded = _loaded_forbidden_legacy_modules()
+    if assert_zero_legacy_modules and loaded:
         raise RuntimeError(
-            f"forbidden legacy modules loaded in standalone candidate runner: {loaded}"
+            f"forbidden legacy modules loaded in standalone candidate runner: {list(loaded)}"
+        )
+    return loaded
+
+
+def _check_legacy_modules_exit(
+    pre_loaded: tuple[str, ...], *, assert_zero_legacy_modules: bool
+) -> None:
+    loaded = _loaded_forbidden_legacy_modules()
+    newly_loaded = sorted(set(loaded) - set(pre_loaded))
+    if newly_loaded:
+        raise RuntimeError(
+            f"candidate runner imported forbidden legacy modules during execution: {newly_loaded}"
+        )
+    if assert_zero_legacy_modules and loaded:
+        raise RuntimeError(
+            f"forbidden legacy modules loaded in standalone candidate runner: {list(loaded)}"
         )
 
 
@@ -652,8 +682,8 @@ def _run_transient_jv_variant(
                 else None
             )
     inner_elapsed = time.perf_counter() - inner_t0
-    obs_now = time.perf_counter()
     timing_snap = timing.snapshot("returned_completed")
+    obs_now = time.perf_counter()
     ident = {"case": variant_spec["id"], "N_grid": str(n_grid)}
     outer_rec = reconcile_outer_timing(
         expected_identity=ident,
@@ -762,8 +792,8 @@ def _run_scaps_steady_perf(
             m = res.metrics
             stopped_early = int(res.voltage_V.size) < n_points
     inner_elapsed = time.perf_counter() - inner_t0
-    obs_now = time.perf_counter()
     timing_snap = timing.snapshot("returned_completed")
+    obs_now = time.perf_counter()
     ident = {"case": "ScapsSteady", "N_grid": str(n_grid)}
     outer_rec = reconcile_outer_timing(
         expected_identity=ident,
@@ -997,10 +1027,10 @@ def _run_ac60_perf(
                 if att.observation is not None
             )
     inner_elapsed = time.perf_counter() - inner_t0
-    obs_now = time.perf_counter()
     timing_snap = timing.snapshot(
         "returned_completed" if ac_res.completed else "returned_other_status"
     )
+    obs_now = time.perf_counter()
     ident = {"case": "AC60", "N_grid": str(n_grid)}
     outer_rec = reconcile_outer_timing(
         expected_identity=ident,
@@ -1035,6 +1065,54 @@ def _run_ac60_perf(
         "runtime_timing": timing_snap,
         "outer_timing": outer_rec,
     }
+
+
+def _dwell_time_grid(duration_s: float, divisor: int) -> np.ndarray:
+    if duration_s <= 0.0:
+        raise ValueError("duration_s must be positive")
+    n_unif = max(int(divisor), 4)
+    dt_unif = duration_s / n_unif
+    t_early = min(1.0e-10, dt_unif * 0.125)
+    if t_early < dt_unif * 0.5:
+        early: np.ndarray = np.geomspace(t_early, dt_unif, 6, dtype=np.float64)
+        if n_unif == 1:
+            return np.r_[0.0, early]
+        tail: np.ndarray = np.linspace(dt_unif, duration_s, n_unif, dtype=np.float64)[1:]
+        return np.r_[0.0, early, tail]
+    return np.linspace(0.0, duration_s, n_unif + 1, dtype=np.float64)
+
+
+def _bake_electronic_reabsorption_2d(
+    device: CompiledDevice2D,
+    state: State2D,
+    rr_specs: tuple[RadiativeReabsorptionSpec2D, ...],
+) -> CompiledDevice2D:
+    g = device.geometry
+    shape = g.shape
+    _, n_arr, p_arr = device.fields(state.u, voltage_V=state.voltage_V)
+    b_rad = device.recombination.coefficients.radiative_m3_s.reshape(shape)
+    ni_sq = device.recombination.coefficients.ni_sq_m6.reshape(shape)
+    base_g = device.generation_source_m3_s.reshape(shape)
+    aug = recompute_g_with_rad_2d(
+        G_optical=base_g,
+        n=n_arr.reshape(shape),
+        p=p_arr.reshape(shape),
+        B_rad=b_rad,
+        ni_sq=ni_sq,
+        x=g.x_m,
+        y=g.y_geometry.nodes_m,
+        absorber_y_ranges=tuple((s.y_start, s.y_stop) for s in rr_specs),
+        absorber_p_esc=tuple(s.escape_probability for s in rr_specs),
+        absorber_areas=tuple(s.area_m2 for s in rr_specs),
+    )
+    gen_y = np.mean(aug, axis=1)
+    new_gen = replace(device.generation_y, source_m3_s=frozen_array(gen_y))
+    baked_sha = hashlib.sha256(
+        device.identity.encode()
+        + b":baked_rr_2d:"
+        + np.ascontiguousarray(gen_y, dtype="<f8").tobytes()
+    ).hexdigest()
+    return replace(device, sha256=baked_sha, generation_y=new_gen)
 
 
 def _run_spatial_2d_stage_a_variant(
@@ -1171,8 +1249,8 @@ def _run_spatial_2d_stage_a_variant(
             )
             m = steady_jv_metrics(voltages, j_out, incident_power_W_m2=1000.0)
     inner_elapsed = time.perf_counter() - inner_t0
-    obs_now = time.perf_counter()
     timing_snap = timing.snapshot("returned_completed")
+    obs_now = time.perf_counter()
     ident = {"case": "Spatial2DStageA", "Nx": str(nx)}
     outer_rec = reconcile_outer_timing(
         expected_identity=ident,
@@ -1269,8 +1347,11 @@ def run_perf_candidate(
     spatial_nx: tuple[int, ...] = (4, 8, 16),
     transient_variants: tuple[str, ...] | None = None,
     require_single_thread: bool = False,
+    assert_zero_legacy_modules: bool = True,
 ) -> dict[str, Any]:
-    _assert_zero_legacy_modules()
+    pre_legacy = _check_legacy_modules_entry(
+        assert_zero_legacy_modules=assert_zero_legacy_modules
+    )
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
     perf_path = repo_root / PERF_CONTRACT_REL
@@ -1383,7 +1464,9 @@ def run_perf_candidate(
                 "growth": _compute_spatial_growth_summary(scale_records),
             }
 
-    _assert_zero_legacy_modules()
+    _check_legacy_modules_exit(
+        pre_legacy, assert_zero_legacy_modules=assert_zero_legacy_modules
+    )
     return {
         "schema": SCHEMA_PERF,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1533,8 +1616,11 @@ def run_scaps_sweep(
     max_cases: int | None = None,
     parallel_workers: int = 1,
     require_single_thread: bool = False,
+    assert_zero_legacy_modules: bool = True,
 ) -> dict[str, Any]:
-    _assert_zero_legacy_modules()
+    pre_legacy = _check_legacy_modules_entry(
+        assert_zero_legacy_modules=assert_zero_legacy_modules
+    )
     if not 1 <= parallel_workers <= 4:
         raise ValueError("parallel_workers must be between 1 and 4")
     contract_path = repo_root / SCAPS_CONTRACT_REL
@@ -1620,7 +1706,9 @@ def run_scaps_sweep(
         ),
         "solver_failed": sum(1 for r in rows if r["disposition"] == "solver_failed"),
     }
-    _assert_zero_legacy_modules()
+    _check_legacy_modules_exit(
+        pre_legacy, assert_zero_legacy_modules=assert_zero_legacy_modules
+    )
     return {
         "schema": SCHEMA_SCAPS,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1686,6 +1774,75 @@ def _extract_hi_ramp_branch(
     return v_seg, j_seg
 
 
+def _warm_electronic_density_newton_on_be_step(
+    compiled: CompiledDevice1D,
+    step: BackwardEuler1DStep,
+    u0: np.ndarray,
+    vk: float,
+    settings: NewtonSettings,
+    conv_norm: Any,
+    eye_n: Any,
+) -> np.ndarray:
+    """3-block physical-density tangent preconditioner on the exact electronic BE residual."""
+    n_nodes = compiled.node_count
+    vt = compiled.thermal_voltage_V
+    u = u0.copy()
+    r0 = step.residual(u)
+    j0 = step.jacobian(u).diagonal()
+    for idx in (0, n_nodes - 1, n_nodes, 2 * n_nodes - 1, 2 * n_nodes, 3 * n_nodes - 1):
+        if j0[idx] != 0.0:
+            u[idx] -= r0[idx] / j0[idx]
+    for _ in range(25):
+        res = step.residual(u)
+        scaled = settings.scaling.scaled(res)
+        norm_val = (
+            float(np.max(np.abs(scaled)))
+            if conv_norm is None
+            else float(conv_norm(scaled))
+        )
+        if norm_val <= 0.8:
+            return u
+        phi, n_arr, p_arr = compiled.fields(u, voltage_V=vk)
+        n_safe = np.maximum(n_arr, 1.0e-250)
+        p_safe = np.maximum(p_arr, 1.0e-250)
+        transform = bmat(
+            [
+                [eye_n, None, None],
+                [-eye_n / vt, diags(1.0 / n_safe), None],
+                [-eye_n / vt, None, diags(-1.0 / p_safe)],
+            ],
+            format="csc",
+        )
+        dx = spsolve(step.jacobian(u) @ transform, -res)
+        dphi = dx[:n_nodes]
+        dn = dx[n_nodes : 2 * n_nodes]
+        dp = dx[2 * n_nodes : 3 * n_nodes]
+        alpha = 1.0
+        sig_n = (dn < 0.0) & (n_arr > 1.0e-6)
+        if np.any(sig_n):
+            alpha = min(alpha, float(np.min(-0.95 * n_arr[sig_n] / dn[sig_n])))
+        sig_p = (dp < 0.0) & (p_arr > 1.0e-6)
+        if np.any(sig_p):
+            alpha = min(alpha, float(np.min(-0.95 * p_arr[sig_p] / dp[sig_p])))
+        max_dphi = float(np.max(np.abs(dphi)))
+        if max_dphi * alpha > 0.25:
+            alpha = 0.25 / max_dphi
+        phi_new = phi + alpha * dphi
+        n_new = np.maximum(n_arr + alpha * dn, 1.0e-250)
+        p_new = np.maximum(p_arr + alpha * dp, 1.0e-250)
+        u_n_new = (
+            u[n_nodes : 2 * n_nodes] + np.log(n_new / n_safe) - (phi_new - phi) / vt
+        )
+        u_p_new = (
+            u[2 * n_nodes : 3 * n_nodes] - np.log(p_new / p_safe) - (phi_new - phi) / vt
+        )
+        phi_new[0], phi_new[-1] = u[0], u[n_nodes - 1]
+        u_n_new[0], u_n_new[-1] = u[n_nodes], u[2 * n_nodes - 1]
+        u_p_new[0], u_p_new[-1] = u[2 * n_nodes], u[3 * n_nodes - 1]
+        u = np.r_[phi_new, u_n_new, u_p_new]
+    return u
+
+
 def _run_ion_free_hi_waveform(
     compiled: CompiledDevice1D,
     pw: Any,
@@ -1696,6 +1853,7 @@ def _run_ion_free_hi_waveform(
 ) -> dict[str, Any]:
     """Run the 7-phase HI waveform on an ion-free legacy deck (c0_m3 == 0.0)."""
     count = compiled.node_count
+    eye_n = eye(count, format="csc")
     polarity = float(compiled.voltage_polarity)
     v0 = float(pw.initial_voltage_V)
     g0 = float(pw.initial_generation_scale)
@@ -1800,24 +1958,66 @@ def _run_ion_free_hi_waveform(
             break
         t_start = float(protocol.times_s[idx - 1])
         t_end = float(protocol.times_s[idx])
+        dt_total = t_end - t_start
+        v_prev = float(state_curr.voltage_V)
         v_step = float(protocol.voltage_V[idx])
         g_step = float(protocol.generation_scale[idx])
-        endpoint = cast(
-            DC1DProblem,
-            AssembledStorage1D(AssembledDC1DProblem(compiled, v_step, g_step, binding)),
-        )
-        step = BackwardEuler1DStep(endpoint, state_curr, t_end - t_start)
-        seed = step.initial_coordinates(transient_opts.predictor, voltage_lift=True)
-        newton = solve_newton(step, seed, tr_settings, convergence_norm=conv_norm)
-        if not newton.accepted:
-            fail_reason = f"step_failed_at_{t_end:.6g}s:{newton.termination.value}"
+        step_ok = False
+        last_term = "stagnated"
+        final_state = state_curr
+        final_acc: dict[str, Any] | None = None
+        for level in range(11):
+            n_sub = 1 << level
+            dt_sub = dt_total / n_sub
+            sub_state = state_curr
+            sub_ok = True
+            for sub_idx in range(1, n_sub + 1):
+                if time.monotonic() >= deadline:
+                    last_term = "wall_budget_exhausted"
+                    sub_ok = False
+                    break
+                vk = v_prev + (v_step - v_prev) * (sub_idx / n_sub)
+                endpoint = cast(
+                    DC1DProblem,
+                    AssembledStorage1D(
+                        AssembledDC1DProblem(compiled, vk, g_step, binding)
+                    ),
+                )
+                step = BackwardEuler1DStep(endpoint, sub_state, dt_sub)
+                seed = step.initial_coordinates(
+                    transient_opts.predictor, voltage_lift=(vk != sub_state.voltage_V)
+                )
+                newton = solve_newton(step, seed, tr_settings, convergence_norm=conv_norm)
+                if not newton.accepted:
+                    u_warm = _warm_electronic_density_newton_on_be_step(
+                        compiled, step, seed, vk, tr_settings, conv_norm, eye_n
+                    )
+                    newton = solve_newton(
+                        step, u_warm, tr_settings, convergence_norm=conv_norm
+                    )
+                last_term = newton.termination.value
+                if not newton.accepted:
+                    sub_ok = False
+                    break
+                sub_state = compiled.state(newton.state, voltage_V=vk)
+                if sub_idx == n_sub:
+                    final_acc = step_accounting(step, newton.state)
+            if sub_ok and final_acc is not None:
+                step_ok = True
+                final_state = sub_state
+                break
+            if last_term == "wall_budget_exhausted":
+                break
+        if not step_ok or final_acc is None:
+            fail_reason = f"step_failed_at_{t_end:.6g}s:{last_term}"
             break
-        acc = step_accounting(step, newton.state)
-        term_tot = np.asarray(acc["terminal_total_current_density_A_m2"], dtype=float)
+        term_tot = np.asarray(
+            final_acc["terminal_total_current_density_A_m2"], dtype=float
+        )
         v_list.append(v_step)
         gen_list.append(g_step)
         pv_list.append(float(-polarity * term_tot[0]))
-        state_curr = compiled.state(newton.state, voltage_V=v_step)
+        state_curr = final_state
 
     n_acc = len(v_list)
     completed = n_acc == n_req and fail_reason is None
@@ -2076,8 +2276,11 @@ def run_hysteresis_matrix(
     max_cases: int | None = None,
     parallel_workers: int = 1,
     require_single_thread: bool = False,
+    assert_zero_legacy_modules: bool = True,
 ) -> dict[str, Any]:
-    _assert_zero_legacy_modules()
+    pre_legacy = _check_legacy_modules_entry(
+        assert_zero_legacy_modules=assert_zero_legacy_modules
+    )
     if not 1 <= parallel_workers <= 4:
         raise ValueError("parallel_workers must be between 1 and 4")
     contract_path = repo_root / HI_CONTRACT_REL
@@ -2174,7 +2377,9 @@ def run_hysteresis_matrix(
             }
         )
 
-    _assert_zero_legacy_modules()
+    _check_legacy_modules_exit(
+        pre_legacy, assert_zero_legacy_modules=assert_zero_legacy_modules
+    )
     return {
         "schema": SCHEMA_HI,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2193,27 +2398,39 @@ def run_hysteresis_matrix(
 
 
 def run_smoke_all(
-    *, repo_root: Path, require_single_thread: bool = False
+    *,
+    repo_root: Path,
+    require_single_thread: bool = False,
+    assert_zero_legacy_modules: bool = True,
 ) -> dict[str, Any]:
     perf = run_perf_candidate(
         repo_root=repo_root,
-        selected_cases=("TransientJvN80", "ScapsSteady", "AC60", "Spatial2DStageA"),
+        selected_cases=(
+            "TransientJvN80",
+            "TransientJvN200",
+            "ScapsSteady",
+            "AC60",
+            "Spatial2DStageA",
+        ),
         repeats=1,
         spatial_nx=(4, 8),
         transient_variants=("ionmonger_benchmark",),
         require_single_thread=require_single_thread,
+        assert_zero_legacy_modules=assert_zero_legacy_modules,
     )
     scaps = run_scaps_sweep(
         repo_root=repo_root,
         selected_case_ids=("scaps_base", "scaps_cbo:row7", "scaps_cbo:row17"),
         parallel_workers=1,
         require_single_thread=require_single_thread,
+        assert_zero_legacy_modules=assert_zero_legacy_modules,
     )
     hi = run_hysteresis_matrix(
         repo_root=repo_root,
         selected_case_ids=("hi_density_00", "hi_diffusivity_10", "hi_rate_40"),
         parallel_workers=1,
         require_single_thread=require_single_thread,
+        assert_zero_legacy_modules=assert_zero_legacy_modules,
     )
     return {
         "schema": SCHEMA_SMOKE,
@@ -2242,6 +2459,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--repo-root",
+        "--repo-data-root",
+        dest="repo_root",
         type=Path,
         default=_DEFAULT_REPO_ROOT,
         help="Repository root containing reproducibility contracts and fixture configs.",

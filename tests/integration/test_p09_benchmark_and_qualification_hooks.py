@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import types
 
 import numpy as np
 import pytest
@@ -246,6 +247,7 @@ def test_p09_candidate_driver_ast_has_zero_legacy_imports() -> None:
     tree = ast.parse(DRIVER_SCRIPT.read_text(encoding="utf-8"), filename=str(DRIVER_SCRIPT))
     forbidden = ("perovskite_sim", "backend", "solarlab_server.legacy_engine")
     offenders: list[str] = []
+    private_solarlab_imports: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -258,28 +260,42 @@ def test_p09_candidate_driver_ast_has_zero_legacy_imports() -> None:
                 node.module == p or node.module.startswith(p + ".") for p in forbidden
             ):
                 offenders.append(node.module)
+            if node.module == "solarlab" or node.module.startswith("solarlab."):
+                for alias in node.names:
+                    if alias.name.startswith("_"):
+                        private_solarlab_imports.append(f"{node.module}:{alias.name}")
     assert offenders == []
+    assert private_solarlab_imports == []
 
 
-def test_p09_candidate_driver_in_process_and_isolated_cli(tmp_path: Path) -> None:
-    # 1. In-process AC60 + Spatial2DStageA (Nx=2,4) smoke
-    perf_out = p09_driver.run_perf_candidate(
-        repo_root=REPO_ROOT,
-        selected_cases=("AC60", "Spatial2DStageA"),
-        repeats=1,
-        spatial_nx=(2, 4),
-    )
-    assert perf_out["scientific_qualification"] is False
-    assert perf_out["cases"]["AC60"]["all_repeats_completed"] is True
-    assert perf_out["cases"]["AC60"]["repeats"][0]["accepted_frequency_count"] == 60
-    assert (
-        perf_out["cases"]["AC60"]["repeats"][0]["outer_timing"]["passed"] is True
-    )
-    growth = perf_out["cases"]["Spatial2DStageA"]["growth"]
-    assert len(growth["pairs"]) == 1
-    assert math.isfinite(growth["worst_pair_beta_median"])
+def test_p09_candidate_driver_in_process_and_isolated_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 1. In-process tolerance for pre-existing sys.modules entries from sibling tests,
+    #    while default assert_zero_legacy_modules=True still rejects them.
+    sentinel_name = "perovskite_sim._pytest_collection_sentinel"
+    with monkeypatch.context() as mp:
+        mp.setitem(sys.modules, sentinel_name, types.ModuleType(sentinel_name))
+        with pytest.raises(RuntimeError, match="forbidden legacy modules loaded"):
+            p09_driver.run_perf_candidate(
+                repo_root=REPO_ROOT,
+                selected_cases=("AC60",),
+                repeats=1,
+            )
+        perf_inproc = p09_driver.run_perf_candidate(
+            repo_root=REPO_ROOT,
+            selected_cases=("AC60",),
+            repeats=1,
+            assert_zero_legacy_modules=False,
+        )
+    assert perf_inproc["scientific_qualification"] is False
+    assert perf_inproc["cases"]["AC60"]["all_repeats_completed"] is True
+    assert perf_inproc["cases"]["AC60"]["repeats"][0]["accepted_frequency_count"] == 60
+    assert perf_inproc["cases"]["AC60"]["repeats"][0]["outer_timing"]["passed"] is True
 
-    # 2. Isolated subprocess CLI (-I -B) covering scaps-sweep & hysteresis-matrix deduplication
+    # 2. Isolated subprocess CLI (-I -B) covering all 5 PerformanceCasesV1 workloads
+    #    (using --repo-data-root alias), scaps-sweep, and hysteresis-matrix deduplication
+    perf_json = tmp_path / "perf_all5_smoke.json"
     scaps_json = tmp_path / "scaps_smoke.json"
     hi_json = tmp_path / "hi_smoke.json"
     env = {
@@ -289,6 +305,65 @@ def test_p09_candidate_driver_in_process_and_isolated_cli(tmp_path: Path) -> Non
     }
     for key in p09_driver.THREAD_ENV_KEYS:
         env[key] = "1"
+
+    proc_perf = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            str(DRIVER_SCRIPT),
+            "--repo-data-root",
+            str(REPO_ROOT),
+            "--require-single-thread-blas",
+            "perf-candidate",
+            "--cases",
+            "all",
+            "--repeats",
+            "1",
+            "--spatial-nx",
+            "2,4",
+            "--transient-variants",
+            "ionmonger_benchmark",
+            "--output",
+            str(perf_json),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    perf_summary = json.loads(proc_perf.stdout.strip())
+    assert perf_summary["scientific_qualification"] is False
+    perf_doc = json.loads(perf_json.read_text(encoding="utf-8"))
+    assert set(perf_doc["cases"]) == {
+        "TransientJvN80",
+        "TransientJvN200",
+        "ScapsSteady",
+        "AC60",
+        "Spatial2DStageA",
+    }
+    assert perf_doc["cases"]["TransientJvN80"]["variants"][0]["all_repeats_completed"] is True
+    assert (
+        perf_doc["cases"]["TransientJvN80"]["variants"][0]["repeats"][0]["outer_timing"]["passed"]
+        is True
+    )
+    assert perf_doc["cases"]["TransientJvN200"]["variants"][0]["all_repeats_completed"] is True
+    assert (
+        perf_doc["cases"]["TransientJvN200"]["variants"][0]["repeats"][0]["outer_timing"]["passed"]
+        is True
+    )
+    assert perf_doc["cases"]["ScapsSteady"]["all_repeats_completed"] is True
+    assert perf_doc["cases"]["ScapsSteady"]["repeats"][0]["outer_timing"]["passed"] is True
+    assert perf_doc["cases"]["AC60"]["all_repeats_completed"] is True
+    assert perf_doc["cases"]["AC60"]["repeats"][0]["outer_timing"]["passed"] is True
+    growth = perf_doc["cases"]["Spatial2DStageA"]["growth"]
+    assert len(growth["pairs"]) == 1
+    assert math.isfinite(growth["worst_pair_beta_median"])
+    assert all(
+        scale["all_repeats_completed"]
+        and scale["repeats"][0]["outer_timing"]["passed"]
+        for scale in perf_doc["cases"]["Spatial2DStageA"]["scales"]
+    )
 
     proc_scaps = subprocess.run(
         [
@@ -343,13 +418,12 @@ def test_p09_candidate_driver_in_process_and_isolated_cli(tmp_path: Path) -> Non
     assert hi_doc["requested_case_count"] == 3
     # hi_diffusivity_10 and hi_rate_40 share the exact nominal request_sha256!
     assert hi_doc["distinct_executed_request_count"] == 2
+    assert hi_doc["completed_case_count"] == 3
     by_id = {c["id"]: c for c in hi_doc["cases"]}
     assert by_id["hi_rate_40"]["reused_from_case_id"] == "hi_diffusivity_10"
     assert by_id["hi_diffusivity_10"]["completed"] is True
     assert by_id["hi_rate_40"]["completed"] is True
-    assert hi_doc["completed_case_count"] == 2
-    # The ion-free density-0 control still reaches the 7-phase protocol but is retained as an
-    # honest candidate failure (first light turn-on step stagnates); it is never relabelled.
     density_zero = by_id["hi_density_00"]
-    assert density_zero["completed"] is False
-    assert density_zero["failure_reason"]
+    assert density_zero["completed"] is True
+    assert density_zero["failure_reason"] is None
+    assert abs(density_zero["candidate_metrics"]["HI_normalized"]) < 1.0e-3
