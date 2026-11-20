@@ -1590,7 +1590,6 @@ def _warm_dc_density_newton(
     conv_norm = production_convergence_norm(
         comp, convergence_policy=opts.convergence_policy
     )
-    assert conv_norm is not None
     u = u0.copy()
     pl, pr = comp.contact_potentials(vk)
     dphi_bc = (pl - u[0]) * np.linspace(1.0, 0.0, n_nodes) + (
@@ -1601,7 +1600,13 @@ def _warm_dc_density_newton(
     u[2 * n_nodes : 3 * n_nodes] -= dphi_bc / vt
     for _ in range(40):
         res = prob.residual(u)
-        if float(conv_norm(scaling.scaled(res))) <= 0.5:
+        scaled = scaling.scaled(res)
+        norm_val = (
+            float(np.max(np.abs(scaled)))
+            if conv_norm is None
+            else float(conv_norm(scaled))
+        )
+        if norm_val <= 0.5:
             return u
         phi, n_arr, p_arr = comp.fields(u, voltage_V=vk)
         n_safe = np.maximum(n_arr, 1.0e-250)
