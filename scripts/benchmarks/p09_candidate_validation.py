@@ -46,6 +46,7 @@ import time
 from typing import Any, cast
 
 import numpy as np
+from scipy.constants import epsilon_0 as VACUUM_PERMITTIVITY_F_M
 from scipy.sparse import bmat, diags, eye
 from scipy.sparse.linalg import spsolve
 import yaml
@@ -109,12 +110,10 @@ from solarlab.experiments.ionic_impedance import (  # noqa: E402
     IonicImpedanceOptions,
     solve_ionic_impedance,
 )
-from solarlab.experiments.ionic_transient import IonicTransientOptions  # noqa: E402
 from solarlab.experiments.jv.steady import (  # noqa: E402
     run_steady_jv,
     steady_jv_metrics,
 )
-from solarlab.experiments.suns_voc import default_ionic_steady_options  # noqa: E402
 from solarlab.experiments.transient import TransientOptions  # noqa: E402
 from solarlab.experiments.two_dimensional.inputs import (  # noqa: E402
     JV2DInput,
@@ -126,11 +125,9 @@ from solarlab.experiments.two_dimensional.jv_sweep_2d import (  # noqa: E402
     project_prepared_for_electronic_2d,
 )
 from solarlab.experiments.waveform_jv import (  # noqa: E402
-    WaveformJVOptions,
     WaveformSegment,
     build_piecewise_waveform,
     package_ionic_steady_initial,
-    run_waveform_jv,
 )
 from solarlab.materials import (  # noqa: E402
     load_packaged_default_catalog_mapping,
@@ -140,8 +137,15 @@ from solarlab.materials import (  # noqa: E402
 from solarlab.materials.resources import ResourceLibrary, ResourceTable  # noqa: E402
 from solarlab.materials.source import SourceDocument  # noqa: E402
 from solarlab.mesh import PHYSICAL_BOUNDARY_TWO_SIDED_V1  # noqa: E402
+from solarlab.physics.contacts import (  # noqa: E402
+    ContactMaterial,
+    semiconductor_work_function,
+)
 from solarlab.physics.interface_transport import (  # noqa: E402
     SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
+)
+from solarlab.physics.recombination import (  # noqa: E402
+    SCAPS_INTERFACE_EXTREMA_ANCHOR,
 )
 from solarlab.solvers.linear.frequency_domain import FrequencyOptions  # noqa: E402
 from solarlab.solvers.nonlinear.ionic_1d import (  # noqa: E402
@@ -166,6 +170,7 @@ from solarlab.solvers.nonlinear.steady_1d import (  # noqa: E402
     SteadyOptions,
     SteadyStateError,
     physical_gates,
+    solve_steady_state,
 )
 from solarlab.solvers.time import (  # noqa: E402
     BackwardEuler1DStep,
@@ -1486,8 +1491,246 @@ def _decimal_ulp(value: float, floor_val: float) -> float:
     return max(ulp, floor_val)
 
 
+def _scaps_spectral_resources(resources: ResourceLibrary) -> ResourceLibrary:
+    """Restrict AM1.5G to [300, 1100] nm matching the SCAPS nk tables."""
+    am15 = resources.get("am15g", "spectrum")
+    wl_nm = am15.array[:, 0] * 1.0e9
+    mask = (wl_nm >= 300.0) & (wl_nm <= 1100.0)
+    csv_lines = ["wavelength_nm,spectral_flux_m-2_s-1_m-1"] + [
+        f"{w:.6f},{f:.12e}" for w, f in zip(wl_nm[mask], am15.array[mask, 1])
+    ]
+    am15_clip = ResourceTable(
+        "am15g",
+        "spectrum",
+        SourceDocument(
+            "scaps://am15g_300_1100.csv", ("\n".join(csv_lines) + "\n").encode("utf-8")
+        ),
+    )
+    return ResourceLibrary(
+        tuple(
+            am15_clip if (t.name == "am15g" and t.kind == "spectrum") else t
+            for t in resources.tables
+        )
+    )
+
+
+def _align_scaps_case_document(raw_doc: dict[str, Any]) -> dict[str, Any]:
+    """Synchronize flat-band V_bi and remove TMM-only glass substrate for SCAPS-1D parity."""
+    doc = json.loads(json.dumps(raw_doc))
+    dev_sec = doc.setdefault("device", {})
+    dev_sec.pop("V_bi", None)
+    dev_sec["het_recomb_despike"] = 0.0
+    doc["layers"] = [
+        lyr for lyr in doc.get("layers", []) if lyr.get("role") != "substrate"
+    ]
+    temp_k = float(dev_sec.get("T", 300.0))
+    if bool(dev_sec.get("flat_band_metal_contacts", False)):
+        phi_b = float(dev_sec.get("contact_phi_B_eV", 0.0))
+        left_lyr = doc["layers"][0]
+        right_lyr = doc["layers"][-1]
+        wl_semi = semiconductor_work_function(
+            ContactMaterial(
+                temp_k,
+                float(left_lyr["chi_eV"]),
+                float(left_lyr["E_g_eV"]),
+                float(left_lyr["N_C_cm3"]) * 1.0e6,
+                float(left_lyr["N_V_cm3"]) * 1.0e6,
+                float(left_lyr["N_D_cm3"]) * 1.0e6,
+                float(left_lyr["N_A_cm3"]) * 1.0e6,
+            )
+        )
+        wr_semi = semiconductor_work_function(
+            ContactMaterial(
+                temp_k,
+                float(right_lyr["chi_eV"]),
+                float(right_lyr["E_g_eV"]),
+                float(right_lyr["N_C_cm3"]) * 1.0e6,
+                float(right_lyr["N_V_cm3"]) * 1.0e6,
+                float(right_lyr["N_D_cm3"]) * 1.0e6,
+                float(right_lyr["N_A_cm3"]) * 1.0e6,
+            )
+        )
+        wl_eff = (
+            max(wl_semi, float(left_lyr["chi_eV"]) + float(left_lyr["E_g_eV"]) - phi_b)
+            if float(left_lyr["N_A_cm3"]) >= float(left_lyr["N_D_cm3"])
+            else min(wl_semi, float(left_lyr["chi_eV"]) + phi_b)
+        )
+        wr_eff = (
+            min(wr_semi, float(right_lyr["chi_eV"]) + phi_b)
+            if float(right_lyr["N_D_cm3"]) >= float(right_lyr["N_A_cm3"])
+            else max(
+                wr_semi,
+                float(right_lyr["chi_eV"]) + float(right_lyr["E_g_eV"]) - phi_b,
+            )
+        )
+        dev_sec["built_in_potential_mode"] = "metal_work_function"
+        dev_sec["work_function_left_eV"] = wl_eff
+        dev_sec["work_function_right_eV"] = wr_eff
+    return doc
+
+
+def _warm_dc_density_newton(
+    comp: CompiledDevice1D,
+    u0: np.ndarray,
+    vk: float,
+    gs: float,
+    opts: SteadyOptions,
+) -> np.ndarray:
+    """Physical-density tangent preconditioner on the exact steady DC residual."""
+    prob = AssembledDC1DProblem(comp, vk, gs)
+    n_nodes = comp.node_count
+    vt = comp.thermal_voltage_V
+    eye_n = eye(n_nodes, format="csc")
+    scaling = production_residual_scaling(
+        comp,
+        poisson_tolerance=opts.poisson_tolerance,
+        continuity_tolerance_A_m2=opts.continuity_tolerance_A_m2,
+        contact_log_tolerance=opts.contact_log_tolerance,
+    )
+    conv_norm = production_convergence_norm(
+        comp, convergence_policy=opts.convergence_policy
+    )
+    assert conv_norm is not None
+    u = u0.copy()
+    pl, pr = comp.contact_potentials(vk)
+    dphi_bc = (pl - u[0]) * np.linspace(1.0, 0.0, n_nodes) + (
+        pr - u[n_nodes - 1]
+    ) * np.linspace(0.0, 1.0, n_nodes)
+    u[:n_nodes] += dphi_bc
+    u[n_nodes : 2 * n_nodes] -= dphi_bc / vt
+    u[2 * n_nodes : 3 * n_nodes] -= dphi_bc / vt
+    for _ in range(40):
+        res = prob.residual(u)
+        if float(conv_norm(scaling.scaled(res))) <= 0.5:
+            return u
+        phi, n_arr, p_arr = comp.fields(u, voltage_V=vk)
+        n_safe = np.maximum(n_arr, 1.0e-250)
+        p_safe = np.maximum(p_arr, 1.0e-250)
+        transform = bmat(
+            [
+                [eye_n, None, None],
+                [-eye_n / vt, diags(1.0 / n_safe), None],
+                [-eye_n / vt, None, diags(-1.0 / p_safe)],
+            ],
+            format="csc",
+        )
+        dx = spsolve(prob.jacobian(u) @ transform, -res)
+        dphi = dx[:n_nodes]
+        dn = dx[n_nodes : 2 * n_nodes]
+        dp = dx[2 * n_nodes : 3 * n_nodes]
+        alpha = 1.0
+        sig_n = (dn < 0.0) & (n_arr > 1.0e-6)
+        if np.any(sig_n):
+            alpha = min(alpha, float(np.min(-0.92 * n_arr[sig_n] / dn[sig_n])))
+        sig_p = (dp < 0.0) & (p_arr > 1.0e-6)
+        if np.any(sig_p):
+            alpha = min(alpha, float(np.min(-0.92 * p_arr[sig_p] / dp[sig_p])))
+        max_dphi = float(np.max(np.abs(dphi)))
+        if max_dphi * alpha > 0.2:
+            alpha = 0.2 / max_dphi
+        phi_new = phi + alpha * dphi
+        n_new = np.maximum(n_arr + alpha * dn, 1.0e-250)
+        p_new = np.maximum(p_arr + alpha * dp, 1.0e-250)
+        u_n_new = (
+            u[n_nodes : 2 * n_nodes] + np.log(n_new / n_safe) - (phi_new - phi) / vt
+        )
+        u_p_new = (
+            u[2 * n_nodes : 3 * n_nodes] - np.log(p_new / p_safe) - (phi_new - phi) / vt
+        )
+        phi_new[0], phi_new[-1] = pl, pr
+        u = np.r_[phi_new, u_n_new, u_p_new]
+    return u
+
+
+def _run_scaps_steady_jv_aligned(
+    compiled: CompiledDevice1D,
+    v_grid: np.ndarray,
+    opts: SteadyOptions,
+) -> tuple[Any, int]:
+    """Run certified steady J-V with density-space continuation fallback for steep barriers."""
+    try:
+        jv_res = run_steady_jv(
+            compiled,
+            v_grid,
+            generation_scale=1.0,
+            incident_power_W_m2=1000.0,
+            options=opts,
+            stop_after_voc=True,
+            max_bias_bisect=5,
+        )
+        return jv_res.metrics, int(jv_res.voltage_V.size)
+    except SteadyStateError:
+        eq_opts = SteadyOptions(
+            continuity_tolerance_A_m2=1.0e-11,
+            current_spread_tolerance_A_m2=1.0e-11,
+        )
+        st = solve_steady_state(
+            compiled, voltage_V=0.0, generation_scale=0.0, options=eq_opts
+        )
+        u_cur = st.state.u
+        for gs in (1.0e-4, 1.0e-2, 0.2, 1.0):
+            u_w = _warm_dc_density_newton(compiled, u_cur, 0.0, gs, opts)
+            st = solve_steady_state(
+                compiled,
+                initial_state=compiled.state(u_w, voltage_V=0.0),
+                voltage_V=0.0,
+                generation_scale=gs,
+                options=opts,
+            )
+            u_cur = st.state.u
+        pol = float(compiled.voltage_polarity)
+        vs = [0.0]
+        js = [float(-pol * np.asarray(st.current_density_A_m2, dtype=float)[0])]
+        v_prev = 0.0
+        for vt_raw in v_grid[1:]:
+            vt_val = float(vt_raw)
+            step_ok = False
+            for b_lvl in range(7):
+                nsub = 1 << b_lvl
+                u_tmp = u_cur
+                st_j = st
+                sub_ok = True
+                for j in range(1, nsub + 1):
+                    vj = v_prev + (vt_val - v_prev) * (j / nsub)
+                    try:
+                        u_w = _warm_dc_density_newton(compiled, u_tmp, vj, 1.0, opts)
+                        st_j = solve_steady_state(
+                            compiled,
+                            initial_state=compiled.state(u_w, voltage_V=vj),
+                            voltage_V=vj,
+                            generation_scale=1.0,
+                            options=opts,
+                        )
+                        u_tmp = st_j.state.u
+                    except SteadyStateError:
+                        sub_ok = False
+                        break
+                if sub_ok:
+                    u_cur = u_tmp
+                    st = st_j
+                    v_prev = vt_val
+                    step_ok = True
+                    break
+            if not step_ok:
+                raise RuntimeError(f"SCAPS J-V continuation failed at V={vt_val:.4f} V")
+            jv_val = float(-pol * np.asarray(st.current_density_A_m2, dtype=float)[0])
+            vs.append(vt_val)
+            js.append(jv_val)
+            if jv_val <= 0.0:
+                break
+        return (
+            steady_jv_metrics(
+                np.asarray(vs, dtype=float),
+                np.asarray(js, dtype=float),
+                incident_power_W_m2=1000.0,
+            ),
+            len(vs),
+        )
+
+
 def _evaluate_scaps_point_worker(task: dict[str, Any]) -> dict[str, Any]:
-    defaults, resources = _load_packaged_catalog_and_resources()
+    defaults, base_resources = _load_packaged_catalog_and_resources()
+    resources = _scaps_spectral_resources(base_resources)
     case_id = str(task["id"])
     group_id = str(task["group_id"])
     coords = list(task["coordinates"])
@@ -1499,8 +1742,11 @@ def _evaluate_scaps_point_worker(task: dict[str, Any]) -> dict[str, Any]:
 
     t0 = time.perf_counter()
     doc_dict, updates = build_scaps_case_document(template_doc, group_id, coords)
-    yaml_bytes = yaml.safe_dump(doc_dict, sort_keys=False).encode("utf-8")
-    input_sha = hashlib.sha256(yaml_bytes).hexdigest()
+    raw_yaml_bytes = yaml.safe_dump(doc_dict, sort_keys=False).encode("utf-8")
+    input_sha = hashlib.sha256(raw_yaml_bytes).hexdigest()
+    aligned_doc = _align_scaps_case_document(doc_dict)
+    yaml_bytes = yaml.safe_dump(aligned_doc, sort_keys=False).encode("utf-8")
+    effective_sha = hashlib.sha256(yaml_bytes).hexdigest()
 
     cand_metrics: dict[str, float | None] | None = None
     solver_error: str | None = None
@@ -1520,23 +1766,19 @@ def _evaluate_scaps_point_worker(task: dict[str, Any]) -> dict[str, Any]:
             interface_topology="two_sided_trace",
             geometry_name=PHYSICAL_BOUNDARY_TWO_SIDED_V1,
             thermionic_mode=SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
+            interface_band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+            optical_model="beer_lambert_spectral",
             allow_legacy_benchmark_deck=True,
         )
         compiled_id = compiled.identity
-        jv_res = run_steady_jv(
+        m, evaluated_points = _run_scaps_steady_jv_aligned(
             compiled,
-            np.linspace(0.0, 1.6, 24),
-            generation_scale=1.0,
-            incident_power_W_m2=1000.0,
-            options=SteadyOptions(
+            np.linspace(0.0, 1.45, 30),
+            SteadyOptions(
                 continuity_tolerance_A_m2=1.0e-4,
                 current_spread_tolerance_A_m2=1.0e-4,
             ),
-            stop_after_voc=True,
-            max_bias_bisect=4,
         )
-        evaluated_points = int(jv_res.voltage_V.size)
-        m = jv_res.metrics
         cand_metrics = {
             "Voc_V": m.open_circuit_voltage_V,
             "Jsc_mA_cm2": (
@@ -1597,6 +1839,7 @@ def _evaluate_scaps_point_worker(task: dict[str, Any]) -> dict[str, Any]:
         "reference_status": ref_status,
         "disposition": disposition,
         "input_yaml_sha256": input_sha,
+        "effective_yaml_sha256": effective_sha,
         "compiled_identity": compiled_id,
         "evaluated_bias_points": evaluated_points,
         "elapsed_s": elapsed_s,
@@ -2026,6 +2269,10 @@ def _run_ion_free_hi_waveform(
     pv_tot: np.ndarray = np.asarray(pv_list, dtype=float)
     mf = None
     mr = None
+    v_f_out: np.ndarray | None = None
+    j_f_out: np.ndarray | None = None
+    v_r_out: np.ndarray | None = None
+    j_r_out: np.ndarray | None = None
     for seg, slc in zip(pw.segments, pw.segment_step_slices, strict=True):
         if slc.stop > n_acc:
             break
@@ -2041,6 +2288,7 @@ def _run_ion_free_hi_waveform(
                 init_pv_A_m2=init_pv_A_m2,
             )
             if v_f.size >= 2 and np.unique(v_f).size == v_f.size:
+                v_f_out, j_f_out = v_f, j_f
                 mf = steady_jv_metrics(v_f, j_f, incident_power_W_m2=incident_power_W_m2)
         elif seg.role == "reverse_ramp" and mr is None:
             v_r, j_r = _extract_hi_ramp_branch(
@@ -2054,6 +2302,7 @@ def _run_ion_free_hi_waveform(
                 init_pv_A_m2=init_pv_A_m2,
             )
             if v_r.size >= 2 and np.unique(v_r).size == v_r.size:
+                v_r_out, j_r_out = v_r, j_r
                 mr = steady_jv_metrics(v_r, j_r, incident_power_W_m2=incident_power_W_m2)
 
     return {
@@ -2064,8 +2313,316 @@ def _run_ion_free_hi_waveform(
         "inventory_relative_drift": [],
         "metrics_fwd": mf,
         "metrics_rev": mr,
+        "V_fwd": v_f_out,
+        "J_fwd": j_f_out,
+        "V_rev": v_r_out,
+        "J_rev": j_r_out,
         "failure_reason": fail_reason,
     }
+
+
+def _run_uniform_ion_hi_waveform(
+    comp_ion: Any,
+    u_dark0: np.ndarray,
+    *,
+    v_rate: float,
+    eps_r_left: float,
+    incident_power_W_m2: float,
+    wall_s: float = 180.0,
+    n_sub_ramp: int = 2,
+    n_sub_hold: int = 20,
+) -> dict[str, Any]:
+    """Integrate the 7-phase HI waveform from uniform initial mobile ions P(x,0) == P0.
+
+    Matches the frozen HysteresisReferenceContractV2 source audit:
+    - t=0 state: dark 0 V electronic equilibrium with uniform mobile ion background
+      P(x,0) == P0 (before the 120 s dark_seed phase);
+    - branch observable: ``historical_interval_endpoint`` current over each of the
+      111 branch sample intervals (conduction at endpoint + interval displacement).
+    """
+    n_nodes = comp_ion.node_count
+    m_ions = comp_ion.ion_node_count
+    n_ion_total = m_ions * comp_ion.ion_species_count
+    eye_n = eye(n_nodes, format="csc")
+    eye_ion = eye(n_ion_total, format="csc")
+    weights = np.r_[
+        production_residual_scaling(
+            comp_ion.electronic_component,
+            poisson_tolerance=1.0e-9,
+            continuity_tolerance_A_m2=1.0e-3,
+            contact_log_tolerance=1.0e-9,
+        ).row_weights,
+        np.full(n_ion_total, m_ions / 1.0e4),
+    ]
+    steps = np.r_[
+        production_coordinates(
+            comp_ion.electronic_component,
+            potential_step_V=0.25,
+            quasi_fermi_step=3.0,
+        ).max_step,
+        np.full(n_ion_total, 1.0),
+    ]
+    settings = NewtonSettings(
+        ResidualScaling(weights),
+        1.0,
+        StepControl(steps),
+        SolveBudget(60, 1200, 60, 24),
+        (),
+        False,
+    )
+    elec_norm = production_convergence_norm(
+        comp_ion.electronic_component, convergence_policy=POISSON_CONTACT_BALANCE_V1
+    )
+    assert elec_norm is not None
+
+    def conv_norm(sc: np.ndarray) -> float:
+        if sc.shape != (comp_ion.state_size,) or not np.all(np.isfinite(sc)):
+            return math.inf
+        return max(
+            float(elec_norm(sc[: 3 * n_nodes])),
+            *(
+                math.fsum(abs(sc[slc]).tolist()) / m_ions
+                for slc in comp_ion.ion_species_slices
+            ),
+        )
+
+    # At z_ion == 0, shifted_logistic_density evaluates to P(x) == P0 identically!
+    st = comp_ion.state(np.r_[u_dark0, np.zeros(n_ion_total)], voltage_V=0.0)
+    measures = comp_ion.ion_geometry.cell_measures_m
+    inv0 = float(np.dot(measures, st.positive_ion_density_m3))
+    max_rel_drift = 0.0
+    deadline = time.monotonic() + wall_s
+    x = comp_ion.electronic_component.nodes_m
+    dx0 = float(x[1] - x[0])
+    eps_face_0 = VACUUM_PERMITTIVITY_F_M * eps_r_left
+    polarity = float(comp_ion.electronic_component.voltage_polarity)
+    accepted_intervals = 0
+    requested_intervals = 2 + 111 + 1 + 111
+
+    def advance_seg(
+        st_in: Any,
+        v_left: float,
+        v_right: float,
+        dur: float,
+        g_scale: float,
+        n_sub: int,
+    ) -> tuple[Any, dict[str, Any]]:
+        nonlocal max_rel_drift
+        cur = st_in
+        dt = dur / n_sub
+        acc_last: dict[str, Any] | None = None
+        for k in range(1, n_sub + 1):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("wall_budget_exhausted")
+            vk = v_left + (v_right - v_left) * (k / n_sub)
+            v_start_b = v_left + (v_right - v_left) * ((k - 1) / n_sub)
+            sub_ok = False
+            for b_lvl in range(10):
+                nb = 1 << b_lvl
+                dtb = dt / nb
+                b_cur = cur
+                b_ok = True
+                for jb in range(1, nb + 1):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("wall_budget_exhausted")
+                    vjb = v_start_b + (vk - v_start_b) * (jb / nb)
+                    prob = AssembledIonic1DProblem(comp_ion, vjb, g_scale)
+                    step = AssembledIonicBackwardEuler1DStep(prob, b_cur, dtb)
+                    seed = step.initial_coordinates(
+                        "previous", voltage_lift=(vjb != b_cur.voltage_V)
+                    )
+                    nw = solve_newton(step, seed, settings, convergence_norm=conv_norm)
+                    if not nw.accepted:
+                        u_w = _warm_density_newton_on_be_step(
+                            comp_ion,
+                            step,
+                            seed,
+                            vjb,
+                            settings,
+                            conv_norm,
+                            eye_n,
+                            eye_ion,
+                        )
+                        nw = solve_newton(
+                            step, u_w, settings, convergence_norm=conv_norm
+                        )
+                    if not nw.accepted:
+                        b_ok = False
+                        break
+                    b_cur = comp_ion.state(nw.state, voltage_V=vjb)
+                    drift = abs(
+                        float(np.dot(measures, b_cur.positive_ion_density_m3)) - inv0
+                    ) / max(abs(inv0), 1.0e-30)
+                    max_rel_drift = max(max_rel_drift, drift)
+                    if k == n_sub and jb == nb:
+                        acc_last = step.accounting(nw.state)
+                if b_ok:
+                    cur = b_cur
+                    sub_ok = True
+                    break
+            if not sub_ok:
+                raise RuntimeError(
+                    f"ionic BE substep failed at V={vk:.4f} V, g={g_scale}, dt={dt:.4g} s"
+                )
+        assert acc_last is not None
+        return cur, acc_last
+
+    try:
+        st, _ = advance_seg(st, 0.0, 0.0, 120.0, 0.0, n_sub_hold)
+        accepted_intervals += 1
+        st, _ = advance_seg(st, -1.0, -1.0, 30.0, 0.0, n_sub_hold)
+        accepted_intervals += 1
+
+        def run_branch(st_start: Any, v_samples: np.ndarray) -> tuple[Any, np.ndarray]:
+            nonlocal accepted_intervals
+            cur = st_start
+            j_out: np.ndarray = np.empty_like(v_samples, dtype=float)
+            prev_v = float(v_samples[0])
+            for idx, val in enumerate(v_samples):
+                st_before = cur
+                dur = 0.5 if idx == 0 else abs(float(val) - prev_v) / v_rate
+                nsub = n_sub_hold if idx == 0 else n_sub_ramp
+                cur, acc = advance_seg(cur, prev_v, float(val), dur, 1.0, nsub)
+                accepted_intervals += 1
+                if "terminal_conduction_current_density_A_m2" in acc:
+                    j_cond_0 = float(
+                        np.asarray(
+                            acc["terminal_conduction_current_density_A_m2"], dtype=float
+                        )[0]
+                    )
+                else:
+                    j_cond_0 = float(
+                        np.asarray(acc["conduction_current_density_A_m2"], dtype=float)[
+                            0
+                        ]
+                    )
+                e_now = (
+                    -(
+                        float(cur.electronic_state.potential_V[1])
+                        - float(cur.electronic_state.potential_V[0])
+                    )
+                    / dx0
+                )
+                e_old = (
+                    -(
+                        float(st_before.electronic_state.potential_V[1])
+                        - float(st_before.electronic_state.potential_V[0])
+                    )
+                    / dx0
+                )
+                j_disp = eps_face_0 * (e_now - e_old) / dur
+                j_out[idx] = -polarity * (j_cond_0 + j_disp)
+                prev_v = float(val)
+            return cur, j_out
+
+        v_fwd = np.linspace(-1.0, 1.2, 111)
+        st, j_fwd = run_branch(st, v_fwd)
+        st, _ = advance_seg(st, 1.2, 1.2, 3.0, 0.0, n_sub_hold)
+        accepted_intervals += 1
+        v_rev = v_fwd[::-1].copy()
+        st, j_rev = run_branch(st, v_rev)
+        mf = steady_jv_metrics(v_fwd, j_fwd, incident_power_W_m2=incident_power_W_m2)
+        mr = steady_jv_metrics(
+            v_rev[::-1], j_rev[::-1], incident_power_W_m2=incident_power_W_m2
+        )
+        return {
+            "completed": True,
+            "compiled_identity": comp_ion.identity,
+            "accepted_steps": accepted_intervals,
+            "requested_steps": requested_intervals,
+            "inventory_relative_drift": [float(max_rel_drift)],
+            "metrics_fwd": mf,
+            "metrics_rev": mr,
+            "V_fwd": v_fwd,
+            "J_fwd": j_fwd,
+            "V_rev": v_rev,
+            "J_rev": j_rev,
+            "failure_reason": None,
+        }
+    except Exception as exc:
+        return {
+            "completed": False,
+            "compiled_identity": comp_ion.identity,
+            "accepted_steps": accepted_intervals,
+            "requested_steps": requested_intervals,
+            "inventory_relative_drift": [float(max_rel_drift)],
+            "metrics_fwd": None,
+            "metrics_rev": None,
+            "V_fwd": None,
+            "J_fwd": None,
+            "V_rev": None,
+            "J_rev": None,
+            "failure_reason": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _solve_legacy_dark_0v_electronic(
+    compiled: CompiledDevice1D, steady_opts: SteadyOptions
+) -> np.ndarray:
+    """Solve dark 0 V electronic steady state on a chi=Eg=0 legacy deck."""
+    count = compiled.node_count
+
+    def pb_res(phi: np.ndarray) -> np.ndarray:
+        _, n_d, p_d = compiled.fields(np.r_[phi, np.zeros(2 * count)], voltage_V=0.0)
+        if not np.all(np.isfinite(n_d)) or not np.all(np.isfinite(p_d)):
+            return np.full(count, np.nan)
+        rho = compiled.charge_ledger(n_d, p_d).space_charge_C_m3()
+        return compiled.poisson.residual(phi, rho, *compiled.contact_potentials(0.0))
+
+    def pb_jac(phi: np.ndarray) -> Any:
+        _, n_d, p_d = compiled.fields(np.r_[phi, np.zeros(2 * count)], voltage_V=0.0)
+        slope = np.zeros(count)
+        slope[1:-1] = (
+            -ELEMENTARY_CHARGE_C
+            * compiled.poisson.interior_widths_m
+            * (n_d[1:-1] + p_d[1:-1])
+            / compiled.thermal_voltage_V
+        )
+        return compiled.poisson.jacobian() + diags(slope)
+
+    pb = solve_newton(
+        CallableProblem(pb_res, pb_jac),
+        compiled.reference_potential_V,
+        NewtonSettings(
+            ResidualScaling(poisson_row_weights(compiled) / steady_opts.poisson_tolerance),
+            1.0,
+            StepControl(np.full(count, steady_opts.potential_step_V)),
+            steady_opts.budget(),
+            (),
+            False,
+        ),
+    )
+    if not pb.accepted:
+        raise SteadyStateError("hi_dark_0v_pb_seed", pb)
+
+    dark_prob = AssembledDC1DProblem(compiled, 0.0, 0.0)
+    dark_newton = solve_newton(
+        dark_prob,
+        np.r_[pb.state, np.zeros(2 * count)],
+        NewtonSettings(
+            production_residual_scaling(
+                compiled,
+                poisson_tolerance=steady_opts.poisson_tolerance,
+                continuity_tolerance_A_m2=steady_opts.continuity_tolerance_A_m2,
+                contact_log_tolerance=steady_opts.contact_log_tolerance,
+            ),
+            1.0,
+            production_coordinates(
+                compiled,
+                potential_step_V=steady_opts.potential_step_V,
+                quasi_fermi_step=steady_opts.quasi_fermi_step,
+            ),
+            steady_opts.budget(),
+            physical_gates(dark_prob, steady_opts, equilibrium=False),
+            False,
+        ),
+        convergence_norm=production_convergence_norm(
+            compiled, convergence_policy=steady_opts.convergence_policy
+        ),
+    )
+    if not dark_newton.accepted:
+        raise SteadyStateError("hi_dark_0v_dc", dark_newton)
+    return dark_newton.state
 
 
 def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
@@ -2077,11 +2634,19 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
     gen_rate = float(nom_req["params"]["waveform"]["uniform_generation_rate_m3_s"])
 
     dev_doc = nom_req["device"]
+    eps_r_left = float(dev_doc["layers"][0]["eps_r"])
+    abs_left_m = 0.0
+    abs_right_m = 0.0
+    cursor_m = 0.0
     for lyr in dev_doc["layers"]:
+        d_m = float(lyr["thickness"])
         if lyr["role"] == "absorber":
+            abs_left_m = cursor_m
+            abs_right_m = cursor_m + d_m
             lyr["D_ion"] = 0.0 if c0_m3 == 0.0 else d_ion
             lyr["P0"] = c0_m3
         lyr["alpha"] = 0.0
+        cursor_m += d_m
     yaml_bytes = yaml.safe_dump(dev_doc, sort_keys=False).encode("utf-8")
     src = SourceDocument(id=f"hi://{task['primary_case_id']}", content=yaml_bytes)
 
@@ -2091,16 +2656,19 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
         dev_in = import_standard_device(
             src, id=task["primary_case_id"], defaults=defaults
         )
+        raw_device_cfg = dev_doc.get("device", {})
         settings_patch: dict[str, Any] = {
             **dev_in.settings.model_dump(exclude_unset=True),
-            "dos_band_potentials": False,
-            "flat_band_metal_contacts": True,
+            "dos_band_potentials": bool(raw_device_cfg.get("dos_band_potentials", False)),
+            "flat_band_metal_contacts": bool(
+                raw_device_cfg.get("flat_band_metal_contacts", False)
+            ),
             "ion_steric_shared_site": False,
+            "ion_steric_diffusion_only": (c0_m3 > 0.0 and d_ion > 0.0),
         }
-        if c0_m3 == 0.0:
-            settings_patch["ion_steric_diffusion_only"] = False
         dev_in = dev_in.validated_update({"settings": settings_patch})
-        # First probe nodes on dark/zero-alpha device to build exact FixedGenerationProfile JSON
+        # Probe nodes on dark/zero-alpha electronic projection to build exact dual-cell
+        # absorber-only generation profile (matching waveform_jv.uniform_absorber_generation).
         with legacy_benchmark_deck_scope():
             probe_1d = compile_device_1d(
                 resolve_device(
@@ -2113,9 +2681,15 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
                             "layers": [
                                 {
                                     **l_d,
-                                    "parameters": {**l_d["parameters"], "D_ion": 0.0, "P0": 0.0},
+                                    "parameters": {
+                                        **l_d["parameters"],
+                                        "D_ion": 0.0,
+                                        "P0": 0.0,
+                                    },
                                 }
-                                for l_d in dev_in.model_dump(mode="json", exclude_unset=True)["layers"]
+                                for l_d in dev_in.model_dump(
+                                    mode="json", exclude_unset=True
+                                )["layers"]
                             ],
                         }
                     ),
@@ -2125,10 +2699,17 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
                 ),
                 intervals_per_layer=20,
             )
+        x_nodes = probe_1d.nodes_m
+        faces = np.r_[x_nodes[0], 0.5 * (x_nodes[:-1] + x_nodes[1:]), x_nodes[-1]]
+        widths = np.diff(faces)
+        overlap = np.maximum(
+            0.0, np.minimum(faces[1:], abs_right_m) - np.maximum(faces[:-1], abs_left_m)
+        )
+        gen_arr_nodes = gen_rate * overlap / widths
         gen_json = json.dumps(
             {
-                "coordinate_m": [float(x) for x in probe_1d.nodes_m],
-                "generation_m3_s": [gen_rate] * int(probe_1d.nodes_m.size),
+                "coordinate_m": [float(x) for x in x_nodes],
+                "generation_m3_s": [float(g) for g in gen_arr_nodes],
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -2138,16 +2719,13 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
             SourceDocument("hi://uniform_gen.json", gen_json),
         )
         hi_resources = ResourceLibrary((*base_resources.tables, gen_table))
-        dev_in_gen = dev_in.validated_update({"fixed_generation": "hi_uniform_gen"})
-        prepared = resolve_device(dev_in_gen, defaults, hi_resources, sources=(src,))
 
-        pw = _build_hi_7phase_waveform(v_rate)
         elec_steady = SteadyOptions(
-            continuity_tolerance_A_m2=1.0e-3, current_spread_tolerance_A_m2=1.0e-3
+            continuity_tolerance_A_m2=1.0e-5, current_spread_tolerance_A_m2=1.0e-5
         )
         tr_elec = TransientOptions(
             poisson_tolerance=1.0e-9,
-            continuity_tolerance_A_m2=1.0e-2,
+            continuity_tolerance_A_m2=1.0e-3,
             contact_log_tolerance=1.0e-9,
             potential_step_V=0.25,
             quasi_fermi_step=3.0,
@@ -2158,9 +2736,34 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
             convergence_policy=POISSON_CONTACT_BALANCE_V1,
         )
 
-        if c0_m3 == 0.0:
+        if c0_m3 == 0.0 or d_ion == 0.0:
+            # Uniform initial ions P(x,0) == P0 with zero mobility/density keep
+            # net ionic charge q*(P - P0) == 0 identically for all t >= 0.
+            dev_immobile = dev_in.validated_update(
+                {
+                    "fixed_generation": "hi_uniform_gen",
+                    "settings": {**settings_patch, "ion_steric_diffusion_only": False},
+                    "layers": [
+                        {
+                            **l_d,
+                            "parameters": {
+                                **l_d["parameters"],
+                                "D_ion": 0.0,
+                                "P0": 0.0,
+                            },
+                        }
+                        for l_d in dev_in.model_dump(mode="json", exclude_unset=True)[
+                            "layers"
+                        ]
+                    ],
+                }
+            )
+            prepared_immobile = resolve_device(
+                dev_immobile, defaults, hi_resources, sources=(src,)
+            )
             with legacy_benchmark_deck_scope():
-                compiled_1d = compile_device_1d(prepared, intervals_per_layer=20)
+                compiled_1d = compile_device_1d(prepared_immobile, intervals_per_layer=20)
+            pw = _build_hi_7phase_waveform(v_rate)
             ion_free_res = _run_ion_free_hi_waveform(
                 compiled_1d,
                 pw,
@@ -2176,7 +2779,11 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
             mf = ion_free_res["metrics_fwd"]
             mr = ion_free_res["metrics_rev"]
             wf_fail_reason = ion_free_res["failure_reason"]
+            raw_curves: dict[str, Any] = ion_free_res
         else:
+            dev_in_gen = dev_in.validated_update({"fixed_generation": "hi_uniform_gen"})
+            prepared = resolve_device(dev_in_gen, defaults, hi_resources, sources=(src,))
+            u_dark0 = _solve_legacy_dark_0v_electronic(probe_1d, elec_steady)
             with legacy_benchmark_deck_scope():
                 absorber_id = next(
                     lyr.id for lyr in prepared.layers if lyr.role == "absorber"
@@ -2187,30 +2794,23 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
                     ion_domain_layer=absorber_id,
                     ion_domain_endpoints=("blocking", "blocking"),
                 )
-            ion_steady = default_ionic_steady_options(
-                compiled_ion.ion_node_count, electronic=elec_steady
-            )
-            wf_opts = WaveformJVOptions(
-                steady=elec_steady,
-                ionic_steady=ion_steady,
-                transient=tr_elec,
-                ionic_transient=IonicTransientOptions(
-                    electronic=tr_elec,
-                    ion_balance_tolerance_m2_s=1.0e6,
-                    ion_logit_step=1.0,
-                ),
+            wf_res = _run_uniform_ion_hi_waveform(
+                compiled_ion,
+                u_dark0,
+                v_rate=v_rate,
+                eps_r_left=eps_r_left,
                 incident_power_W_m2=1000.0,
-                require_completed=False,
+                wall_s=tr_elec.wall_s,
             )
-            wf_res = run_waveform_jv(compiled_ion, pw, options=wf_opts)
-            wf_completed = bool(wf_res.completed)
-            wf_identity = wf_res.compiled_identity
-            wf_acc_steps = int(wf_res.accepted_steps)
-            wf_req_steps = int(wf_res.requested_steps)
-            wf_inv_drift = list(wf_res.inventory_relative_drift)
-            mf = wf_res.metrics_fwd
-            mr = wf_res.metrics_rev
-            wf_fail_reason = wf_res.failure_reason
+            wf_completed = bool(wf_res["completed"])
+            wf_identity = str(wf_res["compiled_identity"])
+            wf_acc_steps = int(wf_res["accepted_steps"])
+            wf_req_steps = int(wf_res["requested_steps"])
+            wf_inv_drift = list(wf_res["inventory_relative_drift"])
+            mf = wf_res["metrics_fwd"]
+            mr = wf_res["metrics_rev"]
+            wf_fail_reason = wf_res["failure_reason"]
+            raw_curves = wf_res
 
         elapsed_s = time.perf_counter() - t0
         p_fwd = None if mf is None else mf.maximum_power_W_m2
@@ -2225,7 +2825,7 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
             if (p_fwd is not None and p_rev is not None and p_rev > 0.0)
             else None
         )
-        return {
+        out_rec: dict[str, Any] = {
             "request_sha256": task["request_sha256"],
             "primary_case_id": task["primary_case_id"],
             "completed": wf_completed,
@@ -2249,6 +2849,14 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
             },
             "failure_reason": wf_fail_reason,
         }
+        if bool(task.get("include_curves", False)) and raw_curves.get("V_fwd") is not None:
+            out_rec["curves"] = {
+                "V_fwd": [float(v) for v in raw_curves["V_fwd"]],
+                "J_fwd": [float(v) for v in raw_curves["J_fwd"]],
+                "V_rev": [float(v) for v in raw_curves["V_rev"]],
+                "J_rev": [float(v) for v in raw_curves["J_rev"]],
+            }
+        return out_rec
     except Exception as exc:
         error_msg = f"{type(exc).__name__}: {exc}"
         return {

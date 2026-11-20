@@ -376,7 +376,7 @@ def test_p09_candidate_driver_in_process_and_isolated_cli(
             "--require-single-thread-blas",
             "scaps-sweep",
             "--case-ids",
-            "scaps_base,scaps_cbo:row7,scaps_cbo:row17",
+            "scaps_base,scaps_cbo:row4,scaps_cbo:row7,scaps_cbo:row12,scaps_cbo:row17",
             "--output",
             str(scaps_json),
         ],
@@ -388,7 +388,7 @@ def test_p09_candidate_driver_in_process_and_isolated_cli(
     scaps_summary = json.loads(proc_scaps.stdout.strip())
     assert scaps_summary["scientific_qualification"] is False
     scaps_doc = json.loads(scaps_json.read_text(encoding="utf-8"))
-    assert scaps_doc["summary_counts"]["total_executed"] == 3
+    assert scaps_doc["summary_counts"]["total_executed"] == 5
     assert scaps_doc["summary_counts"]["reference_missing"] == 1
     assert scaps_doc["summary_counts"]["solver_failed"] == 0
 
@@ -403,7 +403,7 @@ def test_p09_candidate_driver_in_process_and_isolated_cli(
             "--require-single-thread-blas",
             "hysteresis-matrix",
             "--case-ids",
-            "hi_density_00,hi_diffusivity_10,hi_rate_40",
+            "hi_density_00,hi_diffusivity_00,hi_diffusivity_10,hi_rate_40",
             "--output",
             str(hi_json),
         ],
@@ -415,15 +415,38 @@ def test_p09_candidate_driver_in_process_and_isolated_cli(
     hi_summary = json.loads(proc_hi.stdout.strip())
     assert hi_summary["scientific_qualification"] is False
     hi_doc = json.loads(hi_json.read_text(encoding="utf-8"))
-    assert hi_doc["requested_case_count"] == 3
+    assert hi_doc["requested_case_count"] == 4
     # hi_diffusivity_10 and hi_rate_40 share the exact nominal request_sha256!
-    assert hi_doc["distinct_executed_request_count"] == 2
-    assert hi_doc["completed_case_count"] == 3
+    assert hi_doc["distinct_executed_request_count"] == 3
+    assert hi_doc["completed_case_count"] == 4
     by_id = {c["id"]: c for c in hi_doc["cases"]}
     assert by_id["hi_rate_40"]["reused_from_case_id"] == "hi_diffusivity_10"
     assert by_id["hi_diffusivity_10"]["completed"] is True
     assert by_id["hi_rate_40"]["completed"] is True
-    density_zero = by_id["hi_density_00"]
-    assert density_zero["completed"] is True
-    assert density_zero["failure_reason"] is None
-    assert abs(density_zero["candidate_metrics"]["HI_normalized"]) < 1.0e-3
+    assert by_id["hi_diffusivity_10"]["comparison_deltas"]["HI_normalized_abs_diff"] < 0.005
+    for zero_id in ("hi_density_00", "hi_diffusivity_00"):
+        zero_case = by_id[zero_id]
+        assert zero_case["completed"] is True
+        assert zero_case["failure_reason"] is None
+        assert abs(zero_case["candidate_metrics"]["HI_normalized"]) < 1.0e-3
+
+    # Verify SCAPS CBO alignment trend (cliff < base == row7 < plateau, no V_bi inversion)
+    scaps_by_id = {c["id"]: c for c in scaps_doc["cases"]}
+    assert (
+        scaps_by_id["scaps_cbo:row7"]["candidate_metrics"]["Voc_V"]
+        == pytest.approx(scaps_by_id["scaps_base"]["candidate_metrics"]["Voc_V"], abs=1.0e-12)
+    )
+    assert (
+        scaps_by_id["scaps_cbo:row4"]["candidate_metrics"]["Voc_V"]
+        < scaps_by_id["scaps_base"]["candidate_metrics"]["Voc_V"]
+        < scaps_by_id["scaps_cbo:row12"]["candidate_metrics"]["Voc_V"]
+        < 1.25
+    )
+    assert abs(
+        scaps_by_id["scaps_base"]["candidate_metrics"]["Voc_V"]
+        - scaps_by_id["scaps_base"]["reference_metrics"]["Voc_V"]
+    ) < 0.01
+    assert abs(
+        scaps_by_id["scaps_base"]["candidate_metrics"]["PCE_percent"]
+        - scaps_by_id["scaps_base"]["reference_metrics"]["PCE_percent"]
+    ) < 0.5

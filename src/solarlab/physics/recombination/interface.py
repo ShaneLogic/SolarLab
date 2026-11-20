@@ -40,11 +40,15 @@ from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 
 __all__ = [
     "CrossCarrierCellPairEvaluation",
+    "INTERFACE_BAND_REFERENCE_MODES",
+    "InterfaceBandReferenceMode",
     "InterfaceDefectReferences",
     "InterfaceDefectSpec",
     "InterfaceSRHRate",
     "PlaneClosureParams",
     "PlaneClosureResult",
+    "REFERENCE_LAYER_BAND_ANCHOR",
+    "SCAPS_INTERFACE_EXTREMA_ANCHOR",
     "S_SUPPLY_M_S",
     "SharedInterfaceTrapEvaluation",
     "TwoDimensionalInterfaceSRHMode",
@@ -70,6 +74,15 @@ _QSS_LOG_STEP_CLIP: float = 30.0
 NumericArray: TypeAlias = NDArray[np.float64] | NDArray[np.complex128]
 RealArray: TypeAlias = NDArray[np.float64]
 EnergyReference: TypeAlias = Literal["below_conduction_band", "above_valence_band"]
+InterfaceBandReferenceMode: TypeAlias = Literal[
+    "reference_layer", "scaps_interface_extrema"
+]
+REFERENCE_LAYER_BAND_ANCHOR: InterfaceBandReferenceMode = "reference_layer"
+SCAPS_INTERFACE_EXTREMA_ANCHOR: InterfaceBandReferenceMode = "scaps_interface_extrema"
+INTERFACE_BAND_REFERENCE_MODES: tuple[InterfaceBandReferenceMode, ...] = (
+    REFERENCE_LAYER_BAND_ANCHOR,
+    SCAPS_INTERFACE_EXTREMA_ANCHOR,
+)
 
 
 def _finite_real(value: float, name: str) -> float:
@@ -275,12 +288,22 @@ def resolve_interface_defect_references(
     trap_depth_eV: float,
     energy_reference: EnergyReference,
     require_in_gap: bool = False,
+    band_reference_mode: InterfaceBandReferenceMode = REFERENCE_LAYER_BAND_ANCHOR,
 ) -> InterfaceDefectReferences:
     """Resolve reference side and Boltzmann emission densities on physical bands.
 
     Reference-layer rule (validated legacy contract):
     1. Unique ``role == "absorber"`` among ``(left, right)``; otherwise
     2. Smaller physical band gap ``Eg_phys`` (left wins exact ties).
+
+    ``band_reference_mode`` selects the physical band-edge anchor:
+    - ``"reference_layer"`` (default): anchors ``trap_depth_eV`` to the selected
+      reference layer's physical ``E_c`` or ``E_v``.
+    - ``"scaps_interface_extrema"``: anchors ``below_conduction_band`` below the
+      lowest adjacent conduction band ``min(E_{c,L}, E_{c,R}) = -max(chi_L, chi_R)``
+      and ``above_valence_band`` above the highest adjacent valence band
+      ``max(E_{v,L}, E_{v,R}) = -min(chi_L + Eg_L, chi_R + Eg_R)``, matching
+      SCAPS-1D's heterointerface defect energy convention.
 
     Physical band edges ``E_c = -chi_phys`` and ``E_v = -chi_phys - Eg_phys`` are
     kept strictly distinct from DOS-folded transport potentials.
@@ -299,6 +322,11 @@ def resolve_interface_defect_references(
         raise ValueError("physical electron affinities must be finite")
     if energy_reference not in ("below_conduction_band", "above_valence_band"):
         raise ValueError(f"unsupported energy_reference {energy_reference!r}")
+    if band_reference_mode not in INTERFACE_BAND_REFERENCE_MODES:
+        raise ValueError(
+            f"unsupported band_reference_mode {band_reference_mode!r}; "
+            f"expected one of {INTERFACE_BAND_REFERENCE_MODES}"
+        )
 
     if left_role == "absorber" and right_role != "absorber":
         ref_side: Literal["left", "right"] = "left"
@@ -316,10 +344,16 @@ def resolve_interface_defect_references(
             f"trap_depth_eV={depth} lies outside reference physical band gap {ref_eg}"
         )
 
-    if energy_reference == "below_conduction_band":
-        trap_energy_eV = -ref_chi - depth
+    if band_reference_mode == SCAPS_INTERFACE_EXTREMA_ANCHOR:
+        if energy_reference == "below_conduction_band":
+            trap_energy_eV = -max(left_chi, right_chi) - depth
+        else:
+            trap_energy_eV = -min(left_chi + left_eg, right_chi + right_eg) + depth
     else:
-        trap_energy_eV = -ref_chi - ref_eg + depth
+        if energy_reference == "below_conduction_band":
+            trap_energy_eV = -ref_chi - depth
+        else:
+            trap_energy_eV = -ref_chi - ref_eg + depth
 
     ec_left, ev_left = -left_chi, -left_chi - left_eg
     ec_right, ev_right = -right_chi, -right_chi - right_eg

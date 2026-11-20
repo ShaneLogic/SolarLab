@@ -129,7 +129,10 @@ from solarlab.physics.recombination.explicit_neutral import (
     compile_neutral_defect_species,
 )
 from solarlab.physics.recombination.interface import (
+    INTERFACE_BAND_REFERENCE_MODES,
+    InterfaceBandReferenceMode,
     InterfaceDefectSpec,
+    REFERENCE_LAYER_BAND_ANCHOR,
     build_plane_closure_params,
     resolve_interface_defect_references,
 )
@@ -458,6 +461,7 @@ def _bind_interfaces_1d(
     thermionic_mode: ThermionicModelVersion = LEGACY_UNNORMALIZED_THERMIONIC_V1,
     combination_mode: ThermionicCombinationMode | None = None,
     band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    interface_band_reference_mode: InterfaceBandReferenceMode = REFERENCE_LAYER_BAND_ANCHOR,
 ) -> CompiledInterfaceModel1D | None:
     iface_count = len(layers) - 1
     charge_closure = str(settings["interface_charge_closure"])
@@ -632,6 +636,7 @@ def _bind_interfaces_1d(
                     thermal_voltage_V=vt,
                     trap_depth_eV=d_spec.trap_depth_eV,
                     energy_reference=d_spec.energy_reference,
+                    band_reference_mode=interface_band_reference_mode,
                 )
                 _, pl_eq = doping_equilibrium_densities(
                     float(binding.donor_density_m3[i_l]),
@@ -764,6 +769,8 @@ def _bind_interfaces_1d(
                 ]
                 for s in te_specs
             ]
+        if interface_band_reference_mode != REFERENCE_LAYER_BAND_ANCHOR:
+            manifest["interface_band_reference_mode"] = interface_band_reference_mode
         iface_sha = hashlib.sha256(
             json.dumps(manifest, separators=(",", ":"), allow_nan=False).encode()
         ).hexdigest()
@@ -870,6 +877,7 @@ def _bind_interfaces_1d(
                 trap_depth_eV=d_spec.trap_depth_eV,
                 energy_reference=d_spec.energy_reference,
                 require_in_gap=(charge_closure == "equilibrium_referenced"),
+                band_reference_mode=interface_band_reference_mode,
             )
             n1_l, p1_l = refs.n1_left_m3, refs.p1_left_m3
             n1_r, p1_r = refs.n1_right_m3, refs.p1_right_m3
@@ -1066,6 +1074,8 @@ def _bind_interfaces_1d(
             ]
             for s in two_sided_specs
         ]
+    if interface_band_reference_mode != REFERENCE_LAYER_BAND_ANCHOR:
+        manifest_ts["interface_band_reference_mode"] = interface_band_reference_mode
     iface_sha = hashlib.sha256(
         json.dumps(manifest_ts, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
@@ -1510,6 +1520,7 @@ def compile_device_1d(
     band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
     thermionic_mode: ThermionicModelVersion | None = None,
     combination_mode: ThermionicCombinationMode | None = None,
+    interface_band_reference_mode: InterfaceBandReferenceMode = REFERENCE_LAYER_BAND_ANCHOR,
     allow_legacy_benchmark_deck: bool = False,
 ) -> CompiledDevice1D:
     """Cold compile genuine resolved configuration; no legacy/test execution.
@@ -1541,6 +1552,10 @@ def compile_device_1d(
         raise ValueError(f"unknown geometry_name {geometry_name!r}")
     if band_step_mode not in BAND_STEP_MODES:
         raise ValueError(f"unknown band_step_mode {band_step_mode!r}")
+    if interface_band_reference_mode not in INTERFACE_BAND_REFERENCE_MODES:
+        raise ValueError(
+            f"unknown interface_band_reference_mode {interface_band_reference_mode!r}"
+        )
     resolved_thermionic: ThermionicModelVersion = (
         LEGACY_UNNORMALIZED_THERMIONIC_V1 if thermionic_mode is None else thermionic_mode
     )
@@ -1894,6 +1909,7 @@ def compile_device_1d(
         thermionic_mode=resolved_thermionic,
         combination_mode=combination_mode,
         band_step_mode=band_step_mode,
+        interface_band_reference_mode=interface_band_reference_mode,
     )
 
     extra_id = None if additional_recombination is None else additional_recombination.model_id

@@ -530,3 +530,54 @@ def test_two_dimensional_cell_pair_srh_mode() -> None:
     assert active.areal_rate_m2_s[0] == 0.0  # exact equilibrium on cell 0
     assert active.areal_rate_m2_s[1] > 0.0
     np.testing.assert_allclose(active.half_rate_m2_s, 0.5 * active.areal_rate_m2_s, rtol=1e-15)
+
+
+def test_scaps_interface_extrema_band_reference_mode() -> None:
+    from solarlab.physics.recombination import (
+        REFERENCE_LAYER_BAND_ANCHOR,
+        SCAPS_INTERFACE_EXTREMA_ANCHOR,
+    )
+
+    vt = thermal_voltage(300.0)
+    # Deep electron cliff at absorber/ETL: chi_ETL (4.69 eV) > chi_PVK (3.94 eV)
+    kw_cliff = dict(
+        left_role="absorber",
+        right_role="etl",
+        left_chi_phys_eV=3.94,
+        left_Eg_phys_eV=1.53,
+        left_Nc_m3=1.0e25,
+        left_Nv_m3=1.0e25,
+        right_chi_phys_eV=4.69,
+        right_Eg_phys_eV=1.90,
+        right_Nc_m3=8.0e25,
+        right_Nv_m3=8.0e25,
+        thermal_voltage_V=vt,
+        trap_depth_eV=0.60,
+        energy_reference="below_conduction_band",
+    )
+    ref_default = resolve_interface_defect_references(**kw_cliff)  # type: ignore[arg-type]
+    ref_explicit = resolve_interface_defect_references(
+        **kw_cliff, band_reference_mode=REFERENCE_LAYER_BAND_ANCHOR  # type: ignore[arg-type]
+    )
+    assert ref_default == ref_explicit
+
+    ref_scaps = resolve_interface_defect_references(
+        **kw_cliff, band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR  # type: ignore[arg-type]
+    )
+    # Under SCAPS lowest-Ec anchor, E_t = -max(3.94, 4.69) - 0.60 = -5.29 eV,
+    # so E_{c,ETL} - E_t == +0.60 eV regardless of cliff depth.
+    assert ref_scaps.n1_right_m3 == pytest.approx(
+        8.0e25 * np.exp(-0.60 / vt), rel=1e-13
+    )
+    assert ref_scaps.n1_right_m3 < ref_default.n1_right_m3
+
+    # Under an electron spike (chi_ETL < chi_PVK), lowest Ec is PVK so both modes agree identically!
+    kw_spike = {**kw_cliff, "right_chi_phys_eV": 3.74}
+    assert resolve_interface_defect_references(
+        **kw_spike, band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR  # type: ignore[arg-type]
+    ) == resolve_interface_defect_references(**kw_spike)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="band_reference_mode"):
+        resolve_interface_defect_references(
+            **kw_cliff, band_reference_mode="invalid"  # type: ignore[arg-type]
+        )
