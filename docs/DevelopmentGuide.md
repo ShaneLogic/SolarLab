@@ -49,8 +49,8 @@ an existing calculation.
 | Experiment orchestration | `src/solarlab/experiments/`, `sweeps/` | Protocols, preparation, execution and measurements |
 | Persistence and identity | `src/solarlab/io/`, `reproducibility/` | RunStore, source/input identities, original attempts and lossless readers |
 | Service and browser | `src/solarlab_server/`, `web/` | Registered execution, HTTP/events and client contracts |
-| Legacy engine | `perovskite-sim/` and `solarlab_server/legacy_engine/` | Explicit compatibility routes for capabilities not yet migrated |
-| Research companion | `src/solarlab_research/` | Reserved companion namespace; active runnable research entry points are currently in `examples/` |
+| Legacy engine (witness-only) | `perovskite-sim/` (`solarlab_server/legacy_engine/` retired and removed for `P09-03`; see [RetiredModelsV1.md](RetiredModelsV1.md)) | Excluded from target wheels/sdists; retained only for independent test oracles, byte-pinned historical provenance, and decoupled `RS` (`R1` `D20`) |
+| Research companion | `src/solarlab_research/` | Ships migrated `R1` short-window/codec/witness contracts, `CBO` scan, and research CLI entry points (`solarlab-cbo-scan`, `solarlab-r1-short-window`, `solarlab-r1-verify-sources`), alongside runnable workflows in `examples/` |
 
 The import contracts in `pyproject.toml` enforce these boundaries. In
 particular, the core does not import the server, research companion or legacy
@@ -79,11 +79,15 @@ standard; a recorded green committed-tree CI run does not complete that
 review. November 8 was an earliest permitted switch date, not an automatic
 deadline that changes the running default.
 
-Remaining scientific work includes the applicable G2/C2 reference evidence,
-hysteresis and SCAPS reference validation, mesh/time/voltage refinement, and
-the final G9P release gates. Existing bounded working examples and historical
-legacy results retain their own scope. Neither cleanup nor a green test suite
-promotes those scientific gates.
+Product release engineering gates (`G0`–`G6`, `G8`, `P09-01`..`P09-04` -> `G9P`)
+separate engineering delivery and clean wheel/server cutover from scientific
+qualification. `scientific_qualification=False` remains explicit until external
+SCAPS validation, hysteresis `1/3` reference-error closure, formal performance
+baseline denominators, `G2`/`C2` reference evidence, mesh/time/voltage
+refinement, and decoupled `RS-G7` 100s `R1-L2/L3` campaigns are independently
+closed. Existing bounded working examples and historical legacy results retain
+their own scope; neither cleanup nor a green test suite promotes those
+scientific gates.
 
 ## Add a physical model without duplicating the solver
 

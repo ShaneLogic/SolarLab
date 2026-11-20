@@ -49,10 +49,13 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 
 **Continuing development:** `devel` is the shared engineering baseline;
 `AIMC` is the separate branch for the proposed microscopic aging model.
-Start with the [Development Guide](docs/DevelopmentGuide.md) for the current
-package layout, test commands, model extension boundaries and pending work.
-The package remains `solarlab==0.1.0`; full scientific qualification is still
-in progress.
+Start with the [Development Guide](docs/DevelopmentGuide.md) and
+[Retired Models & Legacy Witness Ledger](docs/RetiredModelsV1.md) for the current
+package layout, test commands, model extension boundaries, retired legacy entrypoints
+and pending work. Release wheels and sdists for `solarlab==0.1.0` ship
+`solarlab`, `solarlab_server` (with the compiled `_web_dist` SPA), and
+`solarlab_research` without `perovskite_sim`, while full scientific qualification
+remains explicitly separate (`scientific_qualification=False`).
 
 Supported new-core 1D and steady 2D entry points use the unified equation
 assembly. Backward Euler remains the general transient default; adaptive BDF
@@ -202,30 +205,32 @@ The function named `solve_equilibrium` provides a quasi-neutral starting state; 
 SolarLab/
   src/solarlab/                   New core: configuration, physics, equations,
                                   assembly, solvers, experiments, IO and identity
-  src/solarlab_server/            Registered execution, HTTP and legacy facade
-  src/solarlab_research/          Reserved research companion namespace
+  src/solarlab_server/            Registered V2 execution, RunStore HTTP/SSE API
+                                  and compiled SPA serving
+  src/solarlab_research/          Active research companion: migrated R1 short-window,
+                                  codec/witness contracts and CBO scan CLIs
   examples/research_1d/           Runnable new-core 1D workflows
   examples/research_2d/           Runnable bounded new-core 2D workflows
-  tests/                         Root contracts, integration and runtime tests
-  reproducibility/               Active reference and transition contracts
+  tests/                          Root contracts, integration and runtime tests
+  reproducibility/                Active reference and transition contracts
   pyproject.toml, uv.lock         Locked root package and development environment
   docs/DevelopmentGuide.md        Current development and extension workflow
-  docs/figures/                    Curated README and comparison figures
-  perovskite-sim/
-    perovskite_sim/                Python models, physics, discretization,
-                                  solvers, experiments, 2D, and screening
-    backend/                      FastAPI API and SSE job dispatch
-    configs/                      Three shipped research YAMLs
+  docs/RetiredModelsV1.md         Retired legacy models, entrypoints and RS witness ledger
+  docs/figures/                   Curated README and comparison figures
+  perovskite-sim/                 Retained outside release wheels/sdists as a
+                                  read-only oracle, provenance and RS witness tree
+    perovskite_sim/               Historical Python models, physics, solvers and 2D
+    backend/                      Historical FastAPI reference backend (witness-only)
+    configs/                      Three research YAMLs (also packaged in solarlab.materials)
     tests/fixtures/configs/       Historical/test-only device definitions
-    reproducibility/              Schema, benchmark matrix, hashes, baselines
-    docs/                         Current package capability contracts
-    scripts/                      Experiments, imports, validation, plotting
-    tests/                        Unit, integration, regression, validation
-    notebooks/                    Exploratory workflows
-    pyproject.toml                Legacy package and test dependencies
-  web/                            Vite/TypeScript/Plotly/GoldenLayout UI
-  scripts/                        Repository support utilities
-  docker-compose.yml              Backend/frontend development stack
+    reproducibility/              Historical schema, benchmark matrix, hashes, baselines
+    docs/                         Physics and historical package capability contracts
+    scripts/                      Retained RS (R1/R0) witness scripts
+    tests/                        Historical unit, integration, regression, validation
+    pyproject.toml                Historical package and test dependencies
+  web/                            Vite/TypeScript/Plotly/GoldenLayout V2 workstation UI
+  scripts/                        Repository test runner and benchmark utilities
+  docker-compose.yml              V2 solarlab_server / frontend container stack
   CLAUDE.md                       Repository guidance and archive location
   README.md
 ~~~
@@ -241,24 +246,37 @@ automatically part of the published evidence.
 
 ## Installation
 
-For the active `devel` package, install from the repository root using the
-[locked development workflow](docs/DevelopmentGuide.md#start-from-the-root-package).
-The perovskite-sim installation below is the legacy application setup.
-
 ### Prerequisites
 
-- **Python 3.11+** (the package metadata requirement; focused checks below used 3.13)
+- **Python 3.11+** (`uv` locked environment uses Python 3.13 locally; CI tests the declared matrix)
 - **Node.js 22.12+** with `npm`; the locked Vite 8 engine range is `^20.19.0 || >=22.12.0`
 - A C compiler + BLAS/LAPACK (bundled with `numpy`/`scipy` wheels on most platforms)
 
-### 1. Clone the repository
+### 1. Active Product & Research Setup (Root `solarlab` Package)
+
+Clone the repository, sync the locked root environment, build/verify frontend dependencies, and run the install check:
 
 ```bash
 git clone https://github.com/ShaneLogic/SolarLab.git
 cd SolarLab
+
+uv sync --frozen --extra dev --extra server
+npm ci --prefix web
+npm --prefix web run build
+
+.venv/bin/solarlab check-install
+.venv/bin/python scripts/test_all.py
 ```
 
-### 2. Install the Python package
+When installing a built `solarlab==0.1.0` wheel in a clean environment (outside the repository checkout, where `perovskite_sim` and `backend` are absent), verify clean-wheel isolation directly with:
+
+```bash
+solarlab check-install --require-no-legacy
+```
+
+### 2. Historical Legacy Witness Setup (`perovskite-sim/`, Not Shipped in Release Wheels)
+
+The commands below apply only when inspecting historical witness/oracle tests inside `perovskite-sim/` in a source checkout (not part of the shipped `solarlab` wheel or `G9P` product surface):
 
 ```bash
 cd perovskite-sim
@@ -266,26 +284,11 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
 python -m pip install -r backend/requirements.txt
-```
 
-The editable core package installs NumPy, SciPy, PyYAML, Matplotlib, and the selected test dependencies. FastAPI/Uvicorn/Pydantic are supplied by the separate backend requirements command. Installing only `.[dev]` is not sufficient to start the HTTP service.
-
-### 3. Install frontend dependencies
-
-```bash
-cd ../web
-npm ci
-cd ../perovskite-sim
-```
-
-### 4. Verify the install
-
-```bash
-# From perovskite-sim/
-python -m pytest -q                                     # default non-slow suite
-pytest -m validation -W error::RuntimeWarning           # literature-informed lanes
-pytest -m slow -W error::RuntimeWarning                 # heavy physics suite; can exceed 1 h
-python scripts/verify_reproducibility.py --json         # registry and frozen-baseline checks
+# Historical witness test lanes (from perovskite-sim/)
+python -m pytest -q                                     # default non-slow witness suite
+pytest -m validation -W error::RuntimeWarning           # literature-informed witness lanes
+pytest -m slow -W error::RuntimeWarning                 # heavy historical physics suite
 ```
 
 <br>
@@ -294,47 +297,45 @@ python scripts/verify_reproducibility.py --json         # registry and frozen-ba
 
 ## Running the Application
 
-The application commands below run the retained legacy backend. New-core
-process/HTTP workflows and their saved-result readers are documented in the
-[1D](examples/research_1d/README.md) and [2D](examples/research_2d/README.md)
-examples.
+### Active V2 Product Entrypoints (`solarlab-server` & CLI)
 
-SolarLab runs as **two processes**: a FastAPI backend that executes the simulations, and a Vite dev server that serves the UI.
-
-### Start the backend
-
-From the **SolarLab root** (not `perovskite-sim/`):
+Start the V2 `solarlab_server` HTTP/SSE service from the repository root (or from any directory where the `solarlab` wheel is installed):
 
 ```bash
+.venv/bin/solarlab-server --store-dir ./var/solarlab/store --host 127.0.0.1 --port 8000
+```
+
+When `web/dist` (or `_web_dist` inside the release wheel) is present, `solarlab-server` serves both the V2 API (`/configs`, `/materials`, `/experiments`, `/jobs`, `/runs/...`, `/results/...`, `/artifacts/...`) and the compiled workstation SPA on `http://127.0.0.1:8000`. During interactive frontend development, run the Vite dev server in a second terminal:
+
+```bash
+npm --prefix web run dev
+```
+
+Open **<http://127.0.0.1:5173>** in your browser (override the V2 service endpoint via `VITE_SOLARLAB_SERVICE_BASE` if needed).
+
+You can also run standalone CLI and research workflows directly without a browser:
+
+```bash
+.venv/bin/solarlab steady-jv --output outputs/steady_jv.json
+.venv/bin/solarlab-cbo-scan --help
+.venv/bin/solarlab-r1-short-window --help
+.venv/bin/solarlab-r1-verify-sources --help
+```
+
+Additional runnable new-core 1D and 2D examples and saved-result readers are documented in [examples/research_1d](examples/research_1d/README.md) and [examples/research_2d](examples/research_2d/README.md).
+
+### Historical Legacy Reference Context (`perovskite-sim/`, Witness-Only)
+
+The snippets below document the retired legacy `perovskite-sim` backend and Python helper API for historical provenance only (not part of the active V2 `solarlab-server` or shipped wheel; see [RetiredModelsV1.md](docs/RetiredModelsV1.md)):
+
+```bash
+# Historical witness backend (from the SolarLab root)
 uvicorn backend.main:app \
     --host 127.0.0.1 --port 8000 \
     --app-dir perovskite-sim --reload
 ```
 
-Check it is alive:
-
-```bash
-curl http://127.0.0.1:8000/api/configs
-```
-
-You should get JSON listing the shipped presets.
-
-### Start the frontend
-
-In a second terminal:
-
-```bash
-cd web
-npm run dev
-```
-
-Open **<http://127.0.0.1:5173>** in your browser. The frontend defaults to
-`http://127.0.0.1:8000` and can be pointed at another backend with
-`VITE_API_BASE`. CORS is enabled for the local development and preview flows.
-
-### Run a simulation from Python (no UI)
-
-Run from `perovskite-sim/` with the environment activated. This is a research sweep, not a minimal installation check. Its ordinary 0-to-V_max-and-back protocol differs from the original-paper comparison script.
+Historical `perovskite_sim` Python sweep snippet (run from `perovskite-sim/` in a witness environment; ordinary 0-to-V_max-and-back protocol differs from the original-paper comparison script):
 
 ```python
 from perovskite_sim.models.config_loader import load_device_from_yaml
