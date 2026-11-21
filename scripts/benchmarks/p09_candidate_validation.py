@@ -145,6 +145,7 @@ from solarlab.physics.interface_transport import (  # noqa: E402
     SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
 )
 from solarlab.physics.recombination import (  # noqa: E402
+    SCAPS_GAUSSIAN_INTERFACE_QUADRATURE,
     SCAPS_INTERFACE_EXTREMA_ANCHOR,
 )
 from solarlab.solvers.linear.frequency_domain import FrequencyOptions  # noqa: E402
@@ -1647,12 +1648,65 @@ def _warm_dc_density_newton(
     return u
 
 
+def _step_scaps_bias_point(
+    compiled: CompiledDevice1D,
+    u_from: np.ndarray,
+    v_from: float,
+    v_to: float,
+    opts: SteadyOptions,
+) -> tuple[np.ndarray, float]:
+    """Advance one steady bias step from a certified warm state with density fallback."""
+    pol = float(compiled.voltage_polarity)
+    try:
+        st_direct = solve_steady_state(
+            compiled,
+            initial_state=compiled.state(u_from, voltage_V=v_from),
+            voltage_V=v_to,
+            generation_scale=1.0,
+            options=opts,
+        )
+        return (
+            st_direct.state.u,
+            float(-pol * np.asarray(st_direct.current_density_A_m2, dtype=float)[0]),
+        )
+    except SteadyStateError:
+        pass
+    for b_lvl in range(7):
+        nsub = 1 << b_lvl
+        u_tmp = u_from
+        st_j = None
+        sub_ok = True
+        for j in range(1, nsub + 1):
+            vj = v_from + (v_to - v_from) * (j / nsub)
+            try:
+                u_w = _warm_dc_density_newton(compiled, u_tmp, vj, 1.0, opts)
+                st_j = solve_steady_state(
+                    compiled,
+                    initial_state=compiled.state(u_w, voltage_V=vj),
+                    voltage_V=vj,
+                    generation_scale=1.0,
+                    options=opts,
+                )
+                u_tmp = st_j.state.u
+            except SteadyStateError:
+                sub_ok = False
+                break
+        if sub_ok and st_j is not None:
+            return (
+                u_tmp,
+                float(-pol * np.asarray(st_j.current_density_A_m2, dtype=float)[0]),
+            )
+    raise RuntimeError(f"SCAPS J-V continuation failed at V={v_to:.4f} V")
+
+
 def _run_scaps_steady_jv_aligned(
     compiled: CompiledDevice1D,
     v_grid: np.ndarray,
     opts: SteadyOptions,
+    *,
+    local_refine_step_V: float = 0.005,
 ) -> tuple[Any, int]:
-    """Run certified steady J-V with density-space continuation fallback for steep barriers."""
+    """Run certified 2-stage steady J-V (coarse sweep + 5 mV MPP/Voc bracket refinement)."""
     try:
         jv_res = run_steady_jv(
             compiled,
@@ -1663,7 +1717,9 @@ def _run_scaps_steady_jv_aligned(
             stop_after_voc=True,
             max_bias_bisect=5,
         )
-        return jv_res.metrics, int(jv_res.voltage_V.size)
+        vs = [float(v) for v in jv_res.voltage_V]
+        js = [float(j) for j in jv_res.output_current_A_m2]
+        us = [sol.state.u for sol in jv_res.solutions]
     except SteadyStateError:
         eq_opts = SteadyOptions(
             continuity_tolerance_A_m2=1.0e-11,
@@ -1686,51 +1742,63 @@ def _run_scaps_steady_jv_aligned(
         pol = float(compiled.voltage_polarity)
         vs = [0.0]
         js = [float(-pol * np.asarray(st.current_density_A_m2, dtype=float)[0])]
+        us = [u_cur]
         v_prev = 0.0
         for vt_raw in v_grid[1:]:
             vt_val = float(vt_raw)
-            step_ok = False
-            for b_lvl in range(7):
-                nsub = 1 << b_lvl
-                u_tmp = u_cur
-                st_j = st
-                sub_ok = True
-                for j in range(1, nsub + 1):
-                    vj = v_prev + (vt_val - v_prev) * (j / nsub)
-                    try:
-                        u_w = _warm_dc_density_newton(compiled, u_tmp, vj, 1.0, opts)
-                        st_j = solve_steady_state(
-                            compiled,
-                            initial_state=compiled.state(u_w, voltage_V=vj),
-                            voltage_V=vj,
-                            generation_scale=1.0,
-                            options=opts,
-                        )
-                        u_tmp = st_j.state.u
-                    except SteadyStateError:
-                        sub_ok = False
-                        break
-                if sub_ok:
-                    u_cur = u_tmp
-                    st = st_j
-                    v_prev = vt_val
-                    step_ok = True
-                    break
-            if not step_ok:
-                raise RuntimeError(f"SCAPS J-V continuation failed at V={vt_val:.4f} V")
-            jv_val = float(-pol * np.asarray(st.current_density_A_m2, dtype=float)[0])
+            u_cur, jv_val = _step_scaps_bias_point(compiled, u_cur, v_prev, vt_val, opts)
+            v_prev = vt_val
             vs.append(vt_val)
             js.append(jv_val)
+            us.append(u_cur)
             if jv_val <= 0.0:
                 break
-        return (
-            steady_jv_metrics(
-                np.asarray(vs, dtype=float),
-                np.asarray(js, dtype=float),
-                incident_power_W_m2=1000.0,
-            ),
-            len(vs),
+
+    extra_v: list[float] = []
+    extra_j: list[float] = []
+    if local_refine_step_V > 0.0 and len(vs) >= 2 and js[0] > 0.0 and any(j <= 0.0 for j in js):
+        voc_idx = next(i for i, j in enumerate(js) if j <= 0.0)
+        mpp_idx = int(
+            np.argmax(
+                np.asarray(vs[:voc_idx], dtype=float)
+                * np.asarray(js[:voc_idx], dtype=float)
+            )
         )
+        mpp_lo = max(0, mpp_idx - 1)
+        mpp_hi = min(voc_idx, mpp_idx + 1)
+        voc_lo = voc_idx - 1
+        refine_intervals = sorted(set(range(mpp_lo, mpp_hi)) | {voc_lo})
+        for idx in refine_intervals:
+            v_a = vs[idx]
+            v_b = vs[idx + 1]
+            n_fine = max(1, int(math.ceil((v_b - v_a) / local_refine_step_V)))
+            if n_fine <= 1:
+                continue
+            fine_vs: np.ndarray = np.linspace(v_a, v_b, n_fine + 1, dtype=float)[1:-1]
+            u_walk = us[idx]
+            v_walk = v_a
+            for vf_raw in fine_vs:
+                vf = float(vf_raw)
+                u_walk, jf = _step_scaps_bias_point(compiled, u_walk, v_walk, vf, opts)
+                v_walk = vf
+                extra_v.append(vf)
+                extra_j.append(jf)
+                if idx == voc_lo and jf <= 0.0:
+                    break
+
+    v_all: np.ndarray = np.asarray(vs + extra_v, dtype=float)
+    j_all: np.ndarray = np.asarray(js + extra_j, dtype=float)
+    order = np.argsort(v_all)
+    v_sorted = v_all[order]
+    j_sorted = j_all[order]
+    return (
+        steady_jv_metrics(
+            v_sorted,
+            j_sorted,
+            incident_power_W_m2=1000.0,
+        ),
+        int(v_sorted.size),
+    )
 
 
 def _evaluate_scaps_point_worker(task: dict[str, Any]) -> dict[str, Any]:
@@ -1767,18 +1835,19 @@ def _evaluate_scaps_point_worker(task: dict[str, Any]) -> dict[str, Any]:
         )
         compiled = compile_device_1d(
             prepared,
-            intervals_per_layer=10,
+            intervals_per_layer=20,
             interface_topology="two_sided_trace",
             geometry_name=PHYSICAL_BOUNDARY_TWO_SIDED_V1,
             thermionic_mode=SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
             interface_band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+            interface_defect_distribution_mode=SCAPS_GAUSSIAN_INTERFACE_QUADRATURE,
             optical_model="beer_lambert_spectral",
             allow_legacy_benchmark_deck=True,
         )
         compiled_id = compiled.identity
         m, evaluated_points = _run_scaps_steady_jv_aligned(
             compiled,
-            np.linspace(0.0, 1.45, 30),
+            np.linspace(0.0, 1.45, 37),
             SteadyOptions(
                 continuity_tolerance_A_m2=1.0e-4,
                 current_spread_tolerance_A_m2=1.0e-4,
@@ -2422,7 +2491,7 @@ def _run_uniform_ion_hi_waveform(
             vk = v_left + (v_right - v_left) * (k / n_sub)
             v_start_b = v_left + (v_right - v_left) * ((k - 1) / n_sub)
             sub_ok = False
-            for b_lvl in range(10):
+            for b_lvl in range(3):
                 nb = 1 << b_lvl
                 dtb = dt / nb
                 b_cur = cur
@@ -2465,6 +2534,60 @@ def _run_uniform_ion_hi_waveform(
                     cur = b_cur
                     sub_ok = True
                     break
+            if not sub_ok:
+                b_cur = cur
+                t_done = 0.0
+                dt_try = dt / 8.0
+                while t_done < dt * (1.0 - 1.0e-14):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("wall_budget_exhausted")
+                    rem = dt - t_done
+                    dt_step = rem if dt_try >= 0.999999 * rem else dt_try
+                    is_final = dt_step >= 0.999999999999 * rem
+                    vjb = (
+                        vk
+                        if is_final
+                        else v_start_b + (vk - v_start_b) * ((t_done + dt_step) / dt)
+                    )
+                    prob = AssembledIonic1DProblem(comp_ion, vjb, g_scale)
+                    step = AssembledIonicBackwardEuler1DStep(prob, b_cur, dt_step)
+                    seed = step.initial_coordinates(
+                        "previous", voltage_lift=(vjb != b_cur.voltage_V)
+                    )
+                    nw = solve_newton(step, seed, settings, convergence_norm=conv_norm)
+                    if not nw.accepted:
+                        u_w = _warm_density_newton_on_be_step(
+                            comp_ion,
+                            step,
+                            seed,
+                            vjb,
+                            settings,
+                            conv_norm,
+                            eye_n,
+                            eye_ion,
+                        )
+                        nw = solve_newton(
+                            step, u_w, settings, convergence_norm=conv_norm
+                        )
+                    if nw.accepted:
+                        b_cur = comp_ion.state(nw.state, voltage_V=vjb)
+                        drift = abs(
+                            float(np.dot(measures, b_cur.positive_ion_density_m3))
+                            - inv0
+                        ) / max(abs(inv0), 1.0e-30)
+                        max_rel_drift = max(max_rel_drift, drift)
+                        t_done += dt_step
+                        if is_final:
+                            if k == n_sub:
+                                acc_last = step.accounting(nw.state)
+                            cur = b_cur
+                            sub_ok = True
+                            break
+                        dt_try = min(dt - t_done, 2.0 * dt_step)
+                    else:
+                        dt_try = 0.25 * dt_step
+                        if dt_try < 1.0e-12 * dt:
+                            break
             if not sub_ok:
                 raise RuntimeError(
                     f"ionic BE substep failed at V={vk:.4f} V, g={g_scale}, dt={dt:.4g} s"
@@ -2630,6 +2753,9 @@ def _solve_legacy_dark_0v_electronic(
     return dark_newton.state
 
 
+_HI_INTERVALS_PER_LAYER = 50
+
+
 def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
     defaults, base_resources = _load_packaged_catalog_and_resources()
     nom_req = json.loads(json.dumps(task["nominal_request"]))
@@ -2669,7 +2795,7 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
                 raw_device_cfg.get("flat_band_metal_contacts", False)
             ),
             "ion_steric_shared_site": False,
-            "ion_steric_diffusion_only": (c0_m3 > 0.0 and d_ion > 0.0),
+            "ion_steric_diffusion_only": False,
         }
         dev_in = dev_in.validated_update({"settings": settings_patch})
         # Probe nodes on dark/zero-alpha electronic projection to build exact dual-cell
@@ -2702,7 +2828,7 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
                     base_resources,
                     sources=(src,),
                 ),
-                intervals_per_layer=20,
+                intervals_per_layer=_HI_INTERVALS_PER_LAYER,
             )
         x_nodes = probe_1d.nodes_m
         faces = np.r_[x_nodes[0], 0.5 * (x_nodes[:-1] + x_nodes[1:]), x_nodes[-1]]
@@ -2767,7 +2893,9 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
                 dev_immobile, defaults, hi_resources, sources=(src,)
             )
             with legacy_benchmark_deck_scope():
-                compiled_1d = compile_device_1d(prepared_immobile, intervals_per_layer=20)
+                compiled_1d = compile_device_1d(
+                    prepared_immobile, intervals_per_layer=_HI_INTERVALS_PER_LAYER
+                )
             pw = _build_hi_7phase_waveform(v_rate)
             ion_free_res = _run_ion_free_hi_waveform(
                 compiled_1d,
@@ -2795,7 +2923,7 @@ def _evaluate_hi_request_worker(task: dict[str, Any]) -> dict[str, Any]:
                 )
                 compiled_ion = compile_ionic_device_1d(
                     prepared,
-                    intervals_per_layer=20,
+                    intervals_per_layer=_HI_INTERVALS_PER_LAYER,
                     ion_domain_layer=absorber_id,
                     ion_domain_endpoints=("blocking", "blocking"),
                 )

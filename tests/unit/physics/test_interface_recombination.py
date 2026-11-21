@@ -581,3 +581,218 @@ def test_scaps_interface_extrema_band_reference_mode() -> None:
         resolve_interface_defect_references(
             **kw_cliff, band_reference_mode="invalid"  # type: ignore[arg-type]
         )
+
+
+def test_scaps_gaussian_interface_quadrature_and_distributed_trap_laws() -> None:
+    from solarlab.physics.recombination import (
+        InterfaceTrapQuadrature,
+        SCAPS_INTERFACE_EXTREMA_ANCHOR,
+        build_scaps_gaussian_interface_quadrature,
+        evaluate_distributed_shared_interface_trap,
+    )
+
+    vt = thermal_voltage(300.0)
+    quad = build_scaps_gaussian_interface_quadrature(
+        left_role="absorber",
+        right_role="etl",
+        left_chi_phys_eV=3.94,
+        left_Eg_phys_eV=1.53,
+        left_Nc_m3=1.0e25,
+        left_Nv_m3=1.0e25,
+        right_chi_phys_eV=4.09,
+        right_Eg_phys_eV=1.90,
+        right_Nc_m3=8.0e25,
+        right_Nv_m3=8.0e25,
+        thermal_voltage_V=vt,
+        trap_depth_eV=0.01,
+        energy_reference="below_conduction_band",
+        characteristic_energy_eV=0.10,
+        band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+    )
+    assert quad.energies_eV.shape == (7,)
+    assert not quad.energies_eV.flags.writeable
+    # SCAPS 7-midpoint Gaussian sum over [-3 E_char, +3 E_char]:
+    mid_u = 0.5 * (np.linspace(-3.0, 3.0, 8)[:-1] + np.linspace(-3.0, 3.0, 8)[1:])
+    expected_w_sum = float(np.sum((6.0 / 7.0) / math.sqrt(math.pi) * np.exp(-mid_u * mid_u)))
+    assert float(np.sum(quad.weights)) == pytest.approx(expected_w_sum, rel=1e-14)
+    ni_sq_left = 1.0e25 * 1.0e25 * math.exp(-1.53 / vt)
+    ni_sq_right = 8.0e25 * 8.0e25 * math.exp(-1.90 / vt)
+    np.testing.assert_allclose(quad.n1_left_m3 * quad.p1_left_m3, ni_sq_left, rtol=1e-13)
+    np.testing.assert_allclose(quad.n1_right_m3 * quad.p1_right_m3, ni_sq_right, rtol=1e-13)
+
+    # Exact thermal equilibrium across all 7 levels simultaneously at common Fermi level E_F:
+    e_fermi = -4.35
+    n_eq_l = 1.0e25 * math.exp((e_fermi - (-3.94)) / vt)
+    p_eq_l = 1.0e25 * math.exp(((-3.94 - 1.53) - e_fermi) / vt)
+    n_eq_r = 8.0e25 * math.exp((e_fermi - (-4.09)) / vt)
+    p_eq_r = 8.0e25 * math.exp(((-4.09 - 1.90) - e_fermi) / vt)
+    eq_probe = evaluate_distributed_shared_interface_trap(
+        n_eq_l,
+        p_eq_l,
+        n_eq_r,
+        p_eq_r,
+        v_n_left_m_s=15.0,
+        v_p_left_m_s=35.0,
+        v_n_right_m_s=25.0,
+        v_p_right_m_s=45.0,
+        quadrature=quad,
+    )
+    eq_eval = evaluate_distributed_shared_interface_trap(
+        n_eq_l,
+        p_eq_l,
+        n_eq_r,
+        p_eq_r,
+        v_n_left_m_s=15.0,
+        v_p_left_m_s=35.0,
+        v_n_right_m_s=25.0,
+        v_p_right_m_s=45.0,
+        quadrature=quad,
+        areal_density_m2=1.0e14,
+        equilibrium_occupancy=eq_probe.occupancy,
+    )
+    one_way_scale = max(25.0 * n_eq_r, 45.0 * p_eq_r, 15.0 * n_eq_l, 35.0 * p_eq_l)
+    np.testing.assert_allclose(eq_eval.capture_rates_m2_s, 0.0, atol=1e-13 * one_way_scale)
+    assert eq_eval.incremental_sheet_charge_C_m2 == 0.0
+
+    # Non-equilibrium trial state: Kirchhoff capture sum + central FD Jacobians
+    dens = np.array([2.4e20, 9.1e18, 7.3e21, 1.8e17], dtype=np.float64)
+    nt = 2.5e14
+    f_ref = 0.31
+    base = evaluate_distributed_shared_interface_trap(
+        float(dens[0]),
+        float(dens[1]),
+        float(dens[2]),
+        float(dens[3]),
+        v_n_left_m_s=12.0,
+        v_p_left_m_s=28.0,
+        v_n_right_m_s=19.0,
+        v_p_right_m_s=33.0,
+        quadrature=quad,
+        areal_density_m2=nt,
+        equilibrium_occupancy=f_ref,
+    )
+    assert 0.0 < base.occupancy < 1.0
+    np.testing.assert_allclose(
+        base.capture_rates_m2_s[0] + base.capture_rates_m2_s[2],
+        base.capture_rates_m2_s[1] + base.capture_rates_m2_s[3],
+        rtol=1e-11,
+    )
+    fd_occ = np.zeros(4)
+    fd_cap = np.zeros((4, 4))
+    fd_sig = np.zeros(4)
+    for j in range(4):
+        h = 1.0e-4 * float(dens[j])
+        dp = dens.copy()
+        dm = dens.copy()
+        dp[j] += h
+        dm[j] -= h
+        ep = evaluate_distributed_shared_interface_trap(
+            float(dp[0]),
+            float(dp[1]),
+            float(dp[2]),
+            float(dp[3]),
+            v_n_left_m_s=12.0,
+            v_p_left_m_s=28.0,
+            v_n_right_m_s=19.0,
+            v_p_right_m_s=33.0,
+            quadrature=quad,
+            areal_density_m2=nt,
+            equilibrium_occupancy=f_ref,
+        )
+        em = evaluate_distributed_shared_interface_trap(
+            float(dm[0]),
+            float(dm[1]),
+            float(dm[2]),
+            float(dm[3]),
+            v_n_left_m_s=12.0,
+            v_p_left_m_s=28.0,
+            v_n_right_m_s=19.0,
+            v_p_right_m_s=33.0,
+            quadrature=quad,
+            areal_density_m2=nt,
+            equilibrium_occupancy=f_ref,
+        )
+        fd_occ[j] = (ep.occupancy - em.occupancy) / (2.0 * h)
+        fd_cap[:, j] = (ep.capture_rates_m2_s - em.capture_rates_m2_s) / (2.0 * h)
+        fd_sig[j] = (
+            ep.incremental_sheet_charge_C_m2 - em.incremental_sheet_charge_C_m2
+        ) / (2.0 * h)
+    np.testing.assert_allclose(base.d_occupancy_d_densities_m3, fd_occ, rtol=5e-6)
+    np.testing.assert_allclose(
+        base.d_capture_d_densities_m_s, fd_cap, rtol=5e-6, atol=1e-7
+    )
+    np.testing.assert_allclose(base.d_sheet_charge_d_densities_C_m, fd_sig, rtol=5e-6)
+
+    # E_char -> 0^+ limit matches single-level shared trap evaluation!
+    narrow = build_scaps_gaussian_interface_quadrature(
+        left_role="absorber",
+        right_role="etl",
+        left_chi_phys_eV=3.94,
+        left_Eg_phys_eV=1.53,
+        left_Nc_m3=1.0e25,
+        left_Nv_m3=1.0e25,
+        right_chi_phys_eV=4.09,
+        right_Eg_phys_eV=1.90,
+        right_Nc_m3=8.0e25,
+        right_Nv_m3=8.0e25,
+        thermal_voltage_V=vt,
+        trap_depth_eV=0.60,
+        energy_reference="below_conduction_band",
+        characteristic_energy_eV=1.0e-7,
+        band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+    )
+    single_refs = resolve_interface_defect_references(
+        left_role="absorber",
+        right_role="etl",
+        left_chi_phys_eV=3.94,
+        left_Eg_phys_eV=1.53,
+        left_Nc_m3=1.0e25,
+        left_Nv_m3=1.0e25,
+        right_chi_phys_eV=4.09,
+        right_Eg_phys_eV=1.90,
+        right_Nc_m3=8.0e25,
+        right_Nv_m3=8.0e25,
+        thermal_voltage_V=vt,
+        trap_depth_eV=0.60,
+        energy_reference="below_conduction_band",
+        band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+    )
+    ev_narrow = evaluate_distributed_shared_interface_trap(
+        float(dens[0]),
+        float(dens[1]),
+        float(dens[2]),
+        float(dens[3]),
+        v_n_left_m_s=12.0,
+        v_p_left_m_s=28.0,
+        v_n_right_m_s=19.0,
+        v_p_right_m_s=33.0,
+        quadrature=narrow,
+    )
+    ev_single = evaluate_shared_interface_trap(
+        float(dens[0]),
+        float(dens[1]),
+        float(dens[2]),
+        float(dens[3]),
+        v_n_left_m_s=12.0,
+        v_p_left_m_s=28.0,
+        v_n_right_m_s=19.0,
+        v_p_right_m_s=33.0,
+        n1_left_m3=single_refs.n1_left_m3,
+        p1_left_m3=single_refs.p1_left_m3,
+        n1_right_m3=single_refs.n1_right_m3,
+        p1_right_m3=single_refs.p1_right_m3,
+    )
+    assert ev_narrow.occupancy == pytest.approx(ev_single.occupancy, rel=1e-5)
+    np.testing.assert_allclose(
+        ev_narrow.capture_rates_m2_s, ev_single.capture_rates_m2_s, rtol=2.5e-5
+    )
+
+    with pytest.raises(ValueError, match="positive sum"):
+        InterfaceTrapQuadrature(
+            energies_eV=np.array([-4.5]),
+            weights=np.array([0.0]),
+            n1_left_m3=np.array([1.0e15]),
+            p1_left_m3=np.array([1.0e15]),
+            n1_right_m3=np.array([1.0e15]),
+            p1_right_m3=np.array([1.0e15]),
+        )

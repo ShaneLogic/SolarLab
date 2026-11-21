@@ -130,10 +130,16 @@ from solarlab.physics.recombination.explicit_neutral import (
 )
 from solarlab.physics.recombination.interface import (
     INTERFACE_BAND_REFERENCE_MODES,
+    INTERFACE_DEFECT_DISTRIBUTION_MODES,
     InterfaceBandReferenceMode,
+    InterfaceDefectDistributionMode,
     InterfaceDefectSpec,
+    InterfaceTrapQuadrature,
     REFERENCE_LAYER_BAND_ANCHOR,
+    SCAPS_GAUSSIAN_INTERFACE_QUADRATURE,
+    SINGLE_LEVEL_INTERFACE_DEFECT,
     build_plane_closure_params,
+    build_scaps_gaussian_interface_quadrature,
     resolve_interface_defect_references,
 )
 from solarlab.physics.recombination.reaction import (
@@ -462,6 +468,7 @@ def _bind_interfaces_1d(
     combination_mode: ThermionicCombinationMode | None = None,
     band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
     interface_band_reference_mode: InterfaceBandReferenceMode = REFERENCE_LAYER_BAND_ANCHOR,
+    interface_defect_distribution_mode: InterfaceDefectDistributionMode = SINGLE_LEVEL_INTERFACE_DEFECT,
 ) -> CompiledInterfaceModel1D | None:
     iface_count = len(layers) - 1
     charge_closure = str(settings["interface_charge_closure"])
@@ -495,6 +502,10 @@ def _bind_interfaces_1d(
     temp = binding.temperature_K
 
     if topology == "deduplicated":
+        if interface_defect_distribution_mode != SINGLE_LEVEL_INTERFACE_DEFECT:
+            raise ValueError(
+                f"interface_defect_distribution_mode={interface_defect_distribution_mode!r} requires two_sided_trace topology"
+            )
         if charge_closure != "off":
             raise CapabilityError(
                 "unsupported_classical_1d_dc: settings.interface_charge_closure requires two_sided_trace topology"
@@ -820,6 +831,7 @@ def _bind_interfaces_1d(
         defect = entry.get("defect")
         raw_vn = entry.get("v_n")
         raw_vp = entry.get("v_p")
+        trap_quadrature: InterfaceTrapQuadrature | None = None
         if defect is None:
             vn = 0.0 if raw_vn is None else float(raw_vn)
             vp = 0.0 if raw_vp is None else float(raw_vp)
@@ -882,6 +894,31 @@ def _bind_interfaces_1d(
             n1_l, p1_l = refs.n1_left_m3, refs.p1_left_m3
             n1_r, p1_r = refs.n1_right_m3, refs.p1_right_m3
             trap_density_m2 = d_spec.areal_density_m2
+            if interface_defect_distribution_mode == SCAPS_GAUSSIAN_INTERFACE_QUADRATURE:
+                partner_meta = defect.get("partner_metadata")
+                if (
+                    isinstance(partner_meta, Mapping)
+                    and partner_meta.get("distribution") == "gaussian"
+                    and partner_meta.get("E_char_eV") is not None
+                    and float(partner_meta["E_char_eV"]) > 0.0
+                ):
+                    trap_quadrature = build_scaps_gaussian_interface_quadrature(
+                        left_role=layers[k].role,
+                        right_role=layers[k + 1].role,
+                        left_chi_phys_eV=float(bands.physical_electron_affinity_eV[l_node]),
+                        left_Eg_phys_eV=float(bands.physical_band_gap_eV[l_node]),
+                        left_Nc_m3=float(binding.conduction_dos_m3[l_node]),
+                        left_Nv_m3=float(binding.valence_dos_m3[l_node]),
+                        right_chi_phys_eV=float(bands.physical_electron_affinity_eV[r_node]),
+                        right_Eg_phys_eV=float(bands.physical_band_gap_eV[r_node]),
+                        right_Nc_m3=float(binding.conduction_dos_m3[r_node]),
+                        right_Nv_m3=float(binding.valence_dos_m3[r_node]),
+                        thermal_voltage_V=vt,
+                        trap_depth_eV=d_spec.trap_depth_eV,
+                        energy_reference=d_spec.energy_reference,
+                        characteristic_energy_eV=float(partner_meta["E_char_eV"]),
+                        band_reference_mode=interface_band_reference_mode,
+                    )
 
         trace_elec = TraceElectrostatics.from_plane(
             plane,
@@ -934,6 +971,7 @@ def _bind_interfaces_1d(
             a_star_p_right_A_m2_K2=(
                 None if thermionic_mode == LEGACY_UNNORMALIZED_THERMIONIC_V1 else a_p_r
             ),
+            trap_quadrature=trap_quadrature,
         )
         provisional_specs.append((k, face, l_node, r_node, trace_elec, phys, trap_density_m2))
 
@@ -1076,6 +1114,23 @@ def _bind_interfaces_1d(
         ]
     if interface_band_reference_mode != REFERENCE_LAYER_BAND_ANCHOR:
         manifest_ts["interface_band_reference_mode"] = interface_band_reference_mode
+    if interface_defect_distribution_mode != SINGLE_LEVEL_INTERFACE_DEFECT:
+        manifest_ts["interface_defect_distribution_mode"] = (
+            interface_defect_distribution_mode
+        )
+        manifest_ts["two_sided_trap_quadrature"] = [
+            None
+            if s.physics.trap_quadrature is None
+            else [
+                s.physics.trap_quadrature.energies_eV.tolist(),
+                s.physics.trap_quadrature.weights.tolist(),
+                s.physics.trap_quadrature.n1_left_m3.tolist(),
+                s.physics.trap_quadrature.p1_left_m3.tolist(),
+                s.physics.trap_quadrature.n1_right_m3.tolist(),
+                s.physics.trap_quadrature.p1_right_m3.tolist(),
+            ]
+            for s in two_sided_specs
+        ]
     iface_sha = hashlib.sha256(
         json.dumps(manifest_ts, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
@@ -1521,6 +1576,7 @@ def compile_device_1d(
     thermionic_mode: ThermionicModelVersion | None = None,
     combination_mode: ThermionicCombinationMode | None = None,
     interface_band_reference_mode: InterfaceBandReferenceMode = REFERENCE_LAYER_BAND_ANCHOR,
+    interface_defect_distribution_mode: InterfaceDefectDistributionMode = SINGLE_LEVEL_INTERFACE_DEFECT,
     allow_legacy_benchmark_deck: bool = False,
 ) -> CompiledDevice1D:
     """Cold compile genuine resolved configuration; no legacy/test execution.
@@ -1555,6 +1611,10 @@ def compile_device_1d(
     if interface_band_reference_mode not in INTERFACE_BAND_REFERENCE_MODES:
         raise ValueError(
             f"unknown interface_band_reference_mode {interface_band_reference_mode!r}"
+        )
+    if interface_defect_distribution_mode not in INTERFACE_DEFECT_DISTRIBUTION_MODES:
+        raise ValueError(
+            f"unknown interface_defect_distribution_mode {interface_defect_distribution_mode!r}"
         )
     resolved_thermionic: ThermionicModelVersion = (
         LEGACY_UNNORMALIZED_THERMIONIC_V1 if thermionic_mode is None else thermionic_mode
@@ -1601,6 +1661,13 @@ def compile_device_1d(
     )
     if resolved_topology == "two_sided_trace" and len(layers) < 2:
         raise CapabilityError("unsupported_classical_1d_dc: two_sided_trace requires at least two electrical layers")
+    if (
+        interface_defect_distribution_mode != SINGLE_LEVEL_INTERFACE_DEFECT
+        and resolved_topology != "two_sided_trace"
+    ):
+        raise ValueError(
+            f"interface_defect_distribution_mode={interface_defect_distribution_mode!r} requires two_sided_trace topology"
+        )
     if geometry_name is not None:
         if resolved_topology == "deduplicated" and geometry_name in (
             TWO_SIDED_TRACE_V1,
@@ -1910,6 +1977,7 @@ def compile_device_1d(
         combination_mode=combination_mode,
         band_step_mode=band_step_mode,
         interface_band_reference_mode=interface_band_reference_mode,
+        interface_defect_distribution_mode=interface_defect_distribution_mode,
     )
 
     extra_id = None if additional_recombination is None else additional_recombination.model_id

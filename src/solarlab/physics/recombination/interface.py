@@ -37,24 +37,34 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
+from solarlab.physics.recombination._validation import frozen_float_array
 
 __all__ = [
     "CrossCarrierCellPairEvaluation",
     "INTERFACE_BAND_REFERENCE_MODES",
+    "INTERFACE_DEFECT_DISTRIBUTION_MODES",
     "InterfaceBandReferenceMode",
+    "InterfaceDefectDistributionMode",
     "InterfaceDefectReferences",
     "InterfaceDefectSpec",
     "InterfaceSRHRate",
+    "InterfaceTrapQuadrature",
     "PlaneClosureParams",
     "PlaneClosureResult",
     "REFERENCE_LAYER_BAND_ANCHOR",
+    "SCAPS_DEFAULT_GAUSSIAN_LEVELS",
+    "SCAPS_DEFAULT_GAUSSIAN_WIDTH_ECHAR",
+    "SCAPS_GAUSSIAN_INTERFACE_QUADRATURE",
     "SCAPS_INTERFACE_EXTREMA_ANCHOR",
+    "SINGLE_LEVEL_INTERFACE_DEFECT",
     "S_SUPPLY_M_S",
     "SharedInterfaceTrapEvaluation",
     "TwoDimensionalInterfaceSRHMode",
     "build_plane_closure_params",
+    "build_scaps_gaussian_interface_quadrature",
     "equilibrium_referenced_sheet_charge",
     "evaluate_cross_carrier_cell_pair_srh",
+    "evaluate_distributed_shared_interface_trap",
     "evaluate_shared_interface_trap",
     "interface_srh_rate",
     "resolve_interface_defect_references",
@@ -83,6 +93,19 @@ INTERFACE_BAND_REFERENCE_MODES: tuple[InterfaceBandReferenceMode, ...] = (
     REFERENCE_LAYER_BAND_ANCHOR,
     SCAPS_INTERFACE_EXTREMA_ANCHOR,
 )
+InterfaceDefectDistributionMode: TypeAlias = Literal[
+    "single_level", "scaps_gaussian_quadrature"
+]
+SINGLE_LEVEL_INTERFACE_DEFECT: InterfaceDefectDistributionMode = "single_level"
+SCAPS_GAUSSIAN_INTERFACE_QUADRATURE: InterfaceDefectDistributionMode = (
+    "scaps_gaussian_quadrature"
+)
+INTERFACE_DEFECT_DISTRIBUTION_MODES: tuple[InterfaceDefectDistributionMode, ...] = (
+    SINGLE_LEVEL_INTERFACE_DEFECT,
+    SCAPS_GAUSSIAN_INTERFACE_QUADRATURE,
+)
+SCAPS_DEFAULT_GAUSSIAN_WIDTH_ECHAR: float = 6.0
+SCAPS_DEFAULT_GAUSSIAN_LEVELS: int = 7
 
 
 def _finite_real(value: float, name: str) -> float:
@@ -542,6 +565,323 @@ def evaluate_shared_interface_trap(
         d_occupancy_d_densities_m3=df_d,
         capture_rates_m2_s=capture,
         d_capture_d_densities_m_s=d_cap,
+        incremental_sheet_charge_C_m2=sheet,
+        d_sheet_charge_d_densities_C_m=d_sheet,
+    )
+
+
+@dataclass(frozen=True)
+class InterfaceTrapQuadrature:
+    """Energy-resolved discrete sub-levels for one two-sided heterointerface defect.
+
+    ``energies_eV`` are physical defect energies relative to vacuum
+    (``E_c = -chi_phys``, ``E_v = -chi_phys - Eg_phys``). ``weights`` are
+    fractional sub-level areal densities ``N_{t,m} / N_t >= 0`` with positive sum.
+    """
+
+    energies_eV: RealArray
+    weights: RealArray
+    n1_left_m3: RealArray
+    p1_left_m3: RealArray
+    n1_right_m3: RealArray
+    p1_right_m3: RealArray
+
+    def __post_init__(self) -> None:
+        energies = frozen_float_array(self.energies_eV, name="energies_eV")
+        weights = frozen_float_array(self.weights, name="weights")
+        n1_l = frozen_float_array(self.n1_left_m3, name="n1_left_m3")
+        p1_l = frozen_float_array(self.p1_left_m3, name="p1_left_m3")
+        n1_r = frozen_float_array(self.n1_right_m3, name="n1_right_m3")
+        p1_r = frozen_float_array(self.p1_right_m3, name="p1_right_m3")
+        if energies.ndim != 1 or energies.size < 1:
+            raise ValueError(
+                "InterfaceTrapQuadrature requires 1D arrays with at least one level"
+            )
+        for name, arr in (
+            ("energies_eV", energies),
+            ("weights", weights),
+            ("n1_left_m3", n1_l),
+            ("p1_left_m3", p1_l),
+            ("n1_right_m3", n1_r),
+            ("p1_right_m3", p1_r),
+        ):
+            if arr.shape != energies.shape or not np.all(np.isfinite(arr)):
+                raise ValueError(f"{name} must be finite with shape {energies.shape}")
+        for name, arr in (
+            ("weights", weights),
+            ("n1_left_m3", n1_l),
+            ("p1_left_m3", p1_l),
+            ("n1_right_m3", n1_r),
+            ("p1_right_m3", p1_r),
+        ):
+            if np.any(arr < 0.0):
+                raise ValueError(f"{name} must be non-negative")
+        if float(np.sum(weights)) <= 0.0:
+            raise ValueError("weights must have a positive sum")
+        object.__setattr__(self, "energies_eV", energies)
+        object.__setattr__(self, "weights", weights)
+        object.__setattr__(self, "n1_left_m3", n1_l)
+        object.__setattr__(self, "p1_left_m3", p1_l)
+        object.__setattr__(self, "n1_right_m3", n1_r)
+        object.__setattr__(self, "p1_right_m3", p1_r)
+
+
+def build_scaps_gaussian_interface_quadrature(
+    *,
+    left_role: str,
+    right_role: str,
+    left_chi_phys_eV: float,
+    left_Eg_phys_eV: float,
+    left_Nc_m3: float,
+    left_Nv_m3: float,
+    right_chi_phys_eV: float,
+    right_Eg_phys_eV: float,
+    right_Nc_m3: float,
+    right_Nv_m3: float,
+    thermal_voltage_V: float,
+    trap_depth_eV: float,
+    energy_reference: EnergyReference,
+    characteristic_energy_eV: float,
+    band_reference_mode: InterfaceBandReferenceMode = SCAPS_INTERFACE_EXTREMA_ANCHOR,
+    width_in_echar: float = SCAPS_DEFAULT_GAUSSIAN_WIDTH_ECHAR,
+    num_levels: int = SCAPS_DEFAULT_GAUSSIAN_LEVELS,
+) -> InterfaceTrapQuadrature:
+    """Build SCAPS-1D uniform midpoint Gaussian interface defect quadrature.
+
+    Follows SCAPS-1D's Gaussian defect specification (SCAPS Manual Table 3.2,
+    Table 5.1, and Ch. 5 numerical panel): peak density
+    ``N_peak = N_t / (sqrt(pi) * E_char)`` discretized into ``num_levels`` (default 7)
+    equal sub-intervals across the unclipped window
+    ``[E_0 - 0.5 * w_G * E_char, E_0 + 0.5 * w_G * E_char]`` with ``w_G = 6.0``.
+    """
+    vt = _finite_positive(thermal_voltage_V, "thermal_voltage_V")
+    depth = _finite_nonnegative(trap_depth_eV, "trap_depth_eV")
+    e_char = _finite_positive(characteristic_energy_eV, "characteristic_energy_eV")
+    w_g = _finite_positive(width_in_echar, "width_in_echar")
+    if type(num_levels) is not int or num_levels < 1:
+        raise ValueError("num_levels must be an integer >= 1")
+    left_eg = _finite_positive(left_Eg_phys_eV, "left_Eg_phys_eV")
+    right_eg = _finite_positive(right_Eg_phys_eV, "right_Eg_phys_eV")
+    left_nc = _finite_positive(left_Nc_m3, "left_Nc_m3")
+    left_nv = _finite_positive(left_Nv_m3, "left_Nv_m3")
+    right_nc = _finite_positive(right_Nc_m3, "right_Nc_m3")
+    right_nv = _finite_positive(right_Nv_m3, "right_Nv_m3")
+    left_chi = float(left_chi_phys_eV)
+    right_chi = float(right_chi_phys_eV)
+    if not (math.isfinite(left_chi) and math.isfinite(right_chi)):
+        raise ValueError("physical electron affinities must be finite")
+    if energy_reference not in ("below_conduction_band", "above_valence_band"):
+        raise ValueError(f"unsupported energy_reference {energy_reference!r}")
+    if band_reference_mode not in INTERFACE_BAND_REFERENCE_MODES:
+        raise ValueError(
+            f"unsupported band_reference_mode {band_reference_mode!r}; "
+            f"expected one of {INTERFACE_BAND_REFERENCE_MODES}"
+        )
+
+    if left_role == "absorber" and right_role != "absorber":
+        ref_side: Literal["left", "right"] = "left"
+    elif right_role == "absorber" and left_role != "absorber":
+        ref_side = "right"
+    elif left_eg <= right_eg:
+        ref_side = "left"
+    else:
+        ref_side = "right"
+
+    ref_chi = left_chi if ref_side == "left" else right_chi
+    ref_eg = left_eg if ref_side == "left" else right_eg
+    if band_reference_mode == SCAPS_INTERFACE_EXTREMA_ANCHOR:
+        if energy_reference == "below_conduction_band":
+            e0 = -max(left_chi, right_chi) - depth
+        else:
+            e0 = -min(left_chi + left_eg, right_chi + right_eg) + depth
+    else:
+        if energy_reference == "below_conduction_band":
+            e0 = -ref_chi - depth
+        else:
+            e0 = -ref_chi - ref_eg + depth
+
+    half_span = 0.5 * w_g * e_char
+    edges: RealArray = np.linspace(
+        e0 - half_span, e0 + half_span, num_levels + 1, dtype=np.float64
+    )
+    energies = 0.5 * (edges[:-1] + edges[1:])
+    d_energy = (2.0 * half_span) / float(num_levels)
+    weights = (d_energy / (math.sqrt(math.pi) * e_char)) * np.exp(
+        -np.square((energies - e0) / e_char)
+    )
+
+    ec_left, ev_left = -left_chi, -left_chi - left_eg
+    ec_right, ev_right = -right_chi, -right_chi - right_eg
+    n1_left = np.array(
+        [_boltzmann_emission_density(left_nc, ec_left - float(e_m), vt) for e_m in energies],
+        dtype=np.float64,
+    )
+    p1_left = np.array(
+        [_boltzmann_emission_density(left_nv, float(e_m) - ev_left, vt) for e_m in energies],
+        dtype=np.float64,
+    )
+    n1_right = np.array(
+        [_boltzmann_emission_density(right_nc, ec_right - float(e_m), vt) for e_m in energies],
+        dtype=np.float64,
+    )
+    p1_right = np.array(
+        [_boltzmann_emission_density(right_nv, float(e_m) - ev_right, vt) for e_m in energies],
+        dtype=np.float64,
+    )
+    return InterfaceTrapQuadrature(
+        energies_eV=energies,
+        weights=weights,
+        n1_left_m3=n1_left,
+        p1_left_m3=p1_left,
+        n1_right_m3=n1_right,
+        p1_right_m3=p1_right,
+    )
+
+
+def evaluate_distributed_shared_interface_trap(
+    n_left_m3: float,
+    p_left_m3: float,
+    n_right_m3: float,
+    p_right_m3: float,
+    *,
+    v_n_left_m_s: float,
+    v_p_left_m_s: float,
+    v_n_right_m_s: float,
+    v_p_right_m_s: float,
+    quadrature: InterfaceTrapQuadrature,
+    areal_density_m2: float = 0.0,
+    equilibrium_occupancy: float | None = None,
+) -> SharedInterfaceTrapEvaluation:
+    """Evaluate an energy-distributed ensemble of independent two-sided interface traps.
+
+    Each discrete level ``m`` has its own Shockley-Read-Hall occupancy ``f_m``
+    and emission densities ``(n_{1,L}^{(m)}, p_{1,L}^{(m)}, n_{1,R}^{(m)}, p_{1,R}^{(m)})``
+    weighted by ``w_m = N_{t,m} / N_t``, preserving ``C_{n,L} + C_{n,R} == C_{p,L} + C_{p,R}``
+    and exact analytical derivatives wrt ``(n_left, p_left, n_right, p_right)``.
+    """
+    if not isinstance(quadrature, InterfaceTrapQuadrature):
+        raise TypeError("quadrature must be an InterfaceTrapQuadrature")
+    n_l = _finite_nonnegative(n_left_m3, "n_left_m3")
+    p_l = _finite_nonnegative(p_left_m3, "p_left_m3")
+    n_r = _finite_nonnegative(n_right_m3, "n_right_m3")
+    p_r = _finite_nonnegative(p_right_m3, "p_right_m3")
+    vn_l = _finite_nonnegative(v_n_left_m_s, "v_n_left_m_s")
+    vp_l = _finite_nonnegative(v_p_left_m_s, "v_p_left_m_s")
+    vn_r = _finite_nonnegative(v_n_right_m_s, "v_n_right_m_s")
+    vp_r = _finite_nonnegative(v_p_right_m_s, "v_p_right_m_s")
+    nt = _finite_nonnegative(areal_density_m2, "areal_density_m2")
+
+    w_arr = quadrature.weights
+    w_sum = float(np.sum(w_arr))
+    n1_l_arr = quadrature.n1_left_m3
+    p1_l_arr = quadrature.p1_left_m3
+    n1_r_arr = quadrature.n1_right_m3
+    p1_r_arr = quadrature.p1_right_m3
+
+    alpha = vn_l * n_l + vn_r * n_r + vp_l * p1_l_arr + vp_r * p1_r_arr
+    beta = vn_l * n1_l_arr + vn_r * n1_r_arr + vp_l * p_l + vp_r * p_r
+    denom = alpha + beta
+    valid = (w_arr > 0.0) & (denom > _DENOM_FLOOR)
+    if not np.any(valid):
+        zero4: RealArray = np.zeros(4, dtype=np.float64)
+        zero44: RealArray = np.zeros((4, 4), dtype=np.float64)
+        sheet_z = (
+            0.0
+            if equilibrium_occupancy is None
+            else equilibrium_referenced_sheet_charge(
+                0.0,
+                areal_density_m2=nt * w_sum,
+                equilibrium_occupancy=equilibrium_occupancy,
+            )
+        )
+        return SharedInterfaceTrapEvaluation(
+            occupancy=0.0,
+            d_occupancy_d_densities_m3=zero4,
+            capture_rates_m2_s=zero4.copy(),
+            d_capture_d_densities_m_s=zero44,
+            incremental_sheet_charge_C_m2=sheet_z,
+            d_sheet_charge_d_densities_C_m=zero4.copy(),
+        )
+
+    w_v = w_arr[valid]
+    a_v = alpha[valid]
+    b_v = beta[valid]
+    d_v = denom[valid]
+    d_sq = d_v * d_v
+    n1_lv = n1_l_arr[valid]
+    p1_lv = p1_l_arr[valid]
+    n1_rv = n1_r_arr[valid]
+    p1_rv = p1_r_arr[valid]
+
+    f_v = a_v / d_v
+    omf_v = b_v / d_v
+    occ_weighted = float(np.dot(w_v, f_v))
+    b_over_dsq = b_v / d_sq
+    a_over_dsq = a_v / d_sq
+    df_m = np.vstack(
+        (
+            vn_l * b_over_dsq,
+            -vp_l * a_over_dsq,
+            vn_r * b_over_dsq,
+            -vp_r * a_over_dsq,
+        )
+    )
+    df_weighted = df_m @ w_v
+
+    # Cancel identical self-emission products (v_{n,s} n_s n_{1,s}, v_{p,s} p_s p_{1,s})
+    # analytically so shallow sub-levels above E_c or below E_v lose zero digits!
+    cross_e = vn_l * vn_r * (n_l * n1_rv - n1_lv * n_r)
+    cross_h = vp_l * vp_r * (p_l * p1_rv - p1_lv * p_r)
+    eh_ll = vn_l * vp_l * (n_l * p_l - n1_lv * p1_lv)
+    eh_lr = vn_l * vp_r * (n_l * p_r - n1_lv * p1_rv)
+    eh_rl = vn_r * vp_l * (n_r * p_l - n1_rv * p1_lv)
+    eh_rr = vn_r * vp_r * (n_r * p_r - n1_rv * p1_rv)
+    w_over_d = w_v / d_v
+    pair_ll = float(np.dot(w_over_d, eh_ll))
+    pair_lr = float(np.dot(w_over_d, eh_lr))
+    pair_rl = float(np.dot(w_over_d, eh_rl))
+    pair_rr = float(np.dot(w_over_d, eh_rr))
+    exch_e = float(np.dot(w_over_d, cross_e))
+    exch_h = float(np.dot(w_over_d, cross_h))
+    cap_tot = np.array(
+        [
+            (pair_ll + pair_lr) + exch_e,
+            (pair_ll + pair_rl) + exch_h,
+            (pair_rl + pair_rr) - exch_e,
+            (pair_lr + pair_rr) - exch_h,
+        ],
+        dtype=np.float64,
+    )
+
+    d_cap_tot: RealArray = np.empty((4, 4), dtype=np.float64)
+    d_cap_tot[0, :] = -vn_l * (df_m @ (w_v * (n_l + n1_lv)))
+    d_cap_tot[0, 0] += vn_l * float(np.dot(w_v, omf_v))
+    d_cap_tot[1, :] = vp_l * (df_m @ (w_v * (p_l + p1_lv)))
+    d_cap_tot[1, 1] += vp_l * occ_weighted
+    d_cap_tot[2, :] = -vn_r * (df_m @ (w_v * (n_r + n1_rv)))
+    d_cap_tot[2, 2] += vn_r * float(np.dot(w_v, omf_v))
+    d_cap_tot[3, :] = vp_r * (df_m @ (w_v * (p_r + p1_rv)))
+    d_cap_tot[3, 3] += vp_r * occ_weighted
+
+    occupancy = min(1.0, max(0.0, occ_weighted / w_sum))
+    df_d = df_weighted / w_sum
+    if equilibrium_occupancy is None:
+        sheet = 0.0
+        d_sheet: RealArray = np.zeros(4, dtype=np.float64)
+    else:
+        nt_eff = nt * w_sum
+        sheet = equilibrium_referenced_sheet_charge(
+            occupancy,
+            areal_density_m2=nt_eff,
+            equilibrium_occupancy=equilibrium_occupancy,
+        )
+        d_sheet = -Q * nt_eff * df_d
+
+    return SharedInterfaceTrapEvaluation(
+        occupancy=occupancy,
+        d_occupancy_d_densities_m3=df_d,
+        capture_rates_m2_s=cap_tot,
+        d_capture_d_densities_m_s=d_cap_tot,
         incremental_sheet_charge_C_m2=sheet,
         d_sheet_charge_d_densities_C_m=d_sheet,
     )

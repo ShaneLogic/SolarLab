@@ -450,3 +450,85 @@ def test_p09_candidate_driver_in_process_and_isolated_cli(
         scaps_by_id["scaps_base"]["candidate_metrics"]["PCE_percent"]
         - scaps_by_id["scaps_base"]["reference_metrics"]["PCE_percent"]
     ) < 0.5
+
+
+def test_compile_device_1d_scaps_gaussian_quadrature_default_invariance() -> None:
+    from solarlab.physics.recombination import (
+        SCAPS_GAUSSIAN_INTERFACE_QUADRATURE,
+        SCAPS_INTERFACE_EXTREMA_ANCHOR,
+        SINGLE_LEVEL_INTERFACE_DEFECT,
+    )
+
+    defaults, resources = _catalog_and_resources()
+    scaps_src = next(
+        doc for doc in load_packaged_preset_sources() if doc.id == "scaps_mirror_v2.yaml"
+    )
+    scaps_in = import_scaps_device(
+        scaps_src, id="scaps_mirror_v2", defaults=defaults
+    ).validated_update({"spectrum": "am15g"})
+    scaps_prep = resolve_device(scaps_in, defaults, resources, sources=(scaps_src,))
+
+    comp_default = compile_device_1d(
+        scaps_prep,
+        intervals_per_layer=10,
+        interface_topology="two_sided_trace",
+        geometry_name=PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+        thermionic_mode=SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
+        interface_band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+        allow_legacy_benchmark_deck=True,
+    )
+    comp_explicit_single = compile_device_1d(
+        scaps_prep,
+        intervals_per_layer=10,
+        interface_topology="two_sided_trace",
+        geometry_name=PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+        thermionic_mode=SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
+        interface_band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+        interface_defect_distribution_mode=SINGLE_LEVEL_INTERFACE_DEFECT,
+        allow_legacy_benchmark_deck=True,
+    )
+    assert comp_default.identity == comp_explicit_single.identity
+    assert comp_default.interface_model is not None
+    assert comp_explicit_single.interface_model is not None
+    assert (
+        comp_default.interface_model.identity_sha256
+        == comp_explicit_single.interface_model.identity_sha256
+    )
+    assert all(
+        spec.physics.trap_quadrature is None
+        for spec in comp_default.interface_model.two_sided
+    )
+
+    comp_gauss = compile_device_1d(
+        scaps_prep,
+        intervals_per_layer=10,
+        interface_topology="two_sided_trace",
+        geometry_name=PHYSICAL_BOUNDARY_TWO_SIDED_V1,
+        thermionic_mode=SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
+        interface_band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+        interface_defect_distribution_mode=SCAPS_GAUSSIAN_INTERFACE_QUADRATURE,
+        allow_legacy_benchmark_deck=True,
+    )
+    assert comp_gauss.identity != comp_default.identity
+    assert comp_gauss.interface_model is not None
+    assert (
+        comp_gauss.interface_model.identity_sha256
+        != comp_default.interface_model.identity_sha256
+    )
+    assert len(comp_gauss.interface_model.two_sided) == 2
+    # HTL/PVK is single-level in scaps_mirror_v2.yaml; PVK/ETL is 7-level Gaussian!
+    assert comp_gauss.interface_model.two_sided[0].physics.trap_quadrature is None
+    assert comp_gauss.interface_model.two_sided[1].physics.trap_quadrature is not None
+    assert (
+        comp_gauss.interface_model.two_sided[1].physics.trap_quadrature.energies_eV.shape
+        == (7,)
+    )
+
+    with pytest.raises(ValueError, match="requires two_sided_trace"):
+        compile_device_1d(
+            scaps_prep,
+            intervals_per_layer=10,
+            interface_topology="deduplicated",
+            interface_defect_distribution_mode=SCAPS_GAUSSIAN_INTERFACE_QUADRATURE,
+            allow_legacy_benchmark_deck=True,
+        )

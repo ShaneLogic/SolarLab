@@ -42,7 +42,9 @@ from solarlab.physics.interface_transport.thermionic import (
     reciprocal_thermionic_flux_m2_s,
 )
 from solarlab.physics.recombination.interface import (
+    InterfaceTrapQuadrature,
     SharedInterfaceTrapEvaluation,
+    evaluate_distributed_shared_interface_trap,
     evaluate_shared_interface_trap,
 )
 
@@ -149,6 +151,7 @@ class TwoSidedInterfacePhysics:
     a_star_n_right_A_m2_K2: float | None = None
     a_star_p_left_A_m2_K2: float | None = None
     a_star_p_right_A_m2_K2: float | None = None
+    trap_quadrature: InterfaceTrapQuadrature | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -198,6 +201,12 @@ class TwoSidedInterfacePhysics:
             opt_val = getattr(self, opt_name)
             if opt_val is not None:
                 _positive(opt_val, opt_name)
+        if self.trap_quadrature is not None and not isinstance(
+            self.trap_quadrature, InterfaceTrapQuadrature
+        ):
+            raise TypeError(
+                "trap_quadrature must be an InterfaceTrapQuadrature or None"
+            )
 
 
 @dataclass(frozen=True)
@@ -663,6 +672,20 @@ def _evaluate_trap_for_two_sided(
         if charge is not None:
             raise ValueError("charged two-sided interface requires positive capture velocity")
         return None
+    if physics.trap_quadrature is not None:
+        return evaluate_distributed_shared_interface_trap(
+            float(state_m3[_N_LEFT]),
+            float(state_m3[_P_LEFT]),
+            float(state_m3[_N_RIGHT]),
+            float(state_m3[_P_RIGHT]),
+            v_n_left_m_s=vn,
+            v_p_left_m_s=vp,
+            v_n_right_m_s=vn,
+            v_p_right_m_s=vp,
+            quadrature=physics.trap_quadrature,
+            areal_density_m2=0.0 if charge is None else charge.trap_density_m2,
+            equilibrium_occupancy=None if charge is None else charge.equilibrium_occupancy,
+        )
     return evaluate_shared_interface_trap(
         float(state_m3[_N_LEFT]),
         float(state_m3[_P_LEFT]),

@@ -677,3 +677,142 @@ def test_charged_two_sided_qss_gauss_jump_equilibrium_and_fd_jacobians() -> None
         )
     np.testing.assert_allclose(charged.sheet_charge_jacobian_bulk, fd_sigma, rtol=1e-6, atol=1e-12)
     np.testing.assert_allclose(charged.occupancy_jacobian_bulk, fd_occ, rtol=1e-6, atol=1e-10)
+
+
+def test_two_sided_qss_with_distributed_gaussian_trap_and_fd_jacobians() -> None:
+    from solarlab.physics.interface_transport import SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1
+    from solarlab.physics.recombination import (
+        SCAPS_INTERFACE_EXTREMA_ANCHOR,
+        build_scaps_gaussian_interface_quadrature,
+    )
+
+    temp = 300.0
+    vt = thermal_voltage(temp)
+    geom = TraceElectrostatics(
+        eps_r_left=30.0,
+        eps_r_right=9.0,
+        left_distance_m=2.0e-9,
+        right_distance_m=1.5e-9,
+    )
+    quad = build_scaps_gaussian_interface_quadrature(
+        left_role="absorber",
+        right_role="etl",
+        left_chi_phys_eV=3.94,
+        left_Eg_phys_eV=1.53,
+        left_Nc_m3=1.0e25,
+        left_Nv_m3=1.0e25,
+        right_chi_phys_eV=4.09,
+        right_Eg_phys_eV=1.90,
+        right_Nc_m3=8.0e25,
+        right_Nv_m3=8.0e25,
+        thermal_voltage_V=vt,
+        trap_depth_eV=0.05,
+        energy_reference="below_conduction_band",
+        characteristic_energy_eV=0.10,
+        band_reference_mode=SCAPS_INTERFACE_EXTREMA_ANCHOR,
+    )
+    phys = TwoSidedInterfacePhysics(
+        thermal_voltage_V=vt,
+        temperature_K=temp,
+        D_n_left_m2_s=5.0e-5,
+        D_n_right_m2_s=1.0e-5,
+        D_p_left_m2_s=5.0e-5,
+        D_p_right_m2_s=1.0e-5,
+        N_C_left_m3=1.0e25,
+        N_C_right_m3=8.0e25,
+        N_V_left_m3=1.0e25,
+        N_V_right_m3=8.0e25,
+        richardson_n_A_m2_K2=2.0e5,
+        richardson_p_A_m2_K2=2.0e5,
+        conduction_band_step_eV=3.94 - 4.09,
+        hole_transport_step_eV=(4.09 + 1.90) - (3.94 + 1.53),
+        surface_recombination_velocity_n_m_s=10.0,
+        surface_recombination_velocity_p_m_s=10.0,
+        thermionic_mode=SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
+        carrier_statistics="maxwell_boltzmann",
+        a_star_n_left_A_m2_K2=2.5e5,
+        a_star_n_right_A_m2_K2=5.0e5,
+        a_star_p_left_A_m2_K2=2.5e5,
+        a_star_p_right_A_m2_K2=5.0e5,
+        trap_quadrature=quad,
+    )
+
+    # Exact Boltzmann dark equilibrium across electrostatic drop phi_R - phi_L:
+    phi_l, phi_r = 0.05, 0.22
+    e_fermi = -4.30
+    eq_bulk = TwoSidedBulkState(
+        phi_left_V=phi_l,
+        phi_right_V=phi_r,
+        n_left_m3=1.0e25 * math.exp((e_fermi + phi_l + 3.94) / vt),
+        p_left_m3=1.0e25 * math.exp(-(e_fermi + phi_l + 3.94 + 1.53) / vt),
+        n_right_m3=8.0e25 * math.exp((e_fermi + phi_r + 4.09) / vt),
+        p_right_m3=8.0e25 * math.exp(-(e_fermi + phi_r + 4.09 + 1.90) / vt),
+        electron_electrochemical_step=0.0,
+        hole_electrochemical_step=0.0,
+    )
+    eq_qss = solve_two_sided_interface_qss(geom, phys, eq_bulk)
+    assert eq_qss.converged
+    assert eq_qss.occupancy is not None
+    one_way = 10.0 * max(
+        eq_bulk.n_left_m3, eq_bulk.p_left_m3, eq_bulk.n_right_m3, eq_bulk.p_right_m3
+    )
+    np.testing.assert_allclose(eq_qss.bulk_flux_m2_s, 0.0, atol=1.0e-13 * one_way)
+    np.testing.assert_allclose(eq_qss.capture_flux_m2_s, 0.0, atol=1.0e-13 * one_way)
+
+    charge_spec = EquilibriumReferencedSheetCharge(
+        trap_density_m2=2.0e14,
+        equilibrium_occupancy=eq_qss.occupancy,
+    )
+    eq_charged = solve_charged_two_sided_interface_qss(geom, phys, eq_bulk, charge_spec)
+    assert eq_charged.converged
+    assert eq_charged.incremental_sheet_charge_C_m2 == pytest.approx(0.0, abs=1.0e-15)
+
+    # Biased non-equilibrium state: check both uncharged and charged IFT Jacobians vs FD
+    coords = np.array(
+        [0.18, 0.26, math.log(3.5e19), math.log(1.4e20), math.log(6.2e20), math.log(2.5e16)],
+        dtype=np.float64,
+    )
+
+    def _bulk(c: np.ndarray) -> TwoSidedBulkState:
+        return TwoSidedBulkState(
+            phi_left_V=float(c[0]),
+            phi_right_V=float(c[1]),
+            n_left_m3=math.exp(float(c[2])),
+            p_left_m3=math.exp(float(c[3])),
+            n_right_m3=math.exp(float(c[4])),
+            p_right_m3=math.exp(float(c[5])),
+        )
+
+    res_u = solve_two_sided_interface_qss(geom, phys, _bulk(coords))
+    res_c = solve_charged_two_sided_interface_qss(geom, phys, _bulk(coords), charge_spec)
+    assert res_u.converged and res_c.converged
+
+    fd_u = np.zeros((4, 6))
+    fd_c = np.zeros((4, 6))
+    fd_sig = np.zeros(6)
+    for j in range(6):
+        h = 1.0e-4 if j >= 2 else 1.0e-5
+        cp = coords.copy()
+        cm = coords.copy()
+        cp[j] += h
+        cm[j] -= h
+        up = solve_two_sided_interface_qss(geom, phys, _bulk(cp))
+        um = solve_two_sided_interface_qss(geom, phys, _bulk(cm))
+        cp_res = solve_charged_two_sided_interface_qss(geom, phys, _bulk(cp), charge_spec)
+        cm_res = solve_charged_two_sided_interface_qss(geom, phys, _bulk(cm), charge_spec)
+        fd_u[:, j] = (up.bulk_flux_m2_s - um.bulk_flux_m2_s) / (2.0 * h)
+        fd_c[:, j] = (cp_res.bulk_flux_m2_s - cm_res.bulk_flux_m2_s) / (2.0 * h)
+        fd_sig[j] = (
+            cp_res.incremental_sheet_charge_C_m2 - cm_res.incremental_sheet_charge_C_m2
+        ) / (2.0 * h)
+
+    for row in range(4):
+        atol_u = 1.0e-7 * max(float(np.max(np.abs(res_u.bulk_flux_jacobian_bulk[row]))), 1.0)
+        atol_c = 1.0e-7 * max(float(np.max(np.abs(res_c.bulk_flux_jacobian_bulk[row]))), 1.0)
+        np.testing.assert_allclose(
+            res_u.bulk_flux_jacobian_bulk[row], fd_u[row], rtol=1e-6, atol=atol_u
+        )
+        np.testing.assert_allclose(
+            res_c.bulk_flux_jacobian_bulk[row], fd_c[row], rtol=1e-6, atol=atol_c
+        )
+    np.testing.assert_allclose(res_c.sheet_charge_jacobian_bulk, fd_sig, rtol=1e-6, atol=1e-12)
