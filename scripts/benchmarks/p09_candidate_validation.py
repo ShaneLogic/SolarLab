@@ -1669,7 +1669,7 @@ def _step_scaps_bias_point(
             st_direct.state.u,
             float(-pol * np.asarray(st_direct.current_density_A_m2, dtype=float)[0]),
         )
-    except SteadyStateError:
+    except (SteadyStateError, ValueError):
         pass
     for b_lvl in range(7):
         nsub = 1 << b_lvl
@@ -1688,7 +1688,7 @@ def _step_scaps_bias_point(
                     options=opts,
                 )
                 u_tmp = st_j.state.u
-            except SteadyStateError:
+            except (SteadyStateError, ValueError):
                 sub_ok = False
                 break
         if sub_ok and st_j is not None:
@@ -1720,7 +1720,7 @@ def _run_scaps_steady_jv_aligned(
         vs = [float(v) for v in jv_res.voltage_V]
         js = [float(j) for j in jv_res.output_current_A_m2]
         us = [sol.state.u for sol in jv_res.solutions]
-    except SteadyStateError:
+    except (SteadyStateError, ValueError):
         eq_opts = SteadyOptions(
             continuity_tolerance_A_m2=1.0e-11,
             current_spread_tolerance_A_m2=1.0e-11,
@@ -1729,16 +1729,37 @@ def _run_scaps_steady_jv_aligned(
             compiled, voltage_V=0.0, generation_scale=0.0, options=eq_opts
         )
         u_cur = st.state.u
-        for gs in (1.0e-4, 1.0e-2, 0.2, 1.0):
-            u_w = _warm_dc_density_newton(compiled, u_cur, 0.0, gs, opts)
-            st = solve_steady_state(
-                compiled,
-                initial_state=compiled.state(u_w, voltage_V=0.0),
-                voltage_V=0.0,
-                generation_scale=gs,
-                options=opts,
-            )
-            u_cur = st.state.u
+        gs_prev = 0.0
+        for gs in (1.0e-10, 1.0e-7, 1.0e-5, 1.0e-3, 1.0e-2, 0.1, 0.3, 1.0):
+            gs_ok = False
+            for g_lvl in range(6):
+                ng = 1 << g_lvl
+                u_g = u_cur
+                st_g = st
+                sub_g_ok = True
+                for jg in range(1, ng + 1):
+                    gj = gs_prev + (gs - gs_prev) * (jg / ng)
+                    try:
+                        u_w = _warm_dc_density_newton(compiled, u_g, 0.0, gj, opts)
+                        st_g = solve_steady_state(
+                            compiled,
+                            initial_state=compiled.state(u_w, voltage_V=0.0),
+                            voltage_V=0.0,
+                            generation_scale=gj,
+                            options=opts,
+                        )
+                        u_g = st_g.state.u
+                    except (SteadyStateError, ValueError):
+                        sub_g_ok = False
+                        break
+                if sub_g_ok:
+                    u_cur = u_g
+                    st = st_g
+                    gs_prev = gs
+                    gs_ok = True
+                    break
+            if not gs_ok:
+                raise RuntimeError(f"SCAPS light ramp failed at g={gs:.3e}")
         pol = float(compiled.voltage_polarity)
         vs = [0.0]
         js = [float(-pol * np.asarray(st.current_density_A_m2, dtype=float)[0])]
@@ -1835,7 +1856,7 @@ def _evaluate_scaps_point_worker(task: dict[str, Any]) -> dict[str, Any]:
         )
         compiled = compile_device_1d(
             prepared,
-            intervals_per_layer=20,
+            intervals_per_layer=10,
             interface_topology="two_sided_trace",
             geometry_name=PHYSICAL_BOUNDARY_TWO_SIDED_V1,
             thermionic_mode=SCAPS_EFFECTIVE_VELOCITY_THERMIONIC_V1,
