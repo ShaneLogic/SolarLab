@@ -88,9 +88,11 @@ The following subsystems and model flags have **zero** active product execution 
 
 ---
 
-## 6. Category B Retained Read-Only, Oracle, and `RS` Witness Ledger
+## 6. Category B Historical Witness Ledger (Retired from `devel` at `2026-11-23`)
 
-In accordance with `ArchitectureRefactorExecutionV1.md` §13 (`P09-03` items 2–4) and `ArchitectureRefactorExecutionV2.md` Decision `D20`, the following files remain in the Git checkout **strictly excluded from `solarlab-0.1.0-py3-none-any.whl` and `solarlab-0.1.0.tar.gz`** (`test_release_bundle.py`) and **forbidden as imports across all three shipped packages** (`lint-imports` `12/12` contracts):
+> **Post-`G9P` Repository Slimming Update (`2026-11-23`):** Following SCAPS R2 + Plan B diagnosis and `HysteresisReferenceContractV2` Path A closure on commit `be973ac5e1aa46c5c21eaa79c42b402d25a76eb3` (permanently anchored at local Git tag `archive/pre-slim-be973ac5`), the entire Category B witness tree `/perovskite-sim/` (`1,049` files), expired transition manifests, and unreferenced prototype scripts were physically removed from `devel`, while local `.claude/` skills (`491` files) were untracked and gitignored. Active non-code assets were promoted to canonical top-level locations (`tests/fixtures/configs/` (`52` YAMLs), `docs/contracts/` (`34` physics contracts), `reproducibility/ScapsParams.xlsx`, `reproducibility/AnalyticGatesV1.json`, and `web/src/workstation/panes/__fixtures__/IonDiffusivityFigureReference.json`), with **zero changes** to `src/{solarlab,solarlab_server,solarlab_research}`. The table below is preserved as the historical `P09-03` witness accounting at `be973ac5e1aa46c5c21eaa79c42b402d25a76eb3`.
+
+In accordance with `ArchitectureRefactorExecutionV1.md` §13 (`P09-03` items 2–4) and `ArchitectureRefactorExecutionV2.md` Decision `D20`, the following files were retained through `be973ac5e1aa46c5c21eaa79c42b402d25a76eb3` **strictly excluded from `solarlab-0.1.0-py3-none-any.whl` and `solarlab-0.1.0.tar.gz`** (`test_release_bundle.py`) and **forbidden as imports across all three shipped packages** (`lint-imports` `12/12` contracts):
 
 | Retained Repository Scope | Consumer Group / Classification | Owner & Exit Gate | Exact Retention Justification |
 | --- | --- | --- | --- |

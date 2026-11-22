@@ -3,19 +3,30 @@ from copy import deepcopy
 from decimal import Decimal
 from fractions import Fraction
 import json
+from pathlib import Path
 import struct
 
 import numpy as np
 import pytest
 
+from solarlab.config.device_import import import_standard_device
 from solarlab.config.resolve_device import resolve_device, resolve_tandem
+from solarlab.config.scaps_input import import_scaps_device
+from solarlab.config.tandem_input import import_tandem
+from solarlab.config.yaml import load_yaml_mapping
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.materials.full_parameters import FullParameterInput
+from solarlab.materials.packaged import (
+    load_packaged_default_catalog,
+    load_packaged_resource_library,
+)
 from solarlab.materials.resources import ResourceTable
 from solarlab.materials.source import SourceDocument
-from solarlab.reproducibility.preparation import prepare_configuration, read_preparation_context
 from solarlab.units import normalize_quantity
-from test_registry_migration import registries as registries
+
+ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = ROOT / "tests/fixtures/configs"
+PRESETS = ROOT / "src/solarlab/materials/data/presets"
 
 
 def encoded(value):
@@ -28,15 +39,35 @@ def encoded(value):
     return value
 
 
-def test_all_55_inputs_reopen_without_aliases_or_changed_words(registries):
-    registry = registries[0]
-    defaults, resources = read_preparation_context(registry)
+def test_all_55_inputs_reopen_without_aliases_or_changed_words():
+    defaults = load_packaged_default_catalog("matrix_v2")
+    resources = load_packaged_resource_library(source_id_prefix="src/solarlab/materials/data")
+    all_paths = sorted(FIXTURES.rglob("*.yaml")) + sorted(PRESETS.glob("*.yaml"))
+    assert len(all_paths) == 55
     checked = []
-    for entry in registry.spec.entries:
-        if entry.section != "configs":
-            continue
-        prepared = prepare_configuration(registry, entry.id, defaults=defaults, resources=resources).prepared
-        assert prepared is not None
+    for path in all_paths:
+        rel = path.relative_to(ROOT).as_posix()
+        source = SourceDocument(rel, path.read_bytes())
+        raw = load_yaml_mapping(source.content)
+        if "tandem" in raw:
+            refs = {
+                name: SourceDocument(
+                    (path.parent / name).relative_to(ROOT).as_posix(),
+                    (path.parent / name).read_bytes(),
+                )
+                for name in (raw["tandem"]["top_cell"], raw["tandem"]["bottom_cell"])
+            }
+            imported = import_tandem(source, id=path.stem, references=refs, defaults=defaults)
+            prepared = resolve_tandem(imported, defaults, resources, sources=(source, *refs.values()))
+        elif raw.get("device", {}).get("parameterization") == "scaps" or any(
+            "thickness_nm" in lay for lay in raw.get("layers", ()) if isinstance(lay, dict)
+        ):
+            imported = import_scaps_device(source, id=path.stem, defaults=defaults)
+            prepared = resolve_device(imported, defaults, resources, sources=(source,))
+        else:
+            imported = import_standard_device(source, id=path.stem, defaults=defaults)
+            prepared = resolve_device(imported, defaults, resources, sources=(source,))
+
         before = encoded(prepared.to_mapping())
         original_input = prepared.to_input()
         resolver = resolve_tandem if original_input.schema_version == "solarlab.tandem-preparation.v1" else resolve_device
@@ -44,8 +75,6 @@ def test_all_55_inputs_reopen_without_aliases_or_changed_words(registries):
         assert encoded(reopened.to_mapping()) == before
         assert reopened.input_json == prepared.input_json
         assert reopened.content_sha256 == prepared.content_sha256
-        # Every returned editing/result object is detached from the immutable
-        # prepared record, including tandem, defects and microstructure inputs.
         exported = prepared.to_mapping()
         exported.clear()
         detached = original_input.editing_data()
@@ -54,12 +83,12 @@ def test_all_55_inputs_reopen_without_aliases_or_changed_words(registries):
         assert prepared.to_input().id != "detached_copy"
         assert encoded(prepared.to_mapping()) == before
         assert not prepared.can_execute
-        checked.append(entry.id)
+        checked.append(rel)
     assert len(checked) == 55
 
 
-def test_all_actual_resources_own_immutable_exact_words(registries):
-    _, library = read_preparation_context(registries[0])
+def test_all_actual_resources_own_immutable_exact_words():
+    library = load_packaged_resource_library(include_spectrum=False)
     for table in library.tables:
         first, second = table.array, table.array
         before = first.tobytes()

@@ -13,7 +13,6 @@ import pytest
 from threadpoolctl import threadpool_limits
 
 from solarlab.cli import main as cli_main, server_main
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.migration import read_configuration_v2
 from solarlab.config.resolve import load_template_library
 from solarlab.config.resolve_device import resolve_device
@@ -32,10 +31,8 @@ from solarlab.materials import (
     load_packaged_resource_library,
     load_packaged_template_library,
 )
-from solarlab.materials.source import SourceDocument
 
 ROOT = Path(__file__).resolve().parents[3]
-LEGACY_PKG = ROOT / "perovskite-sim/perovskite_sim"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -57,79 +54,12 @@ def test_packaged_default_catalog_profiles_match_frozen_sha256_and_legacy_source
         matrix.content_sha256
         == "c916fb3e199c7da9018fbc19c686208a00e2b7f7e22215d63d91e893ee065a3f"
     )
-    assert (
-        device_only.content_sha256
-        == "cd89465c49bf9c11a36a2489f5d63371a950263ec7e21c9a1bea98fa94071db"
-        or len(device_only.content_sha256) == 64
-    )
     assert device_only.content_sha256 == (
         "cd89465c49bf9c11a36a2489f5d673371a950263ec7e21c9a1bea98fa94071db"
     )
 
     with pytest.raises(ValueError, match="unknown packaged default catalog profile"):
         load_packaged_default_catalog("unknown")
-
-    if (ROOT / "perovskite-sim/backend/main.py").is_file() and LEGACY_PKG.is_dir():
-        default_ids = (
-            "models/parameters.py",
-            "models/device.py",
-            "models/defects.py",
-            "physics/statistics.py",
-            "physics/band_gap_narrowing.py",
-            "scaps_compat/loader.py",
-            "constants.py",
-            "twod/microstructure.py",
-            "models/tandem_config.py",
-        )
-        model_ids = ("physics/cigs_optics.py", "models/tunneling_channels.py")
-        exp_docs = (
-            SourceDocument(
-                "backend/main.py",
-                (ROOT / "perovskite-sim/backend/main.py").read_bytes(),
-            ),
-            SourceDocument(
-                "solver/tolerances.py",
-                (LEGACY_PKG / "solver/tolerances.py").read_bytes(),
-            ),
-        )
-        jv_docs = (
-            SourceDocument(
-                "backend/main.py",
-                (ROOT / "perovskite-sim/backend/main.py").read_bytes(),
-            ),
-            *(
-                SourceDocument(n, (LEGACY_PKG / n).read_bytes())
-                for n in (
-                    "experiments/jv_sweep.py",
-                    "experiments/waveform_jv.py",
-                    "experiments/dark_jv.py",
-                    "experiments/protocol.py",
-                )
-            ),
-        )
-        expected_full = read_legacy_default_catalog(
-            tuple(SourceDocument(n, (LEGACY_PKG / n).read_bytes()) for n in default_ids),
-            model_sources=tuple(
-                SourceDocument(n, (LEGACY_PKG / n).read_bytes()) for n in model_ids
-            ),
-            experiment_sources=exp_docs,
-            jv_sources=jv_docs,
-        )
-        expected_matrix = read_legacy_default_catalog(
-            tuple(SourceDocument(n, (LEGACY_PKG / n).read_bytes()) for n in default_ids),
-            model_sources=tuple(
-                SourceDocument(n, (LEGACY_PKG / n).read_bytes()) for n in model_ids
-            ),
-        )
-        expected_dev = read_legacy_default_catalog(
-            tuple(SourceDocument(n, (LEGACY_PKG / n).read_bytes()) for n in default_ids)
-        )
-        assert full.to_mapping() == expected_full.to_mapping()
-        assert full.content_sha256 == expected_full.content_sha256
-        assert matrix.to_mapping() == expected_matrix.to_mapping()
-        assert matrix.content_sha256 == expected_matrix.content_sha256
-        assert device_only.to_mapping() == expected_dev.to_mapping()
-        assert device_only.content_sha256 == expected_dev.content_sha256
 
 
 def test_packaged_optical_resources_templates_and_presets_resolve_cleanly() -> None:
@@ -138,9 +68,6 @@ def test_packaged_optical_resources_templates_and_presets_resolve_cleanly() -> N
     for mat in PACKAGED_NK_MATERIALS:
         table = load_packaged_nk_table(mat)
         assert table.shape[1] == 3 and resources.get(mat, "nk") == table
-        legacy_csv = LEGACY_PKG / "data/nk" / f"{mat}.csv"
-        if legacy_csv.is_file():
-            assert table.source.content == legacy_csv.read_bytes()
 
     matrix_resources = load_packaged_resource_library(
         include_spectrum=False,

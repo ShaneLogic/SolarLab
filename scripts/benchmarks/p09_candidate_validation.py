@@ -548,13 +548,24 @@ def _build_ionic_be_controls(dev: Any) -> tuple[NewtonSettings, Any, Any, Any]:
     return settings, conv_norm, eye_n, eye_ion
 
 
+def _resolve_repo_config(repo_root: Path, rel: str) -> Path:
+    direct = repo_root / rel
+    if direct.is_file():
+        return direct
+    if rel.startswith("perovskite-sim/tests/fixtures/configs/"):
+        return repo_root / rel.removeprefix("perovskite-sim/")
+    if rel.startswith("perovskite-sim/configs/"):
+        return repo_root / "src/solarlab/materials/data/presets" / rel.removeprefix("perovskite-sim/configs/")
+    return direct
+
+
 def _run_transient_jv_variant(
     repo_root: Path,
     variant_spec: dict[str, Any],
     defaults: DefaultCatalog,
     resources: ResourceLibrary,
 ) -> dict[str, Any]:
-    cfg_path = repo_root / variant_spec["config_path"]
+    cfg_path = _resolve_repo_config(repo_root, variant_spec["config_path"])
     yaml_bytes = cfg_path.read_bytes()
     actual_sha = hashlib.sha256(yaml_bytes).hexdigest()
     if actual_sha != variant_spec["config_sha256"]:
@@ -953,7 +964,7 @@ def _run_ac60_perf(
     defaults: DefaultCatalog,
     resources: ResourceLibrary,
 ) -> dict[str, Any]:
-    cfg_path = repo_root / case_spec["config_path"]
+    cfg_path = _resolve_repo_config(repo_root, case_spec["config_path"])
     yaml_bytes = cfg_path.read_bytes()
     n_grid = int(case_spec["configured_N_grid"])
     op_spec = case_spec["operating_point"]
@@ -1128,7 +1139,7 @@ def _run_spatial_2d_stage_a_variant(
     defaults: DefaultCatalog,
     resources: ResourceLibrary,
 ) -> dict[str, Any]:
-    cfg_rel = "perovskite-sim/tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml"
+    cfg_rel = "tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml"
     yaml_bytes = (repo_root / cfg_rel).read_bytes()
     timing = RuntimeTiming()
     outer_t0 = time.perf_counter()

@@ -7,7 +7,6 @@ import dataclasses
 import numpy as np
 import pytest
 
-import band_structure_test_support as support
 from solarlab.physics import band_structure as new
 from solarlab.physics.band_structure import (
     DopingProfileSpec,
@@ -61,7 +60,10 @@ def _arrays(binding):
 
 
 def _bitwise_equal(a, b) -> bool:
-    return all(support.same(x, y) for x, y in zip(_arrays(a), _arrays(b)))
+    return all(
+        x.shape == y.shape and x.dtype == y.dtype and x.tobytes() == y.tobytes()
+        for x, y in zip(_arrays(a), _arrays(b))
+    )
 
 
 def test_reference_temperature_returns_the_declared_values():

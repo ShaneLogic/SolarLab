@@ -28,36 +28,10 @@ def test_release_lock_and_console_scripts_preserve_locked_dependencies():
     new_packages = [p for p in new["package"] if p["name"] != "solarlab"]
     added = [p for p in new_packages if p["name"] == "python-flint"]
     assert len(added) == 1 and added[0]["version"] == "0.8.0"
-    legacy_lock = ROOT / "perovskite-sim/uv.lock"
-    if legacy_lock.is_file():
-        old = tomllib.loads(legacy_lock.read_text())
-        old_packages = [p for p in old["package"] if p["name"] != "perovskite-sim"]
-        assert [p for p in new_packages if p["name"] != "python-flint"] == old_packages
-        assert new["requires-python"] == old["requires-python"]
-        assert new["resolution-markers"] == old["resolution-markers"]
 
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert metadata["project"]["requires-python"] == ">=3.11"
     assert metadata["project"]["scripts"] == EXPECTED_SCRIPTS
-
-    legacy_pyproject = ROOT / "perovskite-sim/pyproject.toml"
-    if legacy_pyproject.is_file():
-        old_metadata = tomllib.loads(legacy_pyproject.read_text())
-        assert metadata["project"]["dependencies"] == [
-            *old_metadata["project"]["dependencies"],
-            "pydantic==2.13.5",
-        ]
-        previous_extras = old_metadata["project"]["optional-dependencies"]
-        extras = metadata["project"]["optional-dependencies"]
-        expected_dev = list(previous_extras["dev"])
-        expected_dev.insert(
-            expected_dev.index("httpx==0.28.1") + 1, "jsonschema==4.26.0"
-        )
-        assert extras == {
-            **previous_extras,
-            "dev": expected_dev,
-            "arb": ["python-flint==0.8.0"],
-        }
 
 
 def test_only_first_party_packages_and_web_assets_are_selected_for_the_release_wheel():

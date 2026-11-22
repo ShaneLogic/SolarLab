@@ -105,7 +105,7 @@ def test_default_compilers_still_refuse_legacy_benchmark_decks() -> None:
         )
 
     # 2. Front-incoherent TMM substrate deck refused when allow_legacy_benchmark_deck=False
-    tmm_path = REPO_ROOT / "perovskite-sim/tests/fixtures/configs/nip_MAPbI3_tmm.yaml"
+    tmm_path = REPO_ROOT / "tests/fixtures/configs/nip_MAPbI3_tmm.yaml"
     tmm_src = SourceDocument(id="nip_MAPbI3_tmm", content=tmm_path.read_bytes())
     tmm_in = import_standard_device(tmm_src, id="nip_tmm", defaults=defaults)
     tmm_no_ion_layers = [
@@ -133,7 +133,7 @@ def test_default_compilers_still_refuse_legacy_benchmark_decks() -> None:
 
     # 3. 2D uniform legacy deck refused when allow_legacy_benchmark_deck=False
     twod_path = (
-        REPO_ROOT / "perovskite-sim/tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml"
+        REPO_ROOT / "tests/fixtures/configs/twod/nip_MAPbI3_uniform.yaml"
     )
     twod_src = SourceDocument(id="twod_uniform", content=twod_path.read_bytes())
     twod_in = import_standard_device(

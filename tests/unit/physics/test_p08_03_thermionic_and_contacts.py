@@ -24,16 +24,18 @@ from collections.abc import Callable, Iterator
 import dataclasses
 import math
 from pathlib import Path
-import warnings
 
 import numpy as np
 import pytest
 from threadpoolctl import threadpool_limits
 
-from perovskite_sim.experiments.jv_sweep import build_electrical_grid
-from perovskite_sim.scaps_compat import load_scaps_yaml
-from perovskite_sim.solver.mol import build_material_arrays
-
+from solarlab.config.resolve_device import resolve_device
+from solarlab.config.scaps_input import import_scaps_device
+from solarlab.materials.packaged import (
+    load_packaged_default_catalog,
+    load_packaged_resource_library,
+)
+from solarlab.materials.source import SourceDocument
 from solarlab.physics.contacts import (
     CONTACT_ALIGNMENT_CLASSES,
     CONTACT_THERMODYNAMIC_TOLERANCE_EV,
@@ -41,11 +43,15 @@ from solarlab.physics.contacts import (
     FITTED_MANUAL_CONTACT_ALIGNMENT,
     LEGACY_MANUAL_CONTACT_OFFSET,
     PARAMETER_FREE_CONTACT_ALIGNMENT,
+    BuiltInPotentialSources,
     ContactEndpoint,
+    ContactMaterial,
     ContactThermodynamicError,
+    LegacyBandContact,
     assess_contact_thermodynamics,
     certify_parameter_free_contact_equilibrium,
     classify_contact_alignment_mode,
+    doping_equilibrium_densities,
     require_contact_thermodynamic_certificate,
 )
 from solarlab.physics.interface_transport.thermionic import (
@@ -71,7 +77,8 @@ from solarlab.physics.statistics.thermal import thermal_voltage
 from solarlab.physics.transport.electrochemical_flux import stable_sg_particle_flux
 
 SCAPS_MIRROR_PRESET = (
-    Path(__file__).resolve().parents[3] / "perovskite-sim/configs/scaps_mirror_v2.yaml"
+    Path(__file__).resolve().parents[3]
+    / "src/solarlab/materials/data/presets/scaps_mirror_v2.yaml"
 )
 
 
@@ -732,38 +739,91 @@ def test_contact_5mev_gate_alignment_provenance_and_scaps_mirror_historical_reco
     with pytest.raises(ValueError, match="unknown built-in-potential mode"):
         classify_contact_alignment_mode("fitted_free_offset")
 
-    stack = load_scaps_yaml(str(SCAPS_MIRROR_PRESET))
-    grid = build_electrical_grid(stack, 24)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        mat = build_material_arrays(grid, stack)
-
+    defaults = load_packaged_default_catalog("device_only")
+    resources = load_packaged_resource_library(source_id_prefix="src/solarlab/materials/data")
+    scaps_src = SourceDocument("scaps_mirror_v2.yaml", SCAPS_MIRROR_PRESET.read_bytes())
+    prepared = resolve_device(
+        import_scaps_device(scaps_src, id="scaps_mirror_v2", defaults=defaults),
+        defaults,
+        resources,
+        sources=(scaps_src,),
+    )
+    temp_K = float(prepared.values["settings"]["T"])
+    vt_dev = thermal_voltage(temp_K)
+    htl, pvk, etl = prepared.layers[1], prepared.layers[2], prepared.layers[3]
+    p_l = dict(htl.parameters)
+    p_r = dict(etl.parameters)
+    n_l, hole_l = doping_equilibrium_densities(
+        float(p_l["N_D"]), float(p_l["N_A"]), float(p_l["ni"]) ** 2
+    )
+    n_r, hole_r = doping_equilibrium_densities(
+        float(p_r["N_D"]), float(p_r["N_A"]), float(p_r["ni"]) ** 2
+    )
     left_ep = ContactEndpoint(
-        float(mat.n_L),
-        float(mat.p_L),
-        float(mat.N_C_physical[0]),
-        float(mat.N_V_physical[0]),
-        float(mat.chi_phys[0]),
-        float(mat.Eg_phys[0]),
+        n_l,
+        hole_l,
+        float(p_l["Nc300"]),
+        float(p_l["Nv300"]),
+        float(p_l["chi"]),
+        float(p_l["Eg"]),
     )
     right_ep = ContactEndpoint(
-        float(mat.n_R),
-        float(mat.p_R),
-        float(mat.N_C_physical[-1]),
-        float(mat.N_V_physical[-1]),
-        float(mat.chi_phys[-1]),
-        float(mat.Eg_phys[-1]),
+        n_r,
+        hole_r,
+        float(p_r["Nc300"]),
+        float(p_r["Nv300"]),
+        float(p_r["chi"]),
+        float(p_r["Eg"]),
     )
-    semi_v_bi = float(stack.compute_semiconductor_V_bi())
+    left_mat = ContactMaterial(
+        temperature_K=temp_K,
+        electron_affinity_eV=float(p_l["chi"]),
+        band_gap_eV=float(p_l["Eg"]),
+        conduction_dos_m3=float(p_l["Nc300"]),
+        valence_dos_m3=float(p_l["Nv300"]),
+        donor_density_m3=float(p_l["N_D"]),
+        acceptor_density_m3=float(p_l["N_A"]),
+    )
+    right_mat = ContactMaterial(
+        temperature_K=temp_K,
+        electron_affinity_eV=float(p_r["chi"]),
+        band_gap_eV=float(p_r["Eg"]),
+        conduction_dos_m3=float(p_r["Nc300"]),
+        valence_dos_m3=float(p_r["Nv300"]),
+        donor_density_m3=float(p_r["N_D"]),
+        acceptor_density_m3=float(p_r["N_A"]),
+    )
+    left_band = LegacyBandContact(
+        float(p_l["chi"]), float(p_l["Eg"]), float(p_l["N_D"]), float(p_l["N_A"]), float(p_l["ni"])
+    )
+    right_band = LegacyBandContact(
+        float(p_r["chi"]), float(p_r["Eg"]), float(p_r["N_D"]), float(p_r["N_A"]), float(p_r["ni"])
+    )
+    elec_bands = tuple(
+        (float(dict(lyr.parameters)["chi"]), float(dict(lyr.parameters)["Eg"]))
+        for lyr in (htl, pvk, etl)
+    )
+    sources_manual = BuiltInPotentialSources(
+        mode="legacy_manual",
+        manual_V_bi=float(prepared.values["settings"]["V_bi"]),
+        left_band=left_band,
+        right_band=right_band,
+        electrical_layer_bands=elec_bands,
+        left_material=left_mat,
+        right_material=right_mat,
+    )
+    semi_v_bi = float(sources_manual.semiconductor_potential())
+    manual_v_bi_bc = float(sources_manual.poisson_potential())
+    stats_kind = str(prepared.values["settings"].get("carrier_statistics") or "maxwell_boltzmann")
 
     # 1. Historical scaps_mirror_v2 legacy_manual (6.024958093130e-3 eV) stays permanently inconsistent:
     hist = assess_contact_thermodynamics(
         built_in_potential_mode="legacy_manual",
         left=left_ep,
         right=right_ep,
-        V_bi_bc=float(mat.V_bi_bc),
-        thermal_voltage_V=float(mat.V_T_device),
-        statistics=mat.carrier_statistics,
+        V_bi_bc=manual_v_bi_bc,
+        thermal_voltage_V=vt_dev,
+        statistics=stats_kind,
         semiconductor_potential_V=semi_v_bi,
         has_band_reference=True,
     )
@@ -785,9 +845,9 @@ def test_contact_5mev_gate_alignment_provenance_and_scaps_mirror_historical_reco
                 built_in_potential_mode="legacy_manual",
                 left=left_ep,
                 right=right_ep,
-                V_bi_bc=float(mat.V_bi_bc),
-                thermal_voltage_V=float(mat.V_T_device),
-                statistics=mat.carrier_statistics,
+                V_bi_bc=manual_v_bi_bc,
+                thermal_voltage_V=vt_dev,
+                statistics=stats_kind,
                 semiconductor_potential_V=semi_v_bi,
                 has_band_reference=True,
                 tolerance_eV=bad_tol,
@@ -799,8 +859,8 @@ def test_contact_5mev_gate_alignment_provenance_and_scaps_mirror_historical_reco
         left=left_ep,
         right=right_ep,
         V_bi_bc=semi_v_bi + 2.0e-3,
-        thermal_voltage_V=float(mat.V_T_device),
-        statistics=mat.carrier_statistics,
+        thermal_voltage_V=vt_dev,
+        statistics=stats_kind,
         semiconductor_potential_V=semi_v_bi,
         has_band_reference=True,
     )
@@ -810,18 +870,15 @@ def test_contact_5mev_gate_alignment_provenance_and_scaps_mirror_historical_reco
         certify_parameter_free_contact_equilibrium(tuned_manual)
 
     # 4. Compatible parameter-free semiconductor_work_function on the same reservoirs is certified:
-    stack_compat = dataclasses.replace(stack, built_in_potential_mode="semiconductor_work_function")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        mat_compat = build_material_arrays(grid, stack_compat)
+    sources_compat = dataclasses.replace(sources_manual, mode="semiconductor_work_function")
     compat = certify_parameter_free_contact_equilibrium(
         assess_contact_thermodynamics(
             built_in_potential_mode="semiconductor_work_function",
             left=left_ep,
             right=right_ep,
-            V_bi_bc=float(mat_compat.V_bi_bc),
-            thermal_voltage_V=float(mat_compat.V_T_device),
-            statistics=mat_compat.carrier_statistics,
+            V_bi_bc=float(sources_compat.poisson_potential()),
+            thermal_voltage_V=vt_dev,
+            statistics=stats_kind,
             semiconductor_potential_V=semi_v_bi,
             has_band_reference=True,
         )

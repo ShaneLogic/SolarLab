@@ -21,7 +21,6 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device
 from solarlab.config.scaps_input import import_scaps_device
 from solarlab.device.compile_1d import CompiledDevice1D, compile_device_1d
@@ -47,19 +46,7 @@ from solarlab.solvers.nonlinear.steady_1d import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "perovskite-sim" / "perovskite_sim"
-DATA_DIR = LEGACY / "data"
-CATALOG_PATHS = (
-    "models/parameters.py",
-    "models/device.py",
-    "models/defects.py",
-    "physics/statistics.py",
-    "physics/band_gap_narrowing.py",
-    "scaps_compat/loader.py",
-    "constants.py",
-    "twod/microstructure.py",
-    "models/tandem_config.py",
-)
+DATA_DIR = ROOT / "src" / "solarlab" / "materials" / "data"
 
 
 def _am15g_resource_table(n_wavelengths: int = 200) -> ResourceTable:
@@ -85,7 +72,7 @@ def _prepare_scaps_mirror_v2_new_core(
 
     scaps_src = SourceDocument(
         "configs/scaps_mirror_v2.yaml",
-        (ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml").read_bytes(),
+        (ROOT / "src/solarlab/materials/data/presets/scaps_mirror_v2.yaml").read_bytes(),
     )
     nk_tables = tuple(
         ResourceTable(
@@ -164,12 +151,8 @@ def _prepare_scaps_mirror_v2_new_core(
 
 @pytest.fixture(scope="module")
 def defaults() -> DefaultCatalog:
-    return read_legacy_default_catalog(
-        tuple(
-            SourceDocument(name, (LEGACY / name).read_bytes())
-            for name in CATALOG_PATHS
-        )
-    )
+    from solarlab.materials.packaged import load_packaged_default_catalog
+    return load_packaged_default_catalog("device_only")
 
 
 @pytest.fixture(scope="module")

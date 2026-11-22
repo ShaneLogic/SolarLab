@@ -8,22 +8,19 @@ from urllib.request import Request, urlopen
 from fastapi.testclient import TestClient
 import pytest
 
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.schema import configuration_schema_representation
 from solarlab.experiments.two_dimensional.inputs import SpatialExperimentInput
 from solarlab.experiments.two_dimensional.preparation import prepare_spatial_experiment
-from solarlab.materials.source import SourceDocument
+from solarlab.materials.packaged import load_packaged_default_catalog
 from solarlab_server.app import create_app
 from solarlab_server.configuration import ConfigurationPreviewContext
-from test_configuration_preview import DEFAULT_PATHS, LEGACY, ROOT, case, resources, writer, wire_input, words
+from test_configuration_preview import case, resources, writer, wire_input, words  # noqa: F401
 from test_event_service import _HTTPServer
 
 
 @pytest.fixture(scope="module")
 def catalog():
-    return read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS),
-        experiment_sources=(SourceDocument("backend/main.py", (ROOT / "perovskite-sim/backend/main.py").read_bytes()),
-                            SourceDocument("solver/tolerances.py", (LEGACY / "solver/tolerances.py").read_bytes())))
+    return load_packaged_default_catalog("full")
 
 
 def payload(catalog, name="standard", **fields):
@@ -73,7 +70,7 @@ def test_missing_trusted_defaults_schema_mismatch_and_precise_errors(catalog, re
     data, _ = payload(catalog)
     with TestClient(create_app(writer.root)) as http:
         assert http.post("/configuration-preview/experiment", json=data, headers=headers()).status_code == 503
-    old_catalog = read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS))
+    old_catalog = load_packaged_default_catalog("device_only")
     with TestClient(create_app(writer.root, configuration_preview=ConfigurationPreviewContext(old_catalog, resources))) as http:
         response = http.post("/configuration-preview/experiment", json=data, headers=headers())
         assert response.status_code == 503 and response.json()["detail"]["code"] == "configuration_experiment_context_missing"

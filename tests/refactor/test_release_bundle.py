@@ -47,7 +47,7 @@ REQUIRED = (
     ("src/solarlab/config/identity.py", "validator"),
     ("src/solarlab/reproducibility/sources.py", "validator"),
     ("src/solarlab/reproducibility/PublicAPI.json", "contract"),
-    ("reproducibility/RefactorTransitionBoundariesV1.json", "contract"),
+    ("reproducibility/ScapsComparisonContractV1.json", "contract"),
     ("src/solarlab/materials/data/nk/MAPbI3.csv", "resource"),
     ("scripts/generate_configuration_schema.py", "build_configuration"),
     ("generated/configuration-schema.json", "generated_schema"),
@@ -80,9 +80,8 @@ def frozen(tmp_path_factory):
         "src",
         "uv.lock",
         "pyproject.toml",
-        "reproducibility/RefactorTransitionBoundariesV1.json",
+        "reproducibility/AnalyticGatesV1.json",
         "reproducibility/ScapsComparisonContractV1.json",
-        "reproducibility/HysteresisReferenceContractV1.json",
         "reproducibility/HysteresisReferenceContractV2.json",
         "reproducibility/PerformanceCasesV1.json",
         "scripts/generate_configuration_schema.py",
@@ -566,7 +565,7 @@ def test_changed_installed_source_data_and_unbound_content_refuse(
         "lock": "share/uv.lock",
         "schema": "share/generated/configuration-schema.json",
         "resource": "site/solarlab/materials/data/nk/MAPbI3.csv",
-        "contract": "share/reproducibility/RefactorTransitionBoundariesV1.json",
+        "contract": "share/reproducibility/ScapsComparisonContractV1.json",
     }
     if change in selected:
         path = root / selected[change]
@@ -651,7 +650,7 @@ def test_target_profile_bundle_builds_roundtrips_and_verifies_without_web_dist(
         "src",
         "uv.lock",
         "pyproject.toml",
-        "reproducibility/RefactorTransitionBoundariesV1.json",
+        "reproducibility/ScapsComparisonContractV1.json",
         "scripts/generate_configuration_schema.py",
         "generated/configuration-schema.json",
     ):

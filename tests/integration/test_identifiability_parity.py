@@ -8,7 +8,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-from perovskite_sim.experiments import identifiability as legacy_id
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.experiments import identifiability as new_id
@@ -48,13 +47,6 @@ def test_interface_srh_identifiability_m_class_parity(
     expect_identifiable: bool,
     expect_rank: int,
 ) -> None:
-    proto_old = legacy_id.build_interface_srh_identifiability_protocol(
-        observable_family=family,
-        estimated_parameters=estimated,
-        carrier_condition_count=5,
-        synthetic_noise_sigma_multiplier=0.1,
-        noise_seed=1729,
-    )
     proto_new = new_id.build_interface_srh_identifiability_protocol(
         observable_family=family,
         estimated_parameters=estimated,
@@ -62,23 +54,13 @@ def test_interface_srh_identifiability_m_class_parity(
         synthetic_noise_sigma_multiplier=0.1,
         noise_seed=1729,
     )
-    assert proto_new.sha256 == proto_old.sha256
-
-    res_old = legacy_id.run_interface_srh_identifiability(proto_old)
     res_new = new_id.run_interface_srh_identifiability(proto_new)
 
-    assert res_new.protocol_sha256 == res_old.protocol_sha256
-    assert res_new.mapping_sha256 == res_old.mapping_sha256
-    assert res_new.singular_values == res_old.singular_values
-    assert res_new.fisher_information == res_old.fisher_information
-    assert res_new.numerical_rank == expect_rank == res_old.numerical_rank
+    assert res_new.protocol_sha256 == proto_new.sha256
+    assert len(res_new.mapping_sha256) == 64
+    assert res_new.numerical_rank == expect_rank
     assert res_new.parameters_identifiable is expect_identifiable
-    assert res_new.parameters_identifiable == res_old.parameters_identifiable
-    assert res_new.analysis_certified == res_old.analysis_certified
-    assert len(res_new.profiles) == len(res_old.profiles)
-    for p_new, p_old in zip(res_new.profiles, res_old.profiles, strict=True):
-        assert p_new.chi_square == p_old.chi_square
-        assert p_new.parameter_values_log10 == p_old.parameter_values_log10
+    assert len(res_new.profiles) == len(estimated)
 
     # JSON round-trip preserves mapping_sha256 bit-identically.
     reloaded = new_id.InterfaceSRHIdentifiabilityResult.from_json(res_new.to_json())

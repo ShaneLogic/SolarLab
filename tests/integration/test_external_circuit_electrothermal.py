@@ -17,10 +17,6 @@ from examples.research_1d import optical_generation as optical_example  # noqa: 
 from examples.research_1d.ionic_multilayer import (  # noqa: E402
     prepare_confined_ion_device,
 )
-from perovskite_sim.experiments import (  # noqa: E402
-    external_circuit as legacy_external_circuit,
-    thermal_balance as legacy_thermal_balance,
-)
 from solarlab.config.resolve_device import resolve_device  # noqa: E402
 from solarlab.device.compile_1d import compile_device_1d  # noqa: E402
 from solarlab.device.inputs import DeviceInput  # noqa: E402
@@ -81,7 +77,7 @@ def illuminated_ionic_prepared(illuminated_prepared: PreparedDevice) -> Prepared
     )
 
 
-def test_legacy_parity_external_circuit_and_thermal_balance(
+def test_external_circuit_and_thermal_balance_identities(
     illuminated_prepared: PreparedDevice,
 ) -> None:
     compiled = compile_device_1d(illuminated_prepared, intervals_per_layer=(8, 8, 8))
@@ -94,29 +90,21 @@ def test_legacy_parity_external_circuit_and_thermal_balance(
         series_resistance_ohm_m2=7.5e-4,
         shunt_resistance_ohm_m2=0.25,
     )
-    leg_dc = legacy_external_circuit.ExternalCircuitProtocol(
-        series_resistance_ohm_m2=7.5e-4,
-        shunt_resistance_ohm_m2=0.25,
-    )
     sl_branch = map_external_circuit_branch(
         steady_jv.voltage_V,
         steady_jv.output_current_A_m2,
         sl_dc,
         incident_power_W_m2=1000.0,
     )
-    leg_branch = legacy_external_circuit.map_external_circuit_branch(
-        steady_jv.voltage_V,
-        steady_jv.output_current_A_m2,
-        leg_dc,
-    )
-    np.testing.assert_array_equal(sl_branch.V_terminal, leg_branch.terminal_voltage_V)
-    np.testing.assert_array_equal(sl_branch.J_terminal, leg_branch.terminal_current_A_m2)
-    np.testing.assert_array_equal(sl_branch.J_shunt, leg_branch.shunt_current_A_m2)
-    np.testing.assert_array_equal(
-        sl_branch.series_voltage_drop_V, leg_branch.series_voltage_drop_V
-    )
-    np.testing.assert_array_equal(
-        sl_branch.power_terminal_W_m2, leg_branch.terminal_power_W_m2
+    expected_shunt = steady_jv.voltage_V / 0.25
+    expected_j_term = steady_jv.output_current_A_m2 - expected_shunt
+    expected_v_drop = expected_j_term * 7.5e-4
+    np.testing.assert_allclose(sl_branch.J_shunt, expected_shunt, rtol=1e-15)
+    np.testing.assert_allclose(sl_branch.J_terminal, expected_j_term, rtol=1e-15)
+    np.testing.assert_allclose(sl_branch.series_voltage_drop_V, expected_v_drop, rtol=1e-15)
+    np.testing.assert_allclose(sl_branch.V_terminal, steady_jv.voltage_V - expected_v_drop, rtol=1e-15)
+    np.testing.assert_allclose(
+        sl_branch.power_terminal_W_m2, sl_branch.V_terminal * sl_branch.J_terminal, rtol=1e-15
     )
 
     sl_th = LumpedThermalProtocol(
@@ -128,42 +116,18 @@ def test_legacy_parity_external_circuit_and_thermal_balance(
         constant_internal_heat_W_m2=12.0,
         maximum_temperature_K=400.0,
     )
-    leg_th = legacy_thermal_balance.LumpedThermalProtocol(
-        absorbed_optical_power_W_m2=820.0,
-        ambient_temperature_K=298.15,
-        areal_heat_capacity_J_m2_K=950.0,
-        heat_transfer_coefficient_W_m2_K=18.5,
-        emissivity=0.82,
-        constant_internal_heat_W_m2=12.0,
-        maximum_temperature_K=400.0,
-    )
     p_exp = float(np.max(sl_branch.power_terminal_W_m2))
-
-    sl_ledger = thermal_power_ledger(
-        325.0, sl_th, exported_electrical_power_W_m2=p_exp
-    )
-    leg_ledger = legacy_thermal_balance.thermal_power_ledger(
-        leg_th, temperature_K=325.0, terminal_electrical_export_W_m2=p_exp
-    )
-    assert sl_ledger.net_storage_rate_W_m2 == pytest.approx(
-        leg_ledger.net_heating_W_m2, rel=1e-14, abs=1e-14
-    )
 
     sl_ss = solve_lumped_thermal_steady_state(
         sl_th, exported_electrical_power_fn=lambda _t: p_exp
     )
-    leg_ss = legacy_thermal_balance.solve_lumped_thermal_steady_state(
-        leg_th, terminal_electrical_export_W_m2=p_exp
+    ss_ledger = thermal_power_ledger(
+        sl_ss.temperature_K, sl_th, exported_electrical_power_W_m2=p_exp
     )
-    assert sl_ss.temperature_K == pytest.approx(
-        leg_ss.temperature_K, rel=1e-12, abs=1e-11
-    )
+    assert abs(ss_ledger.net_storage_rate_W_m2) <= 1e-8
 
     t_eval = np.linspace(0.0, 180.0, 37)
     sl_int = ThermalIntegrationProtocol(method="DOP853")
-    leg_int = legacy_thermal_balance.ThermalIntegrationProtocol(
-        initial_temperature_K=298.15, duration_s=180.0, sample_count=37
-    )
     sl_tr = run_lumped_thermal_transient(
         sl_th,
         t_eval,
@@ -171,13 +135,9 @@ def test_legacy_parity_external_circuit_and_thermal_balance(
         exported_electrical_power_fn=lambda _t, _temp: p_exp,
         integration=sl_int,
     )
-    leg_tr = legacy_thermal_balance.run_lumped_thermal_transient(
-        leg_th, leg_int, terminal_electrical_export_W_m2=p_exp
-    )
-    np.testing.assert_allclose(
-        sl_tr.temperature_K, leg_tr.temperature_K, rtol=1e-9, atol=1e-8
-    )
-    assert sl_tr.certified and leg_tr.certified
+    assert sl_tr.certified
+    assert sl_tr.temperature_K[-1] > 298.15
+    assert sl_tr.temperature_K[-1] == pytest.approx(sl_ss.temperature_K, rel=5e-2)
 
 
 def test_external_dc_and_small_signal_ac_on_compiled_1d_device(

@@ -35,7 +35,6 @@ from threadpoolctl import threadpool_limits
 
 from examples.research_1d.ionic_multilayer import prepare_confined_ion_device
 from solarlab.config.device_import import import_standard_device
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.device.compile_1d import compile_device_1d
@@ -86,18 +85,6 @@ from solarlab.solvers.nonlinear.steady_1d import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY_PKG = ROOT / "perovskite-sim" / "perovskite_sim"
-LEGACY_DEFAULTS = (
-    "models/parameters.py",
-    "models/device.py",
-    "models/defects.py",
-    "physics/statistics.py",
-    "physics/band_gap_narrowing.py",
-    "scaps_compat/loader.py",
-    "constants.py",
-    "twod/microstructure.py",
-    "models/tandem_config.py",
-)
 
 Q: float = ELEMENTARY_CHARGE_C
 K_B: float = BOLTZMANN_CONSTANT_J_K
@@ -112,9 +99,8 @@ def single_thread_blas() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def legacy_catalog() -> DefaultCatalog:
-    return read_legacy_default_catalog(
-        tuple(SourceDocument(name, (LEGACY_PKG / name).read_bytes()) for name in LEGACY_DEFAULTS)
-    )
+    from solarlab.materials.packaged import load_packaged_default_catalog
+    return load_packaged_default_catalog("device_only")
 
 
 def _thermodynamic_ni(nc_m3: float, nv_m3: float, eg_eV: float, temp_K: float = 300.0) -> float:

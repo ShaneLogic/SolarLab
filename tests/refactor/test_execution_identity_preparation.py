@@ -26,10 +26,10 @@ from solarlab.config.identity import (
     BuildSource, CACHE_LAYERS, ExecutionDescription, ExecutionEngine, IdentityInputs, ModelInputs,
     RuntimeEnvironment, execution_identity, input_identity, physics_identity,
 )
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.model_parameters import device_topology, layer_parameter_source, structured_parameter_source
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.inputs import DeviceInput
+from solarlab.materials.packaged import load_packaged_default_catalog, load_packaged_nk_table
 from solarlab.materials.resources import ResourceLibrary, ResourceTable
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.registry import CapabilityContext, CapabilityRule, EvidenceRef, ModelDefinition, ModelRef, ModelRegistry, Scope
@@ -37,17 +37,13 @@ from solarlab.physics.selection import ModelChoice, select_models
 from solarlab.physics.semantic_projection import SemanticProjection
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "perovskite-sim/perovskite_sim"
-CATALOG_PATHS = ("models/parameters.py", "models/device.py", "models/defects.py", "physics/statistics.py",
-                 "physics/band_gap_narrowing.py", "scaps_compat/loader.py", "constants.py",
-                 "twod/microstructure.py", "models/tandem_config.py")
 
 
 @pytest.fixture(scope="module")
 def device():
-    defaults = read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in CATALOG_PATHS))
-    original = SourceDocument("fixture:nip_MAPbI3", (ROOT / "perovskite-sim/tests/fixtures/configs/nip_MAPbI3.yaml").read_bytes())
-    table = ResourceTable("MAPbI3", "nk", SourceDocument("nk:MAPbI3", (LEGACY / "data/nk/MAPbI3.csv").read_bytes()))
+    defaults = load_packaged_default_catalog("device_only")
+    original = SourceDocument("fixture:nip_MAPbI3", (ROOT / "tests/fixtures/configs/nip_MAPbI3.yaml").read_bytes())
+    table = load_packaged_nk_table("MAPbI3", source_id_prefix="")
     data = import_standard_device(original, id="identity_device", defaults=defaults).editing_data()
     data["settings"].update(mode="full", T="300 K")
     # Explicit data-only fixture edit binds one real optical table. No optical
@@ -65,7 +61,7 @@ def changed(device, edit):
 def identity_inputs(device, *, version=1, label="Temperature-dependent mobility", rule="all_values_v1", overrides=None,
                     local_id="mobility", parameters=("mu_n", "mu_p", "mu_T_gamma"),
                     effective_behavior=None, problem="transient"):
-    source = SourceDocument("physics/temperature.py", (LEGACY / "physics/temperature.py").read_bytes())
+    source = SourceDocument("physics/thermal.py", (ROOT / "src/solarlab/physics/statistics/thermal.py").read_bytes())
     ref = ModelRef("transport.temperature_mobility", version)
     capability = CapabilityRule("source_data_only", (1,), ("dc", "transient"),
                                (EvidenceRef(source.id + "#mu_at_T", source.sha256, "source"),),
@@ -94,7 +90,7 @@ def execution():
                             capture_output=True, text=True, check=True, timeout=2).stdout.strip()
     # The declared implementation snapshot comes from immutable Git objects,
     # not an uncommitted producer file relabelled as that commit's content.
-    name = "perovskite-sim/perovskite_sim/physics/temperature.py"
+    name = "src/solarlab/physics/statistics/thermal.py"
     source = subprocess.run(["git", "show", commit + ":" + name], cwd=ROOT,
                             capture_output=True, check=True, timeout=2).stdout
     implementation = BuildSource(commit, (SourceDocument(name, source),))
@@ -117,64 +113,18 @@ def hashes(inputs, execution):
     return input_identity(inputs).sha256, physics_identity(inputs).sha256, execution_identity(inputs, execution).sha256
 
 
-def engine_behavior(inputs, environment=()):
-    from solarlab.config.behavior import behavior_source_requirements, inspect_historical_behavior
-    sources = tuple(SourceDocument(name, (LEGACY / name).read_bytes())
-                    for name, _ in behavior_source_requirements())
-    return inspect_historical_behavior(
-        inputs.prepared, inputs.selection, driver="scaps_transient", sources=sources,
-        environment=environment, arguments=SourceDocument("engine-identity:arguments", b"{}"),
-    )
-
-
-def test_explicit_engine_and_behavior_are_inside_execution_identity_only(device, execution):
-    inputs = identity_inputs(device)
-    original = hashes(inputs, execution)
-    behavior = engine_behavior(inputs)
-    legacy = execution_identity(inputs, execution, engine=ExecutionEngine("legacy", behavior))
-    current = execution_identity(inputs, execution, engine=ExecutionEngine("solarlab"))
-    document = legacy.export()["document"]["payload"]
-    assert document["engine"]["name"] == "legacy"
-    assert document["engine"]["fallback"] == "forbidden"
-    assert document["engine"]["behavior_context_sha256"] == behavior.content_sha256
-    assert document["engine"]["behavior_context"]["can_execute"] is False
-    assert len({legacy.sha256, current.sha256, original[2]}) == 3
-    assert (input_identity(inputs).sha256, physics_identity(inputs).sha256) == original[:2]
-    assert hashes(inputs, execution) == original
-    assert not legacy.cache_eligible and not current.cache_eligible
-
-
-def test_legacy_environment_and_driver_cannot_disappear_from_execution_identity(device, execution):
-    inputs = identity_inputs(device)
-    first = engine_behavior(inputs, (("PEROVSKITE_RHS_FINITE_CHECK", "0"),))
-    second = engine_behavior(inputs, (("PEROVSKITE_RHS_FINITE_CHECK", "1"),))
-    a = execution_identity(inputs, execution, engine=ExecutionEngine("legacy", first))
-    b = execution_identity(inputs, execution, engine=ExecutionEngine("legacy", second))
-    assert a.sha256 != b.sha256
-    assert a.export()["document"]["payload"]["engine"]["behavior_context"]["driver"] == "scaps_transient"
-
-
 def test_engine_requires_real_matching_context_and_has_no_automatic_fallback(device, execution):
     inputs = identity_inputs(device)
-    behavior = engine_behavior(inputs)
     for name in ("auto", "fallback", "", True):
         with pytest.raises(ValueError, match="explicitly"):
             ExecutionEngine(name)
     with pytest.raises(ValueError, match="BehaviorContext"):
         ExecutionEngine("legacy")
-    with pytest.raises(ValueError, match="relabelled"):
-        ExecutionEngine("solarlab", behavior)
     with pytest.raises(ValueError, match="typed explicit"):
         execution_identity(inputs, execution, engine={"name": "legacy"})
-    changed_inputs = identity_inputs(changed(device, lambda d: d["settings"].update(Phi=1e21)))
-    with pytest.raises(ValueError, match="different prepared"):
-        execution_identity(changed_inputs, execution, engine=ExecutionEngine("legacy", behavior))
-    engine = ExecutionEngine("legacy", behavior)
-    exported = engine.export()
-    exported["behavior_context"]["environment_effective_snapshot"].clear()
-    assert engine.export()["behavior_context"]["environment_effective_snapshot"]
+    engine = ExecutionEngine("solarlab")
     with pytest.raises(FrozenInstanceError):
-        engine.name = "solarlab"
+        engine.name = "legacy"
 
 
 def test_real_prepared_device_selection_resource_and_execution_producers(device, execution):

@@ -17,7 +17,6 @@ from examples.research_1d.ionic_multilayer import (  # noqa: E402
     prepare_confined_ion_device,
 )
 from examples.research_1d.steady import load_device  # noqa: E402
-from perovskite_sim.experiments import tpv as legacy_tpv  # noqa: E402
 from solarlab.config.resolve_device import resolve_device  # noqa: E402
 from solarlab.device.compile_1d import compile_device_1d  # noqa: E402
 from solarlab.device.inputs import DeviceInput  # noqa: E402
@@ -115,16 +114,16 @@ def test_ion_free_tpv_single_exponential_extraction_truncation_refusal_and_legac
     assert res.decay_fit.status == "single_exponential"
     assert res.tau is not None and res.tau > 0.0
 
-    # Live parity check against perovskite_sim.experiments.tpv.fit_tpv_decay on the solved decay trace
+    # Standalone fit_tpv_decay consistency on the solved decay trace
     pulse_end = prot.pulse_points
     t_rel = res.t[pulse_end:] - float(res.t[pulse_end])
     dv_rel = res.delta_V[pulse_end:]
-    leg_fit = legacy_tpv.fit_tpv_decay(t_rel, dv_rel, noise_floor_V=1e-9)
-    assert leg_fit.status == "accepted"
-    assert leg_fit.tau_s is not None
-    assert res.tau == pytest.approx(leg_fit.tau_s, rel=5e-3)
+    direct_fit = fit_tpv_decay(t_rel, dv_rel)
+    assert direct_fit.status == "single_exponential"
+    assert direct_fit.tau_s is not None
+    assert res.tau == pytest.approx(direct_fit.tau_s, rel=5e-3)
 
-    # Also verify non-identifiable refusal parity vs legacy fit_tpv_decay
+    # Also verify non-identifiable refusal on truncated decay window
     short_prot = TPVProtocol(
         delta_G_frac=0.05,
         t_pulse_s=5e-7,
@@ -142,12 +141,11 @@ def test_ion_free_tpv_single_exponential_extraction_truncation_refusal_and_legac
     t_short = short_res.t[short_prot.pulse_points :] - float(
         short_res.t[short_prot.pulse_points]
     )
-    leg_short = legacy_tpv.fit_tpv_decay(
-        t_short, short_res.delta_V[short_prot.pulse_points :], noise_floor_V=1e-9
+    direct_short = fit_tpv_decay(
+        t_short, short_res.delta_V[short_prot.pulse_points :]
     )
-    assert leg_short.tau_s is None
-    assert leg_short.status == "insufficient_decay_window"
-    _ = fit_tpv_decay
+    assert direct_short.tau_s is None
+    assert direct_short.status == "insufficient_decay_window"
 
 
 def test_mobile_ion_tpv_paired_control_subtraction_under_active_baseline_drift() -> None:

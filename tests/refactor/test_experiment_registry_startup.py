@@ -49,12 +49,12 @@ def bound_case(request, resources):
     parameter_schema = EvidenceRef(schema_id, hashlib.sha256(schema_bytes).hexdigest(), "source")
     builder_ref, result_ref = ref(relative, builder), ref(relative, result_name)
     executor_path, executor_name, renderer_name = {
-        "jv": ("experiments/jv_sweep.py", "run_jv_sweep", "renderJV"),
+        "jv": ("experiments/jv/steady.py", "run_steady_jv", "renderJV"),
         "dark_jv": ("experiments/dark_jv.py", "run_dark_jv", "renderDarkJV"),
-        "jv_2d": ("twod/experiments/jv_sweep_2d.py", "run_jv_sweep_2d", "renderJV2D"),
-        "voc_grain_sweep": ("twod/experiments/voc_grain_sweep.py", "run_voc_grain_sweep", "renderVocGrainSweep"),
+        "jv_2d": ("experiments/two_dimensional/jv_sweep_2d.py", "run_jv_sweep_2d", "renderJV2D"),
+        "voc_grain_sweep": ("experiments/two_dimensional/voc_grain_sweep.py", "run_voc_grain_sweep", "renderVocGrainSweep"),
     }[kind]
-    executor = "perovskite-sim/perovskite_sim/" + executor_path
+    executor = "src/solarlab/" + executor_path
     renderer = ref("web/src/workstation/panes/main-plot-pane.ts", renderer_name)
     dimension = 1 if one_dimensional else 2
     rule = CapabilityRule(kind + ".preparation", (dimension,), ("transient",),

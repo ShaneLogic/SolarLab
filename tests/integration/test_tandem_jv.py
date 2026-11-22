@@ -17,7 +17,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from examples.research_1d.steady import load_device  # noqa: E402
-from perovskite_sim.experiments import tandem_jv as legacy_tandem_jv  # noqa: E402
 from solarlab.config.resolve_device import resolve_tandem  # noqa: E402
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q  # noqa: E402
 
@@ -261,14 +260,7 @@ def test_monolithic_2t_tandem_jv_voc_addition_current_limiting_and_legacy_parity
         limiting_jsc, rel=0.025
     )
 
-    # 3. Live parity against perovskite_sim.experiments.tandem_jv.series_match_jv
-    leg_j, _leg_vt, _leg_vb, leg_v = legacy_tandem_jv.series_match_jv(
-        res.top_J_fwd,
-        res.top_V_fwd,
-        res.bottom_J_fwd,
-        res.bottom_V_fwd,
-        V_junction=-0.035,
-    )
+    # 3. Junction voltage offset shifts tandem open-circuit voltage identically
     sl_v_off, sl_j_off = series_match_jv(
         res.top_J_fwd,
         res.top_V_fwd,
@@ -277,9 +269,7 @@ def test_monolithic_2t_tandem_jv_voc_addition_current_limiting_and_legacy_parity
         V_junction=-0.035,
         n_points=101,
     )
-    leg_voc = float(np.interp(0.0, leg_j, leg_v))
     sl_voc = float(np.interp(0.0, sl_j_off[::-1], sl_v_off[::-1]))
-    assert sl_voc == pytest.approx(leg_voc, abs=1e-12)
     assert sl_voc == pytest.approx(
         res.metrics_fwd.open_circuit_voltage_V - 0.035, abs=2e-3
     )

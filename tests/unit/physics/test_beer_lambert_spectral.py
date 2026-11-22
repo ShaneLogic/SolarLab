@@ -17,7 +17,6 @@ from solarlab.config.identity import (
     input_identity,
     physics_identity,
 )
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.model_parameters import device_topology, layer_parameter_source
 from solarlab.config.resolve_device import resolve_device
 from solarlab.config.scaps_input import import_scaps_device
@@ -75,29 +74,13 @@ from solarlab.reproducibility.scaps_beer_lambert import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-LEGACY = ROOT / "perovskite-sim" / "perovskite_sim"
-DATA_DIR = LEGACY / "data"
-CATALOG_PATHS = (
-    "models/parameters.py",
-    "models/device.py",
-    "models/defects.py",
-    "physics/statistics.py",
-    "physics/band_gap_narrowing.py",
-    "scaps_compat/loader.py",
-    "constants.py",
-    "twod/microstructure.py",
-    "models/tandem_config.py",
-)
+DATA_DIR = ROOT / "src/solarlab/materials/data"
 
 
 @pytest.fixture(scope="module")
 def defaults() -> DefaultCatalog:
-    return read_legacy_default_catalog(
-        tuple(
-            SourceDocument(name, (LEGACY / name).read_bytes())
-            for name in CATALOG_PATHS
-        )
-    )
+    from solarlab.materials.packaged import load_packaged_default_catalog
+    return load_packaged_default_catalog("device_only")
 
 
 def _am15g_spectrum(n_wavelengths: int = 200) -> SpectralPhotonFlux:
@@ -354,7 +337,7 @@ def test_opt_in_compilers_preserve_default_parity_and_separate_identities(
 ) -> None:
     original = SourceDocument(
         "fixture:nip_MAPbI3",
-        (ROOT / "perovskite-sim/tests/fixtures/configs/nip_MAPbI3.yaml").read_bytes(),
+        (ROOT / "tests/fixtures/configs/nip_MAPbI3.yaml").read_bytes(),
     )
     am15g = _am15g_resource(60)
     nk = _nk_tables("TiO2", "MAPbI3", "spiro_OMeTAD")
@@ -605,7 +588,7 @@ def test_scaps_beer_lambert_catalog_provenance_and_sweep_application(
     points = [p for s in catalog["sweeps"].values() for p in s["points"]]
     assert sum(p.get("origin") != "solarlab_extension" for p in points) == 93
     assert len(points) == 95
-    workbook_path = ROOT / "perovskite-sim" / catalog["source"]
+    workbook_path = ROOT / catalog["source"]
     assert (
         catalog["source_sha256"]
         == hashlib.sha256(workbook_path.read_bytes()).hexdigest()
@@ -614,7 +597,7 @@ def test_scaps_beer_lambert_catalog_provenance_and_sweep_application(
 
     scaps_src = SourceDocument(
         "configs/scaps_mirror_v2.yaml",
-        (ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml").read_bytes(),
+        (ROOT / "src/solarlab/materials/data/presets/scaps_mirror_v2.yaml").read_bytes(),
     )
     base_input = import_scaps_device(scaps_src, id="scaps_mirror_v2", defaults=defaults)
     nk_lib = ResourceLibrary(_nk_tables("glass", "spiro_OMeTAD", "MAPbI3", "TiO2"))

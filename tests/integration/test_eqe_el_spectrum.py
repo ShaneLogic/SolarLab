@@ -14,12 +14,6 @@ import numpy as np
 import pytest
 from threadpoolctl import threadpool_limits
 
-from perovskite_sim.experiments.el_spectrum import (
-    run_el_spectrum as legacy_run_el_spectrum,
-)
-from perovskite_sim.experiments.eqe import compute_eqe as legacy_compute_eqe
-from perovskite_sim.models.device import DeviceStack, LayerSpec
-from perovskite_sim.models.parameters import MaterialParams
 from solarlab.config.resolve_device import resolve_device
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.device.compile_1d import compile_device_1d
@@ -53,10 +47,10 @@ def blas1() -> object:
 
 
 def _spectral_resource_library() -> ResourceLibrary:
-    nk_path = ROOT / "perovskite-sim" / "perovskite_sim" / "data" / "nk" / "MAPbI3.csv"
+    nk_path = ROOT / "src" / "solarlab" / "materials" / "data" / "nk" / "MAPbI3.csv"
     nk_bytes = nk_path.read_bytes()
 
-    am15g_path = ROOT / "perovskite-sim" / "perovskite_sim" / "data" / "am15g.csv"
+    am15g_path = ROOT / "src" / "solarlab" / "materials" / "data" / "am15g.csv"
     data_lines: list[str] = []
     for line in am15g_path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -139,69 +133,6 @@ def _prepare_spectral_device(
     )
 
 
-def _legacy_stack_from_prepared(prepared: PreparedDevice) -> DeviceStack:
-    mapping = prepared.to_mapping()
-    settings = mapping["settings"]
-    layers: list[LayerSpec] = []
-    for layer in prepared.layers:
-        p = dict(layer.parameters)
-        opt_mat = layer.optical.name if layer.optical is not None else None
-        n_opt = None if p["n_optical"] is None else float(p["n_optical"])
-        mp = MaterialParams(
-            eps_r=float(p["eps_r"]),
-            mu_n=float(p["mu_n"]),
-            mu_p=float(p["mu_p"]),
-            D_ion=float(p["D_ion"]),
-            P_lim=float(p["P_lim"]),
-            P0=float(p["P0"]),
-            ni=float(p["ni"]),
-            tau_n=float(p["tau_n"]),
-            tau_p=float(p["tau_p"]),
-            n1=float(p["n1"]),
-            p1=float(p["p1"]),
-            B_rad=float(p["B_rad"]),
-            C_n=float(p["C_n"]),
-            C_p=float(p["C_p"]),
-            alpha=float(p["alpha"]),
-            N_A=float(p["N_A"]),
-            N_D=float(p["N_D"]),
-            chi=float(p["chi"]),
-            Eg=float(p["Eg"]),
-            A_star_n=float(p["A_star_n"]),
-            A_star_p=float(p["A_star_p"]),
-            v_th=float(p["v_th"]),
-            D_ion_neg=float(p["D_ion_neg"]),
-            P0_neg=float(p["P0_neg"]),
-            P_lim_neg=float(p["P_lim_neg"]),
-            Nc300=float(p["Nc300"]),
-            Nv300=float(p["Nv300"]),
-            mu_T_gamma=float(p["mu_T_gamma"]),
-            B_rad_T_gamma=float(p["B_rad_T_gamma"]),
-            varshni_alpha=float(p["varshni_alpha"]),
-            varshni_beta=float(p["varshni_beta"]),
-            optical_material=opt_mat,
-            n_optical=n_opt,
-            incoherent=bool(p["incoherent"]),
-        )
-        layers.append(
-            LayerSpec(
-                name=layer.id,
-                thickness=float(layer.thickness),
-                params=mp,
-                role=layer.role,
-            )
-        )
-    return DeviceStack(
-        layers=tuple(layers),
-        V_bi=float(settings["V_bi"]),
-        Phi=float(settings["Phi"]),
-        T=float(settings["T"]),
-        mode=str(settings["mode"]),
-        built_in_potential_mode=str(settings["built_in_potential_mode"]),
-        dos_band_potentials=bool(settings["dos_band_potentials"]),
-    )
-
-
 def test_eqe_finite_flux_linear_response_photon_budget_and_jsc_closure() -> None:
     steady_ex = _import_example("examples.research_1d.steady")
     prepared = _prepare_spectral_device(steady_ex.load_device())
@@ -273,10 +204,9 @@ def test_eqe_finite_flux_linear_response_photon_budget_and_jsc_closure() -> None
     assert eqe_fine.J_sc_eqe_A_m2 == pytest.approx(jsc_full, rel=2e-2)
 
 
-def test_eqe_legacy_engine_parity_and_coupled_ionic_support() -> None:
+def test_eqe_node_profile_and_coupled_ionic_support() -> None:
     steady_ex = _import_example("examples.research_1d.steady")
     prepared = _prepare_spectral_device(steady_ex.load_device())
-    legacy_stack = _legacy_stack_from_prepared(prepared)
 
     wl_parity = np.array([450.0, 650.0, 950.0])
     steady_opts = SteadyOptions(
@@ -294,17 +224,9 @@ def test_eqe_legacy_engine_parity_and_coupled_ionic_support() -> None:
             steady=steady_opts,
         ),
     )
-    leg_eqe = legacy_compute_eqe(
-        legacy_stack,
-        wavelengths_nm=wl_parity,
-        Phi_incident=4e21,
-        N_grid=24,
-        t_settle=1e-3,
-        rtol=1e-4,
-        atol=1e-6,
-    )
-    np.testing.assert_allclose(res_node.EQE, leg_eqe.EQE, atol=2e-3, rtol=2e-3)
-    assert res_node.J_sc_eqe_A_m2 == pytest.approx(leg_eqe.J_sc_integrated, rel=5e-3)
+    assert np.all(res_node.converged_mask)
+    assert res_node.EQE[0] > 0.2 and res_node.EQE[2] < 1e-4
+    assert math.isfinite(res_node.J_sc_eqe_A_m2) and res_node.J_sc_eqe_A_m2 > 0.0
 
     # Coupled confined ionic EQE around genuine ionic DC operating point
     ion_multi = _import_example("examples.research_1d.ionic_multilayer")
@@ -336,7 +258,7 @@ def test_eqe_legacy_engine_parity_and_coupled_ionic_support() -> None:
     assert res_ion.EQE[2] < 1e-4
 
 
-def test_el_spectrum_reciprocity_boltzmann_scaling_and_legacy_parity() -> None:
+def test_el_spectrum_reciprocity_and_boltzmann_scaling() -> None:
     steady_ex = _import_example("examples.research_1d.steady")
     base_dev = steady_ex.load_device()
     prepared_srh = _prepare_spectral_device(
@@ -346,7 +268,6 @@ def test_el_spectrum_reciprocity_boltzmann_scaling_and_legacy_parity() -> None:
         base_dev,
         absorber_overrides={"tau_n": 1.0, "tau_p": 1.0, "C_n": 0.0, "C_p": 0.0},
     )
-    legacy_stack = _legacy_stack_from_prepared(prepared_srh)
 
     wl_el = np.linspace(650.0, 900.0, 26)
     steady_opts = SteadyOptions(
@@ -406,7 +327,6 @@ def test_el_spectrum_reciprocity_boltzmann_scaling_and_legacy_parity() -> None:
     assert el_rad.EQE_EL > 50.0 * el_srh_1v.EQE_EL
     assert el_rad.delta_V_nr_mV < el_srh_1v.delta_V_nr_mV - 100.0
 
-    # Live parity against perovskite_sim.experiments.el_spectrum (node_trapezoid quadrature)
     el_node = run_el_spectrum(
         prepared_srh,
         V_inj_V=1.0,
@@ -417,22 +337,5 @@ def test_el_spectrum_reciprocity_boltzmann_scaling_and_legacy_parity() -> None:
             steady=steady_opts,
         ),
     )
-    leg_el = legacy_run_el_spectrum(
-        legacy_stack,
-        V_inj=1.0,
-        wavelengths_nm=wl_el,
-        N_grid=24,
-        n_points_dark=15,
-        v_rate=1.0,
-        rtol=1e-4,
-        atol=1e-6,
-    )
-    np.testing.assert_allclose(
-        el_node.absorber_absorptance, leg_el.absorber_absorptance, rtol=1e-10, atol=1e-12
-    )
-    np.testing.assert_allclose(
-        el_node.EL_spectrum_m2_s_nm, leg_el.EL_spectrum, rtol=1e-10, atol=1e-20
-    )
-    assert el_node.J_inj_pv_A_m2 == pytest.approx(leg_el.J_inj, rel=2e-3)
-    assert el_node.EQE_EL == pytest.approx(leg_el.EQE_EL, rel=2e-3)
-    assert el_node.delta_V_nr_mV == pytest.approx(leg_el.delta_V_nr_mV, abs=0.2)
+    assert np.all(np.isfinite(el_node.EL_spectrum_m2_s_nm))
+    assert el_node.EQE_EL > 0.0 and math.isfinite(el_node.delta_V_nr_mV)

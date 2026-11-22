@@ -27,7 +27,7 @@ WEB = ROOT / "web"
 EXPORTER = ROOT / "scripts/generate_configuration_schema.py"
 GENERATOR = WEB / "scripts/generate-configuration-inputs.mjs"
 TYPES = WEB / "src/generated/configuration-inputs.ts"
-FIXTURES = ROOT / "perovskite-sim/tests/fixtures/configs"
+FIXTURES = ROOT / "tests/fixtures/configs"
 
 
 def run(command, cwd, expected=0):

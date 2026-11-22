@@ -49,7 +49,8 @@ an existing calculation.
 | Experiment orchestration | `src/solarlab/experiments/`, `sweeps/` | Protocols, preparation, execution and measurements |
 | Persistence and identity | `src/solarlab/io/`, `reproducibility/` | RunStore, source/input identities, original attempts and lossless readers |
 | Service and browser | `src/solarlab_server/`, `web/` | Registered execution, HTTP/events and client contracts |
-| Legacy engine (witness-only) | `perovskite-sim/` (`solarlab_server/legacy_engine/` retired and removed for `P09-03`; see [RetiredModelsV1.md](RetiredModelsV1.md)) | Excluded from target wheels/sdists; retained only for independent test oracles, byte-pinned historical provenance, and decoupled `RS` (`R1` `D20`) |
+| Physics & numerical contracts | `docs/contracts/`, `reproducibility/` | Promoted active physical model contracts (`34` `.md` specifications) and frozen comparison/performance contracts (`AnalyticGatesV1.json`, `ScapsComparisonContractV1.json`, `HysteresisReferenceContractV2.json`, `PerformanceCasesV1.json`, `ScapsParams.xlsx`) |
+| Retired legacy engine | Removed from `devel` (`archive/pre-slim-be973ac5`; see [RetiredModelsV1.md](RetiredModelsV1.md)) | Both `solarlab_server/legacy_engine/` and `perovskite-sim/` are retired and absent from `devel`; historical source snapshots remain addressable via Git tag `archive/pre-slim-be973ac5` |
 | Research companion | `src/solarlab_research/` | Ships migrated `R1` short-window/codec/witness contracts, `CBO` scan, and research CLI entry points (`solarlab-cbo-scan`, `solarlab-r1-short-window`, `solarlab-r1-verify-sources`), alongside runnable workflows in `examples/` |
 
 The import contracts in `pyproject.toml` enforce these boundaries. In

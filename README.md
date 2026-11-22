@@ -162,7 +162,7 @@ The Python `DeviceStack` default and `resolve_mode(None)` select **FULL**. Shipp
 | 2D research extensions | One positive mobile-ion species and optional two-sided interface SRH have explicit Neumann-lateral topology gates; dual mobile ions are rejected |
 | DAE research backbone | Separate residual/Jacobian models and backward-Euler reference integrators; these are not silently substituted into production experiment routes |
 
-The function named `solve_equilibrium` provides a quasi-neutral starting state; it does not by itself certify full ion-relaxed equilibrium. J-V certification is also explicit: strict mode raises on a failed local certificate, while diagnostic mode returns invalid/NaN values for failed dependent points. See the [package guide](perovskite-sim/README.md) for the detailed capability contracts.
+The function named `solve_equilibrium` provides a quasi-neutral starting state; it does not by itself certify full ion-relaxed equilibrium. J-V certification is also explicit: strict mode raises on a failed local certificate, while diagnostic mode returns invalid/NaN values for failed dependent points. See the [Development Guide](docs/DevelopmentGuide.md) and `docs/contracts/` for the detailed capability contracts.
 
 ### Experiments
 
@@ -211,25 +211,16 @@ SolarLab/
                                   codec/witness contracts and CBO scan CLIs
   examples/research_1d/           Runnable new-core 1D workflows
   examples/research_2d/           Runnable bounded new-core 2D workflows
-  tests/                          Root contracts, integration and runtime tests
-  reproducibility/                Active reference and transition contracts
+  tests/                          Unit, integration, refactor, runtime, CI policy,
+                                  and 52 YAML device test fixtures (tests/fixtures/configs/)
+  reproducibility/                Active reference, analytic, performance and SCAPS contracts
   pyproject.toml, uv.lock         Locked root package and development environment
   docs/DevelopmentGuide.md        Current development and extension workflow
-  docs/RetiredModelsV1.md         Retired legacy models, entrypoints and RS witness ledger
+  docs/RetiredModelsV1.md         Retired legacy models, entrypoints and provenance ledger
+  docs/contracts/                 34 active physical model and protocol contract specs
   docs/figures/                   Curated README and comparison figures
-  perovskite-sim/                 Retained outside release wheels/sdists as a
-                                  read-only oracle, provenance and RS witness tree
-    perovskite_sim/               Historical Python models, physics, solvers and 2D
-    backend/                      Historical FastAPI reference backend (witness-only)
-    configs/                      Three research YAMLs (also packaged in solarlab.materials)
-    tests/fixtures/configs/       Historical/test-only device definitions
-    reproducibility/              Historical schema, benchmark matrix, hashes, baselines
-    docs/                         Physics and historical package capability contracts
-    scripts/                      Retained RS (R1/R0) witness scripts
-    tests/                        Historical unit, integration, regression, validation
-    pyproject.toml                Historical package and test dependencies
   web/                            Vite/TypeScript/Plotly/GoldenLayout V2 workstation UI
-  scripts/                        Repository test runner and benchmark utilities
+  scripts/                        Root test runner (test_all.py), schema check, CI & benchmarks
   docker-compose.yml              V2 solarlab_server / frontend container stack
   CLAUDE.md                       Repository guidance and archive location
   README.md
@@ -274,23 +265,6 @@ When installing a built `solarlab==0.1.0` wheel in a clean environment (outside 
 solarlab check-install --require-no-legacy
 ```
 
-### 2. Historical Legacy Witness Setup (`perovskite-sim/`, Not Shipped in Release Wheels)
-
-The commands below apply only when inspecting historical witness/oracle tests inside `perovskite-sim/` in a source checkout (not part of the shipped `solarlab` wheel or `G9P` product surface):
-
-```bash
-cd perovskite-sim
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
-python -m pip install -r backend/requirements.txt
-
-# Historical witness test lanes (from perovskite-sim/)
-python -m pytest -q                                     # default non-slow witness suite
-pytest -m validation -W error::RuntimeWarning           # literature-informed witness lanes
-pytest -m slow -W error::RuntimeWarning                 # heavy historical physics suite
-```
-
 <br>
 
 ---
@@ -322,34 +296,7 @@ You can also run standalone CLI and research workflows directly without a browse
 .venv/bin/solarlab-r1-verify-sources --help
 ```
 
-Additional runnable new-core 1D and 2D examples and saved-result readers are documented in [examples/research_1d](examples/research_1d/README.md) and [examples/research_2d](examples/research_2d/README.md).
-
-### Historical Legacy Reference Context (`perovskite-sim/`, Witness-Only)
-
-The snippets below document the retired legacy `perovskite-sim` backend and Python helper API for historical provenance only (not part of the active V2 `solarlab-server` or shipped wheel; see [RetiredModelsV1.md](docs/RetiredModelsV1.md)):
-
-```bash
-# Historical witness backend (from the SolarLab root)
-uvicorn backend.main:app \
-    --host 127.0.0.1 --port 8000 \
-    --app-dir perovskite-sim --reload
-```
-
-Historical `perovskite_sim` Python sweep snippet (run from `perovskite-sim/` in a witness environment; ordinary 0-to-V_max-and-back protocol differs from the original-paper comparison script):
-
-```python
-from perovskite_sim.models.config_loader import load_device_from_yaml
-from perovskite_sim.experiments.jv_sweep import run_jv_sweep
-
-stack = load_device_from_yaml("configs/calado2016_fig1f.yaml")
-result = run_jv_sweep(stack, N_grid=100, n_points=61, v_rate=0.04, V_max=1.2)
-
-print(f"PCE:  {result.metrics_fwd.PCE*100:.2f} %")
-print(f"V_oc: {result.metrics_fwd.V_oc:.3f} V")
-print(f"J_sc: {result.metrics_fwd.J_sc:.1f} A/m²")
-print(f"FF:   {result.metrics_fwd.FF:.3f}")
-print(f"Hysteresis index: {result.hysteresis_index:.3f}")
-```
+Additional runnable new-core 1D and 2D examples and saved-result readers are documented in [examples/research_1d](examples/research_1d/README.md) and [examples/research_2d](examples/research_2d/README.md). Historical `perovskite-sim/` entrypoints have been retired and removed from `devel`; see [RetiredModelsV1.md](docs/RetiredModelsV1.md) for replacement mappings and commit anchors.
 
 <br>
 
@@ -544,7 +491,7 @@ Ions are blocked at both contacts ($J_P = 0$), enforcing ionic-species conservat
 
 The 2D solver is an experimental extension for lateral microstructure effects, not a replacement for the default 1D workflow. It builds a tensor-product grid with lateral coordinate $x$ and vertical stack coordinate $y$, solves sparse 2D Poisson with Dirichlet contacts in $y$ and periodic lateral boundaries, and advances 2D Scharfetter-Gummel fluxes for carriers. Ions are frozen as a static Poisson background during 2D J-V runs.
 
-2D presets live under `perovskite-sim/configs/twod/` and are auto-discovered by the backend. Current entry points are `kind='jv_2d'` for a voltage sweep and `kind='voc_grain_sweep'` for a grain-size sweep. Microstructure is supplied by a YAML `microstructure:` block containing vertical grain boundaries; the solver paints reduced SRH lifetimes into the absorber through `MaterialArrays2D`.
+2D test fixtures live under `tests/fixtures/configs/twod/`. Current entry points are `kind='jv_2d'` for a voltage sweep and `kind='voc_grain_sweep'` for a grain-size sweep. Microstructure is supplied by a YAML `microstructure:` block containing vertical grain boundaries; the 2D assembler mixes bulk and grain-boundary recombination rates via exact control-volume overlap fractions.
 
 <br>
 
@@ -584,11 +531,9 @@ The production TMM-to-solver path integrates absorbed photons over each electric
 ## Validation & Model Scope
 
 SolarLab keeps repository capability, internal numerical acceptance, and
-external physical agreement as separate claims. The machine-readable registry
-and reproduction commands live under
-[`perovskite-sim/reproducibility/`](perovskite-sim/reproducibility/README.md);
-the full interpretation is in the
-2026-08-11 manual (distributed separately).
+external physical agreement as separate claims. The machine-readable comparison
+and performance contracts live under `reproducibility/`; the full interpretation
+is in the 2026-08-11 manual (distributed separately).
 
 ### Historical R1 failure evidence
 
@@ -728,7 +673,7 @@ At each frequency, the solver integrates several AC cycles, then a lock-in ampli
 | Number of probes | Snapshot count over the simulation |
 | Probe bias | Voltage for snapshot J-V |
 
-At each probe time, the solver takes a **frozen-ion snapshot**: both positive and negative ionic diffusivities are set to zero while their spatial populations, compensating backgrounds and site capacities remain fixed. The same frozen model solves the electronic steady state and reports its $J(V)$ curve only when the residual and current-continuity checks pass. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ versus the declared aging history. This does not independently validate chemical degradation rates. See the [snapshot contract](perovskite-sim/docs/FrozenIonSnapshotContract.md).
+At each probe time, the solver takes a **frozen-ion snapshot**: both positive and negative ionic diffusivities are set to zero while their spatial populations, compensating backgrounds and site capacities remain fixed. The same frozen model solves the electronic steady state and reports its $J(V)$ curve only when the residual and current-continuity checks pass. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ versus the declared aging history. This does not independently validate chemical degradation rates. See the [snapshot contract](docs/contracts/FrozenIonSnapshotContract.md).
 
 #### Transient Photovoltage (TPV)
 
@@ -739,7 +684,7 @@ At each probe time, the solver takes a **frozen-ion snapshot**: both positive an
 | Pulse duration | Duration of the light pulse [s] |
 | Observation window | Total time including decay [s] |
 
-The device is prepared at open circuit under steady illumination, then a small light pulse is applied. Terminal charge and voltage evolve together to preserve the open-circuit total-current condition. The pulse response is measured against an unpulsed trace with the same initial state, allowing slow background drift to remain visible. A single-exponential photovoltage relaxation time is reported only for an identifiable decay; otherwise `tau` is `None` (`null` in JSON) and a fit reason is retained. It is not automatically a microscopic recombination lifetime. See the [TPV contract](perovskite-sim/docs/TpvOpenCircuitContract.md).
+The device is prepared at open circuit under steady illumination, then a small light pulse is applied. Terminal charge and voltage evolve together to preserve the open-circuit total-current condition. The pulse response is measured against an unpulsed trace with the same initial state, allowing slow background drift to remain visible. A single-exponential photovoltage relaxation time is reported only for an identifiable decay; otherwise `tau` is `None` (`null` in JSON) and a fit reason is retained. It is not automatically a microscopic recombination lifetime. See the [TPV contract](docs/contracts/TpvOpenCircuitContract.md).
 
 #### 2D J-V and Grain Sweep
 
@@ -762,7 +707,7 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 
 ## Shipped Device Presets
 
-`perovskite-sim/configs/` currently contains **three** research YAMLs, all listed by the backend API. The frontend catalog displays `scaps_mirror_v2` and `calado2016_ion_sweep`; the older `calado2016_fig1f` remains available through the API/scripts. The current registry covers 55 configurations: 3 shipped and 52 under `tests/fixtures/configs/` (including four 2D fixtures). Fixture-only configurations are not served by the API.
+`src/solarlab/materials/data/presets/` ships the **four** packaged presets (`classical_pin`, `scaps_mirror_v2`, `calado2016_fig1f`, `calado2016_ion_sweep`). The frontend catalog displays `scaps_mirror_v2` and `calado2016_ion_sweep`; `calado2016_fig1f` and `classical_pin` remain available through the V2 API and CLI. Test-only configurations (`52` YAML fixtures, including four 2D fixtures) live under `tests/fixtures/configs/` and are never served by the API.
 
 | Preset | Material System | Ions | Optics | Notes |
 |:-------|:----------------|:----:|:------:|:------|
@@ -770,9 +715,7 @@ The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation 
 | `calado2016_fig1f` | Calado 2016 Fig. 1f toy device | Yes | Beer-Lambert | Original comparison lane, Legacy mode; external agreement remains partial |
 | `calado2016_ion_sweep` | Internal dense ion-sweep figure | Yes | Uniform absorber generation in the declared waveform | Frontend ion study, Full mode; internal figure regression, not original-paper reproduction |
 
-See [Research Presets](perovskite-sim/configs/README.md) for protocols and
-limitations. Older benchmark figures and records elsewhere in this README
-describe their declared historical configurations. The new ion-sweep preset carries its own continuous waveform, preconditioning, and dark-turnaround settings; results must not be transferred between the two Calado-named protocols.
+Older benchmark figures and records elsewhere in this README describe their declared historical configurations. The ion-sweep preset carries its own continuous waveform, preconditioning, and dark-turnaround settings; results must not be transferred between the two Calado-named protocols.
 
 <br>
 
@@ -784,23 +727,12 @@ From the repository root, `.venv/bin/python scripts/test_all.py` runs the
 ordinary root CI pytest selections in isolated processes. Standalone web
 tests/builds, installation checks and optional scientific/slow campaigns have
 their own scope; see [Development Guide](docs/DevelopmentGuide.md).
-The commands and dated measurements below describe the legacy suite.
-
-The 2026-10-01 documentation review ran six focused modules for research-preset inventory/API round trips, SCAPS inline configuration, Calado protocol helpers, mode defaults, ionic-flux Jacobians, and solver dispatch: **77 tests passed**. This check did not rerun the full physics suite, historical grid campaigns, or external-solver comparisons quoted above.
-
-```bash
-# From perovskite-sim/: research-preset checks
-python -m pytest -q tests/reproducibility/test_research_presets.py tests/unit/backend/test_scaps_inline_config.py tests/unit/experiments/test_plot_calado_fig1f.py
-
-# Default non-slow lane (includes applicable regression/validation tests)
-python -m pytest -q
-```
 
 | Suite | Scope |
 |:------|:------|
-| **Unit** | Per-module physics + solver coverage |
-| **Integration** | End-to-end experiment runs on shipped presets |
-| **Regression** | Physical sanity envelopes ($V_{\text{oc}}$, $J_{\text{sc}}$, HI bounds); BLAS pinned via `conftest.py` |
+| **Unit (`tests/unit/`)** | Per-module physics, discretization, equation assembly, and solver contracts |
+| **Integration (`tests/integration/`)** | End-to-end 1D/2D experiment workflows, TMM photon conservation, and screening gates |
+| **Refactor & Runtime (`tests/refactor/`, `tests/runtime/`)** | Release bundle isolation, configuration/protocol identity, HTTP/SSE job supervision, and RunStore fencing |
 
 <br>
 

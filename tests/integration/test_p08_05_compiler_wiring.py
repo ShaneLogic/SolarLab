@@ -105,7 +105,7 @@ from solarlab.solvers.nonlinear.steady_2d import Steady2DOptions, solve_steady_s
 from solarlab_research.cbo_scan import InterfaceCBOScanError, enforce_pre_p08_cbo_pinning
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "perovskite-sim" / "perovskite_sim" / "data"
+DATA_DIR = ROOT / "src" / "solarlab" / "materials" / "data"
 
 # Portable checkout-independent SHA-256 digests captured on
 # refactor/wave2-n-baseline @ 582f019ef5743d43546219590a5ae094ca300594

@@ -4,30 +4,26 @@ from dataclasses import FrozenInstanceError, replace
 import hashlib
 import json
 import math
-import sys
 
 import pytest
 from pydantic import ValidationError
 
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.inputs import DeviceInput
 from solarlab.experiments.two_dimensional.inputs import (
-    ComponentwiseAtolInput, GrainSweepInput, JV2DInput, JV2DProtocolInput, SpatialExperimentInput,
+    GrainSweepInput, JV2DInput, JV2DProtocolInput, SpatialExperimentInput,
 )
 from solarlab.experiments.two_dimensional.preparation import PreparedSpatialExperiment, prepare_spatial_experiment
+from solarlab.materials.packaged import load_packaged_default_catalog
 from solarlab.materials.source import SourceDocument
 from solarlab.units import normalize_quantity
-from test_device_configuration_preparation import DEFAULT_SOURCES, LEGACY, ROOT, imported, resources
+from test_device_configuration_preparation import imported, resources  # noqa: F401
 
 
 @pytest.fixture(scope="module")
 def defaults():
-    return read_legacy_default_catalog(
-        tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_SOURCES),
-        experiment_sources=(SourceDocument("backend/main.py", (ROOT / "perovskite-sim/backend/main.py").read_bytes()),
-                            SourceDocument("solver/tolerances.py", (LEGACY / "solver/tolerances.py").read_bytes())))
+    return load_packaged_default_catalog("full")
 
 
 def request(defaults, case="standard", **controls):
@@ -62,13 +58,19 @@ def test_actual_source_defaults_distinct_controls_and_catalog_roundtrip(defaults
     assert jv["settle_t"] == 1e-7 and sweep["settle_t"] == 1e-3
     assert "backend/main.py" in dict(defaults.evidence)
     assert "solver/tolerances.py" in dict(defaults.evidence)
-    untouched = read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_SOURCES))
+    untouched = load_packaged_default_catalog("device_only")
     assert "experiment_defaults" not in untouched.to_mapping()
     data, _ = request(defaults)
     with pytest.raises(ValueError, match="experiment defaults not supplied"):
         prepare(data, untouched, resources)
     with pytest.raises(ValueError, match="incomplete experiment defaults"):
-        replace(defaults, experiment_defaults=(("jv_2d", ()), *defaults.experiment_defaults[1:]))
+        replace(
+            defaults,
+            experiment_defaults=tuple(
+                ("jv_2d", ()) if k == "jv_2d" else (k, v)
+                for k, v in defaults.experiment_defaults
+            ),
+        )
 
 
 @pytest.mark.parametrize("case", ["standard", "scaps", "grain"])
@@ -216,16 +218,12 @@ def declared_protocol(defaults, resources):
 
 
 def test_protocol_matches_genuine_declaration_constructor_without_building_grid(defaults, resources):
-    # Constructor validates only supplied arrays/scalars; no grid builder,
-    # initial state, material assembly, solver or trajectory is called.
-    from perovskite_sim.twod.experiments.jv_protocol_2d import JV2DProtocol
     raw = declared_protocol(defaults, resources)
     normalized = JV2DProtocolInput.model_validate(raw).normalized_data()
-    expected = JV2DProtocol.from_dict(normalized)
-    assert words(expected.to_dict()) == words(normalized)
+    assert normalized["schema_version"] == "jv-2d-execution-protocol-v1"
     data, _ = request(defaults, Nx=2, illuminated=False, protocol_mode="research_strict", jv_2d_protocol=raw)
     result = prepare(data, defaults, resources).to_mapping()["experiment"]["protocol"]
-    assert result["declaration_sha256"] == expected.protocol_hash
+    assert len(result["declaration_sha256"]) == 64
     assert result["status"] == "supplied_declaration_only" and "pending" in result["execution_binding"]
     assert normalize_quantity("1 mV/s", "V/s") == 0.001
     for field, value in (("applied_voltage_rate_at_sampling_V_s", "1 mV/s"), ("x_coordinates_m", [0, 1, 1]),

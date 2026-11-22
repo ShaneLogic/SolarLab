@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import copy
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 from threadpoolctl import threadpool_limits
 
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_dynamic_defect_1d import compile_dynamic_defect_device_1d
 from solarlab.device.defaults import DefaultCatalog
@@ -26,22 +24,8 @@ from solarlab.equations.assembly.dynamic_defects_1d import (
     solve_dynamic_defect_steady_1d,
 )
 from solarlab.equations.dc_1d import CapabilityError
+from solarlab.materials.packaged import load_packaged_default_catalog
 from solarlab.materials.resources import ResourceLibrary
-from solarlab.materials.source import SourceDocument
-
-ROOT = Path(__file__).resolve().parents[3]
-LEGACY_PKG = ROOT / "perovskite-sim" / "perovskite_sim"
-LEGACY_DEFAULTS = (
-    "models/parameters.py",
-    "models/device.py",
-    "models/defects.py",
-    "physics/statistics.py",
-    "physics/band_gap_narrowing.py",
-    "scaps_compat/loader.py",
-    "constants.py",
-    "twod/microstructure.py",
-    "models/tandem_config.py",
-)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -52,9 +36,7 @@ def _blas1() -> Iterator[None]:
 
 @pytest.fixture(scope="module")
 def defaults() -> DefaultCatalog:
-    return read_legacy_default_catalog(
-        tuple(SourceDocument(n, (LEGACY_PKG / n).read_bytes()) for n in LEGACY_DEFAULTS)
-    )
+    return load_packaged_default_catalog("device_only")
 
 
 def _mat(eg: float = 1.6, chi: float = 3.9, *, nd: float = 0.0, na: float = 0.0) -> dict[str, Any]:

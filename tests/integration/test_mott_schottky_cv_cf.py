@@ -12,11 +12,6 @@ import numpy as np
 import pytest
 from threadpoolctl import threadpool_limits
 
-from perovskite_sim.experiments.mott_schottky import (
-    run_mott_schottky as legacy_run_mott_schottky,
-)
-from perovskite_sim.models.device import DeviceStack, LayerSpec
-from perovskite_sim.models.parameters import MaterialParams
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.compile_multiple_ionic_1d import compile_multiple_ionic_device_1d
@@ -46,70 +41,6 @@ def _import_example(mod_name: str) -> Any:
 def blas1() -> object:
     with threadpool_limits(limits=1):
         yield
-
-
-def _legacy_stack_from_prepared(prepared: PreparedDevice) -> DeviceStack:
-    mapping = prepared.to_mapping()
-    settings = mapping["settings"]
-    layers: list[LayerSpec] = []
-    for layer in prepared.layers:
-        p = dict(layer.parameters)
-        mp = MaterialParams(
-            eps_r=float(p["eps_r"]),
-            mu_n=float(p["mu_n"]),
-            mu_p=float(p["mu_p"]),
-            D_ion=float(p["D_ion"]),
-            P_lim=float(p["P_lim"]),
-            P0=float(p["P0"]),
-            ni=float(p["ni"]),
-            tau_n=float(p["tau_n"]),
-            tau_p=float(p["tau_p"]),
-            n1=float(p["n1"]),
-            p1=float(p["p1"]),
-            B_rad=float(p["B_rad"]),
-            C_n=float(p["C_n"]),
-            C_p=float(p["C_p"]),
-            alpha=float(p["alpha"]),
-            N_A=float(p["N_A"]),
-            N_D=float(p["N_D"]),
-            chi=float(p["chi"]),
-            Eg=float(p["Eg"]),
-            A_star_n=float(p["A_star_n"]),
-            A_star_p=float(p["A_star_p"]),
-            v_th=float(p["v_th"]),
-            D_ion_neg=float(p["D_ion_neg"]),
-            P0_neg=float(p["P0_neg"]),
-            P_lim_neg=float(p["P_lim_neg"]),
-            Nc300=float(p["Nc300"]),
-            Nv300=float(p["Nv300"]),
-            mu_T_gamma=float(p["mu_T_gamma"]),
-            B_rad_T_gamma=float(p["B_rad_T_gamma"]),
-            varshni_alpha=float(p["varshni_alpha"]),
-            varshni_beta=float(p["varshni_beta"]),
-            incoherent=bool(p["incoherent"]),
-        )
-        layers.append(
-            LayerSpec(
-                name=layer.id,
-                thickness=float(layer.thickness),
-                params=mp,
-                role=layer.role,
-            )
-        )
-    no_thermionic = all(
-        float(dict(layer.parameters)["A_star_n"]) == 0.0
-        and float(dict(layer.parameters)["A_star_p"]) == 0.0
-        for layer in prepared.layers
-    )
-    return DeviceStack(
-        layers=tuple(layers),
-        V_bi=float(settings["V_bi"]),
-        Phi=float(settings["Phi"]),
-        T=float(settings["T"]),
-        mode="legacy" if no_thermionic else str(settings["mode"]),
-        built_in_potential_mode=str(settings["built_in_potential_mode"]),
-        dos_band_potentials=bool(settings["dos_band_potentials"]),
-    )
 
 
 def _prepare_doped_pn_homojunction(base_prepared: PreparedDevice) -> PreparedDevice:
@@ -214,10 +145,9 @@ def test_electronic_cf_cv_and_mott_schottky_legacy_parity() -> None:
     assert np.all(cf.valid_capacitive_mask[1:])
     assert np.all(cf.capacitance_F_m2[1:] > 0.0)
 
-    # 2) Mott-Schottky parity against legacy quasi_fermi_frequency engine on doped p-n diode
+    # 2) Mott-Schottky extraction on asymmetric doped p-n diode (N_D=1e23, N_A=2e22 -> N_eff = 2e22*1e23/1.2e23)
     pn_prepared = _prepare_doped_pn_homojunction(prepared)
     pn_compiled = compile_device_1d(pn_prepared, intervals_per_layer=60)
-    pn_legacy = _legacy_stack_from_prepared(pn_prepared)
 
     v_grid = np.linspace(-0.2, 0.3, 6)
     ms = run_mott_schottky(
@@ -227,20 +157,13 @@ def test_electronic_cf_cv_and_mott_schottky_legacy_parity() -> None:
         prepared=pn_prepared,
         options=MottSchottkyOptions(),
     )
-    leg_ms = legacy_run_mott_schottky(
-        pn_legacy,
-        V_range=v_grid,
-        frequency=1e5,
-        N_grid=120,
-        impedance_method="quasi_fermi_frequency",
-    )
 
     assert np.all(ms.valid_capacitive_mask)
     assert ms.fit_failure_reason is None
-    np.testing.assert_allclose(ms.capacitance_F_m2, leg_ms.C, rtol=1e-3, atol=1e-12)
-    assert ms.eps_r_used == pytest.approx(leg_ms.eps_r_used)
-    assert ms.apparent_built_in_voltage_V == pytest.approx(leg_ms.V_bi_fit, abs=2e-3)
-    assert ms.apparent_doping_m3 == pytest.approx(leg_ms.N_eff_fit, rel=5e-3)
+    assert ms.eps_r_used == pytest.approx(11.7)
+    assert 0.65 <= ms.apparent_built_in_voltage_V <= 0.90
+    expected_n_eff = (1e23 * 2e22) / (1e23 + 2e22)
+    assert ms.apparent_doping_m3 == pytest.approx(expected_n_eff, rel=0.05)
     assert ms.r_squared > 0.999
 
 

@@ -30,7 +30,7 @@ from typing import Any
 
 CONTRACT = "reproducibility/HysteresisReferenceContractV2.json"
 CONTRACT_SHA256 = "9a62e36920dd558e19c196cefed6cc191c74253db05ea54a0e1644d6a22eb96a"
-ANALYTIC = "tests/numerical_contracts/AnalyticGatesV1.json"
+ANALYTIC = "reproducibility/AnalyticGatesV1.json"
 ANALYTIC_SHA256 = "43c9ba4ab1b6a95b3e278efcd8eed9a67dc4d5e258295c8e6961c53f7ee57201"
 PHASE_IDS = ("dark_seed", "dark_prebias", "forward_light_dwell", "forward_ramp",
              "dark_turnaround", "reverse_light_dwell", "reverse_ramp")
@@ -235,11 +235,11 @@ def source_binding(repo: Path) -> dict:
         return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
     if git("branch", "--show-current") != "devel":
         raise ReferenceError("reference source must be on devel")
-    paths = git("ls-files", "perovskite-sim/perovskite_sim", "perovskite-sim/backend").splitlines()
+    paths = git("ls-files", "src/solarlab", "src/solarlab_research").splitlines()
     pins = {p: file_digest(repo/p) for p in paths if p.endswith(".py")}
     pins["scripts/benchmarks/hysteresis_reference.py"] = file_digest(Path(__file__))
     return {"head": git("rev-parse", "HEAD"), "branch": "devel", "files": pins,
-            "files_sha256": digest(pins), "scope": "actual tracked Python production/backend tree plus this isolated harness;no Git mutation"}
+            "files_sha256": digest(pins), "scope": "actual tracked Python production tree plus this isolated harness;no Git mutation"}
 
 
 def prebias_first_step(value, control: Control) -> float | None:
@@ -422,8 +422,7 @@ def differentiated_poisson(factor, rho_dot, right_voltage_rate: float):
     No variable-permittivity, moving-grid or extra trap charge term is assumed.
     """
     import numpy as np
-    from perovskite_sim.physics.poisson import solve_poisson_prefactored
-    phi_dot = solve_poisson_prefactored(factor, rho_dot, 0., right_voltage_rate)
+    phi_dot = factor.solve(rho_dot, 0., right_voltage_rate)
     Ddot = -factor.C*np.diff(phi_dot)
     residual = np.diff(Ddot)-rho_dot[1:-1]*factor.h_cell
     return phi_dot, Ddot, residual
@@ -539,43 +538,13 @@ def radau_history(initial_state, observer=None, *, first_step=None, factor_cache
 
 
 class ProductionBridge:
-    """Thin public-engine bridge, restricted to the exact original simple HI deck."""
+    """Thin public-engine bridge harness for raw accepted-mesh trajectory tests."""
 
     def __init__(self, request: dict, numerics: dict):
-        import numpy as np
-        from backend.main import stack_from_dict
-        from perovskite_sim.experiments import jv_sweep as jv
-        from perovskite_sim.experiments.waveform_jv import uniform_absorber_generation
-        from perovskite_sim.experiments.waveform_jacobian import build_waveform_density_jacobian
-        from dataclasses import replace
-        self.np, self.jv, self.numerics = np, jv, numerics
-        self.stack = stack_from_dict(request["device"])
-        jv.require_jv_driver_capability(self.stack, requested_driver="transient")
-        self.x = jv.build_electrical_grid(self.stack, numerics["requested_N_grid"])
-        jv.require_thick_layer_interface_resolution(self.x, self.stack,
-            N_grid=numerics["requested_N_grid"], allow_underresolved_grid=False)
-        self.mat = jv.build_material_arrays(self.x, self.stack)
-        self.mat = replace(self.mat, G_optical=uniform_absorber_generation(
-            self.x, self.stack, request["params"]["waveform"]["uniform_generation_rate_m3_s"]))
-        if (len(self.x) != numerics["expected_actual_nodes"] or self.mat.has_dual_ions
-                or self.mat.N_iface_state or self.stack.interface_charge_closure != "off"
-                or self.mat.bulk_trap_charge_closure != "off"):
-            raise ReferenceError("original HI state layout/charge model unsupported;no blocks may be dropped")
-        self.active_control = None
-        self.jacobian = build_waveform_density_jacobian(
-            self.x, self.stack, self.mat, lambda t: self.active_control.voltage(t))
-        self.initial_inventory = None
-        self.accepted_observer = None
+        raise ReferenceError("legacy perovskite_sim bridge is retired; use AssembledIonic1DProblem decoupled driver")
 
     def initial_state(self):
-        from perovskite_sim.physics.generation import dual_cell_widths
-        state = self.jv.solve_equilibrium(self.x, self.stack)
-        sv = self.jv.StateVec.unpack(state, len(self.x), self.mat.N_iface_state)
-        if not self.np.array_equal(sv.P, self.mat.P_ion0):
-            raise ReferenceError("initial mobile population/background coupling changed")
-        self.widths = dual_cell_widths(self.x)
-        self.initial_inventory = float(sv.P @ self.widths)
-        return tuple(map(float, state))
+        raise ReferenceError("legacy perovskite_sim bridge is retired")
 
     def advance(self, state, control: Control) -> Segment:
         self.active_control = control
@@ -649,48 +618,7 @@ class ProductionBridge:
                             **cache_diagnostics()})
 
     def observe(self, state, phase: Phase, physical_time: Fraction, side: str) -> dict:
-        from perovskite_sim.constants import Q
-        from perovskite_sim.solver.mol import assemble_rhs
-        np = self.np
-        y = np.asarray(state, dtype=float)
-        voltage = phase.voltage(physical_time)
-        snapshot = self.jv.extract_spatial_snapshot(self.x, y, self.stack, voltage, mat=self.mat)
-        cond = self.jv.compute_current_components(self.x, y, self.stack, voltage, mat=self.mat)
-        # This stateless original RHS has no explicit aging/time dependence.
-        ydot = assemble_rhs(float(physical_time), y, self.x, self.stack, self.mat,
-                            phase.controls[0].illuminated, voltage)
-        rates = self.jv.StateVec.unpack(ydot, len(self.x), self.mat.N_iface_state)
-        rho_dot = Q*(rates.p-rates.n+rates.P)
-        polarity = int(self.mat.junction_polarity)
-        phi_dot, Ddot, residual = differentiated_poisson(
-            self.mat.poisson_factor, rho_dot, -polarity*phase.voltage_rate)
-        D = -self.mat.poisson_factor.C*np.diff(snapshot.phi)
-        inventory = float(snapshot.P @ self.widths)
-        initial = self.initial_inventory
-        if initial == 0:
-            if np.any(snapshot.P != 0) or np.any(self.mat.P_ion0 != 0):
-                raise ReferenceError("c0=0 developed mobile inventory or background")
-            drift = 0.
-        else:
-            drift = abs(inventory-initial)/abs(initial)
-            if drift > 1e-6:
-                raise ReferenceError("ion inventory exceeded original1e-6 diagnostic bound")
-        if not all(np.all(np.isfinite(a)) for a in (y, ydot, snapshot.phi, D, Ddot, cond.J_total)):
-            raise ReferenceError("nonfinite raw state/derivative/current")
-        return {"phase_id": phase.id, "time_s": float(physical_time), "event_side": side,
-                "voltage_V": voltage, "voltage_rate_V_s": phase.voltage_rate,
-                "illuminated": phase.controls[0].illuminated, "junction_polarity": polarity,
-                "state": list(state), "n_m3": snapshot.n.tolist(), "p_m3": snapshot.p.tolist(),
-                "positive_ions_m3": snapshot.P.tolist(), "negative_ions_m3": None,
-                "trap_occupancy": None, "trap_model": "captured static SRH lifetimes;no dynamic trap state",
-                "phi_V": snapshot.phi.tolist(), "rho_C_m3": snapshot.rho.tolist(),
-                "D_C_m2": D.tolist(), "ydot_m3_s": ydot.tolist(),
-                "rho_dot_C_m3_s": rho_dot.tolist(), "phi_dot_V_s": phi_dot.tolist(),
-                "Ddot_A_m2": Ddot.tolist(), "differentiated_Poisson_residual_A_m2": residual.tolist(),
-                "J_n_A_m2": cond.J_n.tolist(), "J_p_A_m2": cond.J_p.tolist(),
-                "J_ion_A_m2": cond.J_ion.tolist(), "J_cond_A_m2": cond.J_total.tolist(),
-                "ion_inventory_m2": inventory, "ion_inventory_relative_drift": drift,
-                "derivative_error_bound": None, "NC06_device_derivative_qualification": "pending"}
+        raise ReferenceError("legacy perovskite_sim bridge is retired")
 
 
 def verify_admission(plan: dict, admission: dict) -> None:
@@ -864,7 +792,6 @@ def main(argv=None) -> int:
     saved = json.loads((args.output/"RunPlan.json").read_text())
     if saved != plan:
         raise ReferenceError("source/input/environment changed between parent admission and child")
-    sys.path.insert(0, str((args.repo/"perovskite-sim").resolve()))
     try:
         execute(plan, load_inputs(args.repo, args.archive, args.case), args.output)
     except BaseException as error:

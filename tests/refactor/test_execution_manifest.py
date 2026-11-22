@@ -22,7 +22,7 @@ from solarlab.materials.source import SourceDocument
 from solarlab.sweeps.inputs import SweepInput
 from solarlab.sweeps.preparation import PreparedJVExperiment, prepare_point, prepare_sweep
 from test_device_configuration_preparation import resources as resources
-from test_execution_identity_preparation import execution as execution, identity_inputs, engine_behavior
+from test_execution_identity_preparation import execution as execution, identity_inputs
 from test_jv_protocol_preparation import defaults as defaults, reference, request, words
 from test_sweep_preparation import single
 
@@ -104,7 +104,7 @@ def test_environment_engine_expected_pin_and_build_are_independently_checked(pre
     with pytest.raises(ValueError, match="environment"):
         consume(prepared, inputs, description, engine, manifest, environment=environment)
     with pytest.raises(ValueError, match="engine"):
-        consume(prepared, inputs, description, engine, manifest, engine=ExecutionEngine("legacy", engine_behavior(inputs)))
+        consume(prepared, inputs, description, engine, manifest, engine="legacy")
     build = replace(description.implementation, build_source_commit="1" * 40)
     with pytest.raises(ValueError, match="implementation"):
         consume(prepared, inputs, replace(description, implementation=build), engine, manifest)

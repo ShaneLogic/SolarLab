@@ -14,7 +14,6 @@ import pytest
 from examples.research_1d.service import committed_implementation
 from examples.research_1d.steady import load_device
 from solarlab.config.device_import import import_standard_device
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.legacy_wire import prepare_legacy_wire
 from solarlab.config.resolve_device import resolve_device
 from solarlab.config.scaps_input import import_scaps_device
@@ -26,7 +25,7 @@ from solarlab.experiments.worker import ResourceLimits, WorkerBinding
 from solarlab.io.artifacts import bytes_artifact
 from solarlab.io.run_bundle import RunBundle
 from solarlab.io.run_store import RunStore
-from solarlab.materials.resources import ResourceLibrary, ResourceTable
+from solarlab.materials.packaged import load_packaged_default_catalog, load_packaged_resource_library
 from solarlab.materials.source import SourceDocument
 from solarlab_server.configuration import ConfigurationPreviewContext
 from solarlab_server.job_service import ExecutionCatalog, JobService, JobSubmission
@@ -36,19 +35,6 @@ from test_event_service import _HTTPServer as _BaseHTTPServer, _all_events, _blo
 pytestmark = pytest.mark.requires_clean_core
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "perovskite-sim/perovskite_sim"
-
-DEFAULT_PATHS = (
-    "models/parameters.py",
-    "models/device.py",
-    "models/defects.py",
-    "physics/statistics.py",
-    "physics/band_gap_narrowing.py",
-    "scaps_compat/loader.py",
-    "constants.py",
-    "twod/microstructure.py",
-    "models/tandem_config.py",
-)
 
 
 class _HTTPServer(_BaseHTTPServer):
@@ -69,22 +55,13 @@ def _slot_gate(request, context):
 
 @pytest.fixture(scope="module")
 def legacy_defaults_and_resources():
-    defaults = read_legacy_default_catalog(
-        tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS)
-    )
-    resources = ResourceLibrary(
-        tuple(
-            ResourceTable(path.stem, "nk", SourceDocument(path.name, path.read_bytes()))
-            for path in sorted((LEGACY / "data/nk").glob("*.csv"))
-        )
-    )
-    return defaults, resources
+    return load_packaged_default_catalog("device_only"), load_packaged_resource_library()
 
 
 @pytest.fixture(scope="module")
 def standard_steady_bundle(legacy_defaults_and_resources):
     defaults, resources = legacy_defaults_and_resources
-    fixture_path = ROOT / "perovskite-sim/tests/fixtures/configs/nip_MAPbI3.yaml"
+    fixture_path = ROOT / "tests/fixtures/configs/nip_MAPbI3.yaml"
     seed = SourceDocument("nip_steady.yaml", fixture_path.read_bytes())
     imported = import_standard_device(seed, id="nip_steady", defaults=defaults)
     editing = imported.editing_data()
@@ -356,7 +333,7 @@ def test_scaps_yaml_preview_legacy_refusal_solarlab_job_and_orphan_recovery_read
     defaults, resources = legacy_defaults_and_resources
     yaml_source, steady_prepared, _, catalog, _ = standard_steady_bundle
     scaps_source = SourceDocument(
-        "scaps-original.yaml", (ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml").read_bytes()
+        "scaps-original.yaml", (ROOT / "src/solarlab/materials/data/presets/scaps_mirror_v2.yaml").read_bytes()
     )
     scaps_prepared = resolve_device(
         import_scaps_device(scaps_source, id="legacy_job", defaults=defaults),
