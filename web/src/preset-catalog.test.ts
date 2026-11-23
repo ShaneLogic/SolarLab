@@ -11,12 +11,13 @@ describe('focused research preset catalog', () => {
       { name: 'driftfusion_calado2016_repro.yaml', namespace: 'shipped' },
       { name: 'scaps_mirror_v2_robin_strong.yaml', namespace: 'shipped' },
       { name: 'scaps_mirror_v2.yaml', namespace: 'shipped' },
+      { name: 'scaps_pvk_xy.yaml', namespace: 'shipped' },
       { name: 'my_scan.yaml', namespace: 'user' },
       { name: 'my_tandem.yaml', namespace: 'user', device_type: 'tandem_2T' },
     ]
     const original = structuredClone(entries)
     expect(researchPresetEntries(entries).map(e => e.name)).toEqual([
-      'scaps_mirror_v2.yaml', 'calado2016_ion_sweep.yaml', 'my_scan.yaml',
+      'scaps_pvk_xy.yaml', 'scaps_mirror_v2.yaml', 'calado2016_ion_sweep.yaml', 'my_scan.yaml',
     ])
     expect(entries).toEqual(original)
   })
@@ -30,7 +31,9 @@ describe('focused research preset catalog', () => {
     expect(researchPresetEntries([])).toEqual([])
   })
 
-  it('distinguishes the two studies and their reference physics modes', () => {
+  it('distinguishes the shipped studies and their reference physics modes', () => {
+    expect(presetLabel('scaps_pvk_xy.yaml')).toBe('SCAPS native (PVK-xy)')
+    expect(presetPreferredMode('scaps_pvk_xy.yaml')).toBe('fast')
     expect(presetLabel('scaps_mirror_v2.yaml')).toBe('SCAPS reproduction')
     expect(presetPreferredMode('scaps_mirror_v2.yaml')).toBe('fast')
     expect(presetPreferredMode('calado2016_fig1f.yaml')).toBeUndefined()

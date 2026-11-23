@@ -39,11 +39,11 @@ def encoded(value):
     return value
 
 
-def test_all_55_inputs_reopen_without_aliases_or_changed_words():
+def test_all_56_inputs_reopen_without_aliases_or_changed_words():
     defaults = load_packaged_default_catalog("matrix_v2")
     resources = load_packaged_resource_library(source_id_prefix="src/solarlab/materials/data")
     all_paths = sorted(FIXTURES.rglob("*.yaml")) + sorted(PRESETS.glob("*.yaml"))
-    assert len(all_paths) == 55
+    assert len(all_paths) == 56
     checked = []
     for path in all_paths:
         rel = path.relative_to(ROOT).as_posix()
@@ -84,7 +84,7 @@ def test_all_55_inputs_reopen_without_aliases_or_changed_words():
         assert encoded(prepared.to_mapping()) == before
         assert not prepared.can_execute
         checked.append(rel)
-    assert len(checked) == 55
+    assert len(checked) == 56
 
 
 def test_all_actual_resources_own_immutable_exact_words():

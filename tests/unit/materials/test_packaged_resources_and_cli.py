@@ -93,7 +93,12 @@ def test_packaged_optical_resources_templates_and_presets_resolve_cleanly() -> N
     defaults = load_packaged_default_catalog()
     preset_sources = load_packaged_preset_sources()
     v2_docs = load_packaged_preset_v2_documents()
-    assert set(v2_docs) == {"scaps_mirror_v2", "calado2016_ion_sweep", "calado2016_fig1f"}
+    assert set(v2_docs) == {
+        "scaps_pvk_xy",
+        "scaps_mirror_v2",
+        "calado2016_ion_sweep",
+        "calado2016_fig1f",
+    }
 
     for name in PACKAGED_PRESET_NAMES:
         mapping = load_packaged_preset_device_mapping(name)

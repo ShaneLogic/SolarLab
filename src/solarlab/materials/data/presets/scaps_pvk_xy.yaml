@@ -1,0 +1,127 @@
+# scaps_pvk_xy.yaml — Native zero-fit SCAPS-1D partner baseline (PVK-xy.scaps).
+#
+# Verbatim physical parameters extracted from the partner SCAPS 3.3.10 project
+# definition (PVK-xy.scaps: SAM 20 nm / Perovskite 800 nm / C60 25 nm) with zero
+# empirical calibration factors (het_recomb_despike = 0, no contact phi_B offset,
+# no interface-state attenuation factors):
+#
+#   1. Contacts: recalculated semiconductor flat-band work functions with finite
+#      selective recombination velocities (SAM back: Sn=1e5, Sp=1e3 m/s;
+#      C60 front: Sn=1e3, Sp=1e5 m/s).
+#   2. Absorber (SCAPS_PVK): Eg=1.53 eV, chi=3.94 eV, eps_r=31, Nc=2.0e18 cm^-3,
+#      Nv=1.8e19 cm^-3, mu_n=20 cm^2/(V s), mu_p=2.0 cm^2/(V s), Nd=1.0e12 cm^-3,
+#      B_rad=1.0e-12 cm^3/s, C_n=C_p=2.3e-29 cm^6/s, plus symmetric CB/VB shallow
+#      single-level bulk traps (sigma=1e-15 cm^2, Nt=1e12 cm^-3, 0.10 eV).
+#   3. Heterointerfaces: both HTL/PVK (single) and PVK/ETL (7-level Gaussian,
+#      E_char=0.10 eV) anchor defect levels at Et=0.30 eV above the highest EV
+#      (SCAPS Reference=3) with sigma_n=sigma_p=1.0e-19 cm^2 and Nt=1.0e12 cm^-2.
+#   4. Optics: packaged optical_material keys enable standalone TMM / spectral
+#      workstation runs; scripts/benchmarks/scaps_native_pvk_xy.py binds the
+#      native SCAPS AM1.5G 1 sun.spe table (reproducibility/ScapsAm15g1Sun.spe)
+#      and analytical sqrt(hv - Eg) absorption laws for exact 262-case parity.
+
+device:
+  T: 300.0
+  Phi: 2.5e21
+  mode: fast
+  dos_band_potentials: true
+  het_recomb_despike: 0.0
+  built_in_potential_mode: semiconductor_work_function
+  S_n_left: 1.0e5
+  S_p_left: 1.0e3
+  S_n_right: 1.0e3
+  S_p_right: 1.0e5
+
+layers:
+  - name: SCAPS_HTL
+    role: HTL
+    thickness_nm: 20.0
+    E_g_eV: 3.25
+    chi_eV: 2.40
+    eps_r: 11.75
+    mu_n_cm2: 1.0e-3
+    mu_p_cm2: 1.0e-3
+    N_C_cm3: 2.5e20
+    N_V_cm3: 2.5e20
+    N_D_cm3: 0.0
+    N_A_cm3: 1.0e18
+    v_th_cm_s: 1.0e7
+    optical_material: spiro_OMeTAD
+    bulk_defects:
+      - name: SAM-CB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e6
+        E_t_eV_below_cb: 0.10
+        distribution: single
+      - name: SAM-VB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e6
+        E_t_eV_above_vb: 0.10
+        distribution: single
+
+  - name: SCAPS_PVK
+    role: absorber
+    thickness_nm: 800.0
+    E_g_eV: 1.53
+    chi_eV: 3.94
+    eps_r: 31.0
+    mu_n_cm2: 20.0
+    mu_p_cm2: 2.0
+    N_C_cm3: 2.0e18
+    N_V_cm3: 1.8e19
+    N_D_cm3: 1.0e12
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    B_rad_cm3_s: 1.0e-12
+    C_n_cm6_s: 2.3e-29
+    C_p_cm6_s: 2.3e-29
+    optical_material: MAPbI3
+    bulk_defects:
+      - name: Perovskite-CB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e12
+        E_t_eV_below_cb: 0.10
+        distribution: single
+      - name: Perovskite-VB
+        sigma_n_cm2: 1.0e-15
+        sigma_p_cm2: 1.0e-15
+        N_t_cm3: 1.0e12
+        E_t_eV_above_vb: 0.10
+        distribution: single
+
+  - name: SCAPS_ETL
+    role: ETL
+    thickness_nm: 25.0
+    E_g_eV: 1.90
+    chi_eV: 4.10
+    eps_r: 4.2
+    mu_n_cm2: 1.0e-2
+    mu_p_cm2: 1.0e-5
+    N_C_cm3: 8.0e19
+    N_V_cm3: 8.0e19
+    N_D_cm3: 1.0e18
+    N_A_cm3: 0.0
+    v_th_cm_s: 1.0e7
+    optical_material: C60
+
+interfaces:
+  - target: HTL/PVK
+    sigma_n_cm2: 1.0e-19
+    sigma_p_cm2: 1.0e-19
+    N_t_cm2: 1.0e12
+    v_th_cm_s: 1.0e7
+    E_t_eV_above_vb: 0.30
+    distribution: single
+
+  - target: PVK/ETL
+    sigma_n_cm2: 1.0e-19
+    sigma_p_cm2: 1.0e-19
+    N_t_cm2: 1.0e12
+    v_th_cm_s: 1.0e7
+    E_t_eV_above_vb: 0.30
+    distribution: gaussian
+    E_char_eV: 0.10
+    N_peak_cm3: 5.641895835e12

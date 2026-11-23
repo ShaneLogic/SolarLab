@@ -1,9 +1,9 @@
-"""Generate the V2 SolarLab README figures in strict native Arial typography.
+"""Generate the SolarLab README figures in strict native Arial typography.
 
 Every figure renders at 300 DPI using genuine Arial (Regular, Bold, Italic, and
 custom Arial mathtext) with zero DejaVu/Computer-Modern fallback. Validation
-series come from the verified V2 benchmark baselines:
-  - scaps_full_262.json (sha256: ebc97099e0bfff07..., 262/262 converged)
+series come from the verified benchmark baselines:
+  - scaps_pvk_xy_spe_full_262.json (sha256: a77bec53bbfc51d3..., 262/262 converged)
   - hysteresis_full_45.json (sha256: 9cbc22b7f955a2bd..., 45/45 completed)
 """
 
@@ -19,6 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.font_manager as fm  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle  # noqa: E402
+from matplotlib.ticker import NullFormatter, ScalarFormatter  # noqa: E402
 import numpy as np  # noqa: E402
 
 
@@ -77,21 +78,21 @@ def configure_strict_arial() -> None:
     )
 
 
-# Verified V2 benchmark arrays (scaps_full_262: ebc97099..., hysteresis_full_45: 9cbc22b7...)
+# Verified benchmark arrays (scaps_pvk_xy_spe_full_262: a77bec53..., hysteresis_full_45: 9cbc22b7...)
 BENCHMARK_DATA: dict[str, Any] = {
     "scaps_cbo": {
         "x": [-1.0, -0.75, -0.5, -0.25, -0.2, -0.16, -0.1, -0.05, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
         "sl_voc": [
-            0.40965, 0.5949, 0.8435, 1.09308, 1.1417, 1.1772, 1.21152,
-            1.22169, 1.22453, 1.22519, 1.22479, 1.22436, 1.22291, 1.1988,
+            0.3327, 0.58123, 0.83122, 1.08077, 1.12974, 1.16805, 1.21776,
+            1.24049, 1.2487, 1.25138, 1.25112, 1.25068, 1.24956, 1.23269,
         ],
         "ref_voc": [
             0.33235, 0.58095, 0.83085, 1.08049, 1.12931, 1.16755, 1.2172,
             1.24004, 1.2477, 1.25039, 1.25016, 1.24994, 1.24884, 1.22832,
         ],
         "sl_pce": [
-            7.7913, 12.0835, 18.1971, 24.4467, 25.6948, 26.6634, 27.9234,
-            28.5187, 28.7147, 28.7561, 28.7249, 28.4147, 11.2441, 0.3175,
+            5.8563, 11.8335, 18.0781, 24.4183, 25.6913, 26.7016, 28.1567,
+            29.1276, 29.6316, 29.8142, 29.8, 29.6948, 22.5243, 1.5126,
         ],
         "ref_pce": [
             5.8685, 11.8314, 18.0802, 24.4188, 25.6782, 26.6926, 28.1546,
@@ -100,42 +101,40 @@ BENCHMARK_DATA: dict[str, Any] = {
     },
     "scaps_nt_pvk_etl": {
         "x": [1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15],
-        "sl_voc": [1.22517, 1.2246, 1.21911, 1.1772, 1.10095, 1.0336, 0.97169],
+        "sl_voc": [1.25044, 1.24922, 1.23632, 1.16805, 1.08912, 1.0234, 0.96852],
         "ref_voc": [1.24947, 1.24825, 1.23572, 1.16755, 1.08851, 1.02281, 0.96776],
     },
     "scaps_nt_pvk_cb": {
         "x": [1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15],
-        "sl_voc": [1.17729, 1.17729, 1.17728, 1.1772, 1.1764, 1.16979, 1.14117],
+        "sl_voc": [1.16815, 1.16814, 1.16814, 1.16805, 1.16715, 1.15996, 1.12982],
         "ref_voc": [1.16765, 1.16765, 1.16764, 1.16755, 1.16668, 1.15956, 1.12908],
     },
     "scaps_dvoc_mv": [
-        0.636, 0.9696, 1.0633, 2.2133, 2.7749, 3.1657, 3.1933, 3.599, 3.7288, 3.9384,
-        3.9384, 4.0324, 4.0327, 4.0446, 4.0765, 4.0794, 4.1333, 4.3167, 4.5222, 4.5984,
-        5.6842, 5.6852, 6.1656, 7.0217, 7.2574, 7.452, 7.736, 8.0484, 8.0597, 8.1132,
-        8.2021, 8.2233, 8.9808, 9.0577, 9.0587, 9.1962, 9.1962, 9.1962, 9.1988, 9.2516,
-        9.2768, 9.2792, 9.2792, 9.2792, 9.3106, 9.5135, 9.6021, 9.6152, 9.6221, 9.6341,
-        9.6341, 9.6343, 9.6373, 9.6375, 9.6384, 9.6389, 9.6428, 9.6511, 9.6511, 9.6521,
-        9.6521, 9.6521, 9.6521, 9.6521, 9.6521, 9.6521, 9.6521, 9.6521, 9.6521, 9.6521,
-        9.6522, 9.6544, 9.66, 9.6646, 9.6666, 9.6676, 9.6678, 9.7081, 9.7081, 9.7082,
-        9.7082, 9.7108, 9.7117, 9.7127, 9.7149, 9.7194, 9.7198, 9.7215, 9.7223, 9.8292,
-        9.8302, 10.226, 10.4936, 10.5953, 10.6835, 10.7157, 10.7837, 10.7837, 10.8927,
-        10.893, 10.9048, 10.9139, 11.008, 11.0506, 11.1615, 11.1682, 11.1689, 11.1967,
-        11.1967, 11.2877, 11.6699, 12.0908, 12.3882, 12.3892, 12.4351, 12.4351, 12.5321,
-        12.5323, 12.5413, 12.5869, 12.5878, 12.5879, 12.5931, 12.6525, 12.6535, 12.7466,
-        12.7572, 12.9126, 13.293, 13.5843, 13.949, 13.95, 14.4639, 14.4649, 14.5176,
-        14.873, 15.0496, 15.5684, 15.5684, 15.6392, 16.1658, 16.3256, 16.4677, 16.5888,
-        16.6007, 16.6013, 16.6013, 16.6103, 16.6103, 16.6669, 16.8898, 17.6904, 18.305,
-        18.3528, 18.3528, 19.357, 19.7762, 20.9241, 21.963, 22.1006, 22.5188, 22.5429,
-        22.6416, 22.8942, 22.9442, 23.1623, 23.1623, 23.5934, 23.6379, 23.6461, 23.6543,
-        23.6554, 23.6554, 23.6554, 23.6564, 23.6564, 23.6885, 23.8528, 23.8865, 24.1335,
-        24.2194, 24.3042, 24.3043, 24.3055, 24.3057, 24.3057, 24.3057, 24.3057, 24.3057,
-        24.3084, 24.3249, 24.4834, 24.4846, 24.6788, 24.8509, 24.9136, 24.9339, 24.9712,
-        25.0522, 25.118, 25.1363, 25.2002, 25.2002, 25.3698, 25.37, 25.37, 25.3875,
-        25.3886, 25.4104, 25.4146, 25.4154, 25.4216, 25.5732, 25.5732, 25.5875, 25.5889,
-        25.5899, 25.7087, 25.7106, 25.7258, 25.7324, 25.7886, 25.931, 25.931, 26.4155,
-        27.061, 27.324, 27.6512, 28.0125, 28.493, 29.4777, 29.5267, 29.5267, 31.0909,
-        31.7394, 32.8765, 40.4365, 46.1003, 48.5775, 51.7165, 57.4864, 62.7635, 75.4636,
-        77.2989, 77.2999, 83.0609, 83.904, 87.1866,
+        0.018, 0.0845, 0.133, 0.1414, 0.2235, 0.2786, 0.2788, 0.2796, 0.2798, 0.3204,
+        0.3214, 0.3487, 0.3497, 0.3555, 0.3659, 0.3669, 0.3765, 0.387, 0.3888, 0.3982,
+        0.4019, 0.4072, 0.4075, 0.4149, 0.4238, 0.4302, 0.4312, 0.4482, 0.4482, 0.4512,
+        0.4537, 0.4578, 0.4679, 0.4711, 0.4783, 0.4826, 0.4826, 0.4827, 0.4828, 0.4857,
+        0.4857, 0.486, 0.486, 0.486, 0.4872, 0.4892, 0.4893, 0.4958, 0.4966, 0.4968,
+        0.4968, 0.4973, 0.4976, 0.4981, 0.4981, 0.4981, 0.4981, 0.4982, 0.4986, 0.4999,
+        0.5002, 0.5002, 0.5002, 0.5003, 0.5007, 0.5008, 0.5008, 0.5009, 0.5009, 0.5011,
+        0.5011, 0.5012, 0.5012, 0.5012, 0.5012, 0.5012, 0.5012, 0.5012, 0.5012, 0.5012,
+        0.5012, 0.5012, 0.5012, 0.5012, 0.5012, 0.5012, 0.5013, 0.5013, 0.5015, 0.5017,
+        0.5017, 0.5021, 0.5045, 0.5075, 0.5083, 0.5139, 0.5146, 0.5172, 0.5172, 0.521,
+        0.5361, 0.5444, 0.5574, 0.5584, 0.5658, 0.5707, 0.571, 0.5825, 0.5853, 0.5915,
+        0.5915, 0.5916, 0.5917, 0.5926, 0.5926, 0.5926, 0.5939, 0.5969, 0.6016, 0.6016,
+        0.6016, 0.602, 0.6026, 0.6026, 0.6028, 0.604, 0.604, 0.604, 0.6043, 0.6072,
+        0.6073, 0.6079, 0.6082, 0.609, 0.6145, 0.631, 0.6391, 0.6567, 0.6576, 0.6584,
+        0.6636, 0.6736, 0.678, 0.6784, 0.679, 0.6881, 0.6887, 0.707, 0.7193, 0.7193,
+        0.7223, 0.741, 0.746, 0.746, 0.7463, 0.7463, 0.7467, 0.7469, 0.7488, 0.7533,
+        0.7535, 0.7622, 0.7622, 0.7622, 0.7637, 0.765, 0.7651, 0.7658, 0.7744, 0.7768,
+        0.7774, 0.7935, 0.7937, 0.8171, 0.8171, 0.8458, 0.854, 0.8547, 0.8905, 0.9059,
+        0.9282, 0.9408, 0.9434, 0.9557, 0.9604, 0.9608, 0.9613, 0.9625, 0.9625, 0.9647,
+        0.9661, 0.9662, 0.9664, 0.9703, 0.9703, 0.9703, 0.9706, 0.9706, 0.9706, 0.9707,
+        0.9709, 0.971, 0.9711, 0.9713, 0.9713, 0.9714, 0.9714, 0.9714, 0.9714, 0.9726,
+        0.9737, 0.9738, 0.9808, 0.9812, 0.9856, 0.9856, 0.9943, 1.0024, 1.0024, 1.0041,
+        1.005, 1.0057, 1.0065, 1.0092, 1.0136, 1.0207, 1.0277, 1.028, 1.03, 1.0316,
+        1.1276, 1.3703, 1.3759, 1.3839, 1.4258, 1.4595, 4.3605, 4.3605, 5.105, 5.141,
+        5.1466, 9.3974, 12.1782, 12.8419, 14.2088, 16.2183, 16.2691, 48.7746,
     ],
     "hyst_diffusivity": {
         "x": [round(0.1 * i, 1) for i in range(21)],
@@ -314,7 +313,7 @@ def _clean_axes(ax: plt.Axes) -> None:
 
 
 def generate_architecture_flow() -> Path:
-    """1. ArchitectureFlowV2.png: End-to-end V2 dataflow and package boundaries."""
+    """1. ArchitectureFlow.png: End-to-end dataflow and package boundaries."""
     fig, ax = plt.subplots(figsize=(13.6, 4.4), dpi=DPI)
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.0)
@@ -324,7 +323,7 @@ def generate_architecture_flow() -> Path:
     ax.text(
         0.02,
         0.93,
-        "SolarLab V2 End-to-End Simulation & Provenance Pipeline",
+        "SolarLab End-to-End Simulation & Provenance Pipeline",
         fontsize=13.5,
         fontweight="bold",
         color=C_INK,
@@ -429,7 +428,7 @@ def generate_architecture_flow() -> Path:
 
     pkg_specs = [
         (0.035, 0.335, "src/solarlab · Core Physics, Mesh, Assembler & Solvers", C_BLUE),
-        (0.385, 0.315, "src/solarlab_server · V2 HTTP/SSE API & SPA", C_TEAL),
+        (0.385, 0.315, "src/solarlab_server · HTTP/SSE API & SPA", C_TEAL),
         (0.715, 0.250, "src/solarlab_research · R1 & CBO CLIs", C_PURPLE),
     ]
     for px, pw, label, col in pkg_specs:
@@ -445,14 +444,14 @@ def generate_architecture_flow() -> Path:
             va="center",
         )
 
-    out = OUT_DIR / "ArchitectureFlowV2.png"
+    out = OUT_DIR / "ArchitectureFlow.png"
     fig.savefig(out, dpi=DPI, bbox_inches="tight", pad_inches=0.12, facecolor="white")
     plt.close(fig)
     return out
 
 
 def generate_device_physics_overview() -> Path:
-    """2. DevicePhysicsOverviewV2.png: 1D stack/contacts, band diagram, and 2D grain mesh."""
+    """2. DevicePhysicsOverview.png: 1D stack/contacts, band diagram, and 2D grain mesh."""
     fig = plt.figure(figsize=(13.8, 4.7), dpi=DPI, facecolor="white")
     gs = fig.add_gridspec(1, 3, width_ratios=[1.08, 1.15, 0.97], wspace=0.20)
 
@@ -557,15 +556,12 @@ def generate_device_physics_overview() -> Path:
     ax_c.text(0.0, 0.96, "(c)  2D Grain & Ion Mesh ($N_y$ × $N_x$)", fontsize=11.5, fontweight="bold", color=C_INK)
 
     mx0, my0, mw, mh = 0.10, 0.35, 0.80, 0.49
-    # Background layer bands in 2D mesh
     ax_c.add_patch(Rectangle((mx0, my0 + 0.37), mw, 0.12, facecolor="#DBEAFE", edgecolor="none"))
     ax_c.add_patch(Rectangle((mx0, my0 + 0.12), mw, 0.25, facecolor="#FEF3C7", edgecolor="none"))
     ax_c.add_patch(Rectangle((mx0, my0), mw, 0.12, facecolor="#CCFBF1", edgecolor="none"))
-    # Vertical grain-boundary strip inside absorber
     ax_c.add_patch(
         Rectangle((mx0 + 0.35, my0 + 0.12), 0.10, 0.25, facecolor="#FCA5A5", alpha=0.85, edgecolor=C_CORAL, lw=1.1)
     )
-    # Grid lines
     for gx in np.linspace(mx0, mx0 + mw, 7):
         ax_c.plot([gx, gx], [my0, my0 + mh], color="#94A3B8", lw=0.75)
     for gy in np.linspace(my0, my0 + mh, 7):
@@ -599,14 +595,14 @@ def generate_device_physics_overview() -> Path:
         linespacing=1.38,
     )
 
-    out = OUT_DIR / "DevicePhysicsOverviewV2.png"
+    out = OUT_DIR / "DevicePhysicsOverview.png"
     fig.savefig(out, dpi=DPI, bbox_inches="tight", pad_inches=0.12, facecolor="white")
     plt.close(fig)
     return out
 
 
 def generate_solver_topology() -> Path:
-    """3. SolverTopologyV2.png: Active V2 solver matrix, unknowns, and certificates."""
+    """3. SolverTopology.png: Unified solver matrix, unknowns, and certificates."""
     fig, ax = plt.subplots(figsize=(13.6, 5.2), dpi=DPI)
     ax.set_xlim(0.0, 1.0)
     ax.set_ylim(0.0, 1.0)
@@ -616,7 +612,7 @@ def generate_solver_topology() -> Path:
     ax.text(
         0.02,
         0.945,
-        "SolarLab V2 Unified Equation Assembly & Solver Matrix",
+        "SolarLab Unified Equation Assembly & Solver Matrix",
         fontsize=13.5,
         fontweight="bold",
         color=C_INK,
@@ -713,23 +709,23 @@ def generate_solver_topology() -> Path:
                 linespacing=1.35,
             )
 
-    out = OUT_DIR / "SolverTopologyV2.png"
+    out = OUT_DIR / "SolverTopology.png"
     fig.savefig(out, dpi=DPI, bbox_inches="tight", pad_inches=0.12, facecolor="white")
     plt.close(fig)
     return out
 
 
 def generate_validation_scaps() -> Path:
-    """4. ValidationScapsOverviewV2.png: Verified 262-case SCAPS-1D alignment summary."""
+    """4. ValidationScapsOverview.png: Native zero-fit 262-case SCAPS-1D alignment summary."""
     fig = plt.figure(figsize=(13.8, 4.5), dpi=DPI, facecolor="white")
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.05, 1.05, 1.0], wspace=0.25)
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.05, 1.05, 1.02], wspace=0.25)
 
     # (a) CBO sweep (Voc)
     ax_a = fig.add_subplot(gs[0, 0])
     _clean_axes(ax_a)
     cbo = BENCHMARK_DATA["scaps_cbo"]
-    ax_a.plot(cbo["x"], cbo["ref_voc"], "s--", color=C_INK, ms=5.0, lw=1.5, label="SCAPS-1D $V_{\\mathrm{oc}}$")
-    ax_a.plot(cbo["x"], cbo["sl_voc"], "o-", color=C_BLUE, ms=5.0, lw=2.0, label="SolarLab V2 $V_{\\mathrm{oc}}$")
+    ax_a.plot(cbo["x"], cbo["ref_voc"], "s--", color=C_INK, ms=5.6, lw=1.6, label="SCAPS-1D $V_{\\mathrm{oc}}$")
+    ax_a.plot(cbo["x"], cbo["sl_voc"], "o-", color=C_BLUE, ms=4.2, lw=1.9, label="SolarLab $V_{\\mathrm{oc}}$")
     ax_a.set_xlabel("Conduction-Band Offset Δ$E_{\\mathrm{c}}$ (eV)")
     ax_a.set_ylabel("Open-Circuit Voltage $V_{\\mathrm{oc}}$ (V)", color=C_INK)
     ax_a.set_xlim(-1.05, 0.55)
@@ -738,10 +734,11 @@ def generate_validation_scaps() -> Path:
     ax_a.legend(loc="lower right", frameon=True, facecolor="white", edgecolor=C_LINE, fontsize=8.8)
     ax_a.text(
         -0.98,
-        1.24,
-        "Cliff & spike trend aligned\nacross [−1.0, +0.5] eV",
+        1.20,
+        "Native zero-fit parity\nMed |Δ$V_{\\mathrm{oc}}$| = 0.53 mV",
         fontsize=8.6,
         color=C_MUTED,
+        linespacing=1.35,
         bbox={"boxstyle": "round,pad=0.3", "facecolor": C_BG_SLATE, "edgecolor": C_LINE},
     )
 
@@ -750,52 +747,72 @@ def generate_validation_scaps() -> Path:
     _clean_axes(ax_b)
     nt_if = BENCHMARK_DATA["scaps_nt_pvk_etl"]
     nt_bk = BENCHMARK_DATA["scaps_nt_pvk_cb"]
-    ax_b.semilogx(nt_if["x"], nt_if["ref_voc"], "s--", color=C_INK, ms=4.8, lw=1.4, label="SCAPS PVK/ETL $N_{\\mathrm{t}}$")
-    ax_b.semilogx(nt_if["x"], nt_if["sl_voc"], "o-", color=C_TEAL, ms=5.0, lw=2.0, label="SolarLab PVK/ETL $N_{\\mathrm{t}}$")
-    ax_b.semilogx(nt_bk["x"], nt_bk["ref_voc"], "^--", color=C_MUTED, ms=4.8, lw=1.3, label="SCAPS Bulk $N_{\\mathrm{t}}$")
-    ax_b.semilogx(nt_bk["x"], nt_bk["sl_voc"], "d-", color=C_AMBER, ms=5.0, lw=1.9, label="SolarLab Bulk $N_{\\mathrm{t}}$")
+    ax_b.semilogx(nt_if["x"], nt_if["ref_voc"], "s--", color=C_INK, ms=5.6, lw=1.5, label="SCAPS PVK/ETL $N_{\\mathrm{t}}$")
+    ax_b.semilogx(nt_if["x"], nt_if["sl_voc"], "o-", color=C_TEAL, ms=4.2, lw=1.9, label="SolarLab PVK/ETL $N_{\\mathrm{t}}$")
+    ax_b.semilogx(nt_bk["x"], nt_bk["ref_voc"], "^--", color=C_MUTED, ms=5.4, lw=1.4, label="SCAPS Bulk $N_{\\mathrm{t}}$")
+    ax_b.semilogx(nt_bk["x"], nt_bk["sl_voc"], "d-", color=C_AMBER, ms=4.2, lw=1.8, label="SolarLab Bulk $N_{\\mathrm{t}}$")
     ax_b.set_xlabel("Defect Parameter Scale ($10^9$ to $10^{15}$)")
     ax_b.set_ylabel("Open-Circuit Voltage $V_{\\mathrm{oc}}$ (V)")
     ax_b.set_ylim(0.93, 1.29)
     ax_b.set_title("(b)  7-Level Gaussian Defect Sweeps", fontweight="bold", color=C_INK, loc="left", pad=8)
     ax_b.legend(loc="lower left", frameon=True, facecolor="white", edgecolor=C_LINE, fontsize=8.3)
 
-    # (c) 248 Numeric Cases |ΔVoc| ECDF
+    # (c) 248 Numeric Cases |ΔVoc| ECDF (log scale to resolve sub-mV clustering)
     ax_c = fig.add_subplot(gs[0, 2])
     _clean_axes(ax_c)
     dvoc = np.asarray(BENCHMARK_DATA["scaps_dvoc_mv"], dtype=float)
     ecdf_y = np.arange(1, dvoc.size + 1) / dvoc.size * 100.0
-    ax_c.plot(dvoc, ecdf_y, color=C_BLUE, lw=2.3, label="|Δ$V_{\\mathrm{oc}}$| across 248 numeric cases")
-    ax_c.axvline(30.0, color=C_TEAL, lw=1.5, ls="--", label="30 mV alignment band (94.0%)")
+    ax_c.semilogx(dvoc, ecdf_y, color=C_BLUE, lw=2.3, label="|Δ$V_{\\mathrm{oc}}$| (248 cases)")
+    ax_c.axvline(2.0, color=C_TEAL, lw=1.5, ls="--", label="2 mV gate (95.2%)")
     ax_c.scatter([np.median(dvoc), np.percentile(dvoc, 90)], [50.0, 90.0], color=C_CORAL, zorder=5, s=34)
-    ax_c.set_xlim(0.0, 90.0)
-    ax_c.set_ylim(0.0, 103.0)
+    ax_c.set_xlim(0.012, 220.0)
+    ax_c.set_ylim(0.0, 103.5)
+    ax_c.set_xticks([0.02, 0.1, 0.5, 2.0, 10.0, 100.0])
+    fmt = ScalarFormatter()
+    fmt.set_scientific(False)
+    ax_c.xaxis.set_major_formatter(fmt)
+    ax_c.set_xticklabels(["0.02", "0.1", "0.5", "2", "10", "100"])
+    ax_c.xaxis.set_minor_formatter(NullFormatter())
     ax_c.set_xlabel("Absolute Voltage Deviation |Δ$V_{\\mathrm{oc}}$| (mV)")
     ax_c.set_ylabel("Cumulative Cases (%)")
-    ax_c.set_title("(c)  Full 262-Case Scorecard", fontweight="bold", color=C_INK, loc="left", pad=8)
-    ax_c.legend(loc="lower right", frameon=True, facecolor="white", edgecolor=C_LINE, fontsize=8.4)
+    ax_c.set_title("(c)  Full 262-Case Zero-Fit Scorecard", fontweight="bold", color=C_INK, loc="left", pad=8)
+    ax_c.legend(
+        loc="upper left",
+        frameon=True,
+        facecolor="white",
+        edgecolor=C_LINE,
+        fontsize=7.9,
+        handlelength=1.6,
+        borderpad=0.35,
+    )
     ax_c.text(
-        33.5,
-        42.0,
+        0.975,
+        0.055,
         "262 / 262 converged (0 failed)\n"
-        "Median |Δ$V_{\\mathrm{oc}}$| = 12.7 mV\n"
-        "P90 |Δ$V_{\\mathrm{oc}}$| = 25.9 mV\n"
-        "Median |ΔFF| = 0.53%\n"
-        "Median |ΔPCE| = 0.20%",
-        fontsize=8.6,
+        "221 / 248 (89.1%) pass all 4 gates\n"
+        "Median |Δ$V_{\\mathrm{oc}}$| = 0.60 mV\n"
+        "Median |Δ$J_{\\mathrm{sc}}$| = 0.009 mA $\\mathrm{cm}^{-2}$\n"
+        "Median |ΔFF| = 0.031%\n"
+        "Median |ΔPCE| = 0.009%",
+        transform=ax_c.transAxes,
+        ha="right",
+        va="bottom",
+        multialignment="left",
+        zorder=4,
+        fontsize=7.8,
         color=C_TEXT,
-        linespacing=1.42,
-        bbox={"boxstyle": "round,pad=0.35", "facecolor": C_BG_BLUE, "edgecolor": C_BLUE, "lw": 0.9},
+        linespacing=1.36,
+        bbox={"boxstyle": "round,pad=0.32", "facecolor": C_BG_BLUE, "edgecolor": C_BLUE, "lw": 0.9},
     )
 
-    out = OUT_DIR / "ValidationScapsOverviewV2.png"
+    out = OUT_DIR / "ValidationScapsOverview.png"
     fig.savefig(out, dpi=DPI, bbox_inches="tight", pad_inches=0.12, facecolor="white")
     plt.close(fig)
     return out
 
 
 def generate_validation_hysteresis() -> Path:
-    """5. ValidationHysteresisOverviewV2.png: Verified 45-case dynamic ion hysteresis."""
+    """5. ValidationHysteresisOverview.png: Verified 45-case dynamic ion hysteresis."""
     fig = plt.figure(figsize=(13.8, 4.5), dpi=DPI, facecolor="white")
     gs = fig.add_gridspec(1, 3, width_ratios=[1.08, 1.05, 0.97], wspace=0.25)
 
@@ -828,9 +845,9 @@ def generate_validation_hysteresis() -> Path:
     hd = BENCHMARK_DATA["hyst_diffusivity"]
     hn = BENCHMARK_DATA["hyst_density"]
     ax_b.plot(hd["x"], hd["ref_hi"], "s--", color=C_INK, ms=4.5, lw=1.3, label="Reference ($D_{\\mathrm{ion}}$ axis)")
-    ax_b.plot(hd["x"], hd["sl_hi"], "o-", color=C_BLUE, ms=4.6, lw=1.9, label="SolarLab V2 ($D_{\\mathrm{ion}}$ axis)")
+    ax_b.plot(hd["x"], hd["sl_hi"], "o-", color=C_BLUE, ms=4.6, lw=1.9, label="SolarLab ($D_{\\mathrm{ion}}$ axis)")
     ax_b.plot(hn["x"], hn["ref_hi"], "^--", color=C_MUTED, ms=4.5, lw=1.3, label="Reference ($P_0$ axis)")
-    ax_b.plot(hn["x"], hn["sl_hi"], "d-", color=C_TEAL, ms=4.6, lw=1.9, label="SolarLab V2 ($P_0$ axis)")
+    ax_b.plot(hn["x"], hn["sl_hi"], "d-", color=C_TEAL, ms=4.6, lw=1.9, label="SolarLab ($P_0$ axis)")
     ax_b.set_xlim(-0.05, 2.05)
     ax_b.set_ylim(-0.03, 1.06)
     ax_b.set_xlabel("Normalized Sweep Coordinate (0.0 to 2.0)")
@@ -866,7 +883,7 @@ def generate_validation_hysteresis() -> Path:
         bbox={"boxstyle": "round,pad=0.35", "facecolor": C_BG_TEAL, "edgecolor": C_TEAL, "lw": 0.9},
     )
 
-    out = OUT_DIR / "ValidationHysteresisOverviewV2.png"
+    out = OUT_DIR / "ValidationHysteresisOverview.png"
     fig.savefig(out, dpi=DPI, bbox_inches="tight", pad_inches=0.12, facecolor="white")
     plt.close(fig)
     return out

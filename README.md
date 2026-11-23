@@ -29,8 +29,8 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 | # | Section | Scope |
 |--:|:--------|:------|
 | 1 | [Overview & Highlights](#1-overview--highlights) | Platform positioning and core design pillars |
-| 2 | [Architecture & Repository Layout](#2-architecture--repository-layout) | Three-package V2 layout and navigation map |
-| 3 | [Quickstart](#3-quickstart) | Environment setup, CLI, V2 server, and web workstation |
+| 2 | [Architecture & Repository Layout](#2-architecture--repository-layout) | Three-package layout and navigation map |
+| 3 | [Quickstart](#3-quickstart) | Environment setup, CLI, server, and web workstation |
 | 4 | [Experiment & Capability Matrix](#4-experiment--capability-matrix) | 1D, 2D, tandem, screening, and UI capabilities |
 | 5 | [Governing Physics & Numerical Method](#5-governing-physics--numerical-method) | PDEs, heterointerfaces, optics, and unified sparse assembly |
 | 6 | [Validation Benchmarks & Scope](#6-validation-benchmarks--scope) | 262-case SCAPS & 45-case hysteresis alignment vs formal qualification |
@@ -46,26 +46,26 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 - **Unified Sparse Equation Assembly (`solarlab.equations.assembly`)** — Positive log-activity carrier variables $(z_n, z_p)$ guarantee $n > 0$ and $p > 0$ at every iterate without density clipping, while shared `SystemLayout` + `Term` contracts assemble exact sparse analytical Jacobians across 1D DC, transient, small-signal AC, and 2D microstructure solves.
 - **Strict Conservation & Reciprocity** — Cancellation-free `expm1` control-volume inventories maintain ionic mass conservation below $1.8 \times 10^{-13}$ relative drift; heterojunctions enforce per-side DOS Bethe/Richardson thermionic reciprocity, two-sided / 7-level Gaussian interface SRH, and series-dielectric face capacitance.
 - **End-to-End Cryptographic Provenance (`RunStore` & `ExecutionManifest`)** — Every configuration, optical table, protocol, and compiled solver state is content-hashed (`H_input`, `H_physics`, `H_execution`). Completed runs and failed prefixes are persisted losslessly for solver-free readback.
-- **Enforced Package Isolation** — `solarlab` (core physics & solvers), `solarlab_server` (V2 HTTP/SSE job service & bundled SPA), and `solarlab_research` (`R1` codec & `CBO` scan CLIs) obey 12 machine-checked `import-linter` boundary contracts.
+- **Enforced Package Isolation** — `solarlab` (core physics & solvers), `solarlab_server` (HTTP/SSE job service & bundled SPA), and `solarlab_research` (`R1` codec & `CBO` scan CLIs) obey 12 machine-checked `import-linter` boundary contracts.
 
 > [!NOTE]
-> `devel` is the shared V2 engineering baseline (`solarlab==0.1.0`); `AIMC` is the separate research branch for microscopic aging models. For contributor rules and retired legacy provenance, see [DevelopmentGuide.md](docs/DevelopmentGuide.md) and [RetiredModelsV1.md](docs/RetiredModelsV1.md).
+> `devel` is the shared engineering baseline (`solarlab==0.1.0`); `AIMC` is the separate research branch for microscopic aging models. For contributor rules and retired legacy provenance, see [DevelopmentGuide.md](docs/DevelopmentGuide.md) and [RetiredModelsV1.md](docs/RetiredModelsV1.md).
 
 ---
 
 ## 2. Architecture & Repository Layout
 
 <p align="center">
-  <img src="docs/figures/ArchitectureFlowV2.png" alt="SolarLab V2 simulation and provenance pipeline" width="920">
+  <img src="docs/figures/ArchitectureFlow.png" alt="SolarLab simulation and provenance pipeline" width="920">
 </p>
 
 ```text
 SolarLab/
 ├── src/
 │   ├── solarlab/               Core kernel: config, materials, mesh, physics, equations, solvers, experiments, io
-│   ├── solarlab_server/        V2 FastAPI/SSE job service, RunStore routes, ProcessSupervisor, and SPA serving
+│   ├── solarlab_server/        FastAPI/SSE job service, RunStore routes, ProcessSupervisor, and SPA serving
 │   └── solarlab_research/      Research companion CLIs (solarlab-cbo-scan, solarlab-r1-short-window, r1-verify-sources)
-├── web/                        Vite + TypeScript + Plotly + GoldenLayout V2 workstation frontend
+├── web/                        Vite + TypeScript + Plotly + GoldenLayout workstation frontend
 ├── examples/
 │   ├── research_1d/            23 runnable 1D steady, AC, transient, mobile-ion, optical, and HTTP/process workflows
 │   └── research_2d/            10 runnable 2D steady, J-V, grain-boundary, contact, field-mobility, and optical workflows
@@ -117,9 +117,9 @@ npm --prefix web run build
 .venv/bin/solarlab-r1-short-window --help
 ```
 
-### 3. Launch the V2 Web Workstation
+### 3. Launch the Web Workstation
 
-Start the V2 `solarlab-server` backend (serves `/configs`, `/materials`, `/experiments`, `/jobs`, `/runs/.../events`, `/results/...`, and compiled `web/dist` on port `8000`):
+Start the `solarlab-server` backend (serves `/configs`, `/materials`, `/experiments`, `/jobs`, `/runs/.../events`, `/results/...`, and compiled `web/dist` on port `8000`):
 
 ```bash
 .venv/bin/solarlab-server --store-dir ./var/solarlab/store --host 127.0.0.1 --port 8000
@@ -165,7 +165,7 @@ All characterisation workflows compile from the same validated device declaratio
 ## 5. Governing Physics & Numerical Method
 
 <p align="center">
-  <img src="docs/figures/DevicePhysicsOverviewV2.png" alt="Device stack, heterojunction band bending, and 2D grain mesh" width="920">
+  <img src="docs/figures/DevicePhysicsOverview.png" alt="Device stack, heterojunction band bending, and 2D grain mesh" width="920">
 </p>
 
 ### 1. Electrostatics & Contact Potentials
@@ -210,7 +210,7 @@ Optical generation integrates absorbed photon flux exactly over each electrical 
 ### 5. Unified Solver Matrix
 
 <p align="center">
-  <img src="docs/figures/SolverTopologyV2.png" alt="SolarLab V2 unified equation assembly and solver matrix" width="920">
+  <img src="docs/figures/SolverTopology.png" alt="SolarLab unified equation assembly and solver matrix" width="920">
 </p>
 
 ---
@@ -219,21 +219,21 @@ Optical generation integrates absorbed photon flux exactly over each electrical 
 
 SolarLab separates **engineering verification**, **external solver alignment**, and **formal continuum scientific certification** (`scientific_qualification = False` until all external reference and continuum-refinement gates are independently closed; see [reproducibility/README.md](reproducibility/README.md)).
 
-### 1. SCAPS-1D 262-Case Steady-State Alignment (`ScapsComparisonContractV1`)
+### 1. SCAPS-1D 262-Case Steady-State Alignment
 
 <p align="center">
-  <img src="docs/figures/ValidationScapsOverviewV2.png" alt="SCAPS-1D 262-case alignment summary" width="920">
+  <img src="docs/figures/ValidationScapsOverview.png" alt="SCAPS-1D 262-case zero-fit alignment summary" width="920">
 </p>
 
-Evaluated from an isolated `solarlab==0.1.0` wheel across all **262** single- and two-parameter sweeps (`scaps_cbo`, `scaps_nt_cbo`, `scaps_nt_et`, bulk/interface $N_t$ & $E_t$, donor doping) using 7-level Gaussian interface quadrature, flat-band work-function $V_{\mathrm{bi}}$, and two-stage $5\text{ mV}$ $V_{\mathrm{mpp}}/V_{\mathrm{oc}}$ certification:
-- **Convergence:** `262 / 262` cases converged (`0` solver failures).
-- **Accuracy across 248 numeric reference points:** `233 / 248` (**`94.0%`**) satisfy $|\Delta V_{\mathrm{oc}}| \le 30\text{ mV}$; median $|\Delta V_{\mathrm{oc}}| = 12.7\text{ mV}$ (`P90 = 25.9 mV`), median $|\Delta\mathrm{FF}| = 0.53\%$, median $|\Delta\mathrm{PCE}| = 0.20\%$.
-- **Residual diagnosis:** Independent zero-Auger radiative-limit ablation (`C_{n,p} = 0`) confirmed that the remaining $\sim 25\text{ mV}$ open-circuit plateau offset originates from an undocumented radiative-limit setting in the external partner's proprietary SCAPS project file + bundled `.spe` spectrum table (reducing `scaps_nt_cbo` median $|\Delta V_{\mathrm{oc}}|$ to `4.40 mV` and overall $|\Delta V_{\mathrm{oc}}| \le 20\text{ mV}$ coverage to `88.7%`).
+Evaluated across all **262** single- and two-parameter sweeps (`scaps_cbo`, `scaps_nt_cbo`, `scaps_nt_et`, bulk/interface $N_t$ & $E_t$, donor doping) using the verbatim partner SCAPS 3.3.10 baseline (`scaps_pvk_xy` + [ScapsAm15g1Sun.spe](reproducibility/ScapsAm15g1Sun.spe), driven by [scaps_native_pvk_xy.py](scripts/benchmarks/scaps_native_pvk_xy.py)) with **zero empirical calibration factors** (`het_recomb_despike = 0`, no work-function offsets, no interface-state attenuation, 7-level Gaussian `PVK/ETL` quadrature, and recalculated flat-band contacts):
+- **Convergence & Gate Closure:** `262 / 262` cases converged (`0` solver failures); **`221 / 248` (`89.1%`)** numeric reference points pass **all four** strict pointwise contract gates simultaneously ($V_{\mathrm{oc}}$: `236/248` [`95.2%`], $J_{\mathrm{sc}}$: `239/248` [`96.4%`], $\mathrm{FF}$: `221/248` [`89.1%`], $\mathrm{PCE}$: `235/248` [`94.8%`]), achieving `100%` pass across 11 of the 14 groups (including the full 56-case 2D `scaps_nt_et` grid).
+- **Pointwise Accuracy:** Median $|\Delta V_{\mathrm{oc}}| = 0.60\text{ mV}$ (`P90 = 1.01 mV`, `96.0%` $\le 5\text{ mV}$), median $|\Delta J_{\mathrm{sc}}| = 0.0088\text{ mA cm}^{-2}$, median $|\Delta\mathrm{FF}| = 0.031\%$, and median $|\Delta\mathrm{PCE}| = 0.009\%$.
+- **Boundary Regime Localization:** The remaining 27 tolerance-exceeding points localize to steep positive conduction-band spikes ($\Delta E_c \ge +0.30\text{ eV}$ in `scaps_cbo` / `scaps_nt_cbo`, plus high-doping $N_{D,\mathrm{PVK}} = 10^{18}\text{ cm}^{-3}$), where finite-difference mesh placement across the sub-nanometre heterointerface barrier governs S-curve knee sensitivity.
 
-### 2. 45-Case Dynamic Mobile-Ion Hysteresis Benchmark (`HysteresisReferenceContractV2`)
+### 2. 45-Case Dynamic Mobile-Ion Hysteresis Benchmark
 
 <p align="center">
-  <img src="docs/figures/ValidationHysteresisOverviewV2.png" alt="45-case dynamic mobile-ion hysteresis benchmark summary" width="920">
+  <img src="docs/figures/ValidationHysteresisOverview.png" alt="45-case dynamic mobile-ion hysteresis benchmark summary" width="920">
 </p>
 
 Evaluated across the **45-case** 7-stage preconditioning + forward/reverse scan matrix spanning 6 decades of ion diffusivity, mobile-ion density, and scan rate:
@@ -250,7 +250,8 @@ Evaluated across the **45-case** 7-stage preconditioning + forward/reverse scan 
 | Preset ID | Stack Topology | Mobile Ions | Optics | Primary Role |
 |:----------|:---------------|:-----------:|:------:|:-------------|
 | `classical_pin` | HTL / Absorber / ETL | No | Beer–Lambert | Default CLI & 1D/2D steady-state baseline |
-| `scaps_mirror_v2` | Glass / Spiro-OMeTAD / $\mathrm{MAPbI_3}$ / $\mathrm{TiO_2}$ | No | TMM / Spectral BL | SCAPS-1D heterojunction & defect benchmark stack |
+| `scaps_pvk_xy` | SAM / Perovskite / $\mathrm{C_{60}}$ | No | TMM / Spectral BL | Native zero-fit SCAPS-1D benchmark baseline (`PVK-xy.scaps`) |
+| `scaps_mirror_v2` | Glass / Spiro-OMeTAD / $\mathrm{MAPbI_3}$ / $\mathrm{TiO_2}$ | No | TMM / Spectral BL | Historical PDF-table SCAPS contract stack |
 | `calado2016_ion_sweep` | HTL / Perovskite / ETL | Yes | Uniform / BL | Workstation dynamic ion-hysteresis waveform preset |
 | `calado2016_fig1f` | Calado 2016 SI Table 1 stack | Yes | Beer–Lambert | Literature scan-rate hysteresis comparison preset |
 

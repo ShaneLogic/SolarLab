@@ -2,7 +2,7 @@
 
 Runnable one-dimensional research examples exercising `solarlab`'s configuration compiler, unified sparse equation assembly, nonlinear/time/frequency-domain solvers, and lossless `RunStore` persistence.
 
-For repository installation, V2 server startup, and governing PDEs, see the root [README.md](../../README.md) and [DevelopmentGuide.md](../../docs/DevelopmentGuide.md). Run all commands below from the repository root with single-thread BLAS:
+For repository installation, server startup, and governing PDEs, see the root [README.md](../../README.md) and [DevelopmentGuide.md](../../docs/DevelopmentGuide.md). Run all commands below from the repository root with single-thread BLAS:
 
 ```sh
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1

@@ -14,7 +14,7 @@ For cross-cutting solver architecture and extension rules, see [../DevelopmentGu
 | [InterfaceChargeClosurePolicy.md](InterfaceChargeClosurePolicy.md) | Equilibrium-referenced vs absolute interface sheet-charge Gauss closure |
 | [PhysicalInterfaceCboScan.md](PhysicalInterfaceCboScan.md) | Conduction-band offset ($\Delta E_c$) scan protocol and numerical contraction gates |
 | [WkbTunnellingFamilyContract.md](WkbTunnellingFamilyContract.md) | Nonlocal WKB barrier tunnelling constitutive family |
-| [ResolvedIntrabandTunnellingContractV2.md](ResolvedIntrabandTunnellingContractV2.md) | Node-resolved intraband heterojunction tunnelling closure (V2) |
+| [ResolvedIntrabandTunnellingContractV2.md](ResolvedIntrabandTunnellingContractV2.md) | Node-resolved intraband heterojunction tunnelling closure |
 
 ## 2. Bulk & Interface Defect Thermodynamics (DC, Transient & AC)
 
