@@ -27,16 +27,27 @@ node-aligned fixed generation resources:
      wavelength quadrature, front-prefix optical-only substrate offset, and
      `SpectralPhotonFlux` (e.g. ASTM G-173-03 AM1.5G) as spectral TMM, with
      per-layer attenuation
-     $$\alpha_\ell(\lambda) = \frac{4\pi\,k_\ell(\lambda)}{\lambda}$$
+
+     $$
+     \alpha_\ell(\lambda) = \frac{4\pi\,k_\ell(\lambda)}{\lambda}
+     $$
+
      and cancellation-free control-volume cell absorptance
-     $$A_{\text{cell}}(\lambda) = e^{-\tau_j(\lambda)}\bigl(-\operatorname{expm1}(-\Delta\tau_j(\lambda))\bigr).$$
+
+     $$
+     A_{\mathrm{cell}}(\lambda) = e^{-\tau_j(\lambda)}\bigl(-\mathrm{expm1}(-\Delta\tau_j(\lambda))\bigr).
+     $$
+
    - Zero front/internal Fresnel reflection ($R(\lambda) = 0$), zero coherent
      standing-wave interference, zero dropped multipass fraction, and no
      TMM-derived photon-recycling reabsorption.
    - Per-wavelength and trapezoid-integrated photon accounting close to machine
      precision on arbitrary uniform, stretched (`tanh`), or two-sided trace
      meshes:
-     $$\text{transmitted} + \sum_{\ell}\text{absorbed}_\ell = \text{incident}.$$
+
+     $$
+     \text{transmitted} + \sum_{\ell}\text{absorbed}_\ell = \text{incident}.
+     $$
    - Optical-only front prefix layers (`role: substrate`, `electrical=False`,
      including `incoherent=True` front glass) attenuate the spectrum entering
      the electrical stack (`parasitic_absorbed_m2_s`) without creating
@@ -98,7 +109,7 @@ On `solarlab`'s refactored 1D kernel:
   by construction at every Newton iterate without clipping or projection.
 - Time integration (`BackwardEuler1DStep` / `solve_transient`) discretizes exact
   physical control-volume carrier inventories via cancellation-free secants
-  $S_{\text{old}}\operatorname{expm1}(\log(c_{\text{new}}/c_{\text{old}}))/\Delta t$,
+  $S_{\mathrm{old}}\mathrm{expm1}(\log(c_{\mathrm{new}}/c_{\mathrm{old}}))/\Delta t$,
   closing cell-wise and global particle and Maxwell total-current balances on
   the `scaps_mirror_v2` `N=60` spectral Beer–Lambert stack across DC steady
   state, forward-bias $J\text{--}V$ operating points, and transient illumination

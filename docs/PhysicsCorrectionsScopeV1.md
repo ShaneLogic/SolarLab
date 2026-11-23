@@ -49,10 +49,17 @@ All prospective **physical** corrections (`P`-class) are quarantined into Stage 
   - Only `TWO_SIDED_TRACE_V1` and `PHYSICAL_BOUNDARY_TWO_SIDED_V1` replace split interface faces with `series_face_capacitance(d_L, eps_L, d_R, eps_R)` (`poisson.py` L109–114).
 - **Defect / Counterexample Evidence:**
   1. *Non-uniform split face ($d_L \neq d_R$, $\varepsilon_L \neq \varepsilon_R$):* Exact Gauss-law continuity $D = -\varepsilon_0 \varepsilon_r \partial_x \phi = \text{const}$ across a planar dielectric boundary splitting face $h = d_L + d_R$ yields the exact series capacitance
-     $$C_{\text{exact}} = \frac{\varepsilon_0}{d_L/\varepsilon_L + d_R/\varepsilon_R}.$$
+
+     $$
+     C_{\mathrm{exact}} = \frac{\varepsilon_0}{d_L/\varepsilon_L + d_R/\varepsilon_R}.
+     $$
+
      Unweighted `harmonic_face_mean` assumes $d_L = d_R = h/2$, producing an $O(1)$ capacitance and potential error whenever mesh clustering makes $d_L \neq d_R$ across a high-contrast heterointerface (e.g. organic HTL $\varepsilon_1 = 3.0$ vs perovskite $\varepsilon_2 = 25.0$). Arithmetic averaging $0.5(\varepsilon_L + \varepsilon_R)/h$ treats series dielectrics as a parallel capacitor and fails even when $d_L = d_R$.
   2. *Shared-node `RIGHT_LAYER_WINS` interface shift:* When node $x_k = X_{\text{if}}$ sits on the interface, $[x_{k-1}, x_k]$ lies 100% inside material $L$ ($\varepsilon_L$) and $[x_k, x_{k+1}]$ lies 100% inside material $R$ ($\varepsilon_R$). Setting $\varepsilon_r[k] = \varepsilon_R$ gives $C_{k-1/2} = \varepsilon_0 \frac{2\varepsilon_L\varepsilon_R}{\varepsilon_L+\varepsilon_R} / dx_L$, shifting the effective dielectric boundary by $dx_L / 2$ into layer $L$ across the two adjacent faces:
-     $$C_{k-1/2}^{-1} + C_{k+1/2}^{-1} = \frac{dx_L / 2}{\varepsilon_0 \varepsilon_L} + \frac{dx_L / 2 + dx_R}{\varepsilon_0 \varepsilon_R} \neq \frac{dx_L}{\varepsilon_0 \varepsilon_L} + \frac{dx_R}{\varepsilon_0 \varepsilon_R}.$$
+
+     $$
+     C_{k-1/2}^{-1} + C_{k+1/2}^{-1} = \frac{dx_L / 2}{\varepsilon_0 \varepsilon_L} + \frac{dx_L / 2 + dx_R}{\varepsilon_0 \varepsilon_R} \neq \frac{dx_L}{\varepsilon_0 \varepsilon_L} + \frac{dx_R}{\varepsilon_0 \varepsilon_R}.
+     $$
 - **New Target Semantics:**
   - Every 1D and 2D electrostatic face (stack and lateral) uses exact sub-face material-extent series capacitance $C_f = \varepsilon_0 / (d_{f,L}/\varepsilon_L + d_{f,R}/\varepsilon_R)$. Within a homogeneous layer ($\varepsilon_L = \varepsilon_R = \varepsilon$), this reduces identically to $\varepsilon_0 \varepsilon / h_f$; on a shared-node interface $x_k = X_{\text{if}}$, $[x_{k-1}, x_k]$ uses $\varepsilon_L$ over $dx_L$ and $[x_k, x_{k+1}]$ uses $\varepsilon_R$ over $dx_R$.
 - **Allowed Scope:** `src/solarlab/discretization/face_average.py`, `src/solarlab/physics/electrostatics/`, `src/solarlab/device/compile_1d.py`, `src/solarlab/device/compile_2d.py`, `src/solarlab/equations/dc_2d.py`, and small-signal/displacement-current observers reading `PoissonOperator1D`.
@@ -90,7 +97,7 @@ All prospective **physical** corrections (`P`-class) are quarantined into Stage 
 - **Old Semantics (`devel` @ `0b03de5`):**
   - `BandStructure.transport_potentials(phi)` (`src/solarlab/physics/transport/drift_diffusion.py` L46; `electrochemical_flux.py` L256) forms nodal hole potential $\psi_{p,i} = \phi_i + \chi_{t,i} + E_{g,t,i}$ ($\approx 5.4\text{–}6.0\text{ V}$) first and then differences $\psi_{p,i+1} - \psi_{p,i}$.
 - **Defect / Counterexample Evidence (`ArchitectureRefactorExecutionV1.md` §12 L784, §19.35 L1621):**
-  - Because $\chi_t + E_{g,t} \approx 5.5\text{ eV}$ has $\operatorname{ulp}(5.5) = 2^{-50} \approx 8.88\times 10^{-16}\text{ V}$, adding $\chi_t + E_{g,t}$ prior to subtracting adjacent nodes quantizes small intra-layer electrostatic steps $\Delta\phi = \phi_{i+1} - \phi_i$. At heavily doped transport-layer faces ($p \sim 10^{24}\text{ m}^{-3}$, $\Delta x \sim 1\text{ nm}$), that 1-ULP quantization perturbs $J_p$ by $O(10^{-4})\text{ A/m}^2$.
+  - Because $\chi_t + E_{g,t} \approx 5.5\text{ eV}$ has $\mathrm{ulp}(5.5) = 2^{-50} \approx 8.88\times 10^{-16}\text{ V}$, adding $\chi_t + E_{g,t}$ prior to subtracting adjacent nodes quantizes small intra-layer electrostatic steps $\Delta\phi = \phi_{i+1} - \phi_i$. At heavily doped transport-layer faces ($p \sim 10^{24}\text{ m}^{-3}$, $\Delta x \sim 1\text{ nm}$), that 1-ULP quantization perturbs $J_p$ by $O(10^{-4})\text{ A/m}^2$.
   - On the saved SCAPS fixed-state native residual screens (`V1` §19.35 L1621), native summed-potential differencing gave `8.79892088904392e-5 A/m^2` on `Final61` and `4.010734989424907e-4 A/m^2` on `Final121` (exceeding the exact $1/3000\text{ A/m}^2 = 3.3333333333333335\times 10^{-4}\text{ A/m}^2$ screen on `Final121`), whereas `BandStepsV1` (`hole_separate_increment`, forming $(\phi_{i+1}-\phi_i) + (\chi_{t,i+1}-\chi_{t,i}) + (E_{g,t,i+1}-E_{g,t,i})$ before summation in `FullRhs01`) reduced carrier-balance sums to `2.9697029217142876e-5 A/m^2` (`61`) and `1.9735726377304774e-5 A/m^2` (`121`).
 - **Explicit `N` vs `P` Disposition & Sign Convention Rule:**
   1. Over $\mathbb{R}$, separate-increment differencing is algebraically identical to summed-potential differencing (it is a floating-point conditioning improvement, not a new continuum physical law), **but** because it changes bit-level face currents by up to $4.01\times 10^{-4}\text{ A/m}^2$ on fine grids and moves `Final121` across the historical $1/3000\text{ A/m}^2$ screen, it must **never** be applied silently inside an unversioned edit or used to relabel the historical `Final121` native failure (`V1` §19.35). If adopted in `P08-02`, separate-increment step formation $(\Delta\phi) + (\Delta\chi_t) + (\Delta E_{g,t})$ must be isolated in its own versioned commit with explicit Jacobian consistency (`d step / d phi = +/- 1 / V_T` unchanged) and historical `Final121` failure preserved verbatim.
@@ -104,14 +111,21 @@ All prospective **physical** corrections (`P`-class) are quarantined into Stage 
 
 - **Old Semantics (`devel` @ `0b03de5`):**
   - Deduplicated 1D TE (`compile_1d.py` L367–398; `thermionic_emission_bound_m2_s` in `src/solarlab/physics/interface_transport/thermionic.py` L173–214 with `dos_norm_m3=None`) evaluates left-layer `A_star` only and computes
-    $$J_{\text{TE, legacy}} = A^* T^2 \left(n_L e^{-\max(\Delta E_t, 0)/V_T} - n_R e^{-\max(-\Delta E_t, 0)/V_T}\right),$$
+
+    $$
+    J_{\mathrm{TE,legacy}} = A^* T^2 \left(n_L e^{-\max(\Delta E_t, 0)/V_T} - n_R e^{-\max(-\Delta E_t, 0)/V_T}\right),
+    $$
+
     which has unphysical units $\text{A}\cdot\text{m}^{-5}$ ($\sim 10^{28}\text{–}10^{35}$ numerically in SI, rendering $\min(|J_{\text{SG}}|, |J_{\text{TE}}|)$ nearly inert and violating length-unit invariance).
   - Single-DOS `settings.te_physical_norm` (`ArchiveDigest.md` X3; `perovskite-sim/CLAUDE.md` F02) divides by a single $N_{\text{dos}}$ to form $v_R = A^* T^2 / (q N_{\text{dos}})$ [$\text{m/s}$], and is currently refused with `CapabilityError` in `compile_device_1d` (`compile_1d.py` L147).
   - Two-sided trace (`thermionic.py` L438–615 `fermi_dirac_richardson_flux` & `fermi_richardson_flux`; `compile_1d.py` L589–594, L670–698) already resolves per-side $N_{C,L}, N_{C,R}, N_{V,L}, N_{V,R}$, true physical band offsets, and reciprocal $\tilde{A}^* = \min(A^*_L, A^*_R)$.
 - **Defect / Counterexample Evidence:**
   1. *Unit-system non-invariance:* Rescaling densities and DOS together ($n \to \lambda n$, $N_C \to \lambda N_C$, e.g. $\text{m}^{-3} \leftrightarrow \text{cm}^{-3}$ with $\lambda = 10^{-6}$) changes `thermionic_emission_bound_m2_s(..., dos_norm_m3=None)` by $\lambda$, whereas physical emission flux $J_{\text{TE}} \propto (n / N_C)$ is strictly scale-invariant.
   2. *Failure of single-DOS / non-reciprocal $A^*$ on unequal-DOS heterojunctions ($N_{C,L} \neq N_{C,R}$, $m^*_L \neq m^*_R$):* At thermal equilibrium ($E_{F,L} = E_{F,R}$), Boltzmann carrier densities across physical conduction-band step $\Delta E_{\text{step}} = \Delta E_{C,\text{phys}} - (\phi_R - \phi_L)$ satisfy
-     $$\frac{n_L}{N_{C,L}} e^{-\max(\Delta E_{\text{step}}, 0)/V_T} = \frac{n_R}{N_{C,R}} e^{-\max(-\Delta E_{\text{step}}, 0)/V_T}.$$
+
+     $$
+     \frac{n_L}{N_{C,L}} e^{-\max(\Delta E_{\mathrm{step}}, 0)/V_T} = \frac{n_R}{N_{C,R}} e^{-\max(-\Delta E_{\mathrm{step}}, 0)/V_T}.
+     $$
      Evaluating bare TE with physical $\Delta E_{\text{step}}$ and a **single** shared divisor $N_{\text{dos}} = N_{C,L}$ yields a nonzero spurious equilibrium current $\propto (1 - N_{C,R}/N_{C,L})$. Likewise, using side-specific $A^*_L \neq A^*_R$ separately on the forward and reverse legs yields a spurious equilibrium current $\propto (A^*_L - A^*_R)$ because transverse momentum conservation across a specular planar barrier restricts both directions to the smaller phase-space cone $\tilde{A}^* = \min(A^*_L, A^*_R)$ (Bethe/Richardson reciprocity).
   3. *Historical conditioning failures (`ArchiveDigest.md` X3):* Four prior legacy attempts to flip `te_physical_norm` on by default failed solver conditioning in deep forward injection (`V_max = 3.0 V` non-finite density Newton/Radau steps).
 - **New Target Semantics:**
@@ -166,7 +180,7 @@ All prospective **physical** corrections (`P`-class) are quarantined into Stage 
      - On `solarlab`'s new kernel, `State1D` parameterizes carriers via log-activities $n = n_{\text{ref}}\exp(\Delta\phi/V_T + z_n) > 0$, $p = p_{\text{ref}}\exp(-\Delta\phi/V_T - z_p) > 0$, and `BackwardEuler1DStep` integrates physical inventories via `S_old * expm1(log_ratio) / dt` with `generation_inventory` positive logarithmic seeding (`log1p(dt * G / density)`), structurally excluding $p \le 0$ domain violations.
 - **New Target Semantics:**
   - Introduce immutable `SpectralBeerLambertBinding` in `src/solarlab/physics/generation/` and wire explicit optical-model selection (`beer_lambert` | `beer_lambert_spectral` | `tmm`) in `config/` + `device/`:
-    - Per-layer $\alpha_\ell(\lambda) = 4\pi k_\ell(\lambda)/\lambda \ge 0$ integrated exactly over each cell's true optical-depth increment $\Delta\tau_{i,\lambda}$ via $\exp(-\tau_{\text{left}, i,\lambda}) \cdot (-\operatorname{expm1}(-\Delta\tau_{i,\lambda}))$, followed by explicit wavelength quadrature over the declared `SpectralPhotonFlux` resource.
+    - Per-layer $\alpha_\ell(\lambda) = 4\pi k_\ell(\lambda)/\lambda \ge 0$ integrated exactly over each cell's true optical-depth increment $\Delta\tau_{i,\lambda}$ via $\exp(-\tau_{\text{left}, i,\lambda}) \cdot (-\mathrm{expm1}(-\Delta\tau_{i,\lambda}))$, followed by explicit wavelength quadrature over the declared `SpectralPhotonFlux` resource.
     - Optical-only front `substrate` layers attenuate $\tau_{\text{left}}(\lambda)$ without generating electrical carriers (`electrical=False`), with closed spectral photon budget ($\text{attenuated\_substrate} + \text{absorbed\_electrical} + \text{transmitted} = \Phi_{\text{incident}}$ to `rtol <= 1e-12`).
 - **Allowed Scope:** `src/solarlab/physics/generation/`, `src/solarlab/device/optical_generation.py`, `src/solarlab/device/optical_generation_2d.py`, `src/solarlab/device/compile_1d.py`, `src/solarlab/device/compile_2d.py`, and typed optical-model selector fields in `src/solarlab/config/` + `src/solarlab/device/inputs.py`.
 - **Falsification & Non-Regression Boundaries:**

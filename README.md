@@ -2,17 +2,17 @@
 
 # ☀️ SolarLab
 
-**Thin-Film Solar Cell Simulator**
+**Thin-Film & Tandem Solar Cell Simulation Platform**
 
-*1D/2D Drift-Diffusion · Poisson · Mobile Ions · Transfer-Matrix Optics*
+*1D/2D Drift-Diffusion · Series Poisson · Finite-Site Mobile Ions · Coherent Transfer-Matrix Optics*
 
-Perovskite · CIGS · c-Si
+Perovskite · CIGS · c-Si · Monolithic 2T Tandems
 
 <br>
 
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org)
-[![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com)
-[![Vite](https://img.shields.io/badge/frontend-Vite%20%2B%20TypeScript-646CFF.svg)](https://vitejs.dev)
+[![Python](https://img.shields.io/badge/python-3.11%2B-2563EB.svg)](https://www.python.org)
+[![FastAPI](https://img.shields.io/badge/server-FastAPI%20%2B%20SSE-0D9488.svg)](https://fastapi.tiangolo.com)
+[![Vite](https://img.shields.io/badge/workstation-Vite%20%2B%20TypeScript-7C3AED.svg)](https://vitejs.dev)
 
 <br>
 
@@ -26,738 +26,266 @@ Xuan-Yan Chen · Longhan Zhang · Zecheng Gan<sup>&#42;</sup> · Chang Yan<sup>&
 
 ## Table of Contents
 
-| | Section | Description |
-|--:|---------|-------------|
-| 1 | [Overview](#overview) | What SolarLab does |
-| 2 | [Key Features](#key-features) | Capabilities at a glance |
-| 3 | [Repository Layout](#repository-layout) | Directory structure |
-| 4 | [Installation](#installation) | Setup instructions |
-| 5 | [Running the Application](#running-the-application) | Backend + frontend startup |
-| 6 | [Physical Principles & Equations](#physical-principles--equations) | Governing PDEs and physics |
-| 7 | [Numerical Method](#numerical-method) | Solver architecture |
-| 8 | [Validation & Model Scope](#validation--model-scope) | What current evidence does and does not certify |
-| 9 | [Using the Web UI](#using-the-web-ui) | UI walkthrough |
-| 10 | [Shipped Device Presets](#shipped-device-presets) | Available YAML configs |
-| 11 | [Testing](#testing) | Test suite overview |
-| 12 | [References](#references) | Key literature |
-
-<br>
+| # | Section | Scope |
+|--:|:--------|:------|
+| 1 | [Overview & Highlights](#1-overview--highlights) | Platform positioning and core design pillars |
+| 2 | [Architecture & Repository Layout](#2-architecture--repository-layout) | Three-package V2 layout and navigation map |
+| 3 | [Quickstart](#3-quickstart) | Environment setup, CLI, V2 server, and web workstation |
+| 4 | [Experiment & Capability Matrix](#4-experiment--capability-matrix) | 1D, 2D, tandem, screening, and UI capabilities |
+| 5 | [Governing Physics & Numerical Method](#5-governing-physics--numerical-method) | PDEs, heterointerfaces, optics, and unified sparse assembly |
+| 6 | [Validation Benchmarks & Scope](#6-validation-benchmarks--scope) | 262-case SCAPS & 45-case hysteresis alignment vs formal qualification |
+| 7 | [Presets & Verification Suite](#7-presets--verification-suite) | Shipped device configurations and CI test gates |
+| 8 | [References & Contact](#8-references--contact) | Literature and author correspondence |
 
 ---
 
-## Overview
+## 1. Overview & Highlights
 
-**Continuing development:** `devel` is the shared engineering baseline;
-`AIMC` is the separate branch for the proposed microscopic aging model.
-Start with the [Development Guide](docs/DevelopmentGuide.md) and
-[Retired Models & Legacy Witness Ledger](docs/RetiredModelsV1.md) for the current
-package layout, test commands, model extension boundaries, retired legacy entrypoints
-and pending work. Release wheels and sdists for `solarlab==0.1.0` ship
-`solarlab`, `solarlab_server` (with the compiled `_web_dist` SPA), and
-`solarlab_research` without `perovskite_sim`, while full scientific qualification
-remains explicitly separate (`scientific_qualification=False`).
+**SolarLab** is a research-grade device simulation platform for thin-film and monolithic tandem photovoltaics. It couples **Poisson electrostatics**, **drift-diffusion carrier continuity**, **steric mobile-ion migration**, **explicit bulk/interface defect thermodynamics**, and **wavelength-resolved transfer-matrix optics** under a unified sparse equation-assembly architecture, paired with a **FastAPI / SSE** execution service and an interactive **Vite / TypeScript / Plotly** browser workstation.
 
-Supported new-core 1D and steady 2D entry points use the unified equation
-assembly. Backward Euler remains the general transient default; adaptive BDF
-is an explicit bounded route. The separate CND2 method-selection/default
-switch is not part of this baseline.
+- **Unified Sparse Equation Assembly (`solarlab.equations.assembly`)** — Positive log-activity carrier variables $(z_n, z_p)$ guarantee $n > 0$ and $p > 0$ at every iterate without density clipping, while shared `SystemLayout` + `Term` contracts assemble exact sparse analytical Jacobians across 1D DC, transient, small-signal AC, and 2D microstructure solves.
+- **Strict Conservation & Reciprocity** — Cancellation-free `expm1` control-volume inventories maintain ionic mass conservation below $1.8 \times 10^{-13}$ relative drift; heterojunctions enforce per-side DOS Bethe/Richardson thermionic reciprocity, two-sided / 7-level Gaussian interface SRH, and series-dielectric face capacitance.
+- **End-to-End Cryptographic Provenance (`RunStore` & `ExecutionManifest`)** — Every configuration, optical table, protocol, and compiled solver state is content-hashed (`H_input`, `H_physics`, `H_execution`). Completed runs and failed prefixes are persisted losslessly for solver-free readback.
+- **Enforced Package Isolation** — `solarlab` (core physics & solvers), `solarlab_server` (V2 HTTP/SSE job service & bundled SPA), and `solarlab_research` (`R1` codec & `CBO` scan CLIs) obey 12 machine-checked `import-linter` boundary contracts.
 
-**New-core development on `devel`:** the [1D research workflow](examples/research_1d/README.md)
-runs configuration, a real Poisson/drift-diffusion assembly, the new steady
-Newton solver, J–V, parameter sweeps and lossless result reading. It includes
-an executable local recombination-model extension, direct solved Voc brackets,
-and bounded steady J–V jobs through the shared process supervisor. The new core
-also has explicit voltage/generation transients, saved-result HTTP/browser access,
-and coupled positive, independent dual-ion and shared-site steady/time examples.
-Ionic small-signal examples distinguish mobile and frozen responses about the same
-saved operating state. A complete illuminated ionic J–V command reports sampled
-photovoltaic metrics, and two separated blocking ion domains share one electronic
-steady/transient/AC system. Explicit neutral bulk defects support unequal physical
-DOS, and smooth CT velocity saturation is bound into DC and small-signal response.
-Explicit coherent spectral optics also supplies control-volume generation and photon budgets.
-The [2D research workflow](examples/research_2d/README.md) now assembles a connected
-lateral/stack grid and solves the full coupled dark and illuminated steady system,
-with explicit geometry, physical balances and saved-result reading. Its bounded
-examples use fixed carrier reservoirs and zero-flux lateral boundaries. Neutral
-grain regions mix SRH rates by their exact control-volume overlap. The uniform
-steady workflow also runs in an owned child process, preserving complete results
-and genuine failed attempts for solver-free reading from a local RunStore.
-These are bounded working cases; mesh/time/voltage-grid
-scientific acceptance and the remaining refactor are in progress. The broader application features
-described below include the existing `perovskite_sim` engine and do not imply
-that those capabilities have migrated to the new core.
+> [!NOTE]
+> `devel` is the shared V2 engineering baseline (`solarlab==0.1.0`); `AIMC` is the separate research branch for microscopic aging models. For contributor rules and retired legacy provenance, see [DevelopmentGuide.md](docs/DevelopmentGuide.md) and [RetiredModelsV1.md](docs/RetiredModelsV1.md).
 
-**SolarLab** is a research-grade simulator for thin-film solar cells. The core is a one-dimensional **drift-diffusion + Poisson + mobile-ion** solver, with an experimental two-dimensional extension for lateral microstructure studies, backed by a **FastAPI** HTTP service and a **Vite / TypeScript / Plotly** single-page web application.
+---
 
-It reproduces the main thin-film characterisation experiments from a single device definition, grouped into four families:
-
-| Family | Experiment | What it does |
-|:-------|:-----------|:-------------|
-| **Illuminated J-V** | J-V sweep | Forward + reverse scans with ionic memory preserved (hysteresis); optional current decomposition ($J_n$ / $J_p$ / $J_\text{ion}$ / $J_\text{disp}$) and spatial profiles ($\varphi$, $E$, $n$, $p$, $P$) per voltage point |
-|  | Suns-V<sub>oc</sub> | Intensity sweep producing the Sinton pseudo-JV (immune to series resistance) and pseudo-FF upper bound |
-| **Dark characterisation** | Dark J-V | Injection-current diode curve with auto-selected linear window → ideality factor $n$ and saturation current $J_0$ |
-|  | Mott-Schottky (C-V) | Dark C-V + auto-windowed $1/C^2$ fit → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
-| **Spectral** | EQE / IPCE | Wavelength-resolved external quantum efficiency via monochromatic TMM; integrates against AM1.5G for $J_\text{sc}$ |
-| **Transient** | Impedance spectroscopy | Lock-in extraction of $Z(f)$ with displacement current; Nyquist + Bode plots |
-|  | Transient photovoltage (TPV) | Charge-conserving open-circuit light pulse with a matched unpulsed reference; a single-exponential relaxation time is reported only when identifiable |
-|  | Degradation | Long-time transient with a **frozen-ion snapshot J-V** at each probe, decoupling slow ionic drift from the instantaneous electronic response |
-
-The simulator works for perovskite cells (with mobile ions), inorganic thin films (CIGS, CdTe-style stacks), and crystalline silicon homojunctions — all through the same YAML-based device schema. A separate **2T monolithic tandem** driver performs a combined TMM over top + junction + bottom, runs independent sub-cell J-V sweeps, and series-matches at a common current grid.
-
-The current technical reference is the **SolarLab Technical and User Manual (2026-08-11)**, distributed separately from this repository. It records the solver-specific variable sets, validation gates, and limitations that do not fit in this overview.
+## 2. Architecture & Repository Layout
 
 <p align="center">
-  <img src="docs/figures/ArchitectureFlow.png" alt="SolarLab architecture and data flow" width="900">
+  <img src="docs/figures/ArchitectureFlowV2.png" alt="SolarLab V2 simulation and provenance pipeline" width="920">
 </p>
 
-<br>
-
----
-
-## Key Features
-
-### Core solver
-
-| | Capability | Details |
-|:-:|:-----------|:--------|
-| 🧮 | **Drift-diffusion core** | Scharfetter-Gummel face fluxes with nonuniform control-volume continuity balances; Method-of-Lines with Radau implicit time integration |
-| ⚡ | **Poisson solve** | Finite-volume operator with pre-factored LAPACK tridiagonal `dgttrf`/`dgttrs`, reusing the factor while grid and permittivity stay fixed |
-| 🔬 | **Mobile ions** | Finite-site modified-PNP flux with shared-site dual-ion support; legacy whole-flux regularization retained only for frozen comparisons |
-| 🏗️ | **Heterostacks** | Band offsets from $\chi$ and $E_g$; per-interface transport/recombination; signed contact potential from semiconductor work functions, explicit metals, or a legacy benchmark override |
-
-### Physics upgrades (Phase 2–4)
-
-| | Capability | Details |
-|:-:|:-----------|:--------|
-| 🌈 | **Transfer-matrix optics** | Coherent TMM for position-resolved $G(x)$ with the Poynting-vector correction so $R+T+A=1$; AM1.5G-weighted per-wavelength absorption |
-| 🔥 | **Interface transport** | Default SG face with an optional thermionic cap; supported ion-free QF runs can instead use an exclusive zero-thickness interface boundary with reciprocal transport and shared interface-SRH occupancy |
-| 💡 | **Photon recycling** | Yablonovitch single-pass escape probability $P_\text{esc} = \min(1, 1/(4 n^2 \alpha d))$ scales $B_\text{rad}$ per absorber (Phase 3.1) |
-| 🔁 | **Self-consistent reabsorption** | Per-RHS radiative reabsorption feeds the trapped emission fraction back into $G(x)$ on absorber nodes (Phase 3.1b, FULL only) |
-| 🌀 | **Field-dependent mobility** | Caughey-Thomas velocity saturation + Poole-Frenkel hopping applied per RHS from the Poisson face field (Phase 3.2, FULL only) |
-| 🚪 | **Selective / Schottky contacts** | Robin-type flux $J = \pm q S (n - n_\text{eq})$ at outer contacts; $S \to \infty$ is ohmic, $S = 0$ is blocking (Phase 3.3, FULL only) |
-| 🎯 | **Position-dependent traps** | Exponential or Gaussian defect profiles concentrated at transport-layer interfaces; $\tau(x) = \tau_\text{bulk} \cdot N_{t,\text{bulk}} / N_t(x)$ (Phase 4a) |
-| 🌡️ | **Temperature scaling** | Varshni bandgap shift referenced to 300 K and power-law $B_\text{rad}(T) \propto (T/300)^\gamma$; self-consistent with $n_i(T)$ (Phase 4b) |
-| 🧭 | **Explicit solver drivers** | Transient, direct steady-state, cancellation-safe quasi-Fermi, QF frequency-domain, and 2D drivers keep distinct variable sets and fail closed on unsupported physics |
-
-### Tiered fidelity modes
-
-| Tier | Physics set | Use case |
-|:-----|:------------|:---------|
-| **LEGACY** | No TE, no TMM, uniform traps, $T = 300$ K — classic IonMonger reproduction | Regression parity against published benchmarks |
-| **FAST** | Permits build-once upgrades (TE, TMM, dual ions, trap profile, $T$-scaling, photon recycling); per-RHS hooks off | Selected by the SCAPS reference preset |
-| **FULL** | Widest configured hook set, including per-RHS radiative reabsorption, $\mu(E)$, and Robin contacts | Runs that require those hooks; accuracy still depends on driver support and validation |
-
-The tier is a feature ceiling, not an accuracy grade. The selected experiment driver still determines the unknowns, supported physics, and required certification checks.
-
-The Python `DeviceStack` default and `resolve_mode(None)` select **FULL**. Shipped presets override this explicitly. A permitted feature activates only when its required parameters are present; selecting FULL does not supply missing material data.
-
-### Driver Boundaries
-
-| Path | Interpretation |
-| --- | --- |
-| `transient` | Time-dependent density/ion state with Poisson solved within RHS evaluations; preserves the declared voltage history |
-| `steady_state` / `quasi_fermi` | Explicit DC solve, returned through the backend with forward = reverse and zero scan hysteresis |
-| Frequency-domain adapters | Linearize a qualified operating state; supported charge/storage/contact combinations are adapter-specific |
-| 2D default | Extrudes the electrical stack and uses frozen ionic background for the historical parity lane |
-| 2D research extensions | One positive mobile-ion species and optional two-sided interface SRH have explicit Neumann-lateral topology gates; dual mobile ions are rejected |
-| DAE research backbone | Separate residual/Jacobian models and backward-Euler reference integrators; these are not silently substituted into production experiment routes |
-
-The function named `solve_equilibrium` provides a quasi-neutral starting state; it does not by itself certify full ion-relaxed equilibrium. J-V certification is also explicit: strict mode raises on a failed local certificate, while diagnostic mode returns invalid/NaN values for failed dependent points. See the [Development Guide](docs/DevelopmentGuide.md) and `docs/contracts/` for the detailed capability contracts.
-
-### Experiments
-
-| | Capability | Details |
-|:-:|:-----------|:--------|
-| 📈 | **J-V sweep** | Forward + reverse scans with ionic memory preserved (hysteresis from physics, not post-processing); optional current decomposition and spatial-profile export |
-| ☀️ | **Suns-V<sub>oc</sub>** | Intensity sweep → Sinton pseudo-JV (series-resistance-free) and pseudo-FF upper bound |
-| 🌓 | **Dark J-V** | Auto-windowed linear fit on $\ln J$ vs $V$ → ideality factor $n$ and saturation current $J_0$ |
-| 📊 | **Mott-Schottky** | Dark C-V with $1/C^2$ linearisation → built-in voltage $V_\text{bi}$ and effective dopant density $N_\text{eff}$ |
-| 🌈 | **EQE / IPCE** | Wavelength-resolved external quantum efficiency via monochromatic TMM; AM1.5G integration yields $J_\text{sc}$ |
-| 🎵 | **Impedance** | Lock-in $Z(f)$ with displacement current; Nyquist + Bode output |
-| ⚡ | **Transient photovoltage** | Open-circuit light pulse with a matched control and a qualified photovoltage relaxation fit |
-| 🧊 | **Frozen-ion degradation** | Snapshot J-V with both ionic species frozen, preserving their populations and backgrounds while solving the electronic steady state |
-| 🔗 | **2T tandem driver** | Combined TMM over top + junction + bottom, independent sub-cell sweeps, series-matched on a common current grid |
-| 🟦 | **2D J-V sweep** | Tensor-product 2D extension for lateral-uniform parity checks and microstructure / grain-boundary studies |
-| 🟪 | **V<sub>oc</sub>(L<sub>g</sub>) grain sweep** | Repeats 2D J-V over grain sizes to quantify microstructure-driven open-circuit-voltage loss |
-
-### Dimensionality
-
-| | Capability | Details |
-|:-:|:-----------|:--------|
-| 📏 | **1D drift-diffusion (default)** | Supported 1D experiments use a tanh-clustered multilayer grid with the cached `MaterialArrays` hot path |
-| 🟦 | **2D Stage A (lateral-uniform)** | Tensor-product (Ny × Nx) grid with sparse 5-point Poisson, vectorised 2D Scharfetter-Gummel fluxes, periodic / Neumann lateral BCs; bootstraps from the 1D illuminated steady state and freezes ions as a static Poisson background. On a laterally-uniform stack the 2D solver reproduces the 1D J-V to within sub-mV $V_\text{oc}$, $5 \times 10^{-4}$ relative $J_\text{sc}$, and $10^{-3}$ FF — pinned by `tests/regression/test_twod_validation.py`. Available as `kind='jv_2d'` from the backend and as the **J-V Sweep (2D)** entry in the workstation experiment selector. |
-| 🟪 | **2D Stage B (microstructure)** | Vertical grain boundaries are defined through a YAML `microstructure:` block. The current operator uses exact control-volume overlap fractions to mix bulk and grain-boundary recombination rates, avoiding whole-node lifetime painting. The historical `nip_MAPbI3_singleGB` test fixture (one centred GB, $\tau_\text{GB}=50$ ns, width 5 nm) drops $V_\text{oc}$ by ~46 mV vs the laterally-uniform baseline — pinned to a 5–100 mV regression window in `tests/regression/test_twod_microstructure.py`. The headline `voc_grain_sweep` experiment maps $V_\text{oc}(L_g)$ over a sequence of grain sizes and is exposed as `kind='voc_grain_sweep'` from the backend / **V<sub>oc</sub>(L_g) Grain Sweep** entry in the workstation. |
-
-### Tooling
-
-| | Capability | Details |
-|:-:|:-----------|:--------|
-| 🖥️ | **Interactive web UI** | Live SSE streaming, grouped experiment dropdown, GoldenLayout dockable panes, Plotly plots, layer-builder editor |
-| 🧪 | **Full test suite** | Unit, integration, and physics regression tests ($V_\text{oc}$ / $J_\text{sc}$ / FF / HI bounds; TMM $R+T+A$ conservation; 1D ↔ 2D parity gate) |
-
-<br>
-
----
-
-## Repository Layout
-
-~~~text
+```text
 SolarLab/
-  src/solarlab/                   New core: configuration, physics, equations,
-                                  assembly, solvers, experiments, IO and identity
-  src/solarlab_server/            Registered V2 execution, RunStore HTTP/SSE API
-                                  and compiled SPA serving
-  src/solarlab_research/          Active research companion: migrated R1 short-window,
-                                  codec/witness contracts and CBO scan CLIs
-  examples/research_1d/           Runnable new-core 1D workflows
-  examples/research_2d/           Runnable bounded new-core 2D workflows
-  tests/                          Unit, integration, refactor, runtime, CI policy,
-                                  and 52 YAML device test fixtures (tests/fixtures/configs/)
-  reproducibility/                Active reference, analytic, performance and SCAPS contracts
-  pyproject.toml, uv.lock         Locked root package and development environment
-  docs/DevelopmentGuide.md        Current development and extension workflow
-  docs/RetiredModelsV1.md         Retired legacy models, entrypoints and provenance ledger
-  docs/contracts/                 34 active physical model and protocol contract specs
-  docs/figures/                   Curated README and comparison figures
-  web/                            Vite/TypeScript/Plotly/GoldenLayout V2 workstation UI
-  scripts/                        Root test runner (test_all.py), schema check, CI & benchmarks
-  docker-compose.yml              V2 solarlab_server / frontend container stack
-  CLAUDE.md                       Repository guidance and archive location
-  README.md
-~~~
+├── src/
+│   ├── solarlab/               Core kernel: config, materials, mesh, physics, equations, solvers, experiments, io
+│   ├── solarlab_server/        V2 FastAPI/SSE job service, RunStore routes, ProcessSupervisor, and SPA serving
+│   └── solarlab_research/      Research companion CLIs (solarlab-cbo-scan, solarlab-r1-short-window, r1-verify-sources)
+├── web/                        Vite + TypeScript + Plotly + GoldenLayout V2 workstation frontend
+├── examples/
+│   ├── research_1d/            23 runnable 1D steady, AC, transient, mobile-ion, optical, and HTTP/process workflows
+│   └── research_2d/            10 runnable 2D steady, J-V, grain-boundary, contact, field-mobility, and optical workflows
+├── docs/
+│   ├── DevelopmentGuide.md     Extension workflow, unified assembly rules, and branch governance
+│   ├── RetiredModelsV1.md      Retired legacy entrypoints, falsified closures, and historical anchors
+│   ├── contracts/              34 active physical model, defect, optical, and 2D protocol specifications
+│   └── figures/                Pure-Arial 300 DPI architecture, physics, solver, and validation figures
+├── reproducibility/            Frozen SCAPS, hysteresis, analytic, and performance contracts
+├── scripts/                    Root CI runner (test_all.py), schema generator, figure builder, and benchmarks
+└── tests/                      ci, unit, integration, refactor, runtime suites + 52 YAML device fixtures
+```
 
-The dated technical manual, historical planning records, and large generated
-results are maintained outside the current source tree. The repository retains
-curated figures and active package contracts; a local output directory is not
-automatically part of the published evidence.
-
-<br>
+**Directory Guides:**
+- Developer workflow & model extension contract: [docs/DevelopmentGuide.md](docs/DevelopmentGuide.md)
+- Physical & numerical model contracts (`34` specs): [docs/contracts/README.md](docs/contracts/README.md)
+- Frozen benchmark & reference contracts: [reproducibility/README.md](reproducibility/README.md)
+- Runnable 1D & 2D research workflows: [examples/research_1d/README.md](examples/research_1d/README.md) · [examples/research_2d/README.md](examples/research_2d/README.md)
 
 ---
 
-## Installation
+## 3. Quickstart
 
 ### Prerequisites
+- **Python 3.11+** with [`uv`](https://docs.astral.sh/uv/) (local lock targets Python 3.13; CI verifies Python 3.11 & 3.13)
+- **Node.js 22.12+** with `npm`
 
-- **Python 3.11+** (`uv` locked environment uses Python 3.13 locally; CI tests the declared matrix)
-- **Node.js 22.12+** with `npm`; the locked Vite 8 engine range is `^20.19.0 || >=22.12.0`
-- A C compiler + BLAS/LAPACK (bundled with `numpy`/`scipy` wheels on most platforms)
-
-### 1. Active Product & Research Setup (Root `solarlab` Package)
-
-Clone the repository, sync the locked root environment, build/verify frontend dependencies, and run the install check:
+### 1. Install & Verify Clean Package Isolation
 
 ```bash
 git clone https://github.com/ShaneLogic/SolarLab.git
 cd SolarLab
 
-uv sync --frozen --extra dev --extra server
+uv sync --frozen --all-extras
 npm ci --prefix web
 npm --prefix web run build
 
-.venv/bin/solarlab check-install
-.venv/bin/python scripts/test_all.py
+.venv/bin/solarlab check-install --require-no-legacy
 ```
 
-When installing a built `solarlab==0.1.0` wheel in a clean environment (outside the repository checkout, where `perovskite_sim` and `backend` are absent), verify clean-wheel isolation directly with:
+### 2. Run From the CLI
 
 ```bash
-solarlab check-install --require-no-legacy
+# 1D ion-free steady-state J-V sweep on the packaged classical_pin preset
+.venv/bin/solarlab steady-jv --output outputs/steady_jv.json
+
+# Research companion CLI entrypoints
+.venv/bin/solarlab-cbo-scan --help
+.venv/bin/solarlab-r1-short-window --help
 ```
 
-<br>
+### 3. Launch the V2 Web Workstation
 
----
-
-## Running the Application
-
-### Active V2 Product Entrypoints (`solarlab-server` & CLI)
-
-Start the V2 `solarlab_server` HTTP/SSE service from the repository root (or from any directory where the `solarlab` wheel is installed):
+Start the V2 `solarlab-server` backend (serves `/configs`, `/materials`, `/experiments`, `/jobs`, `/runs/.../events`, `/results/...`, and compiled `web/dist` on port `8000`):
 
 ```bash
 .venv/bin/solarlab-server --store-dir ./var/solarlab/store --host 127.0.0.1 --port 8000
 ```
 
-When `web/dist` (or `_web_dist` inside the release wheel) is present, `solarlab-server` serves both the V2 API (`/configs`, `/materials`, `/experiments`, `/jobs`, `/runs/...`, `/results/...`, `/artifacts/...`) and the compiled workstation SPA on `http://127.0.0.1:8000`. During interactive frontend development, run the Vite dev server in a second terminal:
+For hot-reload frontend development, start Vite in a second terminal and open **<http://127.0.0.1:5173>**:
 
 ```bash
 npm --prefix web run dev
 ```
 
-Open **<http://127.0.0.1:5173>** in your browser (override the V2 service endpoint via `VITE_SOLARLAB_SERVICE_BASE` if needed).
+Or launch the containerized stack directly via `docker compose up --build`.
 
-You can also run standalone CLI and research workflows directly without a browser:
+---
+
+## 4. Experiment & Capability Matrix
+
+All characterisation workflows compile from the same validated device declaration (`YAML`, `SCAPS YAML`, or `JSON`):
+
+| Domain | Experiment / Capability | Primary Module | Output & Physical Checks |
+|:-------|:------------------------|:---------------|:-------------------------|
+| **1D Steady & Sweeps** | Illuminated $J\text{–}V$ & direct $V_{\mathrm{oc}}$ | `solarlab.experiments.jv` | $V_{\mathrm{oc}}, J_{\mathrm{sc}}, \mathrm{FF}, \mathrm{PCE}$, interior/contact currents, exact $V_{\mathrm{oc}}$ sign bracket |
+| | Dark diode $J\text{–}V$ | `solarlab.experiments.dark_jv` | Auto-windowed $\ln J\text{–}V$ ideality factor $n_{\mathrm{id}}$ and $J_0$ |
+| | Parameter sweeps | `solarlab.sweeps` | Cold-compiled multi-parameter studies with persisted `RunStore` attempts |
+| **1D Dynamic & Open-Circuit** | Waveform / Hysteresis $J\text{–}V$ | `solarlab.experiments.waveform_jv` | Continuous preconditioning + forward/reverse mobile-ion loops, $\mathrm{HI}_{\mathrm{norm}}$, current decomposition |
+| | Suns-$V_{\mathrm{oc}}$ & $V_{\mathrm{oc}}(T)$ | `solarlab.experiments.suns_voc`, `voc_t` | Series-resistance-free pseudo-$J\text{–}V$, pseudo-$\mathrm{FF}$, activation-energy intercept |
+| | Transient Photovoltage (TPV) | `solarlab.experiments.tpv` | Floating-port Maxwell $J_{\mathrm{cond}} + \partial_t D = 0$ pulse + paired unpulsed drift subtraction |
+| | Frozen-ion degradation | `solarlab.experiments.degradation` | Long-time ionic evolution with zero-diffusivity electronic snapshot $J\text{–}V$ probes |
+| **1D Small-Signal AC** | Impedance spectroscopy $Z(\omega)$ | `solarlab.experiments.impedance`, `ionic_impedance` | Exact sparse complex solve $(G + i\omega C)\delta u = b$, Nyquist/Bode, coupled ion & dynamic-defect tangents |
+| | Mott–Schottky ($C\text{–}V$ / $C\text{–}f$) | `solarlab.experiments.mott_schottky` | Depletion $1/C^2$ extraction of $V_{\mathrm{bi}}$ and $N_{\mathrm{eff}}$ |
+| **Spectral & Multi-Junction** | Monochromatic EQE & EL | `solarlab.experiments.eqe`, `el_spectrum` | Coherent TMM or spectral Beer–Lambert $\mathrm{EQE}(\lambda)$, AM1.5G $J_{\mathrm{sc}}$, reciprocity EL |
+| | 2T Monolithic Tandem | `solarlab.experiments.tandem_jv` | Joint 4-region coherent TMM photon budget + series current-matched sub-cell $J\text{–}V$ |
+| **2D & Screening** | 2D $J\text{–}V$ & $V_{\mathrm{oc}}(L_g)$ grain sweep | `solarlab.experiments.two_dimensional` | Exact control-volume grain-boundary SRH overlap, frozen-ion DC or coupled 2D mobile-ion BE |
+| | SolarScale material screening | `solarlab.experiments.solarscale`, `evaluation_report` | Candidate ingestion, band-alignment gates, sweep manifests, and publication-gated report packs |
+
+**Web Workstation Layout (`web/`):**
+- **Left Rail (`Devices / Results`)** — Switch between active device configurations and stored `RunStore` attempts for multi-curve overlay.
+- **Center Pane (`Stack & Parameter Editor`)** — Interactive layer builder, grouped parameter editors (*Geometry, Transport, Recombination & Defects, Ions & Optics, Contacts*), live schema preview, and lossless YAML import/export.
+- **Right Pane (`Experiment Runner & Dockable Plots`)** — Protocol controls, live SSE progress/cancellation, and GoldenLayout Plotly views ($J\text{–}V$, Nyquist/Bode, spatial $\varphi, E, n, p, P$ profiles, and 2D heatmaps).
+
+---
+
+## 5. Governing Physics & Numerical Method
+
+<p align="center">
+  <img src="docs/figures/DevicePhysicsOverviewV2.png" alt="Device stack, heterojunction band bending, and 2D grain mesh" width="920">
+</p>
+
+### 1. Electrostatics & Contact Potentials
+On 1D ($x \in [0, L]$) or 2D ($(y, x)$) control volumes, electrostatic potential $\varphi$ satisfies Gauss's law with exact sub-face series dielectric capacitance $C_f = \varepsilon_0 / (d_{f,L}/\varepsilon_L + d_{f,R}/\varepsilon_R)$:
+
+$$
+-\nabla \cdot \bigl(\varepsilon_0 \varepsilon_r \nabla \varphi\bigr)
+= q\Bigl(p - n + N_D - N_A + \sum_\alpha z_\alpha (P_\alpha - P_{\alpha,0}) + \rho_{\mathrm{trap}}\Bigr).
+$$
+
+Outer electrostatic boundaries enforce $\varphi(0) = 0$ and $\varphi(L) = V_{\mathrm{bi}}^{\mathrm{bc}} - s V_{\mathrm{app}}$ with $s = \mathrm{sgn}\bigl(V_{\mathrm{bi}}^{\mathrm{bc}}\bigr)$, where $V_{\mathrm{bi}}^{\mathrm{bc}}$ is derived self-consistently from semiconductor or explicit metal work functions (subject to a strict $5\text{ meV}$ contact thermodynamic equilibrium check). Carrier contacts support equilibrium Dirichlet reservoirs or finite-rate selective Robin velocities $J_{c,s} = \sigma_{c,s} q S_{c,s}(u_c - u_{c,\mathrm{eq}})$.
+
+### 2. Carrier Continuity, Heterointerfaces & Recombination
+Carriers are parameterized via positive log-activity coordinates $(z_n, z_p)$ so $n > 0$ and $p > 0$ hold identically:
+
+$$
+\frac{\partial n}{\partial t} = \frac{1}{q}\nabla \cdot \mathbf{J}_n + G - R, \qquad
+\frac{\partial p}{\partial t} = -\frac{1}{q}\nabla \cdot \mathbf{J}_p + G - R,
+$$
+
+discretized on interior faces with cancellation-safe Scharfetter–Gummel fluxes $J_{n,i+1/2} = (q D_n / \Delta x_i)\bigl[n_{i+1} B(\Delta\psi_{n,i}/V_t) - n_i B(-\Delta\psi_{n,i}/V_t)\bigr]$ where $B(x) = x/(e^x - 1)$ and $V_t = k_B T / q$ (with optional smooth Caughey–Thomas field-dependent velocity saturation). Bulk recombination sums SRH (or explicit monovalent/multivalent/Gaussian bulk defect occupancies), radiative (with optional Yablonovitch photon recycling), and Auger rates:
+
+$$
+R = \frac{np - n_i^2}{\tau_p(n + n_1) + \tau_n(p + p_1)} + k_{\mathrm{rad}}(np - n_i^2) + (C_n n + C_p p)(np - n_i^2).
+$$
+
+Across abrupt heterojunctions ($\Delta E_c, \Delta E_v \neq 0$), two-sided trace models enforce per-side DOS activities $(n_L/N_{C,L}, n_R/N_{C,R})$, reciprocal Richardson constants $\tilde{A}^* = \min(A^*_L, A^*_R)$, and two-sided single-level or 7-level Gaussian quadrature interface SRH without spurious thermal-equilibrium currents.
+
+### 3. Finite-Site Mobile-Ion Migration
+Confined single-domain or multi-domain mobile ions obey blocking boundary conditions ($\mathbf{F}_\alpha \cdot \mathbf{n} = 0$) and steric Poisson–Nernst–Planck fluxes (supporting single positive ions, independent dual ions, or shared-vacancy $\theta = (P_+ + P_-)/P_{\mathrm{lim}}$ populations):
+
+$$
+F_P = -D_{\mathrm{ion}}\left[\frac{1}{1 - \theta}\frac{\partial P}{\partial x} + \frac{P}{V_t}\frac{\partial \varphi}{\partial x}\right]
+\quad \text{(or full-flux steric exclusion } (1-\theta)\text{ on drift + diffusion)}.
+$$
+
+### 4. Optical Generation (Spectral Beer–Lambert & Coherent TMM)
+Optical generation integrates absorbed photon flux exactly over each electrical control volume so discrete carrier generation conserves the optical photon budget ($R + T + A_{\mathrm{elec}} + A_{\mathrm{parasitic}} = 1$) to machine precision:
+- **Spectral Beer–Lambert (`beer_lambert_spectral`)** — Single-pass wavelength quadrature using cancellation-free cell absorptance $A_{\mathrm{cell}}(\lambda) = e^{-\tau_j(\lambda)}\bigl(-\mathrm{expm1}(-\Delta\tau_j(\lambda))\bigr)$.
+- **Coherent Transfer-Matrix Optics (`tmm`)** — Multilayer complex $(n(\lambda), k(\lambda))$ standing-wave Poynting-vector absorption across single-junction and 2T monolithic tandem stacks, excluding front-glass and electrode parasitic absorption from carrier generation.
+
+### 5. Unified Solver Matrix
+
+<p align="center">
+  <img src="docs/figures/SolverTopologyV2.png" alt="SolarLab V2 unified equation assembly and solver matrix" width="920">
+</p>
+
+---
+
+## 6. Validation Benchmarks & Scope
+
+SolarLab separates **engineering verification**, **external solver alignment**, and **formal continuum scientific certification** (`scientific_qualification = False` until all external reference and continuum-refinement gates are independently closed; see [reproducibility/README.md](reproducibility/README.md)).
+
+### 1. SCAPS-1D 262-Case Steady-State Alignment (`ScapsComparisonContractV1`)
+
+<p align="center">
+  <img src="docs/figures/ValidationScapsOverviewV2.png" alt="SCAPS-1D 262-case alignment summary" width="920">
+</p>
+
+Evaluated from an isolated `solarlab==0.1.0` wheel across all **262** single- and two-parameter sweeps (`scaps_cbo`, `scaps_nt_cbo`, `scaps_nt_et`, bulk/interface $N_t$ & $E_t$, donor doping) using 7-level Gaussian interface quadrature, flat-band work-function $V_{\mathrm{bi}}$, and two-stage $5\text{ mV}$ $V_{\mathrm{mpp}}/V_{\mathrm{oc}}$ certification:
+- **Convergence:** `262 / 262` cases converged (`0` solver failures).
+- **Accuracy across 248 numeric reference points:** `233 / 248` (**`94.0%`**) satisfy $|\Delta V_{\mathrm{oc}}| \le 30\text{ mV}$; median $|\Delta V_{\mathrm{oc}}| = 12.7\text{ mV}$ (`P90 = 25.9 mV`), median $|\Delta\mathrm{FF}| = 0.53\%$, median $|\Delta\mathrm{PCE}| = 0.20\%$.
+- **Residual diagnosis:** Independent zero-Auger radiative-limit ablation (`C_{n,p} = 0`) confirmed that the remaining $\sim 25\text{ mV}$ open-circuit plateau offset originates from an undocumented radiative-limit setting in the external partner's proprietary SCAPS project file + bundled `.spe` spectrum table (reducing `scaps_nt_cbo` median $|\Delta V_{\mathrm{oc}}|$ to `4.40 mV` and overall $|\Delta V_{\mathrm{oc}}| \le 20\text{ mV}$ coverage to `88.7%`).
+
+### 2. 45-Case Dynamic Mobile-Ion Hysteresis Benchmark (`HysteresisReferenceContractV2`)
+
+<p align="center">
+  <img src="docs/figures/ValidationHysteresisOverviewV2.png" alt="45-case dynamic mobile-ion hysteresis benchmark summary" width="920">
+</p>
+
+Evaluated across the **45-case** 7-stage preconditioning + forward/reverse scan matrix spanning 6 decades of ion diffusivity, mobile-ion density, and scan rate:
+- **Completion & Conservation:** `45 / 45` cases completed (`0` stalls), with maximum relative ionic inventory drift $\le 1.80 \times 10^{-13}$.
+- **Hysteresis Index Parity:** Median $|\Delta\mathrm{HI}_{\mathrm{norm}}| = 5.64 \times 10^{-4}$, with `43 / 45` (**`95.6%`**) within $5 \times 10^{-3}$.
+- **Four-Axis Decoupled Refinement Closure:** Phase 0 operator/conservation gates, time-step axis ($\le 6.3 \times 10^{-8}\text{ W m}^{-2}$), solver-tolerance axis ($\le 4.6 \times 10^{-8}\text{ W m}^{-2}$), and weak-peak $\mathrm{HI}_{\mathrm{normalized}}$ (`2.73e-4 <= 3.33e-4` at 241 nodes) are verified; unnormalized ratio $\mathrm{HI}_P$ at sub-nanometre Debye screening ($L_D \approx 0.54\text{ nm}$ on fixed `tanh` grids) and decoupled 100 s `R1-L2/L3` (`RS-G7`) remain explicitly open research gates.
+
+---
+
+## 7. Presets & Verification Suite
+
+### Packaged Device Presets (`src/solarlab/materials/data/presets/`)
+
+| Preset ID | Stack Topology | Mobile Ions | Optics | Primary Role |
+|:----------|:---------------|:-----------:|:------:|:-------------|
+| `classical_pin` | HTL / Absorber / ETL | No | Beer–Lambert | Default CLI & 1D/2D steady-state baseline |
+| `scaps_mirror_v2` | Glass / Spiro-OMeTAD / $\mathrm{MAPbI_3}$ / $\mathrm{TiO_2}$ | No | TMM / Spectral BL | SCAPS-1D heterojunction & defect benchmark stack |
+| `calado2016_ion_sweep` | HTL / Perovskite / ETL | Yes | Uniform / BL | Workstation dynamic ion-hysteresis waveform preset |
+| `calado2016_fig1f` | Calado 2016 SI Table 1 stack | Yes | Beer–Lambert | Literature scan-rate hysteresis comparison preset |
+
+An additional **52** YAML device and 2D microstructure test fixtures reside under `tests/fixtures/configs/` (isolated from API serving).
+
+### Running the Full Verification Suite
 
 ```bash
-.venv/bin/solarlab steady-jv --output outputs/steady_jv.json
-.venv/bin/solarlab-cbo-scan --help
-.venv/bin/solarlab-r1-short-window --help
-.venv/bin/solarlab-r1-verify-sources --help
+# Run all 8 isolated root CI pytest selections (static, core, packages, backend, frontend)
+.venv/bin/python scripts/test_all.py
+
+# Static lint, strict typing, package boundary contracts, and schema sync
+.venv/bin/ruff check --no-cache src scripts/test_all.py scripts/generate_configuration_schema.py scripts/ci tests/ci
+.venv/bin/mypy --cache-dir /dev/null src/solarlab src/solarlab_server
+.venv/bin/lint-imports --no-cache
+.venv/bin/python scripts/generate_configuration_schema.py --check
+
+# Frontend unit/integration suite (Vitest) and production bundle build
+SOLARLAB_PYTHON="$PWD/.venv/bin/python" npm --prefix web run test:run
+npm --prefix web run build
 ```
 
-Additional runnable new-core 1D and 2D examples and saved-result readers are documented in [examples/research_1d](examples/research_1d/README.md) and [examples/research_2d](examples/research_2d/README.md). Historical `perovskite-sim/` entrypoints have been retired and removed from `devel`; see [RetiredModelsV1.md](docs/RetiredModelsV1.md) for replacement mappings and commit anchors.
-
-<br>
-
 ---
 
-## Physical Principles & Equations
-
-### Physical Model Overview
-
-<p align="center">
-  <img src="docs/figures/DeviceContactBoundary.png" alt="Electrical coordinate, layer order, and contact-potential sources" width="900">
-</p>
-
-<p align="center">
-  <img src="docs/figures/BandInterfaceConvention.png" alt="Band bending, quasi-Fermi levels, and abrupt-interface closures" width="900">
-</p>
-
-### Governing Equations
-
-SolarLab solves the coupled **Poisson + drift-diffusion + mobile-ion** system on the default one-dimensional device axis. The 2D extension extrudes the same layer stack onto a tensor-product grid for lateral microstructure studies. State variables at every grid node are the electron density $n$, hole density $p$, and the mobile-ion density $P$.
-
-<br>
-
-### 1. Poisson's Equation
-
-The electrostatic potential $\varphi(x,t)$ satisfies
-
-$$
--\frac{\partial}{\partial x}\left(\varepsilon_0 \varepsilon_r(x)\frac{\partial \varphi}{\partial x}\right) = q\bigl(p - n + N_D(x) - N_A(x) + P - P_0(x)\bigr)
-$$
-
-with Dirichlet boundaries
-
-$$
-\varphi(0,t) = 0, \qquad \varphi(L,t) = V_{\text{bi}} - V_{\text{app}}(t).
-$$
-
-$V_{\text{bi}}$ is computed from the Fermi-level offset across the heterostack (`DeviceStack.compute_V_bi()`), accounting for $\chi$, $E_g$, doping, and $n_i$. The operator is discretized with a harmonic-mean face permittivity and pre-factored once per run (LAPACK `dgttrf`), then solved at every RHS call with a single `dgttrs` sweep.
-
-<br>
-
-### 2. Carrier Continuity (Drift-Diffusion)
-
-Electrons and holes obey
-
-$$
-\frac{\partial n}{\partial t} = \frac{1}{q}\frac{\partial J_n}{\partial x} + G(x) - R(n,p,x), \qquad
-\frac{\partial p}{\partial t} = -\frac{1}{q}\frac{\partial J_p}{\partial x} + G(x) - R(n,p,x)
-$$
-
-with the conventional drift-diffusion fluxes
-
-$$
-J_n = q\mu_n n E + qD_n\frac{\partial n}{\partial x}, \qquad
-J_p = q\mu_p p E - qD_p\frac{\partial p}{\partial x}, \qquad E = -\frac{\partial\varphi}{\partial x}.
-$$
-
-**Scharfetter–Gummel discretization.** The flux between nodes $i$ and $i+1$ is written so it is exact for a constant-flux, exponential-profile solution of the local drift-diffusion equation:
-
-$$
-J_{n,\,i+\tfrac12} = \frac{qD_n}{\Delta x_i}\Bigl[n_{i+1}\,B(\Delta\varphi_i/V_t) - n_i\,B(-\Delta\varphi_i/V_t)\Bigr]
-$$
-
-where $B(x) = x/(e^{x}-1)$ is the Bernoulli function and $V_t = k_B T / q$. This removes the classical upwind/central-difference stability problem when $|E|\Delta x \gg V_t$.
-
-<br>
-
-### 3. Recombination
-
-The net recombination rate is the sum of Shockley–Read–Hall, radiative (bimolecular), and Auger channels:
-
-$$
-R = R_{\text{SRH}} + R_{\text{rad}} + R_{\text{Auger}}
-$$
-
-$$
-R_{\text{SRH}} = \frac{np - n_i^2}{\tau_p(n + n_1) + \tau_n(p + p_1)}, \qquad
-R_{\text{rad}} = k_{\text{rad}}\,(np - n_i^2), \qquad
-R_{\text{Auger}} = (C_n n + C_p p)(np - n_i^2).
-$$
-
-Interface recombination is applied at heterointerfaces via the per-interface surface-recombination velocities $(v_n, v_p)$ carried in `DeviceStack.interfaces`.
-
-<br>
-
-### 4. Mobile-Ion Migration (Finite-Site Modified PNP)
-
-For perovskite cells, the default finite-site modified Poisson-Nernst-Planck
-model applies lattice-gas crowding to chemical diffusion without multiplying
-the electrostatic drift. For one positive species,
-
-$$
-F_P=-D_{\text{ion}}\left[
-\frac{1}{1-P/P_{\text{lim}}}\frac{\partial P}{\partial x}
-+\frac{P}{V_t}\frac{\partial \varphi}{\partial x}
-\right].
-$$
-
-Dual mobile species share the occupancy
-$\theta=(P_+ + P_-)/P_{\text{lim}}$ by default. The `legacy` tier retains the
-superseded whole-flux steric multiplier for frozen benchmark compatibility.
-Non-perovskite stacks set $D_{\text{ion}}=0$ so ionic dynamics drop out.
-
-<br>
-
-### 5. Optical Generation
-
-Two optional models share the same interface.
-
-**Beer–Lambert** (default / fallback):
-
-$$
-G_{\text{BL}}(x) =
-\int_\lambda
-\alpha(\lambda,x)\cdot\Phi_0(\lambda)\cdot
-\exp\left[-\int_0^x \alpha(\lambda,\xi)\,d\xi\right]\,d\lambda.
-$$
-
-**Transfer-matrix (coherent thin-film) optics.** When any layer carries an `optical_material` key, `physics/optics.py` loads complex $n(\lambda)$, $k(\lambda)$ CSVs from `perovskite_sim/data/nk/`, builds the layer transfer matrices against AM1.5G, and computes the position-resolved generation rate as
-
-$$
-G_{\text{TMM}}(x,\lambda) = \frac{1}{\hbar\omega}\cdot\frac{n(x,\lambda)}{n_{\text{amb}}}\cdot\alpha(x,\lambda)\,|E(x,\lambda)|^2,
-$$
-
-integrated over the AM1.5G spectrum. The $n/n_{\text{amb}}$ prefactor is the Poynting-vector correction that guarantees $R+T+A=1$. `G_TMM(x)` is computed once during `build_material_arrays` and cached on `MaterialArrays.G_optical` — the hot path never recomputes optics.
-
-<br>
-
-### 6. Thermionic Emission at Heterointerfaces
-
-The default density-variable discretization keeps one bidirectional
-Scharfetter-Gummel face and may apply an empirical density-weighted thermionic
-cap when a band offset exceeds 0.05 eV. The dimensionally normalized
-Richardson-Dushman form is available through `te_physical_norm`, but remains
-opt-in while strongly binding interface cases are still being conditioned:
-
-$$
-J_{\text{TE},n} = A^*_n T^2 \exp\left(-\frac{\Delta E_c}{k_B T}\right)\bigl[\exp(qV/k_B T) - 1\bigr],
-$$
-
-For the supported ion-free local model, `solver="quasi_fermi"` with
-`interface_boundary=true` instead removes the ordinary SG face and solves
-reciprocal thermionic transport and shared-occupancy interface SRH on an
-exclusive zero-thickness boundary. Unsupported physics fails before Newton
-starts. The current CBO campaign certifies its numerical grid contraction, not
-external SCAPS agreement; see [Validation & Model Scope](#validation--model-scope).
-
-<br>
-
-### 7. Boundary Conditions at the Contacts
-
-By default, each outer carrier contact is treated as ohmic: the boundary carrier densities are fixed to the thermal-equilibrium values computed from the outermost layers and the boundary-node time derivatives are pinned. In FULL mode, any configured selective-contact coefficient replaces that side/carrier pin with a Robin-type flux:
-
-$$
-J_{c,s} = \sigma_{c,s}\,qS_{c,s}(u_c - u_{c,\mathrm{eq}}),
-\qquad c \in \{n,p\},\ s \in \{\mathrm{left},\mathrm{right}\},
-$$
-
-where $u_n=n$, $u_p=p$, and $\sigma_{c,s}$ is the outward-current sign for the carrier and side. The YAML schema supports either flat keys (`S_n_left`, `S_p_left`, `S_n_right`, `S_p_right`) or the readable nested form:
-
-```yaml
-device:
-  mode: full
-  contacts:
-    left:
-      S_p: 1.0e3
-      S_n: 1.0e-3
-    right:
-      S_n: 1.0e3
-      S_p: 1.0e-3
-```
-
-Missing or `null` means the default ohmic Dirichlet pin remains active for that carrier/side. A finite value activates the Robin flux; `S = 0` is blocking, while large `S` approaches the ohmic limit. The same coefficients are mapped onto the top and bottom boundaries of the 2D solver.
-
-The Poisson contact potential is configured independently through
-`built_in_potential_mode`: new devices can derive the signed value from endpoint
-semiconductor work functions or from two explicit metal work functions, while
-`legacy_manual` preserves a published benchmark magnitude. Positive applied
-bias reduces the built-in field for either contact orientation:
-
-$$
-\varphi(0)=0,\qquad
-\varphi(L)=V_{\text{bi}}^{\text{bc}}-sV_{\text{app}},
-\qquad s=\operatorname{sign}(V_{\text{bi}}^{\text{bc}}).
-$$
-
-Ions are blocked at both contacts ($J_P = 0$), enforcing ionic-species conservation.
-
-<br>
-
-### 8. Two-Dimensional Extension
-
-The 2D solver is an experimental extension for lateral microstructure effects, not a replacement for the default 1D workflow. It builds a tensor-product grid with lateral coordinate $x$ and vertical stack coordinate $y$, solves sparse 2D Poisson with Dirichlet contacts in $y$ and periodic lateral boundaries, and advances 2D Scharfetter-Gummel fluxes for carriers. Ions are frozen as a static Poisson background during 2D J-V runs.
-
-2D test fixtures live under `tests/fixtures/configs/twod/`. Current entry points are `kind='jv_2d'` for a voltage sweep and `kind='voc_grain_sweep'` for a grain-size sweep. Microstructure is supplied by a YAML `microstructure:` block containing vertical grain boundaries; the 2D assembler mixes bulk and grain-boundary recombination rates via exact control-volume overlap fractions.
-
-<br>
-
----
-
-## Numerical Method
-
-This table describes the retained `perovskite_sim` engine. The new core has
-shared equation assembly, dedicated nonlinear/time solvers, a Backward Euler
-default and explicit adaptive BDF routes; see the
-[development baseline](docs/DevelopmentGuide.md#current-behavior-and-limits).
-
-| Ingredient | Choice |
-|:-----------|:-------|
-| **Driver topology** | Explicit transient, direct steady-state, quasi-Fermi DC, QF frequency-domain, and 2D paths |
-| **1D grid** | Tanh-clustered multilayer grid (refined near interfaces and contacts) |
-| **2D grid** | Tensor-product lateral/vertical mesh for Stage A/B microstructure studies |
-| **Spatial** | Exponentially fitted SG face fluxes and dual-cell continuity balances; finite-volume Poisson with harmonic-mean face permittivities |
-| **Transient** | Method of Lines with `scipy.integrate.solve_ivp` and the Radau IIA 5th-order implicit method |
-| **Steady state** | Direct density-log Newton or cancellation-safe quasi-Fermi Newton, selected explicitly |
-| **Poisson** | LAPACK `dgttrf`/`dgttrs` tridiagonal LU, pre-factored once per run |
-| **Certification** | Driver-specific residual, cell-current, all-face admittance, or lateral/vertical diagnostics |
-| **Safety cap** | `max_step` capped on every `run_transient` sub-interval to prevent Radau from accepting a giant step near flat-band |
-
-Device configuration uses **immutable frozen dataclasses** such as `MaterialParams`, `LayerSpec`, and `DeviceStack`. Update those records with `dataclasses.replace(...)`; numerical arrays and runtime caches have their own mutability rules.
-
-The production TMM-to-solver path integrates absorbed photons over each electrical control volume, then divides by its width. The point-sampled `tmm_generation` helper is for diagnostics and should not be substituted for this photon-conserving path. The standard YAML schema uses SI lengths, densities, mobilities, and currents; energy parameters such as `chi` and `Eg` are in eV. SCAPS-style YAML has a separate loader and unit conversion contract.
-
-<p align="center">
-  <img src="docs/figures/SolverTopology.png" alt="Numerical drivers, variable sets, and certification paths" width="900">
-</p>
-
-<br>
-
----
-
-## Validation & Model Scope
-
-SolarLab keeps repository capability, internal numerical acceptance, and
-external physical agreement as separate claims. The machine-readable comparison
-and performance contracts live under `reproducibility/`; the full interpretation
-is in the 2026-08-11 manual (distributed separately).
-
-### Historical R1 failure evidence
-
-The V53 baseline at source `12869a4f90d6d08af2d24af902838d8a4d5c00c4`
-saved 309 of the 3727 required rows, including the initial state. Its next
-finite step, 309, failed the original nonlinear residual gate; the saved
-prefix does not qualify the full 100 s window or admit the compensated run.
-Step 183's earlier successful correction remains a separate regression.
-The [bound 183/309 witness](tests/fixtures/refactor/R1FailureWitnessV1.json)
-preserves both inputs and their original preparation/source identities.
-The [saved-state diagnostic](scripts/benchmarks/diagnose_r1_saved_failure.py)
-supports bounded reconstruction without restarting the trajectory.
-
-<p align="center">
-  <img src="docs/figures/CsiQfConvergence.png" alt="Registered c-Si QF J-V and C-V grid-ladder observations" width="900">
-</p>
-
-The c-Si panels are internal numerical evidence for the restricted local QF
-model. They do not certify the general transient driver or fit an external
-c-Si device.
-
-<p align="center">
-  <img src="docs/figures/CboInterfaceValidation.png" alt="Physical-interface CBO response, grid contraction, and certification gates" width="900">
-</p>
-
-The physical-interface CBO scan passes its registered N=40/50/60 numerical
-grid envelope, but the normalized SCAPS-shape error is 0.4744 against a 0.05
-gate. Its result is `numerical_certified=true` and top-level
-`certified=false`.
-
-<p align="center">
-  <img src="docs/figures/TwodScope.png" alt="Registered 1D and 2D parity domain and current model scope" width="900">
-</p>
-
-The registered 1D/2D comparison uses matched vertical grids, periodic lateral
-boundaries, frozen ions, and an interface-free preset. Mobile-ion dynamics and
-the 1D interface-SRH/physical-QF machinery are outside that parity claim.
-
-<p align="center">
-  <img src="docs/figures/Calado16Fig1fJVV1.png" alt="Calado 2016 Fig 1e/1f reproduction: forward and reverse J-V at 40 mV/s with and without contact SRH, and figures of merit against the paper" width="900">
-</p>
-
-The Calado 2016 Fig 1e/1f lane (`configs/calado2016_fig1f.yaml`, the paper's
-SI Table 1 toy stack; `scripts/plot_calado_fig1f.py`, the paper's
-−1 → +1.2 V / 3 s hold protocol at 40 mV s<sup>−1</sup>) is a partial
-external comparison. The no-contact-SRH control loop closes (HI 0.007 vs
-0.00) and the hysteretic reverse branch is quantitative (J<sub>sc</sub> 16.0
-vs ≈ 16 mA cm<sup>−2</sup>, P<sub>max</sub> 81 vs ≈ 85 W m<sup>−2</sup>,
-V<sub>oc</sub> 0.78 vs ≈ 0.73 V), but the forward-scan collapse is about
-2× too shallow: HI 0.44 against the paper's 1.84 in its
-P<sub>max,rev</sub>/P<sub>max,fwd</sub> − 1 definition. The cause is open;
-the preset header records the study.
-
-<p align="center">
-  <img src="docs/figures/Calado16Fig1fScanRateV1.png" alt="Scan-rate ladder on the Calado 2016 Fig 1f preset: J-V loops at three rates and the hysteresis-index bell against scan rate" width="900">
-</p>
-
-A nine-rate ladder on the same preset (`scripts/plot_calado_fig1f_scan_rate.py`,
-same protocol without the +1.2 V hold) gives the scan-rate bell: HI 0.001 at
-1 mV s<sup>−1</sup>, a peak of 39 at 0.3 V s<sup>−1</sup>, and 0.06 at
-100 V s<sup>−1</sup>, where ions stay frozen in the short-circuit state and
-both branches collapse together. The paper's 1.84 at 40 mV s<sup>−1</sup>
-falls between the 0.03 (0.28) and 0.1 V s<sup>−1</sup> (5.8) rungs, so the
-residual gap reads as a ≈2× shift of the ionic time scale; it stays open.
-
-<br>
-
----
-
-## Using the Web UI
-
-After launching the backend and frontend (see [Running the Application](#running-the-application)), open **<http://127.0.0.1:5173>**. The UI is split into three regions.
-
-### Left Rail — Devices / Results
-
-| Element | Description |
-|:--------|:------------|
-| **DEVICES** | Active device tab with simulation tier (FAST / FULL / LEGACY). Click to focus configuration. |
-| **RESULTS / COMPARE** | Completed runs are archived here. Select two or more to overlay plots. |
-
-### Center Pane — Device Configuration
-
-| Element | Description |
-|:--------|:------------|
-| **Preset dropdown** | Choose a shipped or user preset. Switching reloads the stack from YAML. |
-| **Reset** | Discards unsaved edits and re-loads the last saved version. |
-| **Stack Visualizer** | *(Full tier)* Vertical layer column — click to edit, **+** to insert, drag to reorder, **x** to delete. |
-| **Detail Editor** | Collapsible groups: Geometry, Transport, Recombination, Ions & Optics. |
-| **TMM badge** | Appears when any layer has a non-empty `optical_material`. |
-| **Save As** | Save edited stack to `configs/user/` or download YAML directly. |
-
-<details>
-<summary><strong>Detail Editor parameter groups</strong></summary>
-
-- **Geometry** — thickness, grid density, role (contact / transport / absorber / substrate)
-- **Transport** — $\mu_n$, $\mu_p$, $N_c$, $N_v$, $N_A$, $N_D$, $\chi$, $E_g$, $\varepsilon_r$
-- **Recombination** — $\tau_n$, $\tau_p$, $k_{\text{rad}}$, $C_n$, $C_p$, $E_t$
-- **Ions & Optics** — $D_{\text{ion}}$, $N_{\max}$, $P_0$, `optical_material`, `n_optical`, `incoherent` flag
-- **Contacts / Advanced physics** — optional Robin contact coefficients, field mobility, and FULL-tier hooks
-
-</details>
-
-### Right Pane — Experiments
-
-Experiment panes share a common pattern: parameters form -> **Run** button -> live progress bar -> Plotly plot. The workstation includes the 1D characterisation experiments plus 2D J-V and grain-size studies.
-
-#### J-V Sweep
-
-| Parameter | Description |
-|:----------|:------------|
-| $N_{\text{grid}}$ | Number of spatial nodes |
-| V sample points | Number of voltage samples per scan direction |
-| Scan rate (V/s) | Ionic memory effects — fast scans produce larger hysteresis |
-| $V_{\max}$ | Upper voltage bound (defaults to $V_{\text{bi}}$) |
-| Decompose current | Per-face breakdown into $J_n$ / $J_p$ / $J_\text{ion}$ / $J_\text{disp}$ at every voltage |
-| Save spatial profiles | Snapshot $\varphi(x)$, $E(x)$, $n(x)$, $p(x)$, $P(x)$ at each voltage |
-
-The experiment runs a **forward** scan (short-circuit to $V_{\max}$) immediately followed by a **reverse** scan, reusing the final state so the ionic population is preserved across the turn. Output: overlaid forward/reverse curves plus metric cards for $V_{\text{oc}}$, $J_{\text{sc}}$, FF, PCE, and hysteresis index. For a dark diode curve, use the dedicated **Dark J-V** experiment, which runs the same $G = 0$ sweep and adds an ideality-factor / $J_0$ fit.
-
-The two optional output views (decomposition, spatial profiles) are mutually exclusive on a single run — pick one per sweep or re-run for the other.
-
-#### Impedance
-
-| Parameter | Description |
-|:----------|:------------|
-| Frequency sweep | $\omega_{\min}$, $\omega_{\max}$, $N_\omega$ |
-| DC bias | Steady-state bias voltage |
-| AC amplitude | Small-signal perturbation |
-
-At each frequency, the solver integrates several AC cycles, then a lock-in amplifier extracts amplitude and phase. Displacement current $\varepsilon_0 \varepsilon_r \, \partial E / \partial t$ is included. Output: Nyquist plot and Bode magnitude/phase curves.
-
-#### Degradation
-
-| Parameter | Description |
-|:----------|:------------|
-| Total time | Simulation duration |
-| Number of probes | Snapshot count over the simulation |
-| Probe bias | Voltage for snapshot J-V |
-
-At each probe time, the solver takes a **frozen-ion snapshot**: both positive and negative ionic diffusivities are set to zero while their spatial populations, compensating backgrounds and site capacities remain fixed. The same frozen model solves the electronic steady state and reports its $J(V)$ curve only when the residual and current-continuity checks pass. Output: PCE / $V_{\text{oc}}$ / $J_{\text{sc}}$ versus the declared aging history. This does not independently validate chemical degradation rates. See the [snapshot contract](docs/contracts/FrozenIonSnapshotContract.md).
-
-#### Transient Photovoltage (TPV)
-
-| Parameter | Description |
-|:----------|:------------|
-| $N_{\text{grid}}$ | Number of spatial nodes |
-| $\delta G$ fraction | Fractional generation perturbation (e.g. 0.05 = 5% pulse) |
-| Pulse duration | Duration of the light pulse [s] |
-| Observation window | Total time including decay [s] |
-
-The device is prepared at open circuit under steady illumination, then a small light pulse is applied. Terminal charge and voltage evolve together to preserve the open-circuit total-current condition. The pulse response is measured against an unpulsed trace with the same initial state, allowing slow background drift to remain visible. A single-exponential photovoltage relaxation time is reported only for an identifiable decay; otherwise `tau` is `None` (`null` in JSON) and a fit reason is retained. It is not automatically a microscopic recombination lifetime. See the [TPV contract](docs/contracts/TpvOpenCircuitContract.md).
-
-#### 2D J-V and Grain Sweep
-
-| Parameter | Description |
-|:----------|:------------|
-| `Nx`, `Ny_per_layer` | Lateral and vertical mesh density |
-| Lateral length | Width of the 2D domain |
-| Microstructure | Optional `grain_boundaries` block painted into absorber lifetime fields |
-| Grain sizes | Sequence used by `voc_grain_sweep` to compute $V_\text{oc}(L_g)$ |
-
-The 2D J-V pane uses the same metric semantics as the 1D J-V sweep. If the voltage window does not bracket the zero-current crossing, the UI shows `V_oc not bracketed` and keeps raw data unchanged while offering an operational-range display clip.
-
-### Docs Tabs — Tutorial & Algorithm
-
-The **Tutorial** pane is a guided walkthrough (Device Setup -> First Simulation -> Interpreting Results -> Advanced Topics). The **Algorithm** pane is a formal write-up of the PDEs, discretization, solver tiers, and the transfer-matrix optical model. Both are always available — no backend required.
-
-<br>
-
----
-
-## Shipped Device Presets
-
-`src/solarlab/materials/data/presets/` ships the **four** packaged presets (`classical_pin`, `scaps_mirror_v2`, `calado2016_fig1f`, `calado2016_ion_sweep`). The frontend catalog displays `scaps_mirror_v2` and `calado2016_ion_sweep`; `calado2016_fig1f` and `classical_pin` remain available through the V2 API and CLI. Test-only configurations (`52` YAML fixtures, including four 2D fixtures) live under `tests/fixtures/configs/` and are never served by the API.
-
-| Preset | Material System | Ions | Optics | Notes |
-|:-------|:----------------|:----:|:------:|:------|
-| `scaps_mirror_v2` | Glass / HTL / PVK / ETL | No | TMM | SCAPS parity study, Fast mode |
-| `calado2016_fig1f` | Calado 2016 Fig. 1f toy device | Yes | Beer-Lambert | Original comparison lane, Legacy mode; external agreement remains partial |
-| `calado2016_ion_sweep` | Internal dense ion-sweep figure | Yes | Uniform absorber generation in the declared waveform | Frontend ion study, Full mode; internal figure regression, not original-paper reproduction |
-
-Older benchmark figures and records elsewhere in this README describe their declared historical configurations. The ion-sweep preset carries its own continuous waveform, preconditioning, and dark-turnaround settings; results must not be transferred between the two Calado-named protocols.
-
-<br>
-
----
-
-## Testing
-
-From the repository root, `.venv/bin/python scripts/test_all.py` runs the
-ordinary root CI pytest selections in isolated processes. Standalone web
-tests/builds, installation checks and optional scientific/slow campaigns have
-their own scope; see [Development Guide](docs/DevelopmentGuide.md).
-
-| Suite | Scope |
-|:------|:------|
-| **Unit (`tests/unit/`)** | Per-module physics, discretization, equation assembly, and solver contracts |
-| **Integration (`tests/integration/`)** | End-to-end 1D/2D experiment workflows, TMM photon conservation, and screening gates |
-| **Refactor & Runtime (`tests/refactor/`, `tests/runtime/`)** | Release bundle isolation, configuration/protocol identity, HTTP/SSE job supervision, and RunStore fencing |
-
-<br>
-
----
-
-## Project Contact
-
-For repository maintenance and technical questions, contact Xuan-Yan Chen at
-[xchen565@connect.hkust-gz.edu.cn](mailto:xchen565@connect.hkust-gz.edu.cn).
-The contributor and corresponding-author addresses below remain separately attributed.
-
-## References
-
-1. **Scharfetter, D. L. & Gummel, H. K.** (1969) — *Large-signal analysis of a silicon Read diode oscillator*. Foundational SG flux scheme.
-2. **Courtier, N. E. et al.** (2019) — *IonMonger: a free and fast planar perovskite solar cell simulator with coupled ion vacancy and charge carrier dynamics*. J. Comput. Electron.
-3. **Calado, P. et al.** — *Driftfusion: an open source code for simulating ordered semiconductor devices*. Reference MATLAB implementation used for cross-checking.
-4. **Pettersson, L. A. A. et al.** (1999) — *Modeling photocurrent action spectra of photovoltaic devices based on organic thin films*. J. Appl. Phys.
-5. **Burkhard, G. F. et al.** (2010) — *Accounting for interference, scattering, and electrode absorption to make accurate internal quantum efficiency measurements in organic and other thin solar cells*. Adv. Mater.
-6. **Richardson, G. et al.** — Theoretical basis for ion-migration modelling in perovskite solar cells.
-
----
+## 8. References & Contact
+
+1. **Scharfetter, D. L. & Gummel, H. K.** (1969) — *Large-signal analysis of a silicon Read diode oscillator*. IEEE Trans. Electron Devices, 16(1), 64–77.
+2. **Burkhard, G. F., Hoke, E. T. & McGehee, M. D.** (2010) — *Accounting for interference, scattering, and electrode absorption to make accurate internal quantum efficiency measurements in organic and other thin solar cells*. Adv. Mater., 22(30), 3293–3297.
+3. **Calado, P. et al.** (2016) — *Evidence for ion migration in hybrid perovskite solar cells with minimal hysteresis*. Nat. Commun., 7, 13831.
+4. **Courtier, N. E. et al.** (2019) — *IonMonger: a free and fast planar perovskite solar cell simulator with coupled ion vacancy and charge carrier dynamics*. J. Comput. Electron., 18, 1435–1449.
+5. **Burgelman, M., Nollet, P. & Degrave, S.** (2000) — *Modelling polycrystalline semiconductor solar cells* (SCAPS-1D). Thin Solid Films, 361–362, 527–532.
 
 <div align="center">
 
-**Authors**
+**Authors & Correspondence**
 
 Xuan-Yan Chen · [xchen565@connect.hkust-gz.edu.cn](mailto:xchen565@connect.hkust-gz.edu.cn)<br>
 Longhan Zhang · [lzhang619@connect.hkust-gz.edu.cn](mailto:lzhang619@connect.hkust-gz.edu.cn)<br>
@@ -765,12 +293,6 @@ Zecheng Gan<sup>&#42;</sup> · [zechenggan@hkust-gz.edu.cn](mailto:zechenggan@hk
 Chang Yan<sup>&#42;</sup> · [changyan@hkust-gz.edu.cn](mailto:changyan@hkust-gz.edu.cn)<br>
 Tongyi Zhang<sup>&#42;</sup> · [mezhangt@hkust-gz.edu.cn](mailto:mezhangt@hkust-gz.edu.cn)
 
-<sup>&#42;</sup> Corresponding authors
-
-*The Hong Kong University of Science and Technology (Guangzhou)*
-
-<br>
-
-Made with 🧪 and ☕ at **HKUST Guangzhou · SolarLab**
+<sup>&#42;</sup> Corresponding authors · *The Hong Kong University of Science and Technology (Guangzhou)*
 
 </div>

@@ -65,7 +65,7 @@ jobs:
         run: >-
           uv run --frozen --no-sync ruff check --no-cache
           src scripts/test_all.py scripts/generate_configuration_schema.py
-          scripts/ci tests/ci
+          scripts/generate_readme_figures.py scripts/ci tests/ci
       - name: Guard root test discovery and explicit exclusions
         working-directory: .
         run: >-

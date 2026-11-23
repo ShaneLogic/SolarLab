@@ -188,7 +188,7 @@ requiring every resolved level to remain inside the material band gap.
 SCAPS's two degeneracy choices are explicit:
 
 $$
-g_s={H \choose s} \quad\text{or}\quad g_s=1.
+g_s=\binom{H}{s} \quad\text{or}\quad g_s=1.
 $$
 
 `explicit` also accepts declared positive state degeneracies. No degeneracy is
