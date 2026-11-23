@@ -14,6 +14,18 @@ export const RESEARCH_PRESETS: ReadonlyArray<{
   description: ReferenceModelDescription
 }> = [
   {
+    name: 'scaps_pvk_xy.yaml', label: 'SCAPS native (PVK-xy)', mode: 'fast',
+    description: {
+      formulation: 'Native zero-fit SCAPS-1D heterojunction model',
+      mechanisms: [
+        'Electron and hole transport; recalculated flat-band contacts',
+        '7-level Gaussian PVK/ETL & single HTL/PVK interface SRH (Et = 0.30 eV above EV)',
+        'Bulk SRH, radiative and Auger recombination with zero calibration factors',
+      ],
+      evidence: 'Native PVK-xy.scaps + AM1.5G .spe zero-fit alignment (median |dVoc| = 0.60 mV across 248 numeric cases).',
+    },
+  },
+  {
     name: 'scaps_mirror_v2.yaml', label: 'SCAPS reproduction', mode: 'fast',
     description: {
       formulation: 'Electronic heterojunction model',

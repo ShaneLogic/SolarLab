@@ -43,7 +43,7 @@ test, and be understood:
 | Active reference contracts and benchmark baselines | `reproducibility/` | CamelCase (`ScapsComparisonContractV1.json`, `HysteresisReferenceContractV2.json`, `ScapsParams.xlsx`) |
 | Operational developer and extension guidance | `docs/` | Multi-word CamelCase, such as `DevelopmentGuide.md` |
 | Retired models, falsified closures, and historical witness ledger | `docs/RetiredModelsV1.md` | Multi-word CamelCase with version suffix (`RetiredModelsV1.md`) |
-| Figures the root README embeds | `docs/figures/` | CamelCase, no date; regenerate under a new `V<n>` and update the README link |
+| Figures the root README embeds | `docs/figures/` | Versionless multi-word CamelCase, no date (`ValidationScapsOverview.png`) |
 
 **Archive (iCloud `projects/solarlab/`, never in git)** — everything else:
 

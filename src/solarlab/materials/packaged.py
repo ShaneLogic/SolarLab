@@ -78,12 +78,14 @@ PACKAGED_NK_MATERIALS: tuple[str, ...] = (
 
 PACKAGED_PRESET_NAMES: tuple[str, ...] = (
     "classical_pin",
+    "scaps_pvk_xy",
     "scaps_mirror_v2",
     "calado2016_ion_sweep",
     "calado2016_fig1f",
 )
 
 _SHIPPED_YAML_PRESETS: tuple[str, ...] = (
+    "scaps_pvk_xy.yaml",
     "scaps_mirror_v2.yaml",
     "calado2016_ion_sweep.yaml",
     "calado2016_fig1f.yaml",
