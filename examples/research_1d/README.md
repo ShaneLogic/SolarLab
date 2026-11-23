@@ -40,7 +40,7 @@ All 1D workflows below enforce the same runtime invariants:
 | | [shared_site_ionic.py](shared_site_ionic.py) | Coupled dual-ion steady & transient sharing a common vacancy fraction |
 | | [immobile_ions.py](immobile_ions.py) | Zero-diffusivity ($D_{\mathrm{ion}} = 0$) exact profile preservation in single and mixed shared-site stacks |
 | | [ionic_initialization.py](ionic_initialization.py) | `direct_density_seed_v1` dark-to-illuminated coupled ionic state preparation |
-| | [ionic_jv.py](ionic_jv.py), [ionic_pv.py](ionic_pv.py) | Equilibrium coupled-ion $J\text{–}V$ slices and full 51-point illuminated PV curve ($0 \to 1.25\text{ V}$) |
+| | [ionic_jv.py](ionic_jv.py), [ionic_pv.py](ionic_pv.py) | Equilibrium coupled-ion $J\text{-}V$ slices and full 51-point illuminated PV curve ($0 \to 1.25\text{ V}$) |
 | | [multiple_ionic_domains.py](multiple_ionic_domains.py), [multiple_ionic_steady.py](multiple_ionic_steady.py), [multiple_ionic_transient.py](multiple_ionic_transient.py) | Two separated blocking ionic layer domains coupled to one shared electronic mesh (steady & BE transient) |
 | **5. Physics Extensions** | [neutral_defects.py](neutral_defects.py) | Explicit neutral single-level bulk SRH defects (including `--unequal-dos` $N_C \neq N_V$ binding) |
 | | [field_transport.py](field_transport.py) | Smooth Caughey–Thomas electric-field velocity saturation ($\beta > 1$) in DC assembly |
@@ -93,7 +93,7 @@ voc = solve_direct_voc(compiled, curve, voltage_tolerance_V=1e-6)
 .venv/bin/python -B -m examples.research_1d.impedance
 ```
 
-### 3. Coupled Shared-Site Mobile Ions (Dark $\to$ Illuminated $J\text{–}V$ $\to$ AC)
+### 3. Coupled Shared-Site Mobile Ions (Dark $\to$ Illuminated $J\text{-}V$ $\to$ AC)
 
 ```sh
 # 1) Coupled dark steady state + 4-step ramp for shared-site positive & negative ions
