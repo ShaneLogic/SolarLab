@@ -37,7 +37,8 @@ def main():
     from examples.research_1d.steady import load_device
     from solarlab.device.compile_1d import compile_device_1d
     from solarlab.solvers.time.bdf import BDFOptions
-    from solarlab.experiments.transient import solve_transient
+    from solarlab.equations.implementation import LEGACY, equation_implementation
+    from solarlab.experiments.bdf import solve_electronic_bdf
     from examples.research_1d.transient import controls
     from solarlab.solvers.nonlinear.steady_1d import SteadyOptions
     raw_bytes = (args.root / "NativeParity01.json").read_bytes()
@@ -56,8 +57,10 @@ def main():
         "original_failure_preserved": True})
     requested, drive = module["protocol"](0.0, np.array([0.0, .13, .31, 1.0]) * 4e-7)
     settings = BDFOptions(1e-7, max_step_s=2e-7, relative_tolerance=1e-5)
-    original = solve_transient(device, initial, requested, options=controls(), initial_options=SteadyOptions(),
-        method="bdf", bdf_options=settings, bdf_drive=drive)
+    # An explicit research BDF call on the original equations, as solve_transient ran it before CND2.
+    with equation_implementation(LEGACY):
+        original = solve_electronic_bdf(device, initial, requested, options=controls(), initial_options=SteadyOptions(),
+                                        bdf_options=settings, drive=drive)
     module["record"]("N_legacy_dark", original)
     assembled = module["run_assembled"](device, initial, requested, drive, settings)
     module["record"]("N_assembled_dark", assembled)

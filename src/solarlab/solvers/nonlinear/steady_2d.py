@@ -22,7 +22,7 @@ from solarlab.contracts.units import ELEMENTARY_CHARGE_C as Q
 from solarlab.equations.assembly.two_dimensional import AssembledDC2DProblem
 from solarlab.equations.dc_2d import CompiledDevice2D, DC2DProblem, State2D
 from solarlab.equations.implementation import use_assembled
-from solarlab.mesh.geometry_2d import RECTANGULAR_HALF_ENDPOINT_2D_V1
+from solarlab.mesh.geometry_2d import RECTANGULAR_2D_NAMES
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, GateOutcome, ResidualScaling, StepControl, state_digest
 from solarlab.solvers.nonlinear.production import HISTORICAL_MAX_ROW_V1, POISSON_CONTACT_BALANCE_V1
@@ -56,8 +56,8 @@ def _problem(device: CompiledDevice2D, voltage_V: float, generation_scale: float
 def scope(device: CompiledDevice2D) -> None:
     if not isinstance(device, CompiledDevice2D):
         raise ValueError("an actual fully compiled classical 2D device is required")
-    if device.geometry.name != RECTANGULAR_HALF_ENDPOINT_2D_V1:
-        raise ValueError("2D steady requires physical half-endpoint Neumann geometry")
+    if device.geometry.name not in RECTANGULAR_2D_NAMES:
+        raise ValueError("2D steady requires physical half-endpoint Neumann or periodic geometry")
     if ((device.column.field_transport is not None and device.field_transport is None) or device.column.recombination.explicit_defects is not None
             or device.column.additional_recombination is not None):
         raise ValueError("2D steady supports constant mobility and lifetime SRH")
@@ -160,12 +160,26 @@ def diagnostics(problem: _Problem2D, u: np.ndarray, options: Steady2DOptions) ->
         "terminal_mean_current_density_A_m2": terminals / width,
         "cross_section_terminal_spread_A_m2": float(np.ptp(integrated)) / width,
         "face_current_density_A_m2": current,
-        "lateral_current_density_A_m2": current[:g.x_face_count].reshape(g.ny, g.nx - 1),
+        "lateral_current_density_A_m2": current[:g.x_face_count].reshape(g.ny, g.x_faces_per_row),
         "stack_current_density_A_m2": current[g.x_face_count:].reshape(g.ny - 1, g.nx),
         "carrier_face_particle_flux_m2_s": np.stack((fluxes.electron.flux, fluxes.hole.flux)),
         "face_displacement_C_m2": problem.displacement(u),
-        "lateral_boundary_particle_flux_m2_s": np.zeros((2, g.ny, 2)),
-        "lateral_boundary_displacement_C_m2": np.zeros((g.ny, 2)),
+        "lateral_boundary_particle_flux_m2_s": (
+            np.zeros((2, g.ny, 2))
+            if g.lateral_bc == "neumann"
+            else np.stack((
+                np.column_stack((fluxes.electron.flux[g.wrap_face_indices], fluxes.electron.flux[g.wrap_face_indices])),
+                np.column_stack((fluxes.hole.flux[g.wrap_face_indices], fluxes.hole.flux[g.wrap_face_indices])),
+            ))
+        ),
+        "lateral_boundary_displacement_C_m2": (
+            np.zeros((g.ny, 2))
+            if g.lateral_bc == "neumann"
+            else np.column_stack((
+                problem.displacement(u)[g.wrap_face_indices],
+                problem.displacement(u)[g.wrap_face_indices],
+            ))
+        ),
         "finite_positive_fields": bool(np.all(n > 0.0) and np.all(p > 0.0) and np.all(np.isfinite(phi))),
         "minimum_electron_density_m3": float(np.min(n)), "minimum_hole_density_m3": float(np.min(p)),
         "generation_current_limit_per_depth_A_m": d.generation_limit_A_m * problem.generation_scale,

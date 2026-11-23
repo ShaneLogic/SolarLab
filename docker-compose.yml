@@ -2,23 +2,33 @@ services:
   backend:
     build:
       context: .
-      dockerfile: perovskite-sim/Dockerfile.backend
-    image: solarlab-backend:dev
+      dockerfile: Dockerfile
+    image: solarlab-server:dev
     environment:
-      PEROVSKITE_BLAS_PIN: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      NEWCORE_EQUATIONS: "assembled"
       PYTHONUNBUFFERED: "1"
     volumes:
-      - ./perovskite-sim:/app
+      - solarlab_runtime:/var/lib/solarlab
     ports:
-      - "8002:8000"
+      - "8000:8000"
     command:
-      - uvicorn
-      - backend.main:app
+      - /app/.venv/bin/python
+      - -m
+      - solarlab_server.cli
       - --host
       - 0.0.0.0
       - --port
       - "8000"
-      - --reload
+      - --store-dir
+      - /var/lib/solarlab/store
+      - --work-dir
+      - /var/lib/solarlab/work
 
   frontend:
     build:
@@ -26,7 +36,7 @@ services:
       dockerfile: web/Dockerfile
     image: solarlab-frontend:dev
     environment:
-      VITE_API_BASE: http://127.0.0.1:8002
+      VITE_SOLARLAB_SERVER: http://backend:8000
     volumes:
       - ./web:/app
       - frontend_node_modules:/app/node_modules
@@ -47,18 +57,23 @@ services:
       - notebook
     build:
       context: .
-      dockerfile: perovskite-sim/Dockerfile.backend
-    image: solarlab-backend:dev
+      dockerfile: Dockerfile
+    image: solarlab-server:dev
     environment:
-      PEROVSKITE_BLAS_PIN: "1"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+      BLIS_NUM_THREADS: "1"
+      NEWCORE_EQUATIONS: "assembled"
       PYTHONUNBUFFERED: "1"
-    volumes:
-      - ./perovskite-sim:/app
     ports:
       - "8888:8888"
     command:
-      - jupyter
-      - lab
+      - /app/.venv/bin/python
+      - -m
+      - jupyterlab
       - --ip=0.0.0.0
       - --port=8888
       - --no-browser
@@ -66,4 +81,5 @@ services:
       - --ServerApp.token=solarlab
 
 volumes:
+  solarlab_runtime:
   frontend_node_modules:

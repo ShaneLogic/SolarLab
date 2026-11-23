@@ -71,12 +71,14 @@ def _recorder_dumps(value: Any, *, indent: int | str | None = None,
 _RECORDER_DUMPS = _recorder_dumps
 
 ROOT = Path(__file__).resolve().parents[2]
-SUITES = {"root": ROOT, "legacy": ROOT / "perovskite-sim"}
+SUITES = {
+    "root": ROOT,
+    **({"legacy": ROOT / "perovskite-sim"} if (ROOT / "perovskite-sim").is_dir() else {}),
+}
 PACKAGE_ROOTS = {
     "solarlab": "src/solarlab",
     "solarlab_research": "src/solarlab_research",
     "solarlab_server": "src/solarlab_server",
-    "perovskite_sim": "perovskite-sim/perovskite_sim",
 }
 # These files contain individually expensive protocols or several old producers.
 # Split by test function; parameter reprs are not portable selector identities.
@@ -125,8 +127,6 @@ THREADS = (
 # These tests observe real child-process deadlines. Instrument the pytest
 # parent, but leave the measured children in the same mode as push CI.
 PARENT_ONLY_COVERAGE = {
-    "tests/numerical_contracts/test_g2_route_launcher.py":
-        "Synthetic process-group startup/closeout is measured inside a fixed wall budget.",
     "tests/runtime/test_ionic_jv_job_service.py":
         "The HTTP worker has a fixed 30 s wall limit; child tracing changes the measured workload.",
 }

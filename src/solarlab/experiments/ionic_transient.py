@@ -9,7 +9,7 @@ substeps, normalization, retries, or physical qualification claims.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 import math
@@ -22,6 +22,7 @@ import numpy as np
 from solarlab.contracts import frozen_array
 from solarlab.equations.assembly.ionic_1d import AssembledConstrainedIonic1DProblem, AssembledIonic1DProblem
 from solarlab.equations.implementation import equation_implementation, selected_implementation, use_assembled
+from solarlab.equations.time_method import IONIC, admit_time_method, integrate_admitted
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D, Ionic1DProblem, IonicState1D
 from solarlab.equations.ionic_closure import immobile_profile_binding
 from solarlab.experiments.transient import TransientOptions, TransientProtocol
@@ -269,23 +270,34 @@ def _newton_settings(
 
 @overload
 def solve_ionic_transient(compiled: CompiledIonicDevice1D, initial: IonicTransientInitial,
-    protocol: TransientProtocol, *, options: IonicTransientOptions,
-    method: Literal["backward_euler"] = "backward_euler", bdf_options: BDFOptions | None = None,
-    bdf_drive: BDFDrive | None = None) -> IonicTransientResult: ...
+    protocol: TransientProtocol, *, options: IonicTransientOptions, method: Literal["backward_euler"],
+    bdf_options: None = None, bdf_drive: None = None) -> IonicTransientResult: ...
 
 
 @overload
 def solve_ionic_transient(compiled: CompiledIonicDevice1D, initial: IonicTransientInitial,
     protocol: TransientProtocol, *, options: IonicTransientOptions, method: Literal["bdf"],
-    bdf_options: BDFOptions, bdf_drive: BDFDrive | None = None) -> BDFResult: ...
+    bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None) -> BDFResult: ...
+
+
+@overload
+def solve_ionic_transient(compiled: CompiledIonicDevice1D, initial: IonicTransientInitial,
+    protocol: TransientProtocol, *, options: IonicTransientOptions, method: None = None,
+    bdf_options: None = None, bdf_drive: None = None) -> IonicTransientResult | BDFResult: ...
 
 
 def solve_ionic_transient(
     compiled: CompiledIonicDevice1D, initial: IonicTransientInitial, protocol: TransientProtocol,
-    *, options: IonicTransientOptions, method: str = "backward_euler",
+    *, options: IonicTransientOptions, method: str | None = None,
     bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None,
 ) -> IonicTransientResult | BDFResult:
     """Run requested physical BE steps once, preserving the first partial outcome.
+
+The time method is resolved first (:mod:`solarlab.equations.time_method`).
+The frozen allowlist holds no ionic scope, so an ionic history integrates
+with backward Euler and a BDF request is refused before numerical work. An
+allowlisted BDF scope runs the frozen profile with the forwarded work cap,
+beside the sample-interval admission of the electronic max_steps.
 
 The one history wall budget includes initial admission and all attempted steps.
 Newton call budgets are explicit per step, with the total bounded by max_steps;
@@ -293,15 +305,15 @@ accounting is called at most once per attempt and counted separately. Individual
 NumPy/SciPy calls are not preempted. Initial-only steady checks never gate the
 time steps, and all dynamic ion continuity rows remain in residual and J.
 """
-    if method == "bdf":
+    selection, call = admit_time_method(method, compiled=compiled, initial=initial, protocol=protocol,
+                                        options=options, bdf_options=bdf_options, bdf_drive=bdf_drive, family=IONIC)
+    if call is not None:
         from solarlab.experiments.bdf import solve_ionic_bdf
-        if bdf_options is None:
-            raise ValueError("BDF selection requires explicit BDFOptions")
+
+        # A BDF selection integrates inputs built from its admission's records, never the caller's (D1b, D1-R1).
         with equation_implementation(selected_implementation(operator="BDFStep:Ionic1DProblem")):
-            return solve_ionic_bdf(compiled, initial, protocol, options=options,
-                                  bdf_options=bdf_options, drive=bdf_drive)
-    if method != "backward_euler":
-        raise ValueError("unknown time integrator")
+            result = integrate_admitted(call, solve_ionic_bdf)
+        return replace(result, controls={**result.controls, "time_method": selection.record()})
     started = time.monotonic()
     if not isinstance(compiled, CompiledIonicDevice1D) or not isinstance(initial, IonicTransientInitial):
         raise ValueError("an actual compiled ionic device and pinned steady initial are required")

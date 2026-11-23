@@ -303,7 +303,7 @@ def test_cold_boundary_imposition_preserves_finite_unknowns_without_running_newt
         np.testing.assert_array_equal(u[offset:offset+N][mask], (reference[mask] - u[:N][mask]) / mixed.thermal_voltage_V)
 
 
-@pytest.mark.parametrize("extra", [{"lateral_bc": "periodic"}, {"ion_dynamics": "single_mobile"},
+@pytest.mark.parametrize("extra", [{"lateral_bc": None}, {"ion_dynamics": "single_mobile"},
                                   {"interface_srh": "two_sided_cross_node"}])
 def test_unbound_contact_combinations_remain_refused(prepared, extra):
     spatial = spatial_input().editing_data()

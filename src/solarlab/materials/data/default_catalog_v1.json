@@ -1,0 +1,309 @@
+{
+  "complex_defaults": {
+    "band_to_band": {
+      "enabled": false,
+      "energy_quadrature_order": 32,
+      "minimum_field_V_m": 1000000.0,
+      "reduced_effective_mass_rel": 0.1
+    },
+    "cigs_graded_optics": {
+      "kk_quadrature_order": 192,
+      "model": "minoura_2015",
+      "slices": 25
+    },
+    "contact": {
+      "barrier_height_eV": 0.0,
+      "electron_effective_mass_rel": 0.2,
+      "enabled": false,
+      "energy_quadrature_order": 32,
+      "hole_effective_mass_rel": 0.2,
+      "side": "both"
+    },
+    "interface_defect_assisted": {
+      "electron_effective_mass_rel": 0.2,
+      "enabled": false,
+      "hole_effective_mass_rel": 0.2,
+      "requires_explicit_occupancy": true
+    },
+    "intraband": {
+      "carrier": "both",
+      "electron_effective_mass_rel": 0.2,
+      "enabled": false,
+      "energy_quadrature_order": 32,
+      "hole_effective_mass_rel": 0.2
+    }
+  },
+  "constants": {
+    "K_B": 1.380649e-23,
+    "Q": 1.602176634e-19,
+    "T": 300.0
+  },
+  "contacts": {
+    "S_n_left": null,
+    "S_n_right": null,
+    "S_p_left": null,
+    "S_p_right": null
+  },
+  "defect_degeneracy": 1.0,
+  "defect_model": "effective_lifetime",
+  "defect_schema_version": null,
+  "device": {
+    "Phi": 2.5e+21,
+    "T": 300.0,
+    "V_bi": 1.1,
+    "band_grading": false,
+    "built_in_potential_mode": null,
+    "contact_phi_B_eV": 0.0,
+    "dos_band_potentials": true,
+    "flat_band_contacts": false,
+    "flat_band_metal_contacts": false,
+    "graded_optics": false,
+    "het_recomb_despike": 0.0,
+    "interface_charge_closure": "off",
+    "interface_charge_rebaseline_acknowledged": false,
+    "interface_plane_closure": false,
+    "interface_plane_generation": false,
+    "interface_plane_projection": false,
+    "interface_shared_occupancy": false,
+    "interface_tunneling": false,
+    "interface_two_sided": false,
+    "ion_steric_diffusion_only": true,
+    "ion_steric_shared_site": true,
+    "jv_solver_policy": "general",
+    "mode": "full",
+    "phi_left": 0.0,
+    "te_physical_norm": false,
+    "tunnel_mass_eff": 0.2,
+    "work_function_left_eV": null,
+    "work_function_right_eV": null
+  },
+  "distribution_width_convention": "not_applicable",
+  "evidence": [
+    [
+      "backend/main.py",
+      "7dd1292f6f34f0f065a50686802c20a8484edcc9e4a7d98287799c076f9da01f"
+    ],
+    [
+      "constants.py",
+      "9ae428b44bbe5f475b638d9c3339e69930249e2b1c39ba0acbfd0764fcaade76"
+    ],
+    [
+      "experiments/dark_jv.py",
+      "7dd01ad1fe88fb0ac2d8d69722aebe8ec5d2cdedd2f5c0f149bad2477759540c"
+    ],
+    [
+      "experiments/jv_sweep.py",
+      "428fbe1c421192e2495ac94fa171df42f2be94dca7733b7a5ab2e07a9628ef96"
+    ],
+    [
+      "experiments/protocol.py",
+      "427d372bd2b28bc2c9b6b924ea4cafa42e7315decf5385664f74bcb19137beef"
+    ],
+    [
+      "experiments/waveform_jv.py",
+      "cac7648c136190db6bca65697cdb3200ab7b57e81787736a67d706cda333d1e7"
+    ],
+    [
+      "models/defects.py",
+      "0bf3cedd435ff8259fb436bbcfcfa3aa586bdee50f89caba161e162c6913159f"
+    ],
+    [
+      "models/device.py",
+      "abedb9e39655a5b54997968a7bfa4d1664b7493475dc8e7c55fffa68195330b9"
+    ],
+    [
+      "models/parameters.py",
+      "0555a6c9280431889b34328bf1e513c7e6d6789368ea858ff3e1ea5a60db7d9d"
+    ],
+    [
+      "models/tandem_config.py",
+      "9aaf4e1fb87f43950c96cabe0ac309cd3416673848b80889fc366be32ad2b595"
+    ],
+    [
+      "models/tunneling_channels.py",
+      "988195babef2c7390bfacd0f849b91a3802abfda3e742332642c1c36a610a114"
+    ],
+    [
+      "physics/band_gap_narrowing.py",
+      "ee7fe97002c19364750f4aa07be1dc150c2acb450ad74ee637d5b8cc783e0a78"
+    ],
+    [
+      "physics/cigs_optics.py",
+      "a7f1cac165c04f8f5d21a530987d65d10fa78af04c77b7e1382149aab59ca811"
+    ],
+    [
+      "physics/statistics.py",
+      "f790b5df608ec54ff64ebd1a3203bcec0a00d1bfbc2677a29ccd34208fc29a01"
+    ],
+    [
+      "scaps_compat/loader.py",
+      "a03a31b81497df6118592aebce7000befaa1d5de787ad989d880c263000e0cd6"
+    ],
+    [
+      "solver/tolerances.py",
+      "1a193fb904bfd593e7581c9c3a25f51e245bbb72ce6b9fcf22bdd9196170e0b6"
+    ],
+    [
+      "twod/microstructure.py",
+      "60d06d32976305a4c29b04e7f46188e8a916e007048a9c6507c680e6d4b6ab35"
+    ]
+  ],
+  "experiment_defaults": {
+    "dark_jv": {
+      "N_grid": 60,
+      "V_max": 1.2,
+      "n_points": 60,
+      "v_rate": 1.0
+    },
+    "dark_jv_numerical": {
+      "atol": 1e-06,
+      "rtol": 0.0001
+    },
+    "jv_2d": {
+      "Nx": 10,
+      "Ny_per_layer": 20,
+      "V_max": 1.2,
+      "V_step": 0.05,
+      "atol": 1e-08,
+      "illuminated": true,
+      "initial_state_settle_s": 0.001,
+      "interface_srh": "off",
+      "ion_dynamics": "frozen",
+      "ion_inventory_rtol": 1e-09,
+      "lateral_length": 5e-07,
+      "max_bisect": 6,
+      "max_nfev_per_solve": 200000,
+      "protocol_mode": "compatibility",
+      "rtol": 1e-06,
+      "save_snapshots": true,
+      "settle_t": 1e-07
+    },
+    "jv_2d_componentwise_atol": {
+      "carrier_fraction": 1e-12,
+      "interface_fraction": 1e-12,
+      "ion_fraction": 1e-12,
+      "minimum_atol": 1e-06,
+      "refinement_factor": 1.0
+    },
+    "jv_endpoint": {
+      "N_grid": 80,
+      "V_max": null,
+      "iface_states": false,
+      "interface_boundary": false,
+      "interface_transport_model": "fermi_richardson",
+      "n_points": 40,
+      "protocol_mode": "compatibility",
+      "solver": "transient",
+      "v_rate": 1.0
+    },
+    "jv_history": {
+      "illuminated_soak_s": 0.001
+    },
+    "jv_jobs": {
+      "N_grid": 60,
+      "V_max": null,
+      "iface_states": false,
+      "illuminated": true,
+      "interface_boundary": false,
+      "interface_transport_model": "fermi_richardson",
+      "n_points": 30,
+      "protocol_mode": "compatibility",
+      "solver": "transient",
+      "v_rate": 1.0
+    },
+    "jv_numerical": {
+      "atol": 1e-06,
+      "rtol": 0.0001
+    },
+    "jv_waveform_controls": {
+      "atol_m3": 100.0,
+      "rtol": 0.0001
+    },
+    "voc_grain_sweep": {
+      "Nx": 10,
+      "Ny_per_layer": 10,
+      "V_max": 1.2,
+      "V_step": 0.05,
+      "gb_width": 1e-08,
+      "illuminated": true,
+      "settle_t": 0.001,
+      "tau_gb_n": 1e-09,
+      "tau_gb_p": 1e-09
+    }
+  },
+  "interface": {
+    "calibration_factor": 1.0,
+    "iface_state_calibration_factor": 1.0
+  },
+  "material": {
+    "A_star_n": 1201700.0,
+    "A_star_p": 1201700.0,
+    "B_rad_T_gamma": 0.0,
+    "D_ion_neg": 0.0,
+    "E_a_ion": 0.58,
+    "Eg": 0.0,
+    "Eg_back": null,
+    "N_A_bulk": null,
+    "N_D_bulk": null,
+    "Nc300": null,
+    "Nv300": null,
+    "P0_neg": 0.0,
+    "P_lim_neg": 1e+30,
+    "acceptor_binding_energy_eV": null,
+    "acceptor_degeneracy": 4.0,
+    "band_gap_narrowing_model": "off",
+    "bgn_conduction_band_fraction": 0.5,
+    "bgn_log_shape": 0.5,
+    "bgn_reference_density_m3": 1e+23,
+    "bgn_reference_energy_eV": 0.009,
+    "carrier_statistics": "maxwell_boltzmann",
+    "chi": 0.0,
+    "chi_back": null,
+    "ct_beta_n": 2.0,
+    "ct_beta_p": 2.0,
+    "donor_binding_energy_eV": null,
+    "donor_degeneracy": 2.0,
+    "dopant_ionization_model": "fully_ionized",
+    "doping_decay_length": null,
+    "doping_edge": "front",
+    "doping_profile_shape": null,
+    "grading_N_mult": 1,
+    "grading_bowing": 0.0,
+    "grading_char_length": null,
+    "grading_direction": "front_to_back",
+    "grading_profile": "linear",
+    "incoherent": false,
+    "mu_T_gamma": -1.5,
+    "n_optical": null,
+    "optical_material": null,
+    "pf_gamma_n": 0.0,
+    "pf_gamma_p": 0.0,
+    "trap_N_t_bulk": null,
+    "trap_N_t_interface": null,
+    "trap_decay_length": null,
+    "trap_edge": "both",
+    "trap_profile_shape": "exponential",
+    "v_sat_n": 0.0,
+    "v_sat_p": 0.0,
+    "v_th": 100000.0,
+    "varshni_alpha": 0.0,
+    "varshni_beta": 0.0
+  },
+  "scaps": {
+    "B_rad": 0.0,
+    "C_n": 0.0,
+    "C_p": 0.0,
+    "D_ion": 0.0,
+    "P0": 0.0,
+    "P_lim": 1e+30,
+    "alpha": 0.0,
+    "tau_n": 0.001,
+    "tau_p": 0.001
+  },
+  "schema": "solarlab.default-catalog.v1",
+  "structural": {
+    "grain_boundary_layer_role": "absorber",
+    "junction_incoherent": false,
+    "tandem_light_direction": "top_first"
+  }
+}

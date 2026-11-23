@@ -251,7 +251,8 @@ def qualify_point(point: dict, arrays: dict, packet: dict, charge: float) -> dic
     """Bound one represented snapshot against its mathematical semidiscrete law."""
     n, p, ions = (list(map(exact, point[k])) for k in ('n_m3', 'p_m3', 'positive_ions_m3'))
     count = len(n)
-    a = lambda name: list(map(exact, arrays['material.'+name]))
+    def a(name: str) -> list[Fraction]:
+        return list(map(exact, arrays['material.' + name]))
     C, widths = a('poisson_factor.C'), a('poisson_factor.h_cell')
     x = arrays['initial.x_m']
     dx = [exact(float(x[i+1])-float(x[i])) for i in range(count-1)]
@@ -304,7 +305,8 @@ def qualify_point(point: dict, arrays: dict, packet: dict, charge: float) -> dic
         recombined = q*(rp[-1]-rn[-1])
         if max(recombined.lo,rho_rate[i].lo) > min(recombined.hi,rho_rate[i].hi):
             raise ArithmeticError("independent carrier/charge enclosures disagree")
-    rn.append(_Interval.of(0)); rp.append(_Interval.of(0))
+    rn.append(_Interval.of(0))
+    rp.append(_Interval.of(0))
 
     yd = list(map(exact, point['ydot_m3_s']))
     if any(yd[2*count:]) or any(point['J_ion_A_m2']):

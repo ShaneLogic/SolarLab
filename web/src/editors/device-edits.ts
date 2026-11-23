@@ -348,3 +348,180 @@ export function exactInputEqual(a: unknown, b: unknown): boolean {
   return keys.length === other.length && keys.every((key, index) => key === other[index]
     && exactInputEqual(Reflect.get(a, key), Reflect.get(b, key)))
 }
+
+export interface ReferenceDiagnostic {
+  readonly path: Path
+  readonly code: 'duplicate_id' | 'dangling_reference' | 'topology_order' | 'duplicate_contact_side'
+  readonly message: string
+}
+
+function collectCellReferenceDiagnostics(device: DeviceInput, prefix: Path): ReferenceDiagnostic[] {
+  const diagnostics: ReferenceDiagnostic[] = []
+  const layerIds = device.layers.map(layer => layer.id)
+  const materialIds = (device.materials ?? []).map(material => material.id)
+
+  for (const [index, material] of (device.materials ?? []).entries()) {
+    if (materialIds.filter(id => id === material.id).length > 1) {
+      diagnostics.push({
+        path: [...prefix, 'materials', index, 'id'],
+        code: 'duplicate_id',
+        message: `materials[${index}].id: duplicate ${material.id}`,
+      })
+    }
+  }
+
+  for (const collection of ['interfaces', 'contacts'] as const) {
+    const records = device[collection] ?? []
+    for (const [index, record] of records.entries()) {
+      if (records.filter(item => item.id === record.id).length > 1) {
+        diagnostics.push({
+          path: [...prefix, collection, index, 'id'],
+          code: 'duplicate_id',
+          message: `${collection}[${index}].id: duplicate ${record.id}`,
+        })
+      }
+    }
+  }
+
+  const contacts = device.contacts ?? []
+  for (const [index, contact] of contacts.entries()) {
+    if (contacts.filter(item => item.side === contact.side).length > 1) {
+      diagnostics.push({
+        path: [...prefix, 'contacts', index, 'side'],
+        code: 'duplicate_contact_side',
+        message: `contacts[${index}].side: duplicate ${contact.side} contact`,
+      })
+    }
+  }
+
+  for (const [index, layer] of device.layers.entries()) {
+    if (layerIds.filter(id => id === layer.id).length > 1) {
+      diagnostics.push({
+        path: [...prefix, 'layers', index, 'id'],
+        code: 'duplicate_id',
+        message: `layers[${index}].id: duplicate ${layer.id}`,
+      })
+    }
+    if (layer.material != null && !materialIds.includes(layer.material)) {
+      diagnostics.push({
+        path: [...prefix, 'layers', index, 'material'],
+        code: 'dangling_reference',
+        message: `layers[${index}].material: ${layer.material} is not a supplied material`,
+      })
+    }
+    const defects = layer.bulk_defects ?? []
+    for (const [offset, defect] of defects.entries()) {
+      if (defects.filter(item => item.id === defect.id).length > 1) {
+        diagnostics.push({
+          path: [...prefix, 'layers', index, 'bulk_defects', offset, 'id'],
+          code: 'duplicate_id',
+          message: `layers[${index}].bulk_defects[${offset}].id: duplicate ${defect.id}`,
+        })
+      }
+    }
+    const metastable = layer.metastable_document?.metastable_defects ?? []
+    for (const [offset, defect] of metastable.entries()) {
+      if (metastable.filter(item => item.id === defect.id).length > 1) {
+        diagnostics.push({
+          path: [...prefix, 'layers', index, 'metastable_document', 'metastable_defects', offset, 'id'],
+          code: 'duplicate_id',
+          message: `layers[${index}].metastable_document.metastable_defects[${offset}].id: duplicate ${defect.id}`,
+        })
+      }
+    }
+    for (const [offset, metadata] of (layer.scaps_defect_metadata ?? []).entries()) {
+      if (!defects.some(defect => defect.id === metadata.defect_id)) {
+        diagnostics.push({
+          path: [...prefix, 'layers', index, 'scaps_defect_metadata', offset, 'defect_id'],
+          code: 'dangling_reference',
+          message: `layers[${index}].scaps_defect_metadata[${offset}].defect_id: ${metadata.defect_id} is not a supplied defect`,
+        })
+      }
+    }
+  }
+
+  for (const ref of layerReferences(device)) {
+    if (!layerIds.includes(ref.value)) {
+      diagnostics.push({
+        path: [...prefix, ...ref.path],
+        code: 'dangling_reference',
+        message: `${JSON.stringify(ref.path)}: ${ref.value} is not a supplied layer`,
+      })
+    }
+  }
+
+  for (const [index, grain] of (device.grain_boundaries ?? []).entries()) {
+    if (device.grain_boundaries!.filter(item => item.id === grain.id).length > 1) {
+      diagnostics.push({
+        path: [...prefix, 'grain_boundaries', index, 'id'],
+        code: 'duplicate_id',
+        message: `Duplicate ID ${grain.id}`,
+      })
+    }
+    for (const [offset, id] of grain.layer_ids.entries()) {
+      if (
+        !device.layers.some(layer => layer.id === id && layer.role !== 'substrate') ||
+        grain.layer_ids.filter(value => value === id).length > 1
+      ) {
+        diagnostics.push({
+          path: [...prefix, 'grain_boundaries', index, 'layer_ids', offset],
+          code: 'dangling_reference',
+          message: `${id} must reference one existing electrical layer without duplicates`,
+        })
+      }
+    }
+  }
+
+  for (const [index, row] of (device.electrical_grid ?? []).entries()) {
+    if (
+      !device.layers.some(layer => layer.id === row.layer && layer.role !== 'substrate') ||
+      device.electrical_grid!.filter(item => item.layer === row.layer).length > 1
+    ) {
+      diagnostics.push({
+        path: [...prefix, 'electrical_grid', index, 'layer'],
+        code: 'dangling_reference',
+        message: `${row.layer} must reference one existing electrical layer exactly once`,
+      })
+    }
+  }
+
+  for (const [index, item] of (device.interfaces ?? []).entries()) {
+    if (layerIds.indexOf(item.left) < 0 || layerIds[layerIds.indexOf(item.left) + 1] !== item.right) {
+      diagnostics.push({
+        path: [...prefix, 'interfaces', index],
+        code: 'topology_order',
+        message: `interfaces[${index}]: ${item.left} → ${item.right} is not a directed adjacent pair in this order`,
+      })
+    }
+  }
+
+  return diagnostics
+}
+
+/** Collect all stable-ID duplicate, dangling-reference, and adjacency diagnostics
+ * across single-junction or 2T tandem preparation inputs without mutating them. */
+export function collectReferenceDiagnostics(input: EditorInput, cell?: Cell): ReferenceDiagnostic[] {
+  if (input.schema_version === 'solarlab.device-preparation.v1') {
+    return collectCellReferenceDiagnostics(input, [])
+  }
+  const diagnostics: ReferenceDiagnostic[] = []
+  const cells: readonly ('top_cell' | 'bottom_cell')[] =
+    cell === 'top_cell' || cell === 'bottom_cell' ? [cell] : ['top_cell', 'bottom_cell']
+  for (const targetCell of cells) {
+    diagnostics.push(...collectCellReferenceDiagnostics(input[targetCell], [targetCell]))
+  }
+  const opticalRows = [
+    ...input.junction_stack.map((value, index) => ({ value, path: ['junction_stack', index] as Path })),
+    ...(input.back_reflector ? [{ value: input.back_reflector, path: ['back_reflector'] as Path }] : []),
+  ]
+  for (const row of opticalRows) {
+    if (opticalRows.filter(item => item.value.id === row.value.id).length > 1) {
+      diagnostics.push({
+        path: [...row.path, 'id'],
+        code: 'duplicate_id',
+        message: `Duplicate optical-layer ID ${row.value.id}`,
+      })
+    }
+  }
+  return diagnostics
+}

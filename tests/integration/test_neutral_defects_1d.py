@@ -212,7 +212,10 @@ def test_species_order_stable_ids_and_document_identity(prepared: PreparedDevice
     assert compile_device_1d(provenance, intervals_per_layer=example.INTERVALS).identity != compile_device_1d(prepared, intervals_per_layer=example.INTERVALS).identity
 
 
-@pytest.mark.parametrize("kind", ["charged", "distributed", "spatial", "degeneracy", "interface", "multivalent", "metastable"])
+@pytest.mark.parametrize(
+    "kind",
+    ["charged", "distributed", "spatial", "degeneracy", "interface_shared_occupancy", "multivalent", "metastable"],
+)
 def test_unsupported_declarations_refuse_before_solver(
     prepared: PreparedDevice, kind: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -234,10 +237,11 @@ def test_unsupported_declarations_refuse_before_solver(
                 {"position_fraction": 0.0, "density_multiplier": 1.0}, {"position_fraction": 1.0, "density_multiplier": 1.0}]}
     elif kind == "degeneracy":
         defect["degeneracy"] = 2.0
-    elif kind == "interface":
+    elif kind == "interface_shared_occupancy":
         document["interfaces"] = [{"id": "interface_trap", "left": "htl", "right": "absorber", "defect": {
             "id": "surface", "trap_depth_eV": 0.5, "energy_reference": "above_valence_band",
             "total_density_m2": 1e15, "kinetics": kinetics, "calibration_factor": 1.0, "iface_state_calibration_factor": 1.0}}]
+        document["settings"]["interface_shared_occupancy"] = True
     else:
         donor = {"family": "single_donor", "charge_states_e": [1, 0], "degeneracy_convention": "unity",
             "state_degeneracies": [1.0, 1.0], "energy_levels": {"first_transition_eV_above_vb": 0.75,

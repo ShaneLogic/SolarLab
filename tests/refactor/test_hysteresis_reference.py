@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import importlib.util
 import json
 import os
@@ -23,19 +22,6 @@ spec = importlib.util.spec_from_file_location("hysteresis_reference_test_subject
 hr = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = hr
 spec.loader.exec_module(hr)
-
-
-def changed_key_paths(old, new, path=""):
-    """Smallest JSON pointers added, removed or modified from old to new."""
-    if isinstance(old, dict) and isinstance(new, dict):
-        keys = [*old, *(key for key in new if key not in old)]
-        return [found for key in keys for found in (
-            changed_key_paths(old[key], new[key], f"{path}/{key}") if key in old and key in new
-            else [f"{path}/{key}"])]
-    if isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
-        return [found for index, pair in enumerate(zip(old, new))
-                for found in changed_key_paths(*pair, f"{path}/{index}")]
-    return [] if type(old) is type(new) and old == new else [path]
 
 
 class RecordingAdapter:
@@ -127,13 +113,6 @@ class TestSourcesAndInput(FrozenFixture):
     def test_wrong_frozen_source_digest_rejected(self):
         with self.assertRaisesRegex(hr.ReferenceError, "source mismatch"):
             hr.checked_json(REPO/hr.CONTRACT, "0"*64)
-
-    def test_superseded_contract_is_unchanged_history_and_only_declared_paths_differ(self):
-        superseded = self.contract["supersedes"]
-        raw = (REPO/superseded["path"]).read_bytes()
-        self.assertEqual((hashlib.sha256(raw).hexdigest(), len(raw)), (superseded["sha256"], superseded["bytes"]))
-        self.assertEqual(sorted(changed_key_paths(json.loads(raw), self.contract)),
-                         sorted(superseded["changed_key_paths"]))
 
 
 class TestTimeline(FrozenFixture):
@@ -312,11 +291,6 @@ class TestHistoryAndObservations(FrozenFixture):
 
 
 class TestThinBridgeAndAnalyticCurrent(FrozenFixture):
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        sys.path.insert(0, str(REPO/"perovskite-sim"))
-
     def test_bridge_requests_raw_accepted_mesh_and_literal_cap(self):
         import numpy as np
         bridge = hr.ProductionBridge.__new__(hr.ProductionBridge)
@@ -364,12 +338,14 @@ class TestThinBridgeAndAnalyticCurrent(FrozenFixture):
 
     def test_frozen_NC06_capacitor_ramps_and_two_orientations(self):
         import numpy as np
-        from perovskite_sim.constants import EPS_0
-        from perovskite_sim.physics.poisson import factor_poisson
+        from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M as EPS_0
+        from solarlab.physics.electrostatics import PoissonFactorization, PoissonOperator1D
         gate = next(x for x in self.gates["gates"] if x["id"] == "NC06")
         case = gate["fixed_inputs"]["capacitor"]
         x = np.linspace(0., case["length"], 5)
-        factor = factor_poisson(x, np.full_like(x, case["epsilon"]/EPS_0))
+        factor = PoissonFactorization.factor(
+            PoissonOperator1D.from_harmonic_nodes(x, np.full_like(x, case["epsilon"]/EPS_0))
+        )
         for slope in case["slopes"]:
             for orientation in (-1, 1):
                 with self.subTest(slope=slope, orientation=orientation):
@@ -381,10 +357,12 @@ class TestThinBridgeAndAnalyticCurrent(FrozenFixture):
 
     def test_differentiated_poisson_includes_full_charge_rate(self):
         import numpy as np
-        from perovskite_sim.constants import EPS_0
-        from perovskite_sim.physics.poisson import factor_poisson
+        from solarlab.discretization.face_average import VACUUM_PERMITTIVITY_F_M as EPS_0
+        from solarlab.physics.electrostatics import PoissonFactorization, PoissonOperator1D
         x = np.linspace(0., 1., 9)
-        factor = factor_poisson(x, np.ones_like(x)/EPS_0)
+        factor = PoissonFactorization.factor(
+            PoissonOperator1D.from_harmonic_nodes(x, np.ones_like(x)/EPS_0)
+        )
         # epsilon=1, rho_dot=2 gives phi_dot=x*(1-x), Ddot=2*x_face-1.
         phi, Ddot, residual = hr.differentiated_poisson(factor, np.full_like(x, 2.), 0.)
         np.testing.assert_allclose(phi, x*(1-x), atol=1e-13, rtol=1e-12)

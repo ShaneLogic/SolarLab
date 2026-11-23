@@ -6,15 +6,17 @@ owns capacity, cancellation, retries and the sole terminal of every attempt.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 import json
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from solarlab.config.identity import BuildSource, ExecutionEngine
 from solarlab.device.resolved import PreparedDevice
 from solarlab.experiments.execution import ProcessSupervisor, ScanPoint, ScanRunner, ScanSpec
 from solarlab.experiments.jv.worker import (
-    SteadyJVProtocol, prepare_steady_jv_job, read_steady_jv_job,
+    SteadyJVProtocol, prepare_steady_jv_job, read_steady_jv_job, steady_jv_worker_binding,
 )
 from solarlab.experiments.worker import ManifestBinding, ResourceLimits, RunSpec
 from solarlab.sweeps.preparation import PreparedSweep, digest, encode, prepare_point
@@ -54,11 +56,65 @@ class SteadySweepJobs:
         """Use this exact shared supervisor; serial admission is the default."""
         return supervisor.scan(self.spec, executions=self.executions, max_in_flight=max_in_flight)
 
+    @classmethod
+    def from_declaration(
+        cls, declaration: bytes | Path, *, executions: Sequence[ManifestBinding],
+    ) -> SteadySweepJobs:
+        """Restore a persisted ScanSpec for sweep resumption with verified bindings."""
+        raw = declaration.read_bytes() if isinstance(declaration, Path) else declaration
+        spec = ScanSpec.from_bytes(raw)
+        by_manifest: dict[str, list[ManifestBinding]] = {}
+        for binding in executions:
+            if type(binding) is not ManifestBinding:
+                raise ValueError("explicit ManifestBinding instances are required")
+            by_manifest.setdefault(binding.expected_sha256, []).append(binding)
+        ordered: list[ManifestBinding] = []
+        if len(executions) == len(spec.points) and all(
+            b.expected_sha256 == p.spec.manifest_sha256 for p, b in zip(spec.points, executions)
+        ):
+            ordered = list(executions)
+        else:
+            for point in spec.points:
+                candidates = by_manifest.get(point.spec.manifest_sha256, [])
+                if not candidates:
+                    raise ValueError(f"missing ManifestBinding for point {point.point_id}")
+                ordered.append(candidates[0])
+        return cls(spec, tuple(ordered))
+
+    def reordered(
+        self, point_ids: Sequence[str], *, scan_id: str | None = None,
+    ) -> SteadySweepJobs:
+        """Permute point dispatch order while preserving declared coordinate indices."""
+        if isinstance(point_ids, (str, bytes)):
+            raise ValueError("point_ids must be an explicit sequence of point IDs")
+        ordered_ids = tuple(point_ids)
+        by_id = {point.point_id: (point, binding)
+                 for point, binding in zip(self.spec.points, self.executions)}
+        if len(ordered_ids) != len(self.spec.points) or set(ordered_ids) != set(by_id):
+            raise ValueError("point_ids must be an exact permutation of declared sweep points")
+        target_scan_id = self.spec.scan_id if scan_id is None else scan_id
+        points: list[ScanPoint] = []
+        executions: list[ManifestBinding] = []
+        for point_id in ordered_ids:
+            point, binding = by_id[point_id]
+            if (scan_id is not None
+                    and point.run_id == "scan:" + digest([self.spec.scan_id, point.point_id])):
+                point = ScanPoint(
+                    point.point_id,
+                    "scan:" + digest([target_scan_id, point.point_id]),
+                    point.coordinates_json,
+                    point.spec,
+                )
+            points.append(point)
+            executions.append(binding)
+        return SteadySweepJobs(ScanSpec(target_scan_id, tuple(points)), tuple(executions))
+
 
 def prepare_steady_sweep_jobs(
     sweep: PreparedSweep, protocol: SteadyJVProtocol, *, limits: ResourceLimits,
     implementation: BuildSource, current_repository_head: str, engine: ExecutionEngine,
     scan_id: str | None = None,
+    reuse_scope: Literal["scan", "execution_identity"] = "scan",
 ) -> SteadySweepJobs:
     """Resolve every point afresh and bind its actual cold steady invocation.
 
@@ -66,17 +122,24 @@ def prepare_steady_sweep_jobs(
     before submission. Failures during execution remain individual RunStore
     attempts and do not prevent later points from running. Continuation is
     confined to the voltages of one point, never across parameter changes.
+    When ``reuse_scope="execution_identity"``, ``run_id`` is bound to the
+    complete ``RunSpec`` and ``steady_jv`` worker source digest so completed
+    points can be reused across resumed or overlapping sweeps only when full
+    input/physics/execution/manifest/schema/budget identity matches.
     """
     if type(sweep) is not PreparedSweep:
         raise TypeError("an actual PreparedSweep is required")
     if sweep.to_input().base.schema_version != "solarlab.device-preparation.v1":
         raise ValueError("steady process sweeps require a device base and an explicit steady protocol")
+    if reuse_scope not in ("scan", "execution_identity"):
+        raise ValueError("reuse_scope must be 'scan' or 'execution_identity'")
     _limits(limits)
     declaration = sweep.to_mapping()
     scan_id = declaration["id"] if scan_id is None else scan_id
     for point in declaration["points"]:
         if point["status"] != "prepared_pending_dependencies" or point["applied_input"] is None:
             raise ValueError(f"unresolved sweep point {point['id']}: {point.get('field_errors', [])}")
+    worker_source_sha256 = steady_jv_worker_binding().source_sha256
     points, executions = [], []
     for index, point in enumerate(declaration["points"]):
         prepared = prepare_point(point["applied_input"], sweep.defaults, sweep.resources, sweep.sources)
@@ -99,8 +162,12 @@ def prepare_steady_sweep_jobs(
             "targets": {axis["id"]: axis["target"] for axis in declaration["axes"]},
             "units": {axis["id"]: axis["input_field_schema"].get("unit") for axis in declaration["axes"]},
         }
-        run_id = "scan:" + digest([scan_id, point["id"]])
         spec = RunSpec.from_binding("steady_jv", job.request, limits, binding)
+        run_id = (
+            "scan:" + digest([scan_id, point["id"]])
+            if reuse_scope == "scan"
+            else "exec:" + digest([spec.to_document(), worker_source_sha256])
+        )
         points.append(ScanPoint(point["id"], run_id, encode(coordinates).decode(), spec))
         executions.append(binding)
     return SteadySweepJobs(ScanSpec(scan_id, tuple(points)), tuple(executions))
@@ -119,9 +186,12 @@ def read_steady_sweep_jobs(store: RunStore, spec: ScanSpec) -> tuple[dict[str, A
     associations = {row["point_id"]: row for row in store.sweep_points(spec.scan_id)}
     if set(associations) - {point.point_id for point in spec.points}:
         raise ValueError("stored sweep contains points outside this declaration")
-    output = []
+    indexed: list[tuple[int, dict[str, Any]]] = []
     for point in spec.points:
         coordinates = json.loads(point.coordinates_json)
+        declared_index = coordinates.get("index")
+        if type(declared_index) is not int or declared_index < 0:
+            raise ValueError("point declaration lacks a valid declared index")
         request = point.spec.request
         body = json.loads(request.request.content)
         if (point.spec.worker_id != "steady_jv" or body.get("engine") != "solarlab"
@@ -135,7 +205,7 @@ def read_steady_sweep_jobs(store: RunStore, spec: ScanSpec) -> tuple[dict[str, A
         }
         association = associations.get(point.point_id)
         if association is None:
-            output.append(value)
+            indexed.append((declared_index, value))
             continue
         if (association["run_id"] != point.run_id or association["coordinates"] != coordinates
                 or association["opaque_execution_identity"] != request.execution_identity.sha256):
@@ -162,5 +232,7 @@ def read_steady_sweep_jobs(store: RunStore, spec: ScanSpec) -> tuple[dict[str, A
         latest = next(a for a in attempts if a["attempt_id"] == run["current_attempt_id"])
         value.update(state=latest["state"], reason=latest["reason"], attempt_id=latest["attempt_id"],
                      attempts=attempts, result=latest["steady_result"])
-        output.append(value)
-    return tuple(output)
+        indexed.append((declared_index, value))
+    if sorted(idx for idx, _ in indexed) != list(range(len(indexed))):
+        raise ValueError("declared point indices must form a complete 0..N-1 sequence")
+    return tuple(value for _, value in sorted(indexed, key=lambda item: item[0]))

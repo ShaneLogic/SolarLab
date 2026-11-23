@@ -1,6 +1,6 @@
 import { ContentItem, GoldenLayout } from 'golden-layout'
 import type { LayoutConfig, ResolvedLayoutConfig } from 'golden-layout'
-import { getConfig, listConfigs } from '../api'
+import { getConfig, listConfigs } from '../v2-workstation-client'
 import type { Workspace, Device, Run, ExperimentKind } from './types'
 import {
   STORAGE_KEY,
@@ -8,6 +8,7 @@ import {
   addExperiment,
   addRun,
   createEmptyWorkspace,
+  findRun,
   loadWorkspace,
   saveWorkspace,
   setActiveDevice,
@@ -28,6 +29,15 @@ import type { MainPlotHandle } from './panes/main-plot-pane'
 import { presetsFromEntries, showWizard } from './wizard'
 import { configureDockLayout, restoreLayoutConfig } from './layout-persistence'
 import { bindMobileSidebarToggle } from './mobile-sidebar'
+import {
+  renderHandshakeBanner,
+  verifyWorkstationHandshake,
+  type WorkstationHandshakeOptions,
+} from './schema-handshake'
+import {
+  formatQualificationBadge,
+  resolveRunExecutionPhysics,
+} from './execution-physics'
 
 const DEFAULT_LAYOUT: LayoutConfig = {
   root: {
@@ -72,7 +82,10 @@ function randomExperimentId(): string {
   return 'e-' + Math.random().toString(36).slice(2, 10)
 }
 
-export async function mountWorkstation(root: HTMLElement): Promise<void> {
+export async function mountWorkstation(
+  root: HTMLElement,
+  options?: { handshake?: WorkstationHandshakeOptions },
+): Promise<void> {
   root.innerHTML = `
     <header class="workstation-header">
       <div>
@@ -80,6 +93,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         <p class="subtitle">Solar cell simulator</p>
       </div>
       <div class="workstation-header-actions">
+        <a class="btn btn-ghost" href="?view=configuration">Configuration · V2 DTO</a>
         <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V · new core</a>
         <a class="btn btn-ghost" href="?view=steady-2d">2D steady · new core</a>
         <a class="btn btn-ghost" href="?view=transient">Transient · new core</a>
@@ -88,12 +102,14 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         <button type="button" class="btn btn-ghost btn-danger-ghost" id="ws-clear-workspace" title="Delete all devices, experiments and saved runs from this browser">Clear Workspace</button>
       </div>
     </header>
+    <div id="ws-handshake-banner" hidden></div>
     <div class="workstation-body">
       <aside class="workstation-sidebar" id="ws-tree"></aside>
       <main class="workstation-dock" id="ws-dock"></main>
     </div>
     <footer class="workstation-footer" id="ws-console"></footer>`
 
+  const handshakeHost = root.querySelector<HTMLElement>('#ws-handshake-banner')!
   const treeEl = root.querySelector<HTMLElement>('#ws-tree')!
   const dockEl = root.querySelector<HTMLElement>('#ws-dock')!
   const consoleEl = root.querySelector<HTMLElement>('#ws-console')!
@@ -101,6 +117,13 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
   bindMobileSidebarToggle(sidebarToggle, treeEl)
 
   const consoleHandle: ConsoleHandle = mountConsole(consoleEl)
+
+  void verifyWorkstationHandshake(options?.handshake).then(handshake => {
+    renderHandshakeBanner(handshakeHost, handshake)
+    if (handshake.status === 'mismatch' || handshake.status === 'error') {
+      consoleHandle.log('Schema handshake error', handshake.message)
+    }
+  })
 
   // --- workspace state ---
   let workspace: Workspace = loadWorkspace() ?? createEmptyWorkspace('Untitled')
@@ -154,15 +177,45 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     return id
   }
 
+  function syncConsolePhysics(): void {
+    if (workspace.activeDeviceId && workspace.activeExperimentId && workspace.activeRunId) {
+      const activeRun = findRun(
+        workspace,
+        workspace.activeDeviceId,
+        workspace.activeExperimentId,
+        workspace.activeRunId,
+      )
+      if (activeRun) {
+        const receipt = resolveRunExecutionPhysics(activeRun)
+        const qual = formatQualificationBadge(receipt)
+        consoleHandle.setPhysics(
+          `${receipt.badgeLabel}${qual.explicitUnqualified ? ' · UNQUALIFIED' : ''}`,
+          `${receipt.summary} — ${qual.label}`,
+        )
+        return
+      }
+    }
+    const active = workspace.devices.find(d => d.id === workspace.activeDeviceId)
+    if (active) {
+      consoleHandle.setPhysics(
+        `DECLARED (${tierLabel(active.tier)})`,
+        `Pre-run legacy mode declaration (not an execution manifest): ${tierPhysicsSummary(active.tier)}`,
+      )
+    }
+  }
+
   function commitRun(deviceId: string, kind: ExperimentKind, run: Run): void {
     const expId = ensureExperiment(deviceId, kind)
     workspace = addRun(workspace, deviceId, expId, run)
     workspace = setActiveRun(workspace, deviceId, expId, run.id)
     saveWorkspace(workspace)
     refreshTree()
+    syncConsolePhysics()
     mainPlot?.update(workspace)
     focusComponent('main-plot')
-    consoleHandle.log('Run complete', `${kind} · ${run.activePhysics}`)
+    const receipt = resolveRunExecutionPhysics(run)
+    const qual = formatQualificationBadge(receipt)
+    consoleHandle.log('Run complete', `${kind} · ${receipt.summary} · ${qual.label}`)
   }
 
   function focusComponent(componentType: string): void {
@@ -186,8 +239,8 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     if (active) {
       devicePanel?.setConfig(active.config)
       experimentPane?.updateDevice()
-      consoleHandle.setPhysics(tierLabel(active.tier), tierPhysicsSummary(active.tier))
     }
+    syncConsolePhysics()
   }
 
   attachTreeHandlers(treeEl, {
@@ -218,11 +271,8 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
     },
   })
 
-  // --- physics indicator for the initially-active device ---
-  const initialActive = workspace.devices.find(d => d.id === workspace.activeDeviceId)
-  if (initialActive) {
-    consoleHandle.setPhysics(tierLabel(initialActive.tier), tierPhysicsSummary(initialActive.tier))
-  }
+  // --- physics indicator for the initially-active run or declared device ---
+  syncConsolePhysics()
 
   // --- Golden Layout ---
   const layout = new GoldenLayout(dockEl)
@@ -252,7 +302,7 @@ export async function mountWorkstation(root: HTMLElement): Promise<void> {
         experimentPane?.updateDevice(reason === 'preset')
         saveWorkspace(workspace)
         refreshTree()
-        consoleHandle.setPhysics(tierLabel(updated.tier), tierPhysicsSummary(updated.tier))
+        syncConsolePhysics()
       })
     })
   })

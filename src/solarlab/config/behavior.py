@@ -22,14 +22,18 @@ from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.model_parameters import device_topology
 from solarlab.config.resolve_device import resolve_device
 from solarlab.config.scaps_input import import_scaps_device
+from solarlab.config.yaml import load_yaml_mapping
+from solarlab.device.defaults import DefaultCatalog
+from solarlab.device.defects import MULTIVALENT_VERSION
 from solarlab.device.resolved import PreparedDevice
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.selection import Selection
 
 __all__ = ["BehaviorContext", "CapturedPreparation", "behavior_source_requirements",
-           "inspect_historical_behavior", "inspect_r1_material_behavior"]
+           "inspect_device_optical_coherence", "inspect_historical_behavior",
+           "inspect_r1_material_behavior", "inspect_scaps_optical_coherence"]
 
-Driver = Literal["scaps_transient", "scaps_steady_state", "ion_hysteresis"]
+Driver = Literal["scaps_transient", "scaps_steady_state", "ion_hysteresis", "r1_material"]
 _SCHEMA = "solarlab.historical-behavior-preparation.v1"
 # Source identities of the inspected branches, not a table of physical defaults.
 _PINS = {
@@ -306,8 +310,8 @@ class CapturedPreparation:
         _verify_words(result, schema=result["schema"])
 
     def inspect(self, driver: Driver, device: PreparedDevice, arguments: dict[str, Any]) -> dict[str, Any]:
-        if driver == "ion_hysteresis":
-            raise ValueError("SCAPS evidence cannot stand in for an ion trajectory")
+        if driver in {"ion_hysteresis", "r1_material"}:
+            raise ValueError("SCAPS evidence cannot stand in for an ion or R1 trajectory")
         expected = resolve_device(import_scaps_device(self.case, id=device.to_input().id, defaults=device.defaults),
                                   device.defaults, device.resources, sources=(self.case,))
         if device.input_json != expected.input_json:
@@ -389,6 +393,77 @@ def _arguments(driver: Driver, source: SourceDocument, sources: dict[str, Source
     return supplied, effective
 
 
+def inspect_device_optical_coherence(
+    device: PreparedDevice, *, legacy_incoherent: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Surface per-layer declared vs effective optical coherence for a PreparedDevice."""
+    if type(device) is not PreparedDevice:
+        raise ValueError("an actual PreparedDevice is required")
+    effective_default = (
+        bool(dict(device.defaults.material)["incoherent"])
+        if legacy_incoherent is None else bool(legacy_incoherent)
+    )
+    raw_layers = json.loads(device.input_json)["layers"]
+    rows = []
+    for raw, layer in zip(raw_layers, device.layers):
+        params = dict(layer.parameters)
+        raw_params = raw.get("parameters", {})
+        declared_present = "incoherent" in raw_params
+        declared = raw_params["incoherent"] if declared_present else None
+        effective = effective_default if raw.get("parameterization") == "scaps" else params["incoherent"]
+        ignored = bool(declared_present and declared != effective)
+        rows.append({
+            "layer": layer.id,
+            "name": layer.name,
+            "role": layer.role,
+            "parameterization": raw.get("parameterization", "standard"),
+            "declared_present": declared_present,
+            "declared": declared,
+            "normalized_configured": params["incoherent"],
+            "effective": effective,
+            "historical_loader_value": effective,
+            "ignored_by_legacy_loader": ignored,
+            "prospective_fix_owner": "P08-04" if ignored else None,
+        })
+    return rows
+
+
+def inspect_scaps_optical_coherence(
+    source: SourceDocument, *, defaults: DefaultCatalog,
+) -> tuple[dict[str, Any], ...]:
+    """Surface declared vs effective SCAPS optical coherence without altering physics."""
+    if type(source) is not SourceDocument or type(defaults) is not DefaultCatalog:
+        raise ValueError("explicit immutable SCAPS source and default catalog are required")
+    raw_doc = load_yaml_mapping(source.content)
+    raw_layers = raw_doc.get("layers")
+    if isinstance(raw_layers, list):
+        for i, raw_row in enumerate(raw_layers):
+            if isinstance(raw_row, dict) and "incoherent" in raw_row and type(raw_row["incoherent"]) is not bool:
+                raise ValueError(f"layers[{i}].incoherent: expected boolean")
+    imported = import_scaps_device(source, id="scaps_optical_coherence", defaults=defaults)
+    legacy_effective = bool(dict(defaults.material)["incoherent"])
+    result = []
+    for raw_row, layer in zip(raw_doc["layers"], imported.layers):
+        declared_present = "incoherent" in raw_row
+        declared = raw_row["incoherent"] if declared_present else None
+        configured = layer.parameters.incoherent if layer.parameters.incoherent is not None else legacy_effective
+        ignored = bool(declared_present and declared != legacy_effective)
+        result.append({
+            "layer": layer.id,
+            "name": layer.name,
+            "role": layer.role,
+            "parameterization": "scaps",
+            "declared_present": declared_present,
+            "declared": declared,
+            "normalized_configured": bool(configured),
+            "effective": legacy_effective,
+            "historical_loader_value": legacy_effective,
+            "ignored_by_legacy_loader": ignored,
+            "prospective_fix_owner": "P08-04" if ignored else None,
+        })
+    return tuple(result)
+
+
 @dataclass(frozen=True, slots=True)
 class BehaviorContext:
     """Independent immutable context built from actual prepared public inputs.
@@ -410,7 +485,8 @@ class BehaviorContext:
     _document: bytes = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.driver not in _DRIVERS or type(self.device) is not PreparedDevice or type(self.selection) is not Selection:
+        all_drivers = set(_DRIVERS) | {"r1_material"}
+        if self.driver not in all_drivers or type(self.device) is not PreparedDevice or type(self.selection) is not Selection:
             raise ValueError("an inspected driver, actual PreparedDevice and Selection are required")
         if self.selection.topology != device_topology(self.device):
             raise ValueError("selection topology does not match prepared device")
@@ -418,126 +494,142 @@ class BehaviorContext:
         if any(type(source) is not SourceDocument for source in supplied_sources):
             raise ValueError("behavior sources must be immutable documents")
         sources = {source.id: source for source in supplied_sources}
-        if len(sources) != len(supplied_sources) or set(sources) != set(_PINS) or any(sources[p].sha256 != h for p, h in _PINS.items()):
+        required_pins = dict(behavior_source_requirements(driver=self.driver))
+        if len(sources) != len(supplied_sources) or set(sources) != set(required_pins) or any(sources[p].sha256 != h for p, h in required_pins.items()):
             raise ValueError("exact audited behavior sources are required")
         environment = _environment(self.environment)
         env = dict(environment)
-        supplied, arguments = _arguments(self.driver, self.arguments, sources)
         device = self.device.to_mapping()
         settings = device["settings"]
-        if device["grain_boundaries"] or device.get("tunnelling_channels") or settings["interface_charge_closure"] != "off":
-            raise ValueError("complex/charged devices require a separate historical inspection")
-        if any(layer.cigs_graded_optics_json is not None or layer.metastable_document_json is not None
-               or layer.defect_model != "effective_lifetime" for layer in self.device.layers):
-            raise ValueError("extended material models require a separate historical inspection")
-        if any(dict(layer.parameters)["carrier_statistics"] != "maxwell_boltzmann" for layer in self.device.layers):
-            raise ValueError("carrier statistics are outside the audited driver subset")
-        ceilings, flags = _material_switches(settings, env, sources)
-        mol = _tree(sources, "solver/mol.py")
-        steady = _tree(sources, "experiments/steady_state.py")
-        softness = (_literal(steady, "_TE_SOFTNESS") if self.driver == "scaps_steady_state"
-                    else _literal(mol, "te_softness", "MaterialArrays"))
-        contact_tree = _tree(sources, "physics/contacts.py")
-        contact_fn = next(n for n in contact_tree.body if isinstance(n, ast.FunctionDef) and n.name == "resolved_contact_velocities")
-        flat_velocity = next(ast.literal_eval(n.body) for n in ast.walk(contact_fn) if isinstance(n, ast.IfExp))
-        contacts = []
-        for contact in device["contacts"]:
-            for carrier in ("n", "p"):
-                original = contact["S_" + carrier]
-                effective = flat_velocity if settings["flat_band_contacts"] and original is None else original
-                if not settings["flat_band_contacts"] and not ceilings["use_selective_contacts"]:
-                    effective = None
-                contacts.append({"side": contact["side"], "carrier": carrier, "configured_S_m_s": original,
-                                 "effective_S_m_s": effective, "condition": "density_dirichlet" if effective is None else
-                                 "blocking_robin" if effective == 0 else "finite_exchange_robin"})
-        state_requested = env.get("SOLARLAB_INTERFACE_PLANE_STATE") == "1" or arguments.get("iface_states", False)
-        interfaces = []
-        for interface in device["interfaces"]:
-            if interface["electrical"]:
-                defect = interface.get("defect")
-                if defect is not None:
-                    base, state = defect["calibration_factor"], defect["iface_state_calibration_factor"]
-                    interfaces.append({"id": interface["id"], "base_calibration": base, "state_calibration": state,
-                                       "calibration_if_plane_exists": base * state if self.driver == "scaps_steady_state" and arguments["iface_states"] else base,
-                                       "normalized_capture_velocities_m_s": interface["microscopic_capture_velocities_m_s"]})
-        ions, incoherence = [], []
-        raw_layers = json.loads(self.device.input_json)["layers"]
-        legacy_incoherent = _literal(_tree(sources, "models/parameters.py"), "incoherent", "MaterialParams")
-        for raw, layer in zip(raw_layers, self.device.layers):
-            params = dict(layer.parameters)
-            incoherence.append({"layer": layer.id, "normalized_configured": params["incoherent"],
-                                "historical_loader_value": legacy_incoherent if raw.get("parameterization") == "scaps" else params["incoherent"]})
-            if layer.role == "substrate":
-                continue
-            for species, suffix in (("positive", ""), ("negative", "_neg")):
-                enabled = species == "positive" or ceilings["use_dual_ions"]
-                diffusion, population = params["D_ion" + suffix], params["P0" + suffix]
-                ions.append({"layer": layer.id, "species": species, "D_reference_m2_s": diffusion,
-                             "configured_initial_population_m3": population, "enabled_by_mode": enabled,
-                             "seed_population_and_fixed_background_m3": population if enabled else 0.0,
-                             "diffusion_status": "disabled_by_mode" if not enabled else "frozen_zero_diffusion" if diffusion == 0 else "temperature_scaled_not_evaluated",
-                             "inventory_status": "zero_population_and_background" if not enabled or population == 0 else "population_and_equal_opposite_background_retained"})
-        optical_data = bool(device["resource_bindings"])
-        tmm_eligible = ceilings["use_tmm_optics"] and optical_data
-        waveform = arguments.get("waveform")
-        generation_override = waveform["uniform_generation_rate_m3_s"] if waveform is not None else None
-        preconditioning = _signature(_tree(sources, "solver/illuminated_ss.py"), "solve_illuminated_ss")
-        preparation = {"method": "steady_carrier_newton_with_bounded_transient_fallback" if self.driver == "scaps_steady_state" else
-                       "finite_time_waveform_from_analytic_seed" if self.driver == "ion_hysteresis" else
-                       "finite_illuminated_preconditioning" if arguments["illuminated"] else "analytic_seed_only",
-                       "solver_executed": False, "converged_state_observed": False,
-                       "seed": "quasi_neutral_n_p_clipped_then_ohmic_overrides_and_StateVec_pack; no Poisson/Newton state solve",
-                       "actual_driver_arguments": arguments}
-        if self.driver == "scaps_transient" and arguments["illuminated"]:
-            preparation["preconditioner"] = {**preconditioning, "V_app": 0.0, "rtol": arguments["rtol"], "atol": arguments["atol"]}
-            preparation["material_ownership"] = "outer, independent inner preconditioner, independent seed material; outer not forwarded"
-        inspection = {
-            "mode_ceiling": ceilings, "switches": flags,
-            "switch_scope": "resolved requests; face/DOS/parameter activation remains conditional, including interface_tunneling's nonempty capped-face gate",
-            "interface_state_requested": state_requested,
-            "interface_state_count": {"status": "unobserved", "reason": "requires actual interface partitions; a gate is not a state count"},
-            "interface_state_shared_occupancy_if_enabled": self.driver == "scaps_steady_state" and arguments.get("iface_states", False),
-            "interfaces": interfaces, "contacts": contacts, "ions": ions,
-            "ion_flux_label": "diffusion_only" if flags["ion_steric_diffusion_only"] else "whole_flux",
-            "te": {"softness": softness, "cap": "hard_direction_preserving_magnitude_min" if softness == 0 else "legacy_logistic_magnitude_blend",
-                   "requested_physical_normalization": flags["te_physical_norm"],
-                   "normalization": "unobserved_face_activation_and_DOS; disabled / legacy_density_weighted / physical_dos_normalized / legacy_fallback_missing_dos remain distinct"},
-            "optics": {"generation": "uniform_absorber_override" if generation_override is not None else "TMM_eligible_unobserved" if tmm_eligible else "Beer_Lambert",
-                       "uniform_generation_m3_s": generation_override, "incoherence": incoherence,
-                       "resources": device["resource_bindings"],
-                       "recycling": "disabled_without_TMM_data" if not tmm_eligible else
-                       "uniform_absorber_nonlocal_RR_eligible_unobserved" if ceilings["use_radiative_reabsorption"] else "escape_scaled_B_eligible_unobserved"},
-            "electrostatics": {"configured_V_bi": settings["V_bi"], "configured_potential_mode": settings["built_in_potential_mode"],
-                               "signed_V_bi_eff": {"status": "unobserved"}, "signed_V_bi_bc": {"status": "unobserved"},
-                               "rule": "compatibility None retains distinct band-derived operating value and signed manual-magnitude BC; explicit modes share the selected value; BC drop is V_bi_bc - junction_polarity*V_app"},
-            "import_time_policy": _import_policy(sources, env),
-            "runtime_interface_requests": {"qss": env.get("SOLARLAB_IFACE_QSS") == "1",
-                                           "allow_generation": env.get("SOLARLAB_IFACE_ALLOW_GEN") == "1",
-                                           "scope": "conditional on actual interface/phi; no RHS is evaluated"},
-            "preparation": preparation,
-        }
-        captured = None
-        if self.capture is not None:
-            if type(self.capture) is not CapturedPreparation:
-                raise ValueError("reviewed captured preparation required")
-            catalog = read_legacy_default_catalog(tuple(sources[path] for path in _CATALOG_SOURCES))
-            if self.device.defaults.content_sha256 != catalog.content_sha256:
-                raise ValueError("captured default catalog does not match prepared inputs")
-            captured = self.capture.inspect(self.driver, self.device, arguments)
-            payload = captured["payload"]
-            if "objects" in payload:
-                material = payload["objects"]["inner_material"]["value"]["fields"]
-            else:
-                record = payload["record"]
-                material = record["boundary_calls"][0]["kwargs"].get("mat", record["preparation"][0]["material"])["fields"]
-            gate_fields = {"te_physical_norm": "te_physical_norm", "ion_steric_diffusion_only": "ion_steric_diffusion_only",
-                           "interface_plane_projection": "iface_plane_projection", "interface_two_sided": "iface_two_sided",
-                           "interface_shared_occupancy": "iface_shared_occ", "interface_plane_closure": "iface_plane_closure",
-                           "interface_plane_generation": "iface_plane_generation"}
-            if any(flags[name] != material[key] for name, key in gate_fields.items()) or state_requested != (material["N_iface_state"] > 0):
-                raise ValueError("captured effective gates conflict with the supplied inspection snapshot")
+        if self.driver == "r1_material":
+            if self.capture is not None:
+                raise ValueError("SCAPS capture cannot be attached to R1 material behavior")
+            supplied = _mapping(self.arguments)
+            if supplied.keys() - {"backend"}:
+                raise ValueError("unknown R1 behavior argument")
+            if (device["grain_boundaries"] or device.get("tunnelling_channels")
+                    or settings["interface_charge_closure"] != "equilibrium_referenced"):
+                raise ValueError("R1 behavior context requires an equilibrium-referenced 1D device without grain boundaries or tunnelling channels")
+            ordered_sources = tuple(sources[path] for path in sorted(sources))
+            inspection = inspect_r1_material_behavior(
+                self.device, sources=ordered_sources, environment=environment, backend=supplied.get("backend"),
+            )
+            driver_source = {"path": "experiments/one_dimensional_mechanism_r1.py", "function": "build_r1_material"}
+            captured = None
+        else:
+            supplied, arguments = _arguments(self.driver, self.arguments, sources)
+            if device["grain_boundaries"] or device.get("tunnelling_channels") or settings["interface_charge_closure"] != "off":
+                raise ValueError("complex/charged devices require a separate historical inspection")
+            if any(layer.cigs_graded_optics_json is not None or layer.metastable_document_json is not None
+                   or layer.defect_model != "effective_lifetime" for layer in self.device.layers):
+                raise ValueError("extended material models require a separate historical inspection")
+            if any(dict(layer.parameters)["carrier_statistics"] != "maxwell_boltzmann" for layer in self.device.layers):
+                raise ValueError("carrier statistics are outside the audited driver subset")
+            ceilings, flags = _material_switches(settings, env, sources)
+            mol = _tree(sources, "solver/mol.py")
+            steady = _tree(sources, "experiments/steady_state.py")
+            softness = (_literal(steady, "_TE_SOFTNESS") if self.driver == "scaps_steady_state"
+                        else _literal(mol, "te_softness", "MaterialArrays"))
+            contact_tree = _tree(sources, "physics/contacts.py")
+            contact_fn = next(n for n in contact_tree.body if isinstance(n, ast.FunctionDef) and n.name == "resolved_contact_velocities")
+            flat_velocity = next(ast.literal_eval(n.body) for n in ast.walk(contact_fn) if isinstance(n, ast.IfExp))
+            contacts = []
+            for contact in device["contacts"]:
+                for carrier in ("n", "p"):
+                    original = contact["S_" + carrier]
+                    effective = flat_velocity if settings["flat_band_contacts"] and original is None else original
+                    if not settings["flat_band_contacts"] and not ceilings["use_selective_contacts"]:
+                        effective = None
+                    contacts.append({"side": contact["side"], "carrier": carrier, "configured_S_m_s": original,
+                                     "effective_S_m_s": effective, "condition": "density_dirichlet" if effective is None else
+                                     "blocking_robin" if effective == 0 else "finite_exchange_robin"})
+            state_requested = env.get("SOLARLAB_INTERFACE_PLANE_STATE") == "1" or arguments.get("iface_states", False)
+            interfaces = []
+            for interface in device["interfaces"]:
+                if interface["electrical"]:
+                    defect = interface.get("defect")
+                    if defect is not None:
+                        base, state = defect["calibration_factor"], defect["iface_state_calibration_factor"]
+                        interfaces.append({"id": interface["id"], "base_calibration": base, "state_calibration": state,
+                                           "calibration_if_plane_exists": base * state if self.driver == "scaps_steady_state" and arguments["iface_states"] else base,
+                                           "normalized_capture_velocities_m_s": interface["microscopic_capture_velocities_m_s"]})
+            legacy_incoherent = bool(_literal(_tree(sources, "models/parameters.py"), "incoherent", "MaterialParams"))
+            incoherence = inspect_device_optical_coherence(self.device, legacy_incoherent=legacy_incoherent)
+            ions = []
+            for layer in self.device.layers:
+                if layer.role == "substrate":
+                    continue
+                params = dict(layer.parameters)
+                for species, suffix in (("positive", ""), ("negative", "_neg")):
+                    enabled = species == "positive" or ceilings["use_dual_ions"]
+                    diffusion, population = params["D_ion" + suffix], params["P0" + suffix]
+                    ions.append({"layer": layer.id, "species": species, "D_reference_m2_s": diffusion,
+                                 "configured_initial_population_m3": population, "enabled_by_mode": enabled,
+                                 "seed_population_and_fixed_background_m3": population if enabled else 0.0,
+                                 "diffusion_status": "disabled_by_mode" if not enabled else "frozen_zero_diffusion" if diffusion == 0 else "temperature_scaled_not_evaluated",
+                                 "inventory_status": "zero_population_and_background" if not enabled or population == 0 else "population_and_equal_opposite_background_retained"})
+            optical_data = bool(device["resource_bindings"])
+            tmm_eligible = ceilings["use_tmm_optics"] and optical_data
+            waveform = arguments.get("waveform")
+            generation_override = waveform["uniform_generation_rate_m3_s"] if waveform is not None else None
+            preconditioning = _signature(_tree(sources, "solver/illuminated_ss.py"), "solve_illuminated_ss")
+            preparation = {"method": "steady_carrier_newton_with_bounded_transient_fallback" if self.driver == "scaps_steady_state" else
+                           "finite_time_waveform_from_analytic_seed" if self.driver == "ion_hysteresis" else
+                           "finite_illuminated_preconditioning" if arguments["illuminated"] else "analytic_seed_only",
+                           "solver_executed": False, "converged_state_observed": False,
+                           "seed": "quasi_neutral_n_p_clipped_then_ohmic_overrides_and_StateVec_pack; no Poisson/Newton state solve",
+                           "actual_driver_arguments": arguments}
+            if self.driver == "scaps_transient" and arguments["illuminated"]:
+                preparation["preconditioner"] = {**preconditioning, "V_app": 0.0, "rtol": arguments["rtol"], "atol": arguments["atol"]}
+                preparation["material_ownership"] = "outer, independent inner preconditioner, independent seed material; outer not forwarded"
+            inspection = {
+                "mode_ceiling": ceilings, "switches": flags,
+                "switch_scope": "resolved requests; face/DOS/parameter activation remains conditional, including interface_tunneling's nonempty capped-face gate",
+                "interface_state_requested": state_requested,
+                "interface_state_count": {"status": "unobserved", "reason": "requires actual interface partitions; a gate is not a state count"},
+                "interface_state_shared_occupancy_if_enabled": self.driver == "scaps_steady_state" and arguments.get("iface_states", False),
+                "interfaces": interfaces, "contacts": contacts, "ions": ions,
+                "ion_flux_label": "diffusion_only" if flags["ion_steric_diffusion_only"] else "whole_flux",
+                "te": {"softness": softness, "cap": "hard_direction_preserving_magnitude_min" if softness == 0 else "legacy_logistic_magnitude_blend",
+                       "requested_physical_normalization": flags["te_physical_norm"],
+                       "normalization": "unobserved_face_activation_and_DOS; disabled / legacy_density_weighted / physical_dos_normalized / legacy_fallback_missing_dos remain distinct"},
+                "optics": {"generation": "uniform_absorber_override" if generation_override is not None else "TMM_eligible_unobserved" if tmm_eligible else "Beer_Lambert",
+                           "uniform_generation_m3_s": generation_override, "incoherence": incoherence,
+                           "resources": device["resource_bindings"],
+                           "recycling": "disabled_without_TMM_data" if not tmm_eligible else
+                           "uniform_absorber_nonlocal_RR_eligible_unobserved" if ceilings["use_radiative_reabsorption"] else "escape_scaled_B_eligible_unobserved"},
+                "electrostatics": {"configured_V_bi": settings["V_bi"], "configured_potential_mode": settings["built_in_potential_mode"],
+                                   "signed_V_bi_eff": {"status": "unobserved"}, "signed_V_bi_bc": {"status": "unobserved"},
+                                   "rule": "compatibility None retains distinct band-derived operating value and signed manual-magnitude BC; explicit modes share the selected value; BC drop is V_bi_bc - junction_polarity*V_app"},
+                "import_time_policy": _import_policy(sources, env),
+                "runtime_interface_requests": {"qss": env.get("SOLARLAB_IFACE_QSS") == "1",
+                                               "allow_generation": env.get("SOLARLAB_IFACE_ALLOW_GEN") == "1",
+                                               "scope": "conditional on actual interface/phi; no RHS is evaluated"},
+                "preparation": preparation,
+            }
+            captured = None
+            if self.capture is not None:
+                if type(self.capture) is not CapturedPreparation:
+                    raise ValueError("reviewed captured preparation required")
+                catalog = read_legacy_default_catalog(tuple(sources[path] for path in _CATALOG_SOURCES))
+                if self.device.defaults.content_sha256 != catalog.content_sha256:
+                    raise ValueError("captured default catalog does not match prepared inputs")
+                captured = self.capture.inspect(self.driver, self.device, arguments)
+                payload = captured["payload"]
+                if "objects" in payload:
+                    material = payload["objects"]["inner_material"]["value"]["fields"]
+                else:
+                    record = payload["record"]
+                    material = record["boundary_calls"][0]["kwargs"].get("mat", record["preparation"][0]["material"])["fields"]
+                gate_fields = {"te_physical_norm": "te_physical_norm", "ion_steric_diffusion_only": "ion_steric_diffusion_only",
+                               "interface_plane_projection": "iface_plane_projection", "interface_two_sided": "iface_two_sided",
+                               "interface_shared_occupancy": "iface_shared_occ", "interface_plane_closure": "iface_plane_closure",
+                               "interface_plane_generation": "iface_plane_generation"}
+                if any(flags[name] != material[key] for name, key in gate_fields.items()) or state_requested != (material["N_iface_state"] > 0):
+                    raise ValueError("captured effective gates conflict with the supplied inspection snapshot")
+            driver_source = {"path": _DRIVERS[self.driver][0], "function": _DRIVERS[self.driver][1]}
         document = {"schema": _SCHEMA, "version": 1, "status": "prepared_pending_dependencies", "can_execute": False,
-                    "driver": self.driver, "driver_source": {"path": _DRIVERS[self.driver][0], "function": _DRIVERS[self.driver][1]},
+                    "driver": self.driver, "driver_source": driver_source,
                     "prepared_device_sha256": self.device.content_sha256, "normalized_supplied": json.loads(self.device.input_json),
                     "input_sources": device["input_sources"], "default_catalog": device["default_catalog"],
                     "layer_parameter_origins": [{"id": row["id"], "provenance": row["provenance"]} for row in device["layers"]],
@@ -553,6 +645,8 @@ class BehaviorContext:
                                    *device["capability_gaps"]]}
         if self.driver == "ion_hysteresis":
             document["unresolved"].append("original_ion_run_effective_flags_not_recoverable_from_saved_request_alone")
+        elif self.driver == "r1_material":
+            document["unresolved"].append("R1_common_state_history_and_reference_require_R1ExecutionContext")
         object.__setattr__(self, "sources", tuple(sources[path] for path in sorted(sources)))
         object.__setattr__(self, "environment", environment)
         object.__setattr__(self, "_document", _bytes(document))
@@ -564,6 +658,10 @@ class BehaviorContext:
     def export(self) -> dict[str, Any]:
         """A detached JSON inspection; mutations cannot affect another context."""
         return json.loads(self._document)
+
+    def optical_coherence_diagnostics(self) -> list[dict[str, Any]]:
+        """Detached per-layer declared vs effective optical coherence records."""
+        return list(self.export()["source_inspection"]["optics"]["incoherence"])
 
 
 def inspect_historical_behavior(
@@ -605,10 +703,36 @@ def inspect_r1_material_behavior(
         else:
             value = ast.literal_eval(keyword.value)
         overrides[keyword.arg] = value
+    qf_call = next(node for node in ast.walk(builder) if isinstance(node, ast.Call)
+                   and isinstance(node.func, ast.Name) and node.func.id == "_build_qf_material")
+    quadrature_order = next(ast.literal_eval(kw.value) for kw in qf_call.keywords
+                            if kw.arg == "defect_energy_quadrature_order")
+    two_sided_call = next(node for node in ast.walk(builder) if isinstance(node, ast.Call)
+                          and isinstance(node.func, ast.Name) and node.func.id == "_prepare_two_sided_material")
+    physical_boundary_volumes = next(ast.literal_eval(kw.value) for kw in two_sided_call.keywords
+                                     if kw.arg == "physical_boundary_volumes")
     qf = _tree(by_id, "experiments/quasi_fermi_steady_state.py")
     charge_off = next(node for node in qf.body if isinstance(node, ast.FunctionDef) and node.name == "_research_charge_off_stack")
     closure = next(ast.literal_eval(keyword.value) for node in ast.walk(charge_off) if isinstance(node, ast.Call)
                    for keyword in node.keywords if keyword.arg == "interface_charge_closure")
+    prep_two_sided = next(node for node in qf.body if isinstance(node, ast.FunctionDef) and node.name == "_prepare_two_sided_material")
+    two_sided_replace = next(node for node in ast.walk(prep_two_sided) if isinstance(node, ast.Call)
+                             and isinstance(node.func, ast.Name) and node.func.id == "replace")
+    two_sided_literals = {
+        str(kw.arg): list(ast.literal_eval(kw.value)) if isinstance(kw.value, ast.Tuple) else ast.literal_eval(kw.value)
+        for kw in two_sided_replace.keywords if kw.arg in {"interface_faces", "iface_qss_two_sided_trace"}
+    }
+    qf_dc_closure = _literal(_tree(by_id, "solver/mol.py"), "EXPLICIT_DEFECT_CHARGE_QF_DC")
+    requires_qf_dc = any(
+        layer.defect_schema_version == MULTIVALENT_VERSION
+        or any(
+            item.to_mapping().get("charge_transition") in {"acceptor", "donor"}
+            or item.to_mapping().get("distribution", {}).get("kind") != "single_level"
+            or item.to_mapping().get("spatial_profile") is not None
+            for item in layer.defects
+        )
+        for layer in device.layers if layer.role != "substrate"
+    )
     backend_tree = _tree(by_id, "experiments/one_dimensional_mechanism_r1_backend.py")
     representations = {target.id: ast.literal_eval(node.value.args[0]) for node in backend_tree.body
                        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
@@ -621,18 +745,32 @@ def inspect_r1_material_behavior(
     else:
         raise ValueError("unrecognized R1 numerical backend")
     data = device.to_mapping()
+    ceilings, switches = _material_switches(data["settings"], snapshot, by_id)
+    legacy_incoherent = bool(_literal(_tree(by_id, "models/parameters.py"), "incoherent", "MaterialParams"))
+    incoherence = inspect_device_optical_coherence(device, legacy_incoherent=legacy_incoherent)
     return {
         "schema": "solarlab.r1-material-behavior-inspection.v1", "can_execute": False,
         "driver": "r1_material", "driver_source": "experiments/one_dimensional_mechanism_r1.py#build_r1_material",
         "prepared_device_sha256": device.content_sha256, "input_sources": data["input_sources"],
+        "mode_ceiling": ceilings, "switches": switches,
+        "ion_flux_label": "diffusion_only" if switches["ion_steric_diffusion_only"] else "whole_flux",
         "declared_interface_charge_closure": data["settings"]["interface_charge_closure"],
         "material_interface_charge_closure": closure,
         "physical_geometry": _literal(_tree(by_id, "physics/physical_control_volume.py"), "PHYSICAL_GEOMETRY_V1"),
+        "qf_material_preparation": {
+            "defect_energy_quadrature_order": quadrature_order,
+            "explicit_defect_charge_closure": qf_dc_closure if requires_qf_dc else "none",
+        },
+        "two_sided_preparation": {"physical_boundary_volumes": physical_boundary_volumes, **two_sided_literals},
         "material_overrides": overrides,
         "ions": [{"layer": layer.id, "D_reference_m2_s": dict(layer.parameters)["D_ion"],
                   "configured_inventory_m3": dict(layer.parameters)["P0"],
                   "zero_diffusion_retains_inventory": dict(layer.parameters)["D_ion"] == 0}
                  for layer in device.layers if layer.role != "substrate"],
+        "optics": {"incoherence": incoherence, "resources": data["resource_bindings"]},
+        "runtime_interface_requests": {"qss": snapshot.get("SOLARLAB_IFACE_QSS") == "1",
+                                       "allow_generation": snapshot.get("SOLARLAB_IFACE_ALLOW_GEN") == "1",
+                                       "scope": "conditional on actual interface/phi; no RHS is evaluated"},
         "backend_requested": backend, "backend_representation": selected_backend,
         "environment_effective_snapshot": {name: snapshot.get(name) for name in sorted(_ENV_NAMES)},
         "import_time_policy": _import_policy(by_id, snapshot),

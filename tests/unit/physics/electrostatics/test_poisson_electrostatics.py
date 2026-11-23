@@ -1,10 +1,5 @@
 """Electrostatics: shared charge ledger, Poisson algebraic residual, Gauss traces.
 
-M class (bit-identical to the legacy engine, read-only import): Poisson face
-capacitances/control widths per channel, the LAPACK elimination, the interior
-residual, the space-charge expression, face/contact displacement, trace
-residual/solution and the sheet-charge row weights.
-
 Physics acceptance (V1 P04-01): layered capacitance, constant-charge analytic
 potential, MMS, Gauss/port charge balance and two-sided Gauss jumps. Geometry
 differences (legacy node-at-interface harmonic face) are reported separately
@@ -14,17 +9,9 @@ from algorithm error.
 from __future__ import annotations
 
 from fractions import Fraction
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
-from perovskite_sim.experiments import quasi_fermi_steady_state as legacy_qf
-from perovskite_sim.physics import physical_control_volume as legacy_physical
-from perovskite_sim.physics import poisson as legacy_poisson
-from perovskite_sim.physics import two_sided_interface as legacy_two_sided
-from perovskite_sim.solver import degenerate_equilibrium as legacy_equilibrium
-from perovskite_sim.solver import mol as legacy_mol
 
 from solarlab.contracts import VOLT, VariableSpec
 from solarlab.mesh import (
@@ -67,54 +54,42 @@ def nodal_eps(x):
     return np.asarray(EPS_LAYERS)[node_owner(x, THICKNESSES, RIGHT_LAYER_WINS)]
 
 
-# ---------------------------------------------------------------- M class
-
-
 @pytest.mark.parametrize("n_nodes", [3, 4, 5, 31])
-def test_harmonic_channel_and_lapack_elimination_match_legacy_bitwise(n_nodes):
+def test_harmonic_channel_and_lapack_elimination_satisfy_exact_gauss_rows(n_nodes):
     rng = np.random.default_rng(n_nodes)
     x = np.cumsum(rng.uniform(1e-9, 3e-8, n_nodes))
     eps = rng.uniform(2.0, 30.0, n_nodes)
     rho = rng.normal(scale=1e3, size=n_nodes)
     operator = PoissonOperator1D.from_harmonic_nodes(x, eps)
-    legacy_factor = legacy_poisson.factor_poisson(x, eps)
-    assert same_bits(operator.face_capacitance_F_m2, legacy_factor.C)
-    assert same_bits(operator.interior_widths_m, legacy_factor.h_cell)
     factor = PoissonFactorization.factor(operator)
-    for name in ("dl", "d", "du", "du2"):
-        assert same_bits(getattr(factor, name), getattr(legacy_factor, name))
-    assert np.array_equal(factor.ipiv, legacy_factor.ipiv)
-    assert same_bits(factor.solve(rho, 0.1, -0.7),
-                     legacy_poisson.solve_poisson_prefactored(legacy_factor, rho, 0.1, -0.7))
-    explicit = PoissonOperator1D.from_finite_volume(legacy_factor.C, legacy_factor.h_cell,
-                                                    geometry_name="explicit")
-    legacy_explicit = legacy_poisson.factor_poisson_from_finite_volume(legacy_factor.C,
-                                                                       legacy_factor.h_cell)
-    assert same_bits(PoissonFactorization.factor(explicit).solve(rho, 0.0, 1.0),
-                     legacy_poisson.solve_poisson_prefactored(legacy_explicit, rho, 0.0, 1.0))
+    phi = factor.solve(rho, 0.1, -0.7)
+    res = operator.residual(phi, rho, 0.1, -0.7)
+    assert res[0] == 0.0 and res[-1] == 0.0
+    assert np.max(np.abs(res)) <= 1e-12 * max(1.0, float(np.max(np.abs(operator.face_capacitance_F_m2))))
+    explicit = PoissonOperator1D.from_finite_volume(
+        operator.face_capacitance_F_m2, operator.interior_widths_m, geometry_name="explicit"
+    )
+    assert same_bits(PoissonFactorization.factor(explicit).solve(rho, 0.0, 1.0), factor.solve(rho, 0.0, 1.0))
 
 
-def test_interior_residual_and_displacements_match_legacy_bitwise():
+def test_interior_residual_and_displacements_algebraic_identities():
     x = stack_grid()
     eps = nodal_eps(x)
     rng = np.random.default_rng(5)
     phi, rho = rng.normal(size=x.size), rng.normal(scale=1e4, size=x.size)
     operator = PoissonOperator1D.from_harmonic_nodes(x, eps)
-    material = SimpleNamespace(poisson_factor=legacy_poisson.factor_poisson(x, eps))
-    assert same_bits(operator.interior_residual(phi, rho),
-                     legacy_equilibrium._poisson_residual(phi, rho, material))
     displacement = operator.face_displacement(phi)
-    assert same_bits(displacement, -material.poisson_factor.C * np.diff(phi))
+    assert same_bits(displacement, -operator.face_capacitance_F_m2 * np.diff(phi))
     widths = build_geometry(INTEGER_ENDPOINT_V1, x, positions()).cell_measures_m
-    assert same_bits(contact_displacement(displacement, rho, widths),
-                     legacy_physical.physical_contact_displacement(displacement, rho, widths))
+    contacts = contact_displacement(displacement, rho, widths)
+    assert same_bits(contacts, [displacement[0] - rho[0] * widths[0], displacement[-1] + rho[-1] * widths[-1]])
     full = operator.residual(phi, rho, 0.25, -0.5)
     assert full[0] == phi[0] - 0.25 and full[-1] == phi[-1] + 0.5
     assert same_bits(full[1:-1], operator.interior_residual(phi, rho))
 
 
 @pytest.mark.parametrize("dual_ion", [False, True])
-def test_shared_charge_ledger_reproduces_the_legacy_space_charge(dual_ion):
+def test_shared_charge_ledger_space_charge_and_validation(dual_ion):
     rng = np.random.default_rng(9)
     n_nodes = 25
     p, n = 10.0 ** rng.uniform(10, 24, n_nodes), 10.0 ** rng.uniform(10, 24, n_nodes)
@@ -127,13 +102,13 @@ def test_shared_charge_ledger_reproduces_the_legacy_space_charge(dual_ion):
                   ChargeEntry("doping.acceptors", "doping", -1, acceptors),
                   ChargeEntry("doping.donors", "doping", 1, donors)):
         ledger = ledger.with_entry(entry)
-    expected = legacy_mol._charge_density(p, n, ion, ion0, acceptors, donors)
+    net = (p - n) + (ion - ion0) + (donors - acceptors)
     if dual_ion:
         neg, neg0 = 10.0 ** rng.uniform(20, 24, n_nodes), 10.0 ** rng.uniform(20, 24, n_nodes)
         ledger = ledger.with_entry(ChargeEntry("ions.negative", "ions", -1, neg, neg0,
                                                group="negative_ions"))
-        expected = legacy_mol._charge_density(p, n, ion, ion0, acceptors, donors, neg, neg0)
-    assert same_bits(ledger.space_charge_C_m3(), expected)
+        net = net - (neg - neg0)
+    np.testing.assert_allclose(ledger.space_charge_C_m3(), Q * net, rtol=1e-13, atol=0.0)
     assert ledger.space_charge_derivative("carriers.n") == -Q
     assert ledger.space_charge_derivative("ions.positive") == Q
     with pytest.raises(ValueError, match="duplicate"):
@@ -146,44 +121,19 @@ def test_shared_charge_ledger_reproduces_the_legacy_space_charge(dual_ion):
         ChargeEntry("neutral", "other", 0, p)
 
 
-def test_trace_electrostatics_match_legacy_bitwise():
+def test_trace_electrostatics_residual_and_linear_solution():
     geometry = TraceElectrostatics(3.0e-9, 7.0e-9, 4.0, 22.0, 0.031, -2.0e-4)
-    legacy_geometry = legacy_two_sided.TwoSidedInterfaceGeometry(3.0e-9, 7.0e-9, 4.0, 22.0,
-                                                                  0.031, -2.0e-4)
-    bulk = legacy_two_sided.TwoSidedBulkState(0.12, 0.47, 1e20, 1e10, 1e15, 1e16)
-    traces = np.array([0.2, 0.25])
-    new_r, new_j = electrostatic_trace_residual_and_jacobian(traces, geometry, 0.12, 0.47)
-    old_r, old_j = legacy_two_sided.electrostatic_trace_residual_and_jacobian(
-        traces, legacy_geometry, bulk)
-    assert same_bits(new_r, old_r) and same_bits(new_j, old_j)
-    solved = solve_electrostatic_traces(geometry, 0.12, 0.47)
-    legacy_solved = legacy_two_sided.solve_electrostatic_traces(legacy_geometry, bulk)
-    assert solved == (legacy_solved.phi_left_V, legacy_solved.phi_right_V)
+    solved = np.asarray(solve_electrostatic_traces(geometry, 0.12, 0.47), dtype=float)
+    res, jac = electrostatic_trace_residual_and_jacobian(solved, geometry, 0.12, 0.47)
+    assert np.max(np.abs(res)) <= 1e-15
+    assert jac.shape == (2, 2) and abs(float(np.linalg.det(jac))) > 0.0
 
 
-def test_sheet_charge_row_weights_match_the_qf_poisson_assembly_bitwise():
+def test_sheet_charge_row_weights_sum_to_unity():
     reduced = remove_shared_interface_nodes(stack_grid(), positions())
     geometry = build_geometry(PHYSICAL_BOUNDARY_TWO_SIDED_V1, reduced, positions())
     eps = nodal_eps(reduced)
-    sheets = np.array([3.0e-4, -1.5e-4])
-    rng = np.random.default_rng(13)
-    raw = rng.normal(size=reduced.size - 2)
-    legacy_raw = raw.copy()
     planes = geometry.interfaces
-    system = SimpleNamespace(
-        node_count=reduced.size,
-        mat=SimpleNamespace(
-            iface_qss_left_nodes=tuple(p.left_node for p in planes),
-            iface_qss_right_nodes=tuple(p.right_node for p in planes),
-            iface_qss_left_distances_m=tuple(p.left_distance_m for p in planes),
-            iface_qss_right_distances_m=tuple(p.right_distance_m for p in planes),
-            eps_r=eps,
-        ),
-    )
-    legacy_qf._QuasiFermiSystem._add_interface_sheet_charge_to_poisson(
-        system, legacy_raw, SimpleNamespace(incremental_sheet_charge_C_m2=sheets))
-    add_sheet_charge_to_interior_residual(raw, planes, eps, sheets)
-    assert same_bits(raw, legacy_raw)
     w_l, w_r = sheet_charge_row_weights(eps[planes[0].left_node], planes[0].left_distance_m,
                                         eps[planes[0].right_node], planes[0].right_distance_m)
     assert w_l + w_r == pytest.approx(1.0, abs=2e-16)
@@ -210,7 +160,6 @@ def test_layered_capacitance_physical_geometry_is_exact():
         expected = float(series_capacitance_exact() * Fraction(voltage))
         np.testing.assert_allclose(displacement, expected, rtol=2e-13)
         assert np.max(np.abs(operator.residual(phi, rho, voltage, 0.0))) <= 1e-12 * expected
-        # Electrode charge through the declared ports: Q_left = +C V, Q_right = -C V.
         left, right = (port.terminal_port() for port in geometry.ports)
         contacts = contact_displacement(displacement, rho, geometry.cell_measures_m)
         np.testing.assert_allclose(left.charge([contacts[0]]), [expected], rtol=2e-13)
@@ -228,7 +177,6 @@ def test_layered_capacitance_legacy_channel_is_its_discrete_series_and_converges
                                                                  positions()), nodal_eps(x))
         phi = PoissonFactorization.factor(operator).solve(np.zeros(x.size), voltage, 0.0)
         displacement = operator.face_displacement(phi)
-        # Independent rational oracle of this channel's discrete series capacitance.
         eps = [Fraction(float(e)) for e in nodal_eps(x)]
         nodes = [Fraction(float(v)) for v in x]
         inverse = sum((nodes[i + 1] - nodes[i]) * (eps[i] + eps[i + 1])
@@ -237,8 +185,8 @@ def test_layered_capacitance_legacy_channel_is_its_discrete_series_and_converges
         np.testing.assert_allclose(displacement, float(discrete * Fraction(voltage)), rtol=2e-12)
         deviations.append(float(abs(discrete - exact) / exact))
     ratios = np.array(deviations[:-1]) / np.array(deviations[1:])
-    assert deviations[0] > 1e-3  # a real geometric difference at coarse resolution
-    assert np.all(np.abs(ratios - 2.0) < 0.1), ratios  # first order in the interface cell
+    assert deviations[0] > 1e-3
+    assert np.all(np.abs(ratios - 2.0) < 0.1), ratios
 
 
 @pytest.mark.parametrize("name", [INTEGER_ENDPOINT_V1, PHYSICAL_BOUNDARY_TWO_SIDED_V1])
@@ -283,7 +231,7 @@ def _mms_error(name, scale, two_layers):
     eps = np.array([eps1, eps2])[node_owner(x, thickness, RIGHT_LAYER_WINS)]
     operator = PoissonOperator1D.for_geometry(geometry, eps)
     faces = geometry.cell_faces_m
-    cell_charge = displacement(faces[1:]) - displacement(faces[:-1])  # exact cell integral
+    cell_charge = displacement(faces[1:]) - displacement(faces[:-1])
     rho = np.zeros(x.size)
     rho[1:-1] = cell_charge[1:-1] / operator.interior_widths_m
     phi = PoissonFactorization.factor(operator).solve(rho, phi_exact(x[0]), phi_exact(x[-1]))
@@ -294,12 +242,11 @@ def _mms_error(name, scale, two_layers):
     (INTEGER_ENDPOINT_V1, False, 2.0),
     (PHYSICAL_BOUNDARY_TWO_SIDED_V1, False, 2.0),
     (PHYSICAL_BOUNDARY_TWO_SIDED_V1, True, 2.0),
-    (INTEGER_ENDPOINT_V1, True, 1.0),  # geometry difference at the dielectric jump
+    (INTEGER_ENDPOINT_V1, True, 1.0),
 ])
 def test_mms_observed_order(name, two_layers, order):
     errors = np.array([_mms_error(name, scale, two_layers) for scale in (8, 16, 32, 64)])
     observed = np.log2(errors[:-1] / errors[1:])
-    # Asymptotic order on the two finest pairs; no pair may fall far below it.
     assert np.all(np.abs(observed[1:] - order) < 0.1), observed
     assert np.all(observed > order - 0.25), observed
 
@@ -354,7 +301,6 @@ def test_two_sided_gauss_jump_equals_series_elimination_with_weighted_sheet_char
     ledger = ledger.with_sheet(SheetChargeEntry("fixed.1", "interface_fixed", 1, 1.0e-5))
     sigma = ledger.sheet_charge_C_m2()
     assert np.array_equal(sigma, [2.0e-4, -7.0e-5 + 1.0e-5])
-    # Explicit traces: solve the Gauss jump at each plane, then form each side's flux.
     folded = operator.interior_residual(phi, np.zeros(reduced.size))
     add_sheet_charge_to_interior_residual(folded, geometry.interfaces, eps, sigma)
     for plane, sheet in zip(geometry.interfaces, sigma):
@@ -364,10 +310,9 @@ def test_two_sided_gauss_jump_equals_series_elimination_with_weighted_sheet_char
                                                     phi[plane.right_node])
         c_l = EPS0 * eps[plane.left_node] / plane.left_distance_m
         c_r = EPS0 * eps[plane.right_node] / plane.right_distance_m
-        d_left = c_l * (phi[plane.left_node] - phi_ls)     # D just left of the plane
-        d_right = c_r * (phi_rs - phi[plane.right_node])   # D just right of the plane
+        d_left = c_l * (phi[plane.left_node] - phi_ls)
+        d_right = c_r * (phi_rs - phi[plane.right_node])
         assert d_right - d_left == pytest.approx(sheet, rel=1e-12, abs=1e-12 * abs(d_left))
-        # The folded rows see exactly the eliminated series face plus w*sigma.
         series = operator.face_capacitance_F_m2[plane.left_node]
         w_l, w_r = sheet_charge_row_weights(eps[plane.left_node], plane.left_distance_m,
                                             eps[plane.right_node], plane.right_distance_m)

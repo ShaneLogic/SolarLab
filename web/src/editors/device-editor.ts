@@ -287,9 +287,21 @@ export function mountDeviceEditor(root: HTMLElement, options: DeviceEditorOption
     const device = cellInput(draft, selection.cell)
     const items: HTMLElement[] = []
     const ids = device.layers.map(layer => layer.id)
+    const materials = device.materials ?? []
+    for (const [index, material] of materials.entries()) {
+      if (materials.filter(item => item.id === material.id).length > 1) {
+        items.push(element('li', `materials[${index}].id: duplicate ${material.id}`))
+      }
+    }
     for (const collection of ['interfaces', 'contacts'] as const) {
       const records = device[collection] ?? []
       for (const [index, record] of records.entries()) if (records.filter(item => item.id === record.id).length > 1) items.push(element('li', `${collection}[${index}].id: duplicate ${record.id}`))
+    }
+    const contacts = device.contacts ?? []
+    for (const [index, contact] of contacts.entries()) {
+      if (contacts.filter(item => item.side === contact.side).length > 1) {
+        items.push(element('li', `contacts[${index}].side: duplicate ${contact.side} contact`))
+      }
     }
     for (const [index, layer] of device.layers.entries()) {
       if (ids.filter(id => id === layer.id).length > 1) items.push(element('li', `layers[${index}].id: duplicate ${layer.id}`))

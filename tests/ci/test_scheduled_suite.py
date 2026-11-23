@@ -28,7 +28,7 @@ def inventory():
             item("tests/runtime/test_supervisor_control_failure.py"),
             item("tests/refactor/test_browser.py", markers=("frontend",)),
             item("tests/runtime/test_run_client_contract.py", markers=("frontend",)),
-            item("tests/numerical_contracts/test_slow_case.py", markers=("slow",)),
+            item("tests/unit/test_slow_case.py", markers=("slow",)),
         ]},
         "legacy": {"items": [
             item("tests/unit/test_one.py"),
@@ -72,8 +72,7 @@ def test_clock_bound_files_run_once_in_explicit_parent_only_coverage_shards():
     for path in scheduled.PARENT_ONLY_COVERAGE:
         data["root"]["items"].append(item(path))
     rows = {row["id"]: row for row in scheduled.build_shards(data)["coverage"]}
-    for job, file in [("core", "test_g2_route_launcher.py"),
-                      ("backend", "test_ionic_jv_job_service.py")]:
+    for job, file in [("backend", "test_ionic_jv_job_service.py")]:
         isolated = next(row for row in rows.values() if row["paths"] == [next(
             path for path in scheduled.PARENT_ONLY_COVERAGE if path.endswith(file)
         )])
@@ -139,7 +138,8 @@ def test_coverage_watchdog_designation_names_only_dedicated_legacy_files():
         "tests/integration/test_interface_flux_balance.py": 1200,
     }
     for path, seconds in scheduled.LEGACY_COVERAGE_NODE_SECONDS.items():
-        assert (scheduled.SUITES["legacy"] / path).is_file()
+        if "legacy" in scheduled.SUITES:
+            assert (scheduled.SUITES["legacy"] / path).is_file()
         assert not (scheduled.SUITES["root"] / path).exists()
         assert Path(path).parent.as_posix() in scheduled.FILE_COVERAGE_SHARDS
         assert seconds == scheduled.slow_node_seconds("legacy", path)

@@ -72,7 +72,7 @@ function protocol(value: SteadyProtocol, route: SteadyRoute): void {
 
 /** Narrow decoder for this worker's plain C-order float64 NPY payloads.
  * getArtifact verifies the original bytes first. No pickle/eval/general dtype loader. */
-export function readSteadyArray(bytes: Uint8Array, record: ArtifactRecord, allowEmpty = false): FloatArray {
+export function readSteadyArray(bytes: Uint8Array, record: ArtifactRecord, allowEmpty = false, maxRank = 2): FloatArray {
   check(record.format === 'npy' && bytes.length >= 10
     && Array.from(bytes.slice(0, 6)).join(',') === '147,78,85,77,80,89', 'Invalid steady NPY artifact')
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -85,7 +85,7 @@ export function readSteadyArray(bytes: Uint8Array, record: ArtifactRecord, allow
   const match = /^\{'descr': '([<>]f8)', 'fortran_order': False, 'shape': \((\d+(?:,\s*\d+)*,?)\),?\s*\}\s*$/.exec(header)
   check(match, 'Only plain C-order float64 steady arrays are supported')
   const shape = match[2].split(',').filter(x => x.trim()).map(Number)
-  check(shape.length >= 1 && shape.length <= 2 && shape.every(n => Number.isSafeInteger(n) && (allowEmpty ? n >= 0 : n > 0)), 'Invalid steady array shape')
+  check(shape.length >= 1 && shape.length <= maxRank && shape.every(n => Number.isSafeInteger(n) && (allowEmpty ? n >= 0 : n > 0)), 'Invalid steady array shape')
   const count = shape.reduce((a, b) => a * b, 1)
   check(Number.isSafeInteger(count) && prefix + length + count * 8 === bytes.length, 'NPY byte count mismatch')
   check(record.metadata.dtype === match[1] && record.metadata.order === 'C'
@@ -143,10 +143,11 @@ export class SteadyJVClient {
       if (entry.engine !== 'solarlab' || entry.scope !== STEADY_SCOPE || entry.driver !== 'steady_jv') continue
       const schema = object(entry.input_schema), properties = object(schema.properties)
       const keys = ['device_id', 'voltage_V', 'intervals_per_layer', 'generation_scale', 'incident_power_W_m2']
+      const optionalKeys = ['expected_prepared_sha256', 'expected_source_sha256']
       const required = schema.required
       if (schema.additionalProperties !== false || !Array.isArray(required)
         || required.length !== keys.length || keys.some(key => !required.includes(key))
-        || Object.keys(properties).some(key => !keys.includes(key))) continue
+        || Object.keys(properties).some(key => !keys.includes(key) && !optionalKeys.includes(key))) continue
       const voltage = object(properties.voltage_V), grid = object(properties.intervals_per_layer)
       const installed = object(entry.preparation_context)
       check(Array.isArray(installed.devices), 'Missing installed device list')

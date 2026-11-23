@@ -97,14 +97,160 @@ class SteadyJVResult:
     solver_controls: dict[str, Any]
 
 
+def _prepare_legacy_benchmark_initial_state(
+    compiled: CompiledDevice1D,
+    *,
+    first_voltage_V: float,
+    generation_scale: float,
+    controls: SteadyOptions,
+) -> SteadyState1D | None:
+    """Prepare an accepted illuminated seed for legacy manual-V_bi benchmark decks.
+
+    Manual ``V_bi`` decks do not satisfy ``semiconductor_work_function`` dark
+    thermodynamic identity ``V_bi == W_L - W_R`` at ``(V=0, G=0)``, so dark
+    equilibrium certification fails on contact span even when Poisson and both
+    continuity equations converge to machine precision. Stepping light from
+    ``1e-12`` to ``generation_scale`` through ``solve_steady_state`` with an
+    explicit ``State1D`` certifies every stage under full Poisson/continuity/
+    all-face-current gates without relaxing any tolerance.
+    """
+    if "legacy_benchmark_deck" not in compiled.capabilities or generation_scale <= 0.0:
+        return None
+    from scipy.sparse import diags
+
+    from solarlab.contracts.units import ELEMENTARY_CHARGE_C
+    from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem
+    from solarlab.equations.dc_1d import DC1DProblem
+    from solarlab.equations.implementation import use_assembled
+    from solarlab.solvers.nonlinear.newton import NewtonSettings, solve_newton
+    from solarlab.solvers.nonlinear.problem import CallableProblem, ResidualScaling, StepControl
+    from solarlab.solvers.nonlinear.production import (
+        poisson_row_weights,
+        production_convergence_norm,
+        production_coordinates,
+        production_residual_scaling,
+    )
+    from solarlab.solvers.nonlinear.steady_1d import (
+        SteadyStateError,
+        density_basin_seed,
+        physical_gates,
+        solve_steady_state,
+    )
+
+    count = compiled.node_count
+    q_charge = ELEMENTARY_CHARGE_C
+
+    def pb_densities(phi: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        _, n, p = compiled.fields(np.r_[phi, np.zeros(2 * count)])
+        return n, p
+
+    def pb_residual(phi: NDArray[np.float64]) -> NDArray[np.float64]:
+        n, p = pb_densities(phi)
+        if not np.all(np.isfinite(n)) or not np.all(np.isfinite(p)):
+            return np.full(count, np.nan)
+        rho = compiled.charge_ledger(n, p).space_charge_C_m3()
+        return compiled.poisson.residual(phi, rho, *compiled.contact_potentials(0.0))
+
+    def pb_jacobian(phi: NDArray[np.float64]) -> object:
+        n, p = pb_densities(phi)
+        slope = np.zeros(count)
+        slope[1:-1] = (
+            -q_charge
+            * compiled.poisson.interior_widths_m
+            * (n[1:-1] + p[1:-1])
+            / compiled.thermal_voltage_V
+        )
+        return compiled.poisson.jacobian() + diags(slope)
+
+    pb_settings = NewtonSettings(
+        ResidualScaling(poisson_row_weights(compiled) / controls.poisson_tolerance),
+        1.0,
+        StepControl(np.full(count, controls.potential_step_V)),
+        controls.budget(),
+        (),
+        False,
+    )
+    pb = solve_newton(CallableProblem(pb_residual, pb_jacobian), compiled.reference_potential_V, pb_settings)
+    if not pb.accepted:
+        return None
+    u = np.r_[pb.state, np.zeros(2 * count)]
+    dark_problem = AssembledDC1DProblem(compiled, 0.0, 0.0) if use_assembled() else DC1DProblem(compiled, 0.0, 0.0)
+    dark_settings = NewtonSettings(
+        production_residual_scaling(
+            compiled,
+            poisson_tolerance=controls.poisson_tolerance,
+            continuity_tolerance_A_m2=controls.continuity_tolerance_A_m2,
+            contact_log_tolerance=controls.contact_log_tolerance,
+        ),
+        1.0,
+        production_coordinates(
+            compiled,
+            potential_step_V=controls.potential_step_V,
+            quasi_fermi_step=controls.quasi_fermi_step,
+        ),
+        controls.budget(),
+        physical_gates(dark_problem, controls, equilibrium=False),
+        False,
+    )
+    dark_newton = solve_newton(
+        dark_problem,
+        u,
+        dark_settings,
+        convergence_norm=production_convergence_norm(compiled, convergence_policy=controls.convergence_policy),
+    )
+    if not dark_newton.accepted:
+        return None
+    u = dark_newton.state
+    last_steady: SteadyState1D | None = None
+    for frac in (1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2, 1.0):
+        g_val = frac * generation_scale
+        lit_prob = AssembledDC1DProblem(compiled, 0.0, g_val) if use_assembled() else DC1DProblem(compiled, 0.0, g_val)
+        try:
+            u_seed = density_basin_seed(lit_prob, u)
+            last_steady = solve_steady_state(
+                compiled,
+                initial_state=compiled.state(u_seed, voltage_V=0.0),
+                voltage_V=0.0,
+                generation_scale=g_val,
+                options=controls,
+            )
+        except (ValueError, SteadyStateError):
+            return None
+        u = last_steady.state.u
+    assert last_steady is not None
+    if first_voltage_V != 0.0:
+        bias_count = max(1, int(np.ceil(abs(first_voltage_V) / controls.max_bias_step_V)))
+        cur_state = last_steady.state
+        for v_step in np.linspace(0.0, first_voltage_V, bias_count + 1)[1:]:
+            last_steady = solve_steady_state(
+                compiled,
+                initial_state=cur_state,
+                voltage_V=float(v_step),
+                generation_scale=generation_scale,
+                options=controls,
+            )
+            cur_state = last_steady.state
+    return last_steady
+
+
 def run_steady_jv(
     compiled: CompiledDevice1D, voltage_V: ArrayLike, *,
     generation_scale: float = 1.0, incident_power_W_m2: float | None = None,
     options: SteadyOptions | None = None,
+    stop_after_voc: bool = False,
+    max_bias_bisect: int = 0,
 ) -> SteadyJVResult:
     """Run the actual new solver; the first failed point raises its solver error."""
-    from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
+    from solarlab.solvers.nonlinear.steady_1d import (
+        SteadyOptions,
+        SteadyStateError,
+        solve_steady_state,
+    )
 
+    if not isinstance(stop_after_voc, bool):
+        raise TypeError("stop_after_voc must be a bool")
+    if type(max_bias_bisect) is not int or max_bias_bisect < 0:
+        raise ValueError("max_bias_bisect must be a nonnegative integer")
     voltages = _vector(voltage_V)
     differences = np.diff(voltages)
     if not (np.all(differences > 0.0) or np.all(differences < 0.0)):
@@ -119,15 +265,81 @@ def run_steady_jv(
     if polarity not in (-1.0, 1.0):
         raise ValueError("compiled device must declare its terminal voltage polarity")
     state = None
-    solutions = []
+    solutions: list[SteadyState1D] = []
+    accepted_voltages: list[float] = []
     controls = SteadyOptions() if options is None else options
+    legacy_seed = _prepare_legacy_benchmark_initial_state(
+        compiled,
+        first_voltage_V=float(voltages[0]),
+        generation_scale=generation_scale,
+        controls=controls,
+    )
+    if legacy_seed is not None:
+        state = legacy_seed.state
+    saw_positive_pv = False
+    stopped_early = False
+
+    def _record_accepted(point: SteadyState1D, v_val: float) -> bool:
+        nonlocal state, saw_positive_pv, stopped_early
+        if not point.converged:
+            raise RuntimeError(f"uncertified steady-state result at {v_val} V")
+        solutions.append(point)
+        accepted_voltages.append(v_val)
+        state = point.state
+        if stop_after_voc:
+            j_out = -polarity * float(point.current_density_A_m2[0])
+            if v_val >= 0.0 and j_out > 0.0:
+                saw_positive_pv = True
+            elif saw_positive_pv and v_val > 0.0 and j_out <= 0.0 and len(solutions) >= 2:
+                stopped_early = True
+                return True
+        return False
+
+    def _advance_with_bisection(v_from: float, v_to: float, depth: int) -> None:
+        if stopped_early:
+            return
+        try:
+            res_pt = solve_steady_state(
+                compiled,
+                initial_state=state,
+                voltage_V=v_to,
+                generation_scale=generation_scale,
+                options=controls,
+            )
+        except SteadyStateError:
+            if depth >= max_bias_bisect or state is None:
+                raise
+            v_mid = 0.5 * (v_from + v_to)
+            if v_mid == v_from or v_mid == v_to:
+                raise
+            _advance_with_bisection(v_from, v_mid, depth + 1)
+            if not stopped_early:
+                _advance_with_bisection(accepted_voltages[-1], v_to, depth + 1)
+            return
+        _record_accepted(res_pt, v_to)
+
     for voltage in voltages:
-        result = solve_steady_state(compiled, initial_state=state, voltage_V=float(voltage),
-                                    generation_scale=generation_scale, options=controls)
-        if not result.converged:
-            raise RuntimeError(f"uncertified steady-state result at {voltage} V")
-        solutions.append(result)
-        state = result.state
+        v_target = float(voltage)
+        if max_bias_bisect == 0 or not accepted_voltages:
+            result = solve_steady_state(
+                compiled,
+                initial_state=state,
+                voltage_V=v_target,
+                generation_scale=generation_scale,
+                options=controls,
+            )
+            if _record_accepted(result, v_target):
+                break
+        else:
+            _advance_with_bisection(accepted_voltages[-1], v_target, 0)
+            if stopped_early:
+                break
+
+    voltages_used = (
+        _vector(accepted_voltages)
+        if (stop_after_voc or max_bias_bisect > 0)
+        else voltages
+    )
     currents = np.array([result.current_density_A_m2 for result in solutions], dtype=float)
     if currents.ndim != 2 or not np.all(np.isfinite(currents)):
         raise ValueError("steady solutions must contain finite all-face currents")
@@ -136,10 +348,15 @@ def run_steady_jv(
     output = -polarity * currents[:, 0]
     currents.setflags(write=False)
     output.setflags(write=False)
-    return SteadyJVResult(voltages, currents, output, tuple(solutions),
-                          steady_jv_metrics(voltages, output, incident_power_W_m2=incident_power_W_m2),
+    controls_dict = asdict(controls)
+    if stop_after_voc:
+        controls_dict["stop_after_voc"] = True
+    if max_bias_bisect > 0:
+        controls_dict["max_bias_bisect"] = max_bias_bisect
+    return SteadyJVResult(voltages_used, currents, output, tuple(solutions),
+                          steady_jv_metrics(voltages_used, output, incident_power_W_m2=incident_power_W_m2),
                           generation_scale, incident_power_W_m2, polarity,
-                          compiled.identity, _vector(compiled.nodes_m), asdict(controls))
+                          compiled.identity, _vector(compiled.nodes_m), controls_dict)
 
 
 def steady_jv_payload(result: SteadyJVResult) -> tuple[dict[str, Any], tuple[tuple[str, ArtifactPayload], ...]]:

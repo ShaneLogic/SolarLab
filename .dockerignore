@@ -12,8 +12,9 @@
 **/.coverage
 **/htmlcov
 
-perovskite-sim/.venv
+outputs
+var
+skills-lock.json
 web/node_modules
 web/dist
-perovskite-sim-phase2b
 

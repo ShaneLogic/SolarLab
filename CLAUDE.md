@@ -4,21 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-The active package lives in `src/solarlab/`, with the service in
-`src/solarlab_server/`, root `tests/`, `examples/` and `web/`. Read
+The active shipped product and research companion packages live in `src/solarlab/`,
+`src/solarlab_server/`, `src/solarlab_research/`, and `web/` (cut over to V2 execution
+at `P09-02` and packaged in `solarlab==0.1.0` wheels/sdists), alongside root `tests/`,
+`examples/`, `docs/`, `reproducibility/`, and `scripts/`. Read
 [Development Guide](docs/DevelopmentGuide.md) for the current extension and
-validation workflow. `perovskite-sim/` is the retained legacy engine and has
-its own `CLAUDE.md`; read that guide before working on legacy behavior.
+validation workflow, and [Retired Models & Legacy Witness Ledger](docs/RetiredModelsV1.md)
+for retired legacy entrypoints and historical provenance. The legacy `perovskite-sim/`
+tree has been completely retired and removed from `devel` (its final pre-slim snapshot
+remains permanently addressable in Git at tag `archive/pre-slim-be973ac5`, commit
+`be973ac5e1aa46c5c21eaa79c42b402d25a76eb3`). Local `.claude/` skills and
+`skills-lock.json` remain gitignored on disk.
 
-Note: parallel `perovskite-sim-phase2b/` worktree was removed once tandem v1 (PR #11) and Phase 2b Layer Builder UI (PR #2) merged into `main`. Short-lived feature isolation now uses `.worktrees/<name>/` (gitignored).
+Short-lived feature isolation uses `.worktrees/<name>/` (gitignored).
 
 ## New files: where they go and what they are called
 
 Decide placement first, then the name.
 
 **Folder names.** Inside the repo every folder is lowercase `snake_case` or a single
-lowercase word, like the code tree (`perovskite_sim/`, `tests/fixtures/configs/`,
-`docs/figures/`, `docs/scaps_collection_templates/`); never CamelCase, never hyphens.
+lowercase word, like the code tree (`src/solarlab/`, `tests/fixtures/configs/`,
+`docs/contracts/`, `docs/figures/`); never CamelCase, never hyphens.
 In the archive the root-level folders keep the user's lowercase scheme (`present/`,
 `develop/`, `plans/`, `figures/`, `results/`, `test/`, `reference/`, `deck-src/`) and
 every folder below them is multi-word CamelCase with no dates (`plans/Specs/`,
@@ -29,15 +35,15 @@ test, and be understood:
 
 | What | Where | Name |
 |---|---|---|
-| Python / TypeScript / MATLAB code, tests, backend, frontend | language folders | language convention (`snake_case.py`, `test_*.py`, kebab-case `.ts`) — never CamelCase |
-| Shipped device presets (the research entry points the frontend catalogue lists) | `perovskite-sim/configs/` + `web/src/preset-catalog.ts` | existing scheme (`snake_case.yaml`) |
-| Test-only / historical device presets | `perovskite-sim/tests/fixtures/configs/` (never served by the API; API tests use the `serve_all_presets` fixture) | existing scheme |
-| Package data, tooling files | `perovskite_sim/data/`, tool-fixed names | as the tool or existing scheme requires |
-| Physics contract / policy / protocol / schema / certificate docs that code, tests or configs cite | `perovskite-sim/docs/` | multi-word CamelCase, versions as `V1`, `V2` (`TwodTransportContract.md`, `ExplicitDefectSchemaV2.md`) |
-| Registries and data the reproducibility chain reads | `perovskite-sim/reproducibility/` | CamelCase (`ConfigBenchmarkMatrix.yaml`); re-pin the sha256 in the matrix after any edit |
+| Python / TypeScript code, tests, server, frontend | `src/`, `tests/`, `scripts/`, `web/` | language convention (`snake_case.py`, `test_*.py`, kebab-case `.ts`) — never CamelCase |
+| Shipped device presets (the research entry points the frontend catalogue lists) | `src/solarlab/materials/data/presets/` + `web/src/preset-catalog.ts` | existing scheme (`snake_case.yaml`) |
+| Test-only / historical device presets | `tests/fixtures/configs/` (never served by the API) | existing scheme |
+| Package optical / template / default catalog data | `src/solarlab/materials/data/` | as the packaged loader requires |
+| Physics contract / policy / protocol / schema / certificate docs | `docs/contracts/` and `docs/` | multi-word CamelCase, versions as `V1`, `V2` (`TwodTransportContract.md`, `ExplicitDefectSchemaV2.md`) |
+| Active reference contracts and benchmark baselines | `reproducibility/` | CamelCase (`ScapsComparisonContractV1.json`, `HysteresisReferenceContractV2.json`, `ScapsParams.xlsx`) |
 | Operational developer and extension guidance | `docs/` | Multi-word CamelCase, such as `DevelopmentGuide.md` |
+| Retired models, falsified closures, and historical witness ledger | `docs/RetiredModelsV1.md` | Multi-word CamelCase with version suffix (`RetiredModelsV1.md`) |
 | Figures the root README embeds | `docs/figures/` | CamelCase, no date; regenerate under a new `V<n>` and update the README link |
-| Tutorial notebooks and run-by-path benchmark scripts | `perovskite-sim/notebooks/` | CamelCase (`JvHysteresis.ipynb`, `IonmongerBenchmark.py`) |
 
 **Archive (iCloud `projects/solarlab/`, never in git)** — everything else:
 
@@ -76,10 +82,9 @@ map the old repo-era names to the new ones):
 | `test/` | `docs/reference` reports (`TwodScan`, `FormalVerify`), `ValidEvidence1/2.md`, `P1Checkpoints/` (reproducibility P1 notes) |
 | `reference/` | SCAPS manual, Pauwels-Vanhoutte paper, SCAPS reference report + xlsx |
 
-Generated outputs are gitignored (`outputs/`, `perovskite-sim/outputs/`); regenerate
-with the scripts under `perovskite-sim/scripts/` and file the result in `results/`.
-The one input file code still reads, `ScapsParams.xlsx`, stays at
-`perovskite-sim/reproducibility/`.
+Generated outputs are gitignored (`outputs/`, `var/`). Active benchmark and
+qualification scripts live under `scripts/benchmarks/`, and the SCAPS reference
+workbook `ScapsParams.xlsx` lives at `reproducibility/ScapsParams.xlsx`.
 
 ## Git
 
@@ -162,24 +167,24 @@ process, whose accumulated imports count toward the pools' process-family RSS.
 
 This local command uses the existing installation; CI still checks its Python
 matrix, package installation modes, binding probe, lint/types and web test/build
-steps. **legacy suite: not part of the green claim** — the separate
-`perovskite-sim` suite is outside this command. Optional scheduled slow/coverage jobs retain
-their own commands and scope.
+steps. Optional scheduled slow/coverage jobs retain their own commands and scope.
 
-### Legacy commands
+### Product CLI & Server commands
 
-Run from **inside `perovskite-sim/`**, not from the SolarLab root:
+From the locked root environment (`.venv/bin/`) or an installed `solarlab==0.1.0` wheel:
 
 ```bash
-cd perovskite-sim
+# Verify packaged resources, configuration schema, and absence of legacy packages
+solarlab check-install --require-no-legacy
 
-# Python — the marker split is the non-obvious part
-pytest                                 # unit + integration, excludes -m slow (~2 min)
-pytest -m slow                         # slow regression (258 tests, ~2 h, BLAS auto-pinned)
+# Run a 1D ion-free steady-state J-V sweep on the packaged classical_pin preset
+solarlab steady-jv --output outputs/steady_jv.json
 
-# Backend — must run from the SolarLab root so --app-dir resolves
-uvicorn backend.main:app --host 127.0.0.1 --port 8000 \
-    --app-dir perovskite-sim --reload
+# Launch the V2 FastAPI/SSE server (serves compiled _web_dist SPA when built)
+solarlab-server --store-dir ./var/solarlab/store --host 127.0.0.1 --port 8000
+
+# Research companion CLI entry points (src/solarlab_research/)
+solarlab-cbo-scan --help
+solarlab-r1-short-window --help
+solarlab-r1-verify-sources --help
 ```
-
-See `perovskite-sim/CLAUDE.md` for the full command reference, architecture deep-dive, and known gotchas (Radau `max_step` cap near flat-band, `_JV_RADAU_MAX_NFEV`, RHS finite-check, TMM `_inv2x2` det guard, tandem series-matching, YAML 1.1 scientific-notation coercion, SSE streaming pattern, BLAS thread pinning for the slow suite).

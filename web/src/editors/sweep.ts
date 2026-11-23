@@ -54,6 +54,56 @@ export function sweepTargets(base: Base): TargetChoice[] {
   return choices
 }
 
+export function collectSweepReferenceDiagnostics(
+  input: SweepInput,
+): { path: Path; message: string }[] {
+  const choices = sweepTargets(input.base)
+  const device =
+    input.base.schema_version === 'solarlab.device-preparation.v1'
+      ? input.base
+      : input.base.device
+  const diagnostics: { path: Path; message: string }[] = []
+
+  for (const [index, axis] of input.axes.entries()) {
+    if (axis.id && input.axes.filter(other => other.id === axis.id).length > 1) {
+      diagnostics.push({
+        path: ['axes', index, 'id'],
+        message: `axes[${index}].id: duplicate ${axis.id}`,
+      })
+    }
+    if (!axis.target || !Object.keys(axis.target).length) continue
+    const matchesTarget = choices.some(choice => exactInputEqual(choice.target, axis.target))
+    if (!matchesTarget) {
+      diagnostics.push({
+        path: ['axes', index, 'target'],
+        message: `axes[${index}].target: dangling target ${JSON.stringify(axis.target)} does not match any supplied parameter instance`,
+      })
+      continue
+    }
+    if (
+      (axis.target.family === 'layer_parameter' ||
+        axis.target.family === 'bulk_defect' ||
+        axis.target.family === 'cbo') &&
+      device.layers.filter(item => item.id === axis.target.owner_id).length > 1
+    ) {
+      diagnostics.push({
+        path: ['axes', index, 'target', 'owner_id'],
+        message: `axes[${index}].target.owner_id: ambiguous duplicate layer ID ${axis.target.owner_id}`,
+      })
+    }
+    if (
+      axis.target.family === 'cbo' &&
+      device.layers.filter(item => item.id === axis.target.reference_id).length > 1
+    ) {
+      diagnostics.push({
+        path: ['axes', index, 'target', 'reference_id'],
+        message: `axes[${index}].target.reference_id: ambiguous duplicate layer ID ${axis.target.reference_id}`,
+      })
+    }
+  }
+  return diagnostics
+}
+
 export interface SweepDraft { input: SweepInput; dirty: boolean; incomplete: Path[] }
 export interface SweepEditor { read(): SweepDraft; setInput(input: SweepInput): void; apply(): boolean; discard(): void; dispose(): void }
 
@@ -62,13 +112,14 @@ export function mountSweepEditor(root: HTMLElement, options: { input: SweepInput
   let axisIndex = 0, coordinateIndex = 0, lastApplied: SweepInput | undefined
   const pending = new Map<string, { path: Path; edit: Extract<FieldEdit, { kind: 'incomplete' }> }>(), controls: { dispose(): void }[] = []
   const card = node('section'); card.className = 'card'; card.dataset.panel = 'sweep-editor'; card.style.minWidth = '0'; card.style.overflowWrap = 'anywhere'
-  const status = node('p'), fields = node('div'), navigation = node('select'), actions = node('div'), baseDetails = node('details'), baseHost = node('div')
+  const status = node('p'), referenceNotices = node('ul'), fields = node('div'), navigation = node('select'), actions = node('div'), baseDetails = node('details'), baseHost = node('div')
   status.setAttribute('role', 'status'); status.dataset.role = 'sweep-draft-status'; actions.className = 'toolbar'
+  referenceNotices.dataset.role = 'sweep-reference-notices'
   navigation.setAttribute('aria-label', 'Sweep axis'); navigation.dataset.role = 'sweep-axis'
   baseDetails.append(node('summary', 'Base device and J–V input'), baseHost)
   const applyButton = button('Apply sweep to preview', 'apply-sweep', () => { apply() }), discardButton = button('Discard sweep changes', 'discard-sweep', discard)
   actions.append(applyButton, discardButton)
-  card.append(node('h3', 'Serial sweep preparation'), node('p', 'Declare one or two axes and inspect each prepared point. No numerical scan, point reuse or execution qualification is performed.'), status, actions, baseDetails, navigation, fields)
+  card.append(node('h3', 'Serial sweep preparation'), node('p', 'Declare one or two axes and inspect each prepared point. No numerical scan, point reuse or execution qualification is performed.'), status, referenceNotices, actions, baseDetails, navigation, fields)
   root.replaceChildren(card)
   let child: { read(): { input: Base; incomplete: Path[] }; dispose(): void }
   function mountBase() {
@@ -86,6 +137,9 @@ export function mountSweepEditor(root: HTMLElement, options: { input: SweepInput
   function updateStatus() {
     if (disposed) return
     const value = read(), applied = !!lastApplied && exactInputEqual(value.input, lastApplied)
+    const sweepDiagnostics = collectSweepReferenceDiagnostics(value.input)
+    referenceNotices.replaceChildren(...sweepDiagnostics.map(item => node('li', item.message)))
+    referenceNotices.hidden = sweepDiagnostics.length === 0
     for (const [index, option] of [...navigation.options].entries()) option.textContent = `${index + 1}: ${draft.axes[index]?.id || 'Unnamed axis'}`
     const coordinateSelect = fields.querySelector<HTMLSelectElement>('[data-role=sweep-coordinate]')
     if (coordinateSelect) for (const [index, option] of [...coordinateSelect.options].entries()) option.textContent = coordinateLabel(index)

@@ -11,7 +11,6 @@ from dataclasses import FrozenInstanceError, replace
 from copy import deepcopy
 from functools import lru_cache
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -20,7 +19,6 @@ import pytest
 
 from solarlab.config.defect_documents import import_metastable_document, import_metastable_preparation
 from solarlab.config.device_import import import_standard_device
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.model_parameters import (
     device_topology, resolve_structured_edit, structured_parameter_source,
     structured_parameter_sources, update_structured_source,
@@ -29,7 +27,7 @@ from solarlab.config.resolve_device import resolve_device
 from solarlab.config.scaps_input import import_scaps_device
 from solarlab.device.defaults import DefaultCatalog
 from solarlab.device.inputs import DeviceInput
-from solarlab.materials.resources import ResourceLibrary, ResourceTable
+from solarlab.materials.packaged import load_packaged_default_catalog, load_packaged_resource_library
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.presets import NamedPreset, select_preset
 from solarlab.physics.registry import (
@@ -37,10 +35,10 @@ from solarlab.physics.registry import (
     OwnedVariable, Scope,
 )
 from solarlab.physics.selection import ModelChoice, select_models, validate_selection
+from test_complex_configuration_preparation import METASTABLE_DOC_PAYLOAD, METASTABLE_PROTOCOL_PAYLOAD
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "perovskite-sim/perovskite_sim"
-FIXTURES = ROOT / "perovskite-sim/tests/fixtures/configs"
+FIXTURES = ROOT / "tests/fixtures/configs"
 COMPLEX = (
     "scaps_defect_m1_double_donor_p.yaml", "scaps_defect_m2_double_acceptor_n.yaml",
     "scaps_defect_m3_amphoteric_i.yaml", "csi_gaussian_bulk_trap_pn_research.yaml",
@@ -58,15 +56,8 @@ def prepared_case():
     if packet is not None:
         defaults = DefaultCatalog.from_mapping(packet["catalog"])
     else:
-        paths = ("models/parameters.py", "models/device.py", "models/defects.py", "physics/statistics.py",
-                 "physics/band_gap_narrowing.py", "scaps_compat/loader.py", "constants.py",
-                 "twod/microstructure.py", "models/tandem_config.py")
-        defaults = read_legacy_default_catalog(
-            tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in paths),
-            model_sources=tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in
-                                ("physics/cigs_optics.py", "models/tunneling_channels.py")))
-    resources = ResourceLibrary(tuple(ResourceTable(path.stem, "nk", SourceDocument(str(path.relative_to(ROOT)), path.read_bytes()))
-                                     for path in sorted((LEGACY / "data/nk").glob("*.csv"))))
+        defaults = load_packaged_default_catalog("matrix_v2")
+    resources = load_packaged_resource_library(source_id_prefix="src/solarlab/materials/data")
 
     @lru_cache(maxsize=None)
     def prepare(name):
@@ -79,14 +70,10 @@ def prepared_case():
             assert result.content_sha256 == entry["resolved_sha256"]
             return result
         if name == "programmatic_metastable":
-            path = ROOT / "perovskite-sim/tests/unit/models/test_multivalent_defect_schema.py"
-            spec = importlib.util.spec_from_file_location("structured_metastable_data", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            doc = module.MetastableDefectDocument(schema_version=module.METASTABLE_DEFECT_SCHEMA_VERSION,
-                  defect_model=module.EXPLICIT_METASTABLE_FROZEN, metastable_defects=(module._metastable_definition(),))
-            sources = (SourceDocument("metastable_document", doc.canonical_json().encode()),
-                       SourceDocument("preparation_protocol", module._preparation().canonical_json().encode()))
+            sources = (
+                SourceDocument("metastable_document", json.dumps(METASTABLE_DOC_PAYLOAD, sort_keys=True).encode()),
+                SourceDocument("preparation_protocol", json.dumps(METASTABLE_PROTOCOL_PAYLOAD, sort_keys=True).encode()),
+            )
             data = prepare(COMPLEX[0]).to_input().editing_data()
             layer = data["layers"][0]
             for key in ("bulk_defects", "defect_schema_version", "defect_model"):
@@ -95,7 +82,7 @@ def prepared_case():
             layer["metastable_document"] = import_metastable_document(sources[0])
             layer["metastable_preparation"] = import_metastable_preparation(sources[1])
             return resolve_device(DeviceInput.model_validate(data), defaults, resources, sources=sources)
-        path = ROOT / "perovskite-sim/configs" / name if name == "scaps_mirror_v2.yaml" else FIXTURES / name
+        path = ROOT / "src/solarlab/materials/data/presets" / name if name == "scaps_mirror_v2.yaml" else FIXTURES / name
         source = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
         loader = import_scaps_device if name == "scaps_mirror_v2.yaml" else import_standard_device
         return resolve_device(loader(source, id="device", defaults=defaults), defaults, resources, sources=(source,))

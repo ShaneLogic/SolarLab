@@ -1,8 +1,9 @@
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import type { DeviceConfig, DegResult } from '../../types'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface DegradationPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -57,18 +58,34 @@ export function mountDegradationPane(container: HTMLElement, opts: DegradationPa
         streamJobEvents<DegResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result as DegResult & { active_physics?: string }
+            const { pure, receipt } = extractExecutionPhysics(result as DegResult & { active_physics?: string })
             const runResult: RunResult = { kind: 'degradation', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
             opts.onRunComplete(active.id, run)
             progressBar.done()
+            const invalidCount =
+              (pure.failed_points?.length ?? 0) ||
+              pure.times.filter(
+                (_, i) =>
+                  pure.valid?.[i] === false ||
+                  pure.PCE[i] == null ||
+                  !Number.isFinite(pure.PCE[i]) ||
+                  pure.V_oc[i] == null ||
+                  !Number.isFinite(pure.V_oc[i]),
+              ).length
+            if (invalidCount > 0) {
+              setStatus('status-deg', `Done · Diagnostics: ${invalidCount} failed/invalid trajectory step(s)`, true)
+              return
+            }
             setStatus('status-deg', 'Done')
           },
           onError: (msg) => {

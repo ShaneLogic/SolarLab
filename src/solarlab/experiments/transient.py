@@ -9,7 +9,7 @@ DC conduction current. The first failed attempt and accepted prefix are kept.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import math
 import time
 from typing import TYPE_CHECKING, Literal, cast, overload
@@ -20,6 +20,7 @@ from solarlab.contracts import frozen_array
 from solarlab.equations.assembly.classical_1d import AssembledDC1DProblem, classical_dc_1d
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, State1D
 from solarlab.equations.implementation import equation_implementation, selected_implementation, use_assembled
+from solarlab.equations.time_method import ELECTRONIC, admit_time_method, integrate_admitted
 from solarlab.experiments.jv.operating_points import _verify_point
 from solarlab.solvers.nonlinear.newton import NewtonResult, NewtonSettings, solve_newton
 from solarlab.solvers.nonlinear.problem import CallableProblem, Matrix, SolveBudget
@@ -151,14 +152,20 @@ class _WallBudgetExceeded(RuntimeError):
 
 @overload
 def solve_transient(compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
-    options: TransientOptions, initial_options: SteadyOptions, method: Literal["backward_euler"] = "backward_euler",
-    bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None) -> TransientResult1D: ...
+    options: TransientOptions, initial_options: SteadyOptions, method: Literal["backward_euler"],
+    bdf_options: None = None, bdf_drive: None = None) -> TransientResult1D: ...
 
 
 @overload
 def solve_transient(compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions, method: Literal["bdf"],
-    bdf_options: BDFOptions, bdf_drive: BDFDrive | None = None) -> BDFResult: ...
+    bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None) -> BDFResult: ...
+
+
+@overload
+def solve_transient(compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
+    options: TransientOptions, initial_options: SteadyOptions, method: None = None,
+    bdf_options: None = None, bdf_drive: None = None) -> TransientResult1D | BDFResult: ...
 
 
 def solve_transient(
@@ -168,11 +175,17 @@ def solve_transient(
     *,
     options: TransientOptions,
     initial_options: SteadyOptions,
-    method: str = "backward_euler",
+    method: str | None = None,
     bdf_options: BDFOptions | None = None,
     bdf_drive: BDFDrive | None = None,
 ) -> TransientResult1D | BDFResult:
     """Run exactly the requested BE steps; stop and retain the first failure.
+
+The time method is resolved first (:mod:`solarlab.equations.time_method`):
+backward Euler unless BDF is requested for, or defaults on, an allowlisted
+scope. BDF then runs the frozen profile with the forwarded work cap, on
+inputs built from the admission's records (``integrate_admitted``). Any
+other BDF request is refused before numerical work.
 
 The wall budget is monotonic and checked around each residual/Jacobian and
 accounting call; individual SciPy operations are not preempted. No wall clock
@@ -183,15 +196,16 @@ lifted to the new electrode potentials while preserving old carrier densities.
 The full physical secant already includes reference-voltage changes, so no
 additional voltage-rate storage term is added.
 """
-    if method == "bdf":
+    selection, call = admit_time_method(method, compiled=compiled, initial=initial, protocol=protocol,
+                                        options=options, initial_options=initial_options, bdf_options=bdf_options,
+                                        bdf_drive=bdf_drive, family=ELECTRONIC)
+    if call is not None:
         from solarlab.experiments.bdf import solve_electronic_bdf
-        if bdf_options is None:
-            raise ValueError("BDF selection requires explicit BDFOptions")
+
+        # A BDF selection integrates inputs built from its admission's records, never the caller's (D1b, D1-R1).
         with equation_implementation(selected_implementation(operator="BDFStep:DC1DProblem")):
-            return solve_electronic_bdf(compiled, initial, protocol, options=options,
-                initial_options=initial_options, bdf_options=bdf_options, drive=bdf_drive)
-    if method != "backward_euler":
-        raise ValueError("unknown time integrator")
+            result = integrate_admitted(call, solve_electronic_bdf)
+        return replace(result, controls={**result.controls, "time_method": selection.record()})
     started = time.monotonic()
     if not isinstance(compiled, CompiledDevice1D) or not isinstance(initial, SteadyState1D):
         raise ValueError("an actual compiled device and accepted same-device DC initial state are required")

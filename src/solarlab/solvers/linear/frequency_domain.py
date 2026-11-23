@@ -19,7 +19,7 @@ __all__ = ["FrequencyOptions", "FrequencySolution", "FrequencySolveError", "solv
 
 @dataclass(frozen=True)
 class FrequencyOptions:
-    max_frequencies: int = 32
+    max_frequencies: int = 128
     relative_tolerance: float = 1e-11
     max_refinements: int = 2
 

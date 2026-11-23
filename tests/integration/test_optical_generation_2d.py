@@ -1,6 +1,5 @@
 """Original photon counts, half cells, source identity and saved-only reading."""
 
-import ast
 from dataclasses import replace
 import hashlib
 from pathlib import Path
@@ -35,20 +34,15 @@ def absorbing_contacts(prepared):
     return edited(prepared, data)
 
 
-def test_half_endpoint_source_matches_legacy_conversion_exactly_once(prepared):
+def test_half_endpoint_source_matches_half_cell_conversion_exactly_once(prepared):
     prepared = absorbing_contacts(prepared)
     geometry = example.research_geometry(prepared)
     bound = bind_optical_generation_2d(prepared, geometry)
     old_geometry = build_geometry(INTEGER_ENDPOINT_V1, geometry.y_geometry.nodes_m)
     old = bind_optical_generation_1d(prepared, old_geometry).profile
-    # Execute only the immutable legacy reweighting function, never its engine.
-    root = Path(__file__).resolve().parents[2]
-    path = root / "perovskite-sim/perovskite_sim/twod/solver_2d.py"
-    function = next(node for node in ast.parse(path.read_text()).body
-                    if isinstance(node, ast.FunctionDef) and node.name == "_to_2d_dual_cell")
-    namespace = {"np": np}
-    exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
-    expected = namespace["_to_2d_dual_cell"](old.source_m3_s)
+    expected = old.source_m3_s.copy()
+    expected[0] *= 2.0
+    expected[-1] *= 2.0
     assert np.all(old.source_m3_s[[0, -1]] > 0.0)
     np.testing.assert_array_equal(bound.optical_y.profile.source_m3_s, expected)
     np.testing.assert_array_equal(bound.optical_y.profile.absorbed_m2_s, old.absorbed_m2_s)

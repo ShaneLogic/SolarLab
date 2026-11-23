@@ -17,6 +17,7 @@ import type {
   JV2DResult,
   VocGrainSweepResult,
 } from '../types'
+import type { ExecutionPhysicsReceipt } from './execution-physics'
 
 /** The root object persisted to localStorage. */
 export interface Workspace {
@@ -96,6 +97,10 @@ export interface Run {
   timestamp: number
   result: RunResult
   activePhysics: string
+  /** Authoritative backend execution-manifest / worker receipt (P06-08). */
+  executionPhysics?: ExecutionPhysicsReceipt
+  /** Explicit backend scientific qualification flag (`false` for compatibility/engineering runs). */
+  scientificQualification?: boolean | null
   durationMs: number
   /** Frozen DeviceConfig snapshot at the moment the run was dispatched. */
   deviceSnapshot: DeviceConfig

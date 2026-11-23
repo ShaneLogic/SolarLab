@@ -23,7 +23,7 @@ from typing import Any
 CONTRACT = "reproducibility/ScapsComparisonContractV1.json"
 CONTRACT_SHA256 = "5beaf9096866cd98896d0300425e107aa9323dfc3e7a1fd8d8ca5d1ceed2e3b5"
 MANIFEST = "reproducibility/RefactorReferenceManifestV1.json"
-TEMPLATE = "perovskite-sim/configs/scaps_mirror_v2.yaml"
+TEMPLATE = "src/solarlab/materials/data/presets/scaps_mirror_v2.yaml"
 CHANNEL = "historical_mirror_inputs_distinct_defect_sweeps_v1"
 
 # axis, container, exact template selector, field, effective input unit.

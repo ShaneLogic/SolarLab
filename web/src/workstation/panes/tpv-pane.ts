@@ -1,8 +1,9 @@
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import type { DeviceConfig, TPVResult } from '../../types'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface TPVPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -97,18 +98,37 @@ export function mountTPVPane(container: HTMLElement, opts: TPVPaneOptions): void
         streamJobEvents<TPVResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result as TPVResult & { active_physics?: string }
+            const { pure, receipt } = extractExecutionPhysics(result as TPVResult & { active_physics?: string })
             const runResult: RunResult = { kind: 'tpv', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
             opts.onRunComplete(active.id, run)
             progressBar.done()
+            const nonIdReason = pure.non_identifiable_reason ?? pure.fit?.non_identifiable_reason ?? null
+            const tauInvalid =
+              pure.tau === null ||
+              !Number.isFinite(pure.tau) ||
+              pure.tau <= 0 ||
+              Boolean(nonIdReason) ||
+              Boolean(pure.fit && pure.fit.status !== 'accepted') ||
+              Boolean(pure.valid?.includes(false))
+            if (tauInvalid || !Number.isFinite(pure.V_oc)) {
+              const reason =
+                nonIdReason ??
+                (pure.fit && pure.fit.status !== 'accepted' ? pure.fit.status : null) ??
+                (pure.valid?.includes(false) ? 'invalid trajectory points' : null) ??
+                (!Number.isFinite(pure.V_oc) ? 'V_oc unavailable' : 'non-identifiable decay')
+              setStatus('status-tpv', `Done · τ non-identifiable (${reason})`, true)
+              return
+            }
             setStatus('status-tpv', 'Done')
           },
           onError: showError,

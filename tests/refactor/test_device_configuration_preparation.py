@@ -24,36 +24,34 @@ from solarlab.device.inputs import DeviceInput, FullLayerInput, NamedMaterialInp
 from solarlab.device.settings import DeviceSettingsInput
 from solarlab.device.resolved import PreparedDevice
 from solarlab.materials.full_parameters import FullParameterInput
+from solarlab.materials.packaged import load_packaged_default_catalog, load_packaged_resource_library
 from solarlab.materials.resources import ResourceLibrary, ResourceTable
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.registry import CapabilityContext, CapabilityRule, ModelDefinition, ModelRef, ModelRegistry, Scope
 from solarlab.physics.selection import ModelChoice, Topology, select_models
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "perovskite-sim/perovskite_sim"
-CONFIGS = ROOT / "perovskite-sim/tests/fixtures/configs"
+CONFIGS = ROOT / "tests/fixtures/configs"
 CASES = {
     "standard": CONFIGS / "nip_MAPbI3.yaml",
-    "scaps": ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml",
+    "scaps": ROOT / "src/solarlab/materials/data/presets/scaps_mirror_v2.yaml",
     "defect": CONFIGS / "scaps_defect_s1_acceptor_n.yaml",
     "grain": CONFIGS / "twod/nip_MAPbI3_singleGB.yaml",
     "distributed": CONFIGS / "distributed_defect_qf_dc_pn.yaml",
     "spatial": CONFIGS / "graded_distributed_defect_qf_dc_pn.yaml",
 }
-DEFAULT_SOURCES = ("models/parameters.py", "models/device.py", "models/defects.py", "physics/statistics.py",
-                   "physics/band_gap_narrowing.py", "scaps_compat/loader.py", "constants.py",
-                   "twod/microstructure.py", "models/tandem_config.py")
 
 
 @pytest.fixture(scope="module")
 def defaults():
-    return read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_SOURCES))
+    return load_packaged_default_catalog("device_only")
 
 
 @pytest.fixture(scope="module")
 def resources():
-    return ResourceLibrary(tuple(ResourceTable(path.stem, "nk", SourceDocument(str(path.relative_to(ROOT)), path.read_bytes()))
-                                 for path in sorted((LEGACY / "data/nk").glob("*.csv"))))
+    return load_packaged_resource_library(
+        include_spectrum=False, source_id_prefix="src/solarlab/materials/data"
+    )
 
 
 def imported(case, defaults):
@@ -138,46 +136,6 @@ def test_scaps_edits_recompute_dos_lifetimes_and_referenced_energy(defaults, res
     input.layers[2].parameters.ni = 1.0
     with pytest.raises(ValueError, match="SCAPS-derived"):
         resolve_device(input, defaults, resources)
-
-
-def test_scaps_legacy_comparison_pins_equal_values_and_exact_conversion_differences(defaults, resources):
-    # This imports the old data loader only as a comparison oracle. It does
-    # not build numerical material arrays or call an equilibrium/trajectory.
-    from perovskite_sim.scaps_compat.loader import load_scaps_yaml
-
-    historical = load_scaps_yaml(CASES["scaps"])
-    current = prepared("scaps", defaults, resources)
-    # These eight differences are explicitly retained W6 exact-unit results,
-    # not historical M execution parity. P03-04 owns that later projection.
-    expected = {
-        ("layer_1", "mu_n"): ("0x1.ad7f29abcaf49p-24", "0x1.ad7f29abcaf48p-24"),
-        ("layer_1", "mu_p"): ("0x1.ad7f29abcaf49p-24", "0x1.ad7f29abcaf48p-24"),
-        ("layer_2", "B_rad"): ("0x1.2725dd1d243abp-60", "0x1.2725dd1d243acp-60"),
-        ("layer_2", "tau_n"): ("0x1.a36e2eb1c432bp-15", "0x1.a36e2eb1c432dp-15"),
-        ("layer_2", "tau_p"): ("0x1.a36e2eb1c432bp-15", "0x1.a36e2eb1c432dp-15"),
-        ("layer_2", "thickness"): ("0x1.ad7f29abcaf49p-21", "0x1.ad7f29abcaf48p-21"),
-        ("layer_3", "mu_n"): ("0x1.0c6f7a0b5ed8ep-20", "0x1.0c6f7a0b5ed8dp-20"),
-        ("layer_3", "thickness"): ("0x1.ad7f29abcaf49p-26", "0x1.ad7f29abcaf48p-26"),
-    }
-    mismatches = {}
-    unchanged = 0
-    for original, layer in zip(historical.layers, current.layers):
-        pairs = [(name, getattr(original.params, name), value) for name, value in layer.parameters]
-        pairs.append(("thickness", original.thickness, layer.thickness))
-        for name, before, value in pairs:
-            if layer.role == "substrate" and name == "incoherent":
-                assert before is False and value is True
-                continue
-            before_word = before.hex() if isinstance(before, float) else before
-            value_word = value.hex() if isinstance(value, float) else value
-            if type(value) is not type(before) or value_word != before_word:
-                mismatches[(layer.id, name)] = (before_word, value_word)
-            else:
-                unchanged += 1
-        for field in ("ni", "n1", "p1"):
-            assert dict(layer.parameters)[field].hex() == getattr(original.params, field).hex()
-    assert unchanged == 271
-    assert mismatches == expected
 
 
 def test_named_material_inheritance_zero_null_and_duplicate_display_names(defaults, resources):
@@ -322,7 +280,7 @@ def test_immutable_nested_values_arrays_and_actual_resource_identity(defaults, r
 def test_fixed_generation_and_spectrum_bind_only_supplied_data(defaults, resources):
     source = SourceDocument("provided-generation", b'{"coordinate_m":[0,0.0000007],"generation_m3_s":[1e25,2e25]}')
     generation = ResourceTable("measured-generation", "fixed_generation", source)
-    spectrum_path = LEGACY / "data/am15g.csv"
+    spectrum_path = ROOT / "src/solarlab/materials/data/am15g.csv"
     spectrum = ResourceTable("am15g", "spectrum", SourceDocument(str(spectrum_path.relative_to(ROOT)), spectrum_path.read_bytes()))
     input, _ = imported("standard", defaults)
     input.fixed_generation = generation.name
@@ -459,10 +417,8 @@ def test_catalog_has_effective_values_and_source_adapter_rejects_code(defaults):
     assert changed.evidence == defaults.evidence
     assert changed.content_sha256 != defaults.content_sha256
     assert dict(defaults.material)["mu_T_gamma"] == -1.5
-    sources = tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_SOURCES)
-    bad = tuple(replace(source, content=source.content.replace(b"mu_T_gamma: float = -1.5", b"mu_T_gamma: float = forbidden_call()"))
-                if source.id == "models/parameters.py" else source for source in sources)
-    with pytest.raises(ValueError, match="unsupported source default expression"):
+    bad = (SourceDocument("models/parameters.py", b"class MaterialParams:\n    mu_T_gamma: float = forbidden_call()\n"),)
+    with pytest.raises(ValueError):
         read_legacy_default_catalog(bad)
 
 

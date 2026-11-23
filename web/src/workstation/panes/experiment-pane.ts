@@ -18,19 +18,12 @@
  */
 import type { DeviceConfig } from '../../types'
 import type { Run, ExperimentKind } from '../types'
-import { mountJVPane } from './jv-pane'
-import { mountImpedancePane } from './impedance-pane'
-import { mountDynamicDefectTransientPane } from './dynamic-defect-transient-pane'
-import { mountDegradationPane } from './degradation-pane'
-import { mountTPVPane } from './tpv-pane'
-import { mountDarkJVPane } from './dark-jv-pane'
-import { mountSunsVocPane } from './suns-voc-pane'
-import { mountVocTPane } from './voc-t-pane'
-import { mountEQEPane } from './eqe-pane'
-import { mountELPane } from './el-pane'
-import { mountMottSchottkyPane } from './mott-schottky-pane'
-import { mountJV2DPane } from './jv-2d-pane'
-import { mountVocGrainSweepPane } from './voc-grain-sweep-pane'
+import {
+  getExperimentDescriptor,
+  getSelectableExperimentGroups,
+  type ExperimentDescriptor,
+  type MountedExperimentForm,
+} from '../experiment-catalog'
 
 export interface ExperimentPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -40,20 +33,6 @@ export interface ExperimentPaneOptions {
 export interface ExperimentPaneHandle {
   updateDevice(resetDefaults?: boolean): void
   selectExperiment(kind: ExperimentKind): void
-}
-
-type DeviceAwarePane = Pick<ExperimentPaneHandle, 'updateDevice'>
-
-interface ExperimentEntry {
-  kind: ExperimentKind
-  /** HTML — may contain <sub> for proper subscript typography. Static source constants only. */
-  labelHTML: string
-  mount: (container: HTMLElement) => DeviceAwarePane | void
-}
-
-interface ExperimentGroup {
-  label: string
-  entries: ExperimentEntry[]
 }
 
 export function mountExperimentPane(container: HTMLElement, opts: ExperimentPaneOptions): ExperimentPaneHandle {
@@ -70,93 +49,13 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
       opts.onRunComplete(deviceId, run.result.kind, run),
   })
 
-  const groups: ExperimentGroup[] = [
-    {
-      label: 'Illuminated J\u2013V',
-      entries: [
-        {
-          kind: 'jv', labelHTML: 'J\u2013V Sweep',
-          mount: (el) => mountJVPane(el, paneOpts()),
-        },
-        {
-          kind: 'suns_voc', labelHTML: 'Suns\u2013V<sub>oc</sub>',
-          mount: (el) => mountSunsVocPane(el, paneOpts()),
-        },
-        {
-          kind: 'voc_t', labelHTML: 'V<sub>oc</sub>(T)',
-          mount: (el) => mountVocTPane(el, paneOpts()),
-        },
-      ],
-    },
-    {
-      label: 'Dark characterisation',
-      entries: [
-        {
-          kind: 'dark_jv', labelHTML: 'Dark J\u2013V',
-          mount: (el) => mountDarkJVPane(el, paneOpts()),
-        },
-        {
-          kind: 'mott_schottky', labelHTML: 'Mott\u2013Schottky (C\u2013V)',
-          mount: (el) => mountMottSchottkyPane(el, paneOpts()),
-        },
-      ],
-    },
-    {
-      label: 'Spectral',
-      entries: [
-        {
-          kind: 'eqe', labelHTML: 'EQE / IPCE',
-          mount: (el) => mountEQEPane(el, paneOpts()),
-        },
-        {
-          kind: 'el', labelHTML: 'EL / \u0394V<sub>nr</sub>',
-          mount: (el) => mountELPane(el, paneOpts()),
-        },
-      ],
-    },
-    {
-      label: 'Transient',
-      entries: [
-        {
-          kind: 'impedance', labelHTML: 'Impedance',
-          mount: (el) => mountImpedancePane(el, paneOpts()),
-        },
-        {
-          kind: 'dynamic_defect_transient',
-          labelHTML: 'Defect–Ion Transient',
-          mount: (el) => mountDynamicDefectTransientPane(el, paneOpts()),
-        },
-        {
-          kind: 'tpv', labelHTML: 'Transient Photovoltage (TPV)',
-          mount: (el) => mountTPVPane(el, paneOpts()),
-        },
-        {
-          kind: 'degradation', labelHTML: 'Degradation',
-          mount: (el) => mountDegradationPane(el, paneOpts()),
-        },
-      ],
-    },
-    {
-      label: '2D / Microstructure',
-      entries: [
-        {
-          kind: 'jv_2d', labelHTML: 'J–V Sweep (2D)',
-          mount: (el) => mountJV2DPane(el, paneOpts()),
-        },
-        {
-          kind: 'voc_grain_sweep', labelHTML: 'V<sub>oc</sub>(L<sub>g</sub>) Grain Sweep',
-          mount: (el) => mountVocGrainSweepPane(el, paneOpts()),
-        },
-      ],
-    },
-  ]
-
-  const entries: ExperimentEntry[] = groups.flatMap(g => g.entries)
+  const groups = getSelectableExperimentGroups()
+  const entries: readonly ExperimentDescriptor[] = groups.flatMap(g => g.entries)
 
   const groupHTML = groups
     .map(g => {
       const optionHTML = g.entries
-        .map(e => `<div class="experiment-dropdown-option" role="option" tabindex="-1" data-kind="${e.kind}">${e.labelHTML}</div>`)
+        .map(e => `<div class="experiment-dropdown-option" role="option" tabindex="-1" data-kind="${e.kind}">${e.selectorLabelHTML}</div>`)
         .join('')
       return `<div class="experiment-dropdown-group">
         <div class="experiment-dropdown-group-label">${escapeText(g.label)}</div>
@@ -188,19 +87,40 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
   const body = container.querySelector<HTMLDivElement>('#exp-body')!
 
   let selectedKind: ExperimentKind = entries[0].kind
-  let activePane: DeviceAwarePane | void
+  let activePane: MountedExperimentForm | void
+
+  function renderUnsupportedCapability(kind: string): void {
+    body.replaceChildren()
+    const card = document.createElement('div')
+    card.className = 'card'
+    card.dataset.test = 'experiment-capability-fallback'
+    const title = document.createElement('h3')
+    title.textContent = `Registered capability: ${kind}`
+    const note = document.createElement('p')
+    note.textContent =
+      'This registered experiment capability has no bespoke legacy form in the workstation dock; inspect or submit it through its dedicated V2 route.'
+    card.append(title, note)
+    body.appendChild(card)
+  }
 
   function selectKind(kind: ExperimentKind): void {
     const entry = entries.find(e => e.kind === kind)
-    if (!entry) return
+    if (!entry || !entry.mountForm) {
+      selectedKind = kind
+      current.textContent = kind
+      options.forEach(o => o.classList.remove('experiment-dropdown-option-selected'))
+      activePane = undefined
+      renderUnsupportedCapability(kind)
+      return
+    }
     if (kind === selectedKind && body.childElementCount > 0) return
     selectedKind = kind
-    current.innerHTML = entry.labelHTML
+    current.innerHTML = entry.selectorLabelHTML
     options.forEach(o =>
       o.classList.toggle('experiment-dropdown-option-selected', o.dataset.kind === kind),
     )
     body.innerHTML = ''
-    activePane = entry.mount(body)
+    activePane = entry.mountForm(body, paneOpts())
   }
 
   function setOpen(open: boolean): void {
@@ -266,18 +186,11 @@ export function mountExperimentPane(container: HTMLElement, opts: ExperimentPane
   return {
     updateDevice: resetDefaults => activePane?.updateDevice(resetDefaults),
     selectExperiment: kind => {
-      const target = kind === 'current_decomp' || kind === 'spatial' ? 'jv' : kind
+      const descriptor = getExperimentDescriptor(kind)
+      const target = descriptor?.delegateToKind ?? kind
       selectKind(target)
       setOpen(false)
-      if (target === 'jv') {
-        const solver = body.querySelector<HTMLSelectElement>('#jvp-solver')!
-        if (kind === 'current_decomp' || kind === 'spatial') {
-          solver.value = 'transient'
-          solver.dispatchEvent(new Event('change', { bubbles: true }))
-        }
-        body.querySelector<HTMLInputElement>('#jvp-decomp')!.checked = kind === 'current_decomp'
-        body.querySelector<HTMLInputElement>('#jvp-spatial')!.checked = kind === 'spatial'
-      }
+      descriptor?.applyFormPreset?.(body)
     },
   }
 }

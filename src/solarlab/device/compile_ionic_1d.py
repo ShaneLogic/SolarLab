@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import hashlib
 import json
 import math
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -19,14 +19,24 @@ from solarlab.config.resolve_device import resolve_device
 from solarlab.device.compile_1d import compile_device_1d
 from solarlab.device.inputs import DeviceInput
 from solarlab.device.resolved import PreparedDevice
-from solarlab.equations.dc_1d import CapabilityError
+from solarlab.equations.dc_1d import CapabilityError, TERegularizationName
 from solarlab.equations.ionic_1d import CompiledIonicDevice1D
-from solarlab.mesh.geometry import half_endpoint_geometry
+from solarlab.mesh.geometry import (
+    PHYSICAL_HALF_ENDPOINT_V2,
+    half_endpoint_geometry,
+    physical_half_endpoint_geometry,
+)
 from solarlab.physics.band_structure.temperature import ion_diffusivity_at_temperature
+from solarlab.physics.interface_transport import (
+    LEGACY_UNNORMALIZED_THERMIONIC_V1,
+    ThermionicCombinationMode,
+    ThermionicModelVersion,
+)
 from solarlab.physics.ions import (
     DIFFUSION_ONLY_STERIC_V1, HISTORICAL_OCCUPANCY_CLIP,
     HISTORICAL_STERIC_FLOOR, WHOLE_FLUX_STERIC_V1,
 )
+from solarlab.physics.transport.electrochemical_flux import LEGACY_SUMMED_POTENTIAL_V1
 
 __all__ = ["CompiledIonicDevice1D", "compile_ionic_device_1d", "ION_INPUTS"]
 ION_INPUTS = ("P0", "P0_neg", "D_ion", "D_ion_neg", "P_lim", "P_lim_neg", "E_a_ion")
@@ -36,6 +46,14 @@ def compile_ionic_device_1d(
     prepared: PreparedDevice, *, intervals_per_layer: int | Sequence[int] = 24,
     ion_domain_layer: str | None = None,
     ion_domain_endpoints: tuple[str, str] | None = None,
+    te_softness: float = 0.02,
+    te_regularization_mode: TERegularizationName = "legacy_logistic",
+    optical_model: Literal["beer_lambert", "beer_lambert_spectral", "tmm"] | None = None,
+    dielectric_rule: str | None = None,
+    geometry_name: str | None = None,
+    band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    thermionic_mode: ThermionicModelVersion | None = None,
+    combination_mode: ThermionicCombinationMode | None = None,
 ) -> CompiledIonicDevice1D:
     """Compile independent or shared finite-site ions in one blocking layer.
 
@@ -117,14 +135,29 @@ def compile_ionic_device_1d(
     component_prepared = resolve_device(
         DeviceInput.model_validate(projection), prepared.defaults, prepared.resources, sources=prepared.sources,
     )
-    component = compile_device_1d(component_prepared, intervals_per_layer=intervals_per_layer)
+    component = compile_device_1d(
+        component_prepared,
+        intervals_per_layer=intervals_per_layer,
+        te_softness=te_softness,
+        te_regularization_mode=te_regularization_mode,
+        optical_model=optical_model,
+        dielectric_rule=dielectric_rule,
+        geometry_name=geometry_name,
+        band_step_mode=band_step_mode,
+        thermionic_mode=thermionic_mode,
+        combination_mode=combination_mode,
+    )
     domain_index = layers.index(domain_layer)
     left = 0 if domain_index == 0 else component.geometry.interfaces[domain_index - 1].shared_node
     right = component.node_count - 1 if domain_index == len(layers) - 1 else component.geometry.interfaces[domain_index].shared_node
     if left is None or right is None:
         raise CapabilityError("first_ionic_1d: domain endpoints require actual shared electrostatic nodes")
     indices: np.ndarray = np.arange(left, right + 1, dtype=np.intp)
-    ion_geometry = half_endpoint_geometry(component.nodes_m[indices])
+    ion_geometry = (
+        physical_half_endpoint_geometry(component.nodes_m[indices])
+        if component.geometry.name == PHYSICAL_HALF_ENDPOINT_V2
+        else half_endpoint_geometry(component.nodes_m[indices])
+    )
     count = ion_geometry.node_count
     scaled_diffusion = ion_diffusivity_at_temperature(diffusion, component.parameters.temperature_K, activation)
     if not math.isfinite(scaled_diffusion) or scaled_diffusion < 0.0:
@@ -194,6 +227,19 @@ def compile_ionic_device_1d(
         manifest["ion_charge_deposition"]["rule"] = "rho_ion=q*(W_P/W_e)*((P_positive-P0)-(P_negative-P0_neg)); separate historical negative charge group"
         manifest["state_layout"].update(size=3 * component.node_count + 2 * count,
                                         ion_species=["positive", "negative"], ion_species_count=2)
+    if optical_model is not None:
+        manifest["electronic_component"]["optical_model"] = optical_model
+    if dielectric_rule is not None:
+        manifest["electronic_component"]["dielectric_rule"] = component.poisson.dielectric_rule
+    if band_step_mode != LEGACY_SUMMED_POTENTIAL_V1:
+        manifest["electronic_component"]["band_step_mode"] = band_step_mode
+    if thermionic_mode is not None and thermionic_mode != LEGACY_UNNORMALIZED_THERMIONIC_V1:
+        manifest["electronic_component"]["thermionic_mode"] = thermionic_mode
+        manifest["electronic_component"]["combination_mode"] = (
+            "harmonic_series" if combination_mode is None else combination_mode
+        )
+    elif combination_mode is not None:
+        manifest["electronic_component"]["combination_mode"] = combination_mode
     encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":"), allow_nan=False)
     identity = hashlib.sha256(encoded.encode()).hexdigest()
     return CompiledIonicDevice1D(

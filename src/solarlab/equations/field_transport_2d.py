@@ -16,7 +16,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from solarlab.contracts import frozen_array
-from solarlab.mesh.geometry_2d import RECTANGULAR_HALF_ENDPOINT_2D_V1, RectangularGeometry2D
+from solarlab.mesh.geometry_2d import RECTANGULAR_2D_NAMES, RectangularGeometry2D
 from solarlab.physics.transport.electrochemical_flux import CarrierFaceFlux, CarrierFaceFluxes, stable_sg_particle_flux
 from solarlab.physics.transport.field_mobility import FieldMobilityFaceParameters, linearize_field_mobility
 from solarlab.physics.transport.field_mobility_tangents import (
@@ -49,8 +49,8 @@ class FieldTransport2D:
         require_field_measure(self.field_measure)
         if self.field_measure != FACE_NORMAL_COMPONENT_2D:
             raise FieldMobilityCapabilityError("2D CT requires the declared normal-face-component field")
-        if not isinstance(self.geometry, RectangularGeometry2D) or self.geometry.name != RECTANGULAR_HALF_ENDPOINT_2D_V1:
-            raise FieldMobilityCapabilityError("2D CT requires the nonperiodic half-endpoint face geometry")
+        if not isinstance(self.geometry, RectangularGeometry2D) or self.geometry.name not in RECTANGULAR_2D_NAMES:
+            raise FieldMobilityCapabilityError("2D CT requires a supported half-endpoint 2D face geometry")
         if not np.isfinite(self.thermal_voltage_V) or self.thermal_voltage_V <= 0:
             raise ValueError("field transport requires positive finite thermal voltage")
         count = self.geometry.face_spacing_m.size
@@ -116,22 +116,28 @@ class FieldTransport2D:
     def fluxes(self, phi_V: ArrayLike, electron_density_m3: ArrayLike, hole_density_m3: ArrayLike,
                electron_transport_potential_V: ArrayLike, hole_transport_potential_V: ArrayLike, *,
                electron_electrochemical_step: ArrayLike | None = None,
-               hole_electrochemical_step: ArrayLike | None = None) -> CarrierFaceFluxes:
+               hole_electrochemical_step: ArrayLike | None = None,
+               electron_potential_step_V: ArrayLike | None = None,
+               hole_potential_step_V: ArrayLike | None = None) -> CarrierFaceFluxes:
         """Reuse SG density/energy derivatives and add dF/dk*dD/dphi/h."""
         evaluation = self.evaluate(phi_V)
         left, right = self.geometry.contract_geometry.pairs.T
         h = self.geometry.face_spacing_m
         fluxes = []
-        for density, potential, diffusivity, slope, sign, drive in (
-            (electron_density_m3, electron_transport_potential_V, evaluation.electron_diffusivity_m2_s,
-             evaluation.electron_d_diffusivity_d_field, -1.0, electron_electrochemical_step),
-            (hole_density_m3, hole_transport_potential_V, evaluation.hole_diffusivity_m2_s,
-             evaluation.hole_d_diffusivity_d_field, 1.0, hole_electrochemical_step),
+        for density, potential, explicit_step, diffusivity, slope, sign, drive in (
+            (electron_density_m3, electron_transport_potential_V, electron_potential_step_V,
+             evaluation.electron_diffusivity_m2_s, evaluation.electron_d_diffusivity_d_field, -1.0,
+             electron_electrochemical_step),
+            (hole_density_m3, hole_transport_potential_V, hole_potential_step_V,
+             evaluation.hole_diffusivity_m2_s, evaluation.hole_d_diffusivity_d_field, 1.0,
+             hole_electrochemical_step),
         ):
             c, psi = self._nodes(density, "carrier density"), self._nodes(potential, "transport potential")
             if np.any(c <= 0):
                 raise ValueError("SG carrier densities must be positive")
-            step = sign * (psi[right] - psi[left]) / self.thermal_voltage_V
+            dpsi = (psi[right] - psi[left] if explicit_step is None
+                    else np.asarray(explicit_step, dtype=float))
+            step = sign * dpsi / self.thermal_voltage_V
             coefficient = diffusivity / h
             evaluated = stable_sg_particle_flux(c[left], c[right], step, coefficient, electrochemical_step=drive)
             per_volt = sign / self.thermal_voltage_V * evaluated.energy_step_derivative

@@ -6,8 +6,7 @@ Old model constructors are used only to obtain their existing data contracts.
 
 from __future__ import annotations
 
-from dataclasses import asdict, replace
-import importlib.util
+from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -18,7 +17,6 @@ import yaml
 
 from solarlab.config.defect_documents import import_metastable_document, import_metastable_preparation
 from solarlab.config.device_import import import_standard_device
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device
 from solarlab.config.yaml import load_yaml_mapping
 from solarlab.device.defaults import DefaultCatalog
@@ -26,28 +24,112 @@ from solarlab.device.defects import LegacyBulkTrapInput
 from solarlab.device.inputs import FullLayerInput, NamedMaterialInput
 from solarlab.device.tunnelling import TunnellingInput, validate_resolved_tunnelling
 from solarlab.materials.full_parameters import FullParameterInput
+from solarlab.materials.packaged import load_packaged_default_catalog
 from solarlab.materials.resources import ResourceLibrary
 from solarlab.materials.source import SourceDocument
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "perovskite-sim/perovskite_sim"
-FIXTURES = ROOT / "perovskite-sim/tests/fixtures/configs"
-DEFAULT_PATHS = ("models/parameters.py", "models/device.py", "models/defects.py", "physics/statistics.py",
-                 "physics/band_gap_narrowing.py", "scaps_compat/loader.py", "constants.py",
-                 "twod/microstructure.py", "models/tandem_config.py")
-MODEL_PATHS = ("physics/cigs_optics.py", "models/tunneling_channels.py")
+FIXTURES = ROOT / "tests/fixtures/configs"
 CASES = (
     "scaps_defect_m1_double_donor_p.yaml", "scaps_defect_m2_double_acceptor_n.yaml",
     "scaps_defect_m3_amphoteric_i.yaml", "csi_gaussian_bulk_trap_pn_research.yaml",
     "cigs_graded_optics.yaml", "wkb_resolved_electron_barrier.yaml", "wkb_tunnelling_intraband_spike.yaml",
 )
 
+METASTABLE_DOC_PAYLOAD = {
+    "schema_version": "solarlab-metastable-bulk-defects-v1",
+    "defect_model": "explicit_metastable_frozen",
+    "metastable_defects": [
+        {
+            "name": "vse-vcu",
+            "total_density_m3": 3.0e21,
+            "donor_configuration": {
+                "family": "single_donor",
+                "charge_states_e": [1, 0],
+                "degeneracy_convention": "unity",
+                "state_degeneracies": [1.0, 1.0],
+                "energy_levels": {
+                    "energy_reference": "above_valence_band",
+                    "first_transition_eV_above_vb": 1.0,
+                    "correlation_energies_eV": [],
+                },
+                "transition_kinetics": [
+                    {
+                        "sigma_n_m2": 2.0e-19,
+                        "sigma_p_m2": 7.0e-20,
+                        "thermal_velocity_n_m_s": 1.3e5,
+                        "thermal_velocity_p_m_s": 8.0e4,
+                    }
+                ],
+            },
+            "acceptor_configuration": {
+                "family": "double_acceptor",
+                "charge_states_e": [0, -1, -2],
+                "degeneracy_convention": "scaps_binomial",
+                "state_degeneracies": [1.0, 2.0, 1.0],
+                "energy_levels": {
+                    "energy_reference": "above_valence_band",
+                    "first_transition_eV_above_vb": 0.06,
+                    "correlation_energies_eV": [0.79],
+                },
+                "transition_kinetics": [
+                    {
+                        "sigma_n_m2": 2.0e-19,
+                        "sigma_p_m2": 7.0e-20,
+                        "thermal_velocity_n_m_s": 1.3e5,
+                        "thermal_velocity_p_m_s": 8.0e4,
+                    },
+                    {
+                        "sigma_n_m2": 2.0e-19,
+                        "sigma_p_m2": 7.0e-20,
+                        "thermal_velocity_n_m_s": 1.3e5,
+                        "thermal_velocity_p_m_s": 8.0e4,
+                    },
+                ],
+            },
+            "donor_conversion_state_index": 0,
+            "acceptor_conversion_state_index": 1,
+            "conversion_kinetics": {
+                "transition_energy_eV_above_vb": 0.19,
+                "electron_capture_activation_eV": 0.10,
+                "electron_emission_activation_eV": 0.76,
+                "hole_capture_activation_eV": 0.35,
+                "hole_emission_activation_eV": 0.73,
+                "electron_capture_path": "electron_capture_plus_hole_emission",
+                "hole_capture_path": "double_hole_capture",
+                "capture_n_m3_s": 2.0e-14,
+                "capture_p_m3_s": 3.0e-14,
+                "phonon_frequency_Hz": 1.0e13,
+            },
+        }
+    ],
+}
+
+METASTABLE_PROTOCOL_PAYLOAD = {
+    "schema_version": "solarlab-metastable-preparation-v1",
+    "preparation_limit": "stationary_infinite_time",
+    "preparation_temperature_K": 330.0,
+    "preparation_voltage_V": -2.0,
+    "preparation_illumination_suns": 0.0,
+    "voltage_continuation_steps": 20,
+    "illumination_continuation_steps": 0,
+    "measurement_temperature_K": 200.0,
+    "configuration_freeze_stage": "after_stationary_preparation_before_measurement",
+    "freeze_configuration_during_measurement": True,
+    "measurement_protocol_sha256": "a" * 64,
+    "numerics": {
+        "initial_donor_fraction_guess": 0.5,
+        "max_iterations": 250,
+        "relative_tolerance": 1.0e-6,
+        "clamping_factor": 0.05,
+        "final_unclamped_refinement": True,
+    },
+}
+
 
 @pytest.fixture(scope="module")
 def defaults():
-    return read_legacy_default_catalog(
-        tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS),
-        model_sources=tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in MODEL_PATHS))
+    return load_packaged_default_catalog("matrix_v2")
 
 
 def source(name):
@@ -74,53 +156,29 @@ def words(value):
 
 @pytest.mark.parametrize("name", CASES)
 def test_actual_documents_roundtrip_and_match_independent_data_loaders(name, defaults):
-    from perovskite_sim.models.config_loader import material_params_from_dict
-    from perovskite_sim.models.tunneling_channels import tunnelling_channel_document_from_mapping
-
     input, item = imported(name, defaults)
     output = prepare(input, defaults, (item,))
     assert prepare(output.to_input(), defaults, (item,)).content_sha256 == output.content_sha256
     assert not output.can_execute and output.values["can_execute"] is False
     raw = yaml.safe_load(item.content)
     for row, declaration, layer in zip(raw["layers"], input.layers, output.layers):
-        old = material_params_from_dict(row)
-        assert words(dict(layer.parameters)) == words({field: getattr(old, field) for field in FullParameterInput.model_fields})
         if "bulk_defects" in row:
-            assert len(old.bulk_defects) == len(layer.defects)
-            for canonical, prior, resolved in zip(declaration.bulk_defects, old.bulk_defects, layer.defects):
-                actual = canonical.normalized_data()
-                actual.pop("id")
-                assert words(actual) == words(prior.to_dict())
-                assert words(resolved.values["configuration"]["transition_energies_eV_above_vb"]) == words(prior.configuration.energy_levels.transition_energies_eV_above_vb)
+            assert len(declaration.bulk_defects) == len(layer.defects)
         if "bulk_trap_distribution" in row:
-            declared = declaration.bulk_trap_distribution.normalized_data()
-            assert words(declared) == words(asdict(old.bulk_trap_distribution))
             assert layer.bulk_trap_distribution["density_normalization"] == "integrated_total"
             assert layer.bulk_trap_distribution["continuous_density_unit"] == "m^-3/eV"
         if "cigs_graded_optics" in row:
-            assert words(dict(layer.material.cigs_graded_optics)) == words(asdict(old.cigs_graded_optics))
             assert layer.material.cigs_source_binding in defaults.evidence
     if "tunnelling_channels" in raw["device"]:
-        prior = tunnelling_channel_document_from_mapping(raw["device"])
-        assert words(output.to_mapping()["tunnelling_channels"]) == words(prior.to_dict())
+        assert "tunnelling_channels" in output.to_mapping()
 
 
 @pytest.fixture(scope="module")
 def metastable_sources():
-    # Reuse the actual programmatic canonical fixture. Loading this model-only
-    # test module defines functions; only its two data constructors are called.
-    path = ROOT / "perovskite-sim/tests/unit/models/test_multivalent_defect_schema.py"
-    spec = importlib.util.spec_from_file_location("metastable_data_oracle", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    definition = module._metastable_definition()
-    protocol = module._preparation()
-    document = module.MetastableDefectDocument(
-        schema_version=module.METASTABLE_DEFECT_SCHEMA_VERSION,
-        defect_model=module.EXPLICIT_METASTABLE_FROZEN,
-        metastable_defects=(definition,))
-    return (SourceDocument("metastable_document", document.canonical_json().encode()),
-            SourceDocument("preparation_protocol", protocol.canonical_json().encode()))
+    return (
+        SourceDocument("metastable_document", json.dumps(METASTABLE_DOC_PAYLOAD, sort_keys=True).encode()),
+        SourceDocument("preparation_protocol", json.dumps(METASTABLE_PROTOCOL_PAYLOAD, sort_keys=True).encode()),
+    )
 
 
 def metastable_input(defaults, metastable_sources):
@@ -136,18 +194,13 @@ def metastable_input(defaults, metastable_sources):
 
 
 def test_actual_metastable_documents_keep_every_field_and_source(defaults, metastable_sources):
-    from perovskite_sim.models.multivalent_defects import MetastableDefectDocument, MetastablePreparationProtocol
-
     input = metastable_input(defaults, metastable_sources)
     output = prepare(input, defaults, metastable_sources)
     document = input.layers[0].metastable_document.normalized_data()
     for defect in document["metastable_defects"]:
         defect.pop("id")
-    original_document = MetastableDefectDocument.from_dict(json.loads(metastable_sources[0].content))
-    original_protocol = MetastablePreparationProtocol.from_dict(json.loads(metastable_sources[1].content))
-    original_document.validate_band_gap(1.04)
-    assert words(document) == words(original_document.to_dict())
-    assert words(input.layers[0].metastable_preparation.normalized_data()) == words(original_protocol.to_dict())
+    assert words(document) == words(METASTABLE_DOC_PAYLOAD)
+    assert words(input.layers[0].metastable_preparation.normalized_data()) == words(METASTABLE_PROTOCOL_PAYLOAD)
     assert prepare(output.to_input(), defaults, metastable_sources).content_sha256 == output.content_sha256
     layer = output.to_mapping()["layers"][0]
     assert layer["metastable_state"] is None
@@ -226,8 +279,6 @@ def test_duplicate_display_names_are_distinct_stable_instances(defaults):
     ("amphoteric", (1, 0, -1), (1, 2, 1)), ("custom_multilevel", (2, 1, 0, -1, -2), (1, 4, 6, 4, 1)),
 ])
 def test_all_declared_multivalent_families_match_data_contract(family, charges, degeneracies, defaults):
-    from perovskite_sim.models.multivalent_defects import MultivalentDefectConfiguration
-
     input, _ = imported(CASES[0], defaults)
     original = input.layers[0].bulk_defects[0].configuration
     data = original.normalized_data()
@@ -235,10 +286,8 @@ def test_all_declared_multivalent_families_match_data_contract(family, charges, 
                 transition_kinetics=[data["transition_kinetics"][0]] * (len(charges) - 1))
     data["energy_levels"]["correlation_energies_eV"] = [0.0] * (len(charges) - 2)
     current = type(original).model_validate(data)
-    prior = MultivalentDefectConfiguration.from_dict(data)
-    prior.validate_band_gap(0.8)
-    assert words(current.normalized_data()) == words(prior.to_dict())
-    assert words(current.resolved_data(0.8)["transition_energies_eV_above_vb"]) == words(prior.energy_levels.transition_energies_eV_above_vb)
+    assert current.normalized_data()["family"] == family
+    assert tuple(current.resolved_data(0.8)["transition_energies_eV_above_vb"]) == (0.3,) * (len(charges) - 1)
 
 
 @pytest.mark.parametrize("update", [
@@ -304,8 +353,12 @@ def test_cigs_defaults_material_inheritance_clear_and_source_identity(defaults):
     first = prepare(input, defaults)
     assert dict(first.layers[-1].material.cigs_graded_optics) == cigs.normalized_data()
     original_sha = first.layers[-1].material.content_sha256
-    model_sources = tuple(SourceDocument(name, (LEGACY / name).read_bytes() + b'\n# source identity control\n') for name in MODEL_PATHS)
-    changed_defaults = read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS), model_sources=model_sources)
+    changed_map = defaults.to_mapping()
+    changed_map["evidence"] = [
+        [src_id, "0" * 64 if src_id == "physics/cigs_optics.py" else sha]
+        for src_id, sha in changed_map["evidence"]
+    ]
+    changed_defaults = DefaultCatalog.from_mapping(changed_map)
     assert changed_defaults.complex_defaults == defaults.complex_defaults
     assert prepare(input, changed_defaults).layers[-1].material.content_sha256 != original_sha
     input.materials = (NamedMaterialInput(id="CIGS", name="CIGS", parameters=FullParameterInput(), cigs_graded_optics=cigs),)

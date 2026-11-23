@@ -21,7 +21,11 @@ from solarlab.contracts import frozen_array
 from solarlab.contracts.arrays import integer_indices
 from solarlab.contracts.units import ELEMENTARY_CHARGE_C
 from solarlab.equations.dc_1d import CompiledDevice1D, DC1DProblem, State1D, Vector
-from solarlab.mesh.geometry import ControlVolumeGeometry1D, HALF_ENDPOINT_V1
+from solarlab.mesh.geometry import (
+    HALF_ENDPOINT_V1,
+    PHYSICAL_HALF_ENDPOINT_V2,
+    ControlVolumeGeometry1D,
+)
 from solarlab.physics.band_structure.temperature import ion_diffusivity_at_temperature
 from solarlab.physics.electrostatics.charge import ChargeEntry, ChargeLedger
 from solarlab.physics.ions import (
@@ -152,7 +156,10 @@ class CompiledIonicDevice1D:
             raise ValueError("ionic binding: shared sites require both complete populations")
         if np.any(self.positive_ion_reference_m3 <= 0.0) or np.any(self.positive_ion_reference_m3 >= self.positive_ion_site_limit_m3):
             raise ValueError("finite-site reference must lie strictly between zero and capacity")
-        if self.ion_geometry.name != HALF_ENDPOINT_V1 or self.ion_geometry.interfaces:
+        if (
+            self.ion_geometry.name not in {HALF_ENDPOINT_V1, PHYSICAL_HALF_ENDPOINT_V2}
+            or self.ion_geometry.interfaces
+        ):
             raise ValueError("first ionic domain requires geometric half cells without interfaces")
         if not np.array_equal(self.ion_geometry.nodes_m, self.nodes_m[indices]):
             raise ValueError("ion and electronic nodes must coincide")

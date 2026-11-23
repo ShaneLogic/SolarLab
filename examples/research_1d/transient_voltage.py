@@ -40,8 +40,9 @@ def main() -> int:
     initial = solve_steady_state(device, voltage_V=0.1, generation_scale=1.0, options=initial_controls)
     results = []
     for steps in ((4, 8, 16) if args.refine else (4,)):
+        # A backward-Euler example: these ramps are allowlisted BDF envelopes, so the opt-out is explicit.
         result = solve_transient(device, initial, voltage_protocol(steps), options=controls(),
-                                 initial_options=initial_controls)
+                                 initial_options=initial_controls, method="backward_euler")
         results.append(result)
         if not result.completed:
             break

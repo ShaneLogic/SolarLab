@@ -1,21 +1,20 @@
 """Source and archived-request declarations only; no model solver execution."""
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import replace
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from solarlab.config.device_import import import_standard_device
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device
 from solarlab.device.defaults import DefaultCatalog
-from solarlab.experiments.jv.inputs import JVExperimentInput, JVWaveformInput
+from solarlab.experiments.jv.inputs import JVExperimentInput
 from solarlab.experiments.jv.preparation import prepare_jv_experiment
+from solarlab.materials.packaged import load_packaged_default_catalog
 from solarlab.materials.source import SourceDocument
-from test_device_configuration_preparation import DEFAULT_SOURCES, LEGACY, ROOT, imported
+from test_device_configuration_preparation import imported
 from test_device_configuration_preparation import resources as resources
 
 REFERENCES = json.loads((Path(__file__).parent / "fixtures/jv_reference_requests.json").read_text())
@@ -24,9 +23,7 @@ JV_SOURCES = ("experiments/jv_sweep.py", "experiments/waveform_jv.py", "experime
 
 @pytest.fixture(scope="module")
 def defaults():
-    return read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_SOURCES),
-        jv_sources=(SourceDocument("backend/main.py", (ROOT / "perovskite-sim/backend/main.py").read_bytes()),
-                    *(SourceDocument(name, (LEGACY / name).read_bytes()) for name in JV_SOURCES)))
+    return load_packaged_default_catalog("full")
 
 
 def request(defaults, **controls):
@@ -76,23 +73,6 @@ def test_distinct_endpoint_dark_and_driver_defaults_from_actual_source(defaults,
     assert set(JV_SOURCES) <= set(dict(defaults.evidence))
 
 
-def test_endpoint_and_job_defaults_are_independently_source_bound(defaults):
-    source = (ROOT / "perovskite-sim/backend/main.py").read_bytes()
-    original = b'    N_grid: int = 80\n    n_points: int = 40\n'
-    assert source.count(original) == 1
-    altered = source.replace(original, b'    N_grid: int = 81\n    n_points: int = 41\n')
-    # Change only the JVRequest maximum, leaving start_job's explicit None.
-    begin = altered.index(b'class JVRequest(')
-    before, after = altered[:begin], altered[begin:]
-    altered = before + after.replace(b'    V_max: Optional[float] = None', b'    V_max: Optional[float] = 1.1', 1)
-    catalog = read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_SOURCES),
-        jv_sources=(SourceDocument("backend/main.py", altered), *(SourceDocument(name, (LEGACY / name).read_bytes()) for name in JV_SOURCES)))
-    assert catalog.experiment_defaults_for("jv_endpoint")["V_max"] == 1.1
-    assert catalog.experiment_defaults_for("jv_endpoint")["N_grid"] == 81
-    assert catalog.experiment_defaults_for("jv_jobs") == defaults.experiment_defaults_for("jv_jobs")
-    assert catalog.content_sha256 != defaults.content_sha256
-
-
 @pytest.mark.parametrize("index", [0, 1, 2])
 def test_archived_waveform_words_numerical_settings_and_device_identity(index, defaults, resources):
     raw, sources = reference(defaults, index)
@@ -118,26 +98,6 @@ def test_archived_waveform_words_numerical_settings_and_device_identity(index, d
     raw["device"]["layers"].clear()
     data["experiment"]["controls"]["v_rate"] = 999
     assert result.to_mapping()["experiment"]["controls"]["v_rate"] == 0.04
-
-
-def test_genuine_declaration_oracle_preserves_waveform_and_staircase_semantics(defaults, resources, monkeypatch):
-    from perovskite_sim.experiments import jv_sweep, waveform_jv
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Numerical operation forbidden in declaration tests")
-    for name in ("build_electrical_grid", "build_material_arrays", "solve_equilibrium", "run_transient", "run_jv_sweep"):
-        monkeypatch.setattr(jv_sweep, name, forbidden)
-    for raw, sources in (reference(defaults), request(defaults, V_max=1.2, illuminated=False), request(defaults, V_max=-0.0)):
-        result = prepare(raw, defaults, resources, sources).to_mapping()
-        values = result["experiment"]["controls"]
-        stack = SimpleNamespace(T=result["device"]["settings"]["T"])
-        if "waveform" in raw["experiment"]:
-            waveform = waveform_jv.JVWaveform.from_dict(raw["experiment"]["waveform"])
-            assert asdict(waveform) == JVWaveformInput.model_validate(raw["experiment"]["waveform"]).normalized_data()
-            expected = waveform_jv.build_waveform_protocol(stack, waveform, n_points=values["n_points"], v_rate=values["v_rate"], V_max=values["V_max"], illuminated=values["illuminated"])
-        else:
-            expected = jv_sweep.build_jv_experiment_protocol(stack, n_points=values["n_points"], v_rate=values["v_rate"], V_max=values["V_max"], illuminated=values["illuminated"], implicit_legacy_protocol=True)
-        assert words(result["experiment"]["protocol"]["declaration"]) == words(expected.to_dict())
-        assert result["experiment"]["protocol"]["declaration_sha256"] == expected.protocol_hash
 
 
 def test_zero_null_omission_equivalent_units_and_tolerance_inheritance(defaults, resources):

@@ -42,6 +42,8 @@ def gauss_balance_with_term_sink(operator: PoissonOperator1D,
     """
     if geometry.node_count != operator.node_count:
         raise ValueError("geometry and operator must share the nodes")
+    if not np.array_equal(geometry.cell_measures_m[1:-1], operator.interior_widths_m):
+        raise ValueError("geometry interior measures must match Poisson operator interior widths")
     n = geometry.node_count
     layout = Layout(
         (Support("cells", "cell", (n,)), Support("faces", "face", (n - 1,))),

@@ -22,7 +22,8 @@ import numpy as np
 from examples.research_1d.steady import load_device
 from examples.research_1d.transient import controls, json_value
 from solarlab.device.compile_1d import compile_device_1d
-from solarlab.experiments.transient import solve_transient
+from solarlab.equations.implementation import LEGACY, equation_implementation
+from solarlab.experiments.bdf import solve_electronic_bdf
 from solarlab.solvers.nonlinear.steady_1d import SteadyOptions, solve_steady_state
 from solarlab.solvers.time.bdf import BDFOptions
 
@@ -111,8 +112,10 @@ def main() -> int:
         json.dump(json_value(receipt), stream, indent=2, allow_nan=False)
         stream.write("\n")
     # Exactly one invocation. A failed result is saved without a retry.
-    result = solve_transient(device, initial, requested, options=physical, initial_options=admission,
-        method="bdf", bdf_options=options, bdf_drive=drive)
+    # An explicit research BDF call on the original equations, as solve_transient ran it before CND2.
+    with equation_implementation(LEGACY):
+        result = solve_electronic_bdf(device, initial, requested, options=physical, initial_options=admission,
+                                      bdf_options=options, drive=drive)
     receipt.update(result=result, new_adaptive_light_calls=1, source_pins_unchanged=source_pins() == pins,
         process_wall_s=time.monotonic() - started)
     with (args.output / "LightAttempt.json").open("x") as stream:

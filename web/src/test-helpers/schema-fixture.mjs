@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { webcrypto } from 'node:crypto';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export { webcrypto };
@@ -8,7 +9,7 @@ export { webcrypto };
 export function configurationSchemaBytes() {
   // Real Python DTO metadata supplies the bytes; JSON.stringify in JavaScript
   // cannot reproduce Python's numeric JSON spelling in general.
-  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
   const code = [
     'from pathlib import Path',
     'import sys',

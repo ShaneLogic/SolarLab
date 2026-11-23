@@ -147,10 +147,13 @@ def prepare_transient_job(prepared: PreparedDevice, protocol: TransientProtocol,
     inputs = _identity_inputs(prepared, implementation)
     body = _body(prepared, protocol, intervals_per_layer, options, initial_options)
     from solarlab.equations.implementation import selection_setting
+    from solarlab.equations.time_method import ELECTRONIC, time_method_setting
 
     # The child installs these before any engine import: a queued or spawned
-    # job runs the equation selection of the parent that prepared it.
-    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting()]))
+    # job runs the equation selection and time method of the parent that
+    # prepared it. A worker integrates with backward Euler; BDF is refused here.
+    settings = tuple(sorted([*((name, "1") for name in _THREADS), selection_setting(),
+                             time_method_setting(ELECTRONIC)]))
     environment = RuntimeEnvironment(platform.python_implementation(), platform.python_version(),
         platform.system(), platform.machine(), tuple((n, importlib.metadata.version(n)) for n in _PACKAGES),
         tuple((name, json.dumps(value)) for name, value in settings))
@@ -177,8 +180,10 @@ def run_transient_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
     worker.check_cancel()
     binding = worker.consume_manifest(request, engine="solarlab")
     from solarlab.equations.implementation import verify_selection
+    from solarlab.equations.time_method import BACKWARD_EULER, ELECTRONIC, verify_time_method
 
     verify_selection(binding.environment)
+    time_method = verify_time_method(binding.environment, ELECTRONIC)
     _verify_sources(binding.execution)
     body = json.loads(request.request.content)
     prepared = binding.inputs.prepared
@@ -230,8 +235,8 @@ def run_transient_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
                 "compiled_identity": compiled.identity, "manifest_sha256": binding.expected_sha256,
                 "runtime": runtime, "threadpools": pools}
             worker.progress({"stage": "transient_time_steps", "nodes": compiled.node_count})
-            captured = run_transient_for_publication(compiled, initial, protocol,
-                                                   options=options, initial_options=initial_options)
+            captured = run_transient_for_publication(compiled, initial, protocol, options=options,
+                                                   initial_options=initial_options, method=BACKWARD_EULER)
         worker.check_cancel()
         summary, payloads = _payload(captured.result, captured.nodes_m)
         capture = json.loads(captured.capture_json)
@@ -241,7 +246,7 @@ def run_transient_worker(request: WorkerRequest, worker: WorkerContext) -> Worke
             "prepared_sha256": prepared.content_sha256, "H_input": request.H_input, "H_physics": request.H_physics,
             "H_execution": request.execution_identity.sha256, "manifest_sha256": binding.expected_sha256,
             "transient_result": summary, "reason": summary["reason"], "cold_start": json.loads(_document("cold", cold).content),
-            "transient_capture": capture,
+            "transient_capture": capture, "time_method": time_method.record(),
             "payloads": {name: {"sha256": p.sha256, "format": p.format, "metadata": json.loads(p.metadata_json)}
                          for name, p in payloads.items()},
             "scientific_qualification": False}, artifacts=tuple(payloads.items()),
@@ -253,7 +258,7 @@ def read_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None =
     """Verify one committed complete/partial history without importing a solver."""
     import numpy as np
     from solarlab.experiments.transient_results import (
-        _UNITS, _decode, _digest, _inputs, _result_digest, _validate,
+        _UNITS, _decode, _digest, _inputs, _result_digest, _validate, recorded_backward_euler,
     )
     from solarlab.io.artifacts import ArtifactPayload, _json_document, _parse_document
 
@@ -320,7 +325,10 @@ def read_transient_job(store: RunStore, run_id: str, *, attempt_id: str | None =
     description = capture["description"]
     inputs = _inputs(summary["compiled_identity"], arrays, diagnostics["initial"], diagnostics["initial_controls"])
     expected_identity = {"H_input": _digest(inputs), "H_physics": summary["compiled_identity"], "H_execution": _digest(description)}
+    if not recorded_backward_euler(result.get("time_method"), bound["environment"]["settings"]):
+        raise ValueError("transient worker time-method record differs from its execution manifest")
     if (capture["status"] != "captured_at_computation" or description["scope"] != "solve_transient_call"
+            or not recorded_backward_euler(description.get("time_method"))
             or any(description[n] is not None for n in ("compiled_device_history", "initial_dc_history"))
             or description["inputs"] != inputs or capture["identity"] != expected_identity
             or description["numerics"] != controls["transient"]

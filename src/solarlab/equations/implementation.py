@@ -176,14 +176,25 @@ def implementation_source_modules(family: str) -> tuple[str, ...]:
 
 def selection_setting() -> tuple[str, str]:
     """The resolved selection as the child setting a worker's execution manifest records."""
-    return ENVIRONMENT, selected_implementation()
+    selected = selected_implementation()
+    if _SCOPE.get() is None and selected != ASSEMBLED:
+        raise ValueError(
+            "production worker preparation requires the assembled equation implementation; "
+            "NEWCORE_EQUATIONS=legacy is retired"
+        )
+    return ENVIRONMENT, selected
 
 
 def verify_selection(settings: Iterable[tuple[str, str | None]]) -> None:
-    """Refuse a process whose resolved selection is not the one its job's manifest bound."""
+    """Refuse a process whose resolved selection is not the assembled manifest binding."""
     declared = dict(settings).get(ENVIRONMENT)
     if declared is None or selected_implementation() != declared:
         raise ValueError("the worker's equation selection differs from its execution manifest")
+    if declared != ASSEMBLED:
+        raise ValueError(
+            "production worker execution requires the assembled equation implementation; "
+            "legacy worker equation selection is retired"
+        )
 
 
 def _assemblers(device: object, roles: tuple[str, ...], inventory_row_node: int | None) -> dict[str, str]:

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
+from collections.abc import Iterable, Sequence
 from enum import Enum
 import hashlib
+import json
 import math
 import re
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
     from solarlab.solvers.time.bdf_1d import BDFDrive
 
 __all__ = ["CapturedTransientRun", "run_transient_for_publication",
-           "publish_transient_result", "read_transient_result", "transient_result_payload"]
+           "publish_transient_result", "read_transient_result", "recorded_backward_euler", "transient_result_payload"]
 
 _SCHEMA = "solarlab.transient-result.v1"
 _CURRENTS = tuple(prefix + "current_density_A_m2" for prefix in (
@@ -46,6 +48,7 @@ _UNITS = {"requested_times_s": "s", "requested_voltage_V": "V", "requested_gener
           "electron_density_m3": "m^-3", "hole_density_m3": "m^-3",
           **{name: "A/m^2" for name in _CURRENTS}}
 _TAGS = {"$array", "$scalar", "$float", "$tuple"}
+_SELECTION = "solarlab.time-method-selection.v1"
 _SOURCE_MODULES = (__name__, "solarlab.experiments.transient", "solarlab.solvers.time.backward_euler",
     "solarlab.solvers.nonlinear.newton", "solarlab.solvers.nonlinear.problem",
     "solarlab.solvers.nonlinear.production", "solarlab.solvers.nonlinear.steady_1d",
@@ -228,6 +231,22 @@ def _payload(result: TransientResult1D, nodes_m: np.ndarray) -> tuple[dict[str, 
     return data, payloads
 
 
+def recorded_backward_euler(record: Any, settings: Iterable[Sequence[str]] | None = None) -> bool:
+    """Whether a saved time-method record states a backward-Euler history; records before CND2 are absent.
+
+    Without ``settings`` the record is a capture's. With a worker manifest's child settings, it must carry
+    the request that manifest bound. Readers import no equation module, so the names are the saved literals.
+    """
+    backward = (type(record) is dict and record.get("schema") == _SELECTION
+                and record.get("effective") == "backward_euler")
+    if settings is None:
+        return record is None or (backward and record.get("requested") in (None, "backward_euler"))
+    bound = {name: json.loads(value) for name, value in settings}
+    if record is None:
+        return "NEWCORE_TIME_METHOD" not in bound
+    return backward and "NEWCORE_TIME_METHOD" in bound and record.get("requested") == bound["NEWCORE_TIME_METHOD"]
+
+
 def _result_digest(data: dict[str, Any], payloads: dict[str, ArtifactPayload]) -> str:
     return _digest({"summary": data, "payloads": {name: value.sha256 for name, value in payloads.items()}})
 
@@ -258,8 +277,7 @@ class CapturedTransientRun:
 def run_transient_for_publication(
     compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions,
-    method: Literal["backward_euler"] = "backward_euler", bdf_options: None = None,
-    bdf_drive: None = None,
+    method: Literal["backward_euler"], bdf_options: None = None, bdf_drive: None = None,
 ) -> CapturedTransientRun: ...
 
 
@@ -267,30 +285,44 @@ def run_transient_for_publication(
 def run_transient_for_publication(
     compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions, method: Literal["bdf"],
-    bdf_options: BDFOptions, bdf_drive: BDFDrive | None = None,
+    bdf_options: BDFOptions | None = None, bdf_drive: BDFDrive | None = None,
 ) -> CapturedBDFRun: ...
+
+
+@overload
+def run_transient_for_publication(
+    compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
+    options: TransientOptions, initial_options: SteadyOptions, method: None = None,
+    bdf_options: None = None, bdf_drive: None = None,
+) -> CapturedTransientRun | CapturedBDFRun: ...
 
 
 def run_transient_for_publication(
     compiled: CompiledDevice1D, initial: SteadyState1D, protocol: TransientProtocol, *,
     options: TransientOptions, initial_options: SteadyOptions,
-    method: str = "backward_euler", bdf_options: BDFOptions | None = None,
+    method: str | None = None, bdf_options: BDFOptions | None = None,
     bdf_drive: BDFDrive | None = None,
 ) -> CapturedTransientRun | CapturedBDFRun:
     """Capture this call's actual inputs/source/runtime, then run the existing solver.
+
+    The time method is resolved as by ``solve_transient``. A BDF selection is
+    captured with its selection record, as by
+    ``run_production_bdf_for_publication``. This call's single admission is
+    handed to ``capture_admitted_bdf``, which integrates inputs built from its
+    records, never the caller's objects (D1b, D1-R1).
 
     It makes no claim about when/how the supplied compiled device or initial
     DC state was produced. No HEAD, build commit, release or certificate is
     inferred. Sources are contemporaneous file hashes, not a source archive.
     """
-    if method == "bdf":
-        from solarlab.experiments.bdf_results import run_bdf_for_publication
-        if bdf_options is None:
-            raise ValueError("BDF publication requires explicit BDFOptions")
-        return run_bdf_for_publication(compiled, initial, protocol, options=options,
-            initial_options=initial_options, bdf_options=bdf_options, bdf_drive=bdf_drive)
-    if method != "backward_euler" or bdf_options is not None or bdf_drive is not None:
-        raise ValueError("mixed or unknown transient publication method/options")
+    from solarlab.equations.time_method import BACKWARD_EULER, ELECTRONIC, admit_time_method
+
+    selection, call = admit_time_method(method, compiled=compiled, initial=initial, protocol=protocol,
+                                        options=options, initial_options=initial_options, bdf_options=bdf_options,
+                                        bdf_drive=bdf_drive, family=ELECTRONIC)
+    if call is not None:
+        from solarlab.experiments.bdf_results import capture_admitted_bdf
+        return capture_admitted_bdf(selection, call, drive_was_explicit=bdf_drive is not None)
     from solarlab.equations.implementation import provenance_binding
     from solarlab.experiments.transient import solve_transient
     nodes = np.frombuffer(compiled.nodes_m.tobytes(), dtype=compiled.nodes_m.dtype).reshape(compiled.nodes_m.shape)
@@ -304,9 +336,10 @@ def run_transient_for_publication(
             "runtime": admitted.export()["runtime_observed"],
             "source_content": "admitted execution snapshot; historical inputs retain their own identities",
             "build_source_commit": admitted.export()["git_commit"],
-            "compiled_device_history": None, "initial_dc_history": None}
+            "compiled_device_history": None, "initial_dc_history": None, "time_method": selection.record()}
         started = datetime.now(timezone.utc).isoformat()
-        result = solve_transient(compiled, initial, protocol, options=options, initial_options=initial_options)
+        result = solve_transient(compiled, initial, protocol, options=options, initial_options=initial_options,
+                                 method=BACKWARD_EULER)
         data, payloads = _payload(result, nodes)
         identity = {"H_input": _digest(inputs), "H_physics": compiled.identity, "H_execution": _digest(description)}
         record = {"status": "captured_at_computation", "started_utc": started,
@@ -438,7 +471,7 @@ def read_transient_result(store: RunStore, run_id: str, *, attempt_id: str | Non
         elif read_provenance(job).export()["git_commit"] != description["build_source_commit"]:
             raise ValueError("transient capture source commit differs from admitted provenance")
         expected = {"H_input": _digest(inputs), "H_physics": document["compiled_identity"], "H_execution": _digest(description)}
-        if (description["scope"] != "solve_transient_call"
+        if (description["scope"] != "solve_transient_call" or not recorded_backward_euler(description.get("time_method"))
                 or any(description[name] is not None for name in ("compiled_device_history", "initial_dc_history"))
                 or description["inputs"] != inputs or provenance["identity"] != expected or manifest["identity"] != expected
                 or provenance["result_sha256"] != _result_digest(manifest["summary"], payloads)):

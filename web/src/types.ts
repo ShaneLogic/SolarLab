@@ -328,6 +328,17 @@ export interface JVWaveformEvidence {
   inventory_relative_drift?: number[]
 }
 
+export interface SweepFailurePoint {
+  index?: number
+  label?: string
+  bias_V?: number
+  voltage_V?: number
+  time_s?: number
+  grain_size_nm?: number
+  branch?: string
+  reason?: string
+}
+
 export interface JVResult extends JVWaveformEvidence {
   V_fwd: number[]
   J_fwd: number[]
@@ -338,6 +349,8 @@ export interface JVResult extends JVWaveformEvidence {
   hysteresis_index: number
   bulk_defect_evidence?: JVBulkDefectEvidence | null
   interface_charge_evidence?: InterfaceChargeJVEvidence | null
+  failed_points?: SweepFailurePoint[] | null
+  converged?: boolean[] | null
 }
 
 export interface InterfaceChargeJVSolverControls {
@@ -877,6 +890,8 @@ export interface DegResult {
   PCE: number[]
   V_oc: number[]
   J_sc: number[]
+  valid?: boolean[] | null
+  failed_points?: SweepFailurePoint[] | null
 }
 
 export interface TPVResult {
@@ -886,6 +901,7 @@ export interface TPVResult {
   V_oc: number
   tau: number | null
   delta_V0: number
+  non_identifiable_reason?: string | null
   V_reference?: number[] | null
   delta_V?: number[] | null
   valid?: boolean[] | null
@@ -896,6 +912,7 @@ export interface TPVResult {
     tau_s: number | null
     amplitude_V: number
     status: string
+    non_identifiable_reason?: string | null
     points: number
     r_squared: number | null
     normalized_max_error: number | null
@@ -1064,6 +1081,8 @@ export interface JV2DResult {
    *  case. ``J_sc`` is in A/m² (same convention as the J array; the
    *  backend has already sign-normalised to J_sc>0). */
   metrics?: JVMetrics
+  failed_points?: SweepFailurePoint[] | null
+  converged?: boolean[] | null
 }
 
 /** V_oc(L_g) sweep result — Stage-B headline experiment.
@@ -1073,6 +1092,8 @@ export interface VocGrainSweepResult {
   V_oc_V: number[]
   J_sc_Am2: number[]
   FF: number[]
+  voc_bracketed?: boolean[] | null
+  failed_points?: SweepFailurePoint[] | null
 }
 
 export interface JVParams {
@@ -1207,6 +1228,8 @@ export interface TandemJVMetrics {
   J_sc: number
   FF: number
   PCE: number
+  voc_bracketed?: boolean
+  open_circuit_voltage_V?: number | null
 }
 
 /** Mirrors the JSON response from POST /api/tandem.
@@ -1220,4 +1243,23 @@ export interface TandemJVPayload {
   benchmark: TandemBenchmark | null
   top_layers?: TandemJunctionLayer[]
   bot_layers?: TandemJunctionLayer[]
+  failed_points?: SweepFailurePoint[] | null
 }
+
+export type DispatchableJobKind =
+  | 'jv'
+  | 'impedance'
+  | 'dynamic_defect_transient'
+  | 'degradation'
+  | 'tpv'
+  | 'current_decomp'
+  | 'spatial'
+  | 'tandem'
+  | 'dark_jv'
+  | 'suns_voc'
+  | 'voc_t'
+  | 'eqe'
+  | 'el'
+  | 'mott_schottky'
+  | 'jv_2d'
+  | 'voc_grain_sweep'

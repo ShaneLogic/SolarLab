@@ -66,7 +66,9 @@ def main() -> int:
         # Explicit right-endpoint samples of g(t)=1+0.01*(t/400 ns)^2.
         # These are not inferred event times or hidden solver substeps.
         protocol = TransientProtocol(times, np.zeros(steps + 1), 1.0 + 0.01 * (times / times[-1]) ** 2)
-        result = solve_transient(device, initial, protocol, options=controls(), initial_options=initial_controls)
+        # A backward-Euler example: these ramps are allowlisted BDF envelopes, so the opt-out is explicit.
+        result = solve_transient(device, initial, protocol, options=controls(), initial_options=initial_controls,
+                                 method="backward_euler")
         results.append(result)
         if not result.completed:
             break

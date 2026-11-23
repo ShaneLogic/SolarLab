@@ -1,6 +1,6 @@
 import Plotly from 'plotly.js-basic-dist-min'
 import { mountDevicePanel } from '../device-panel'
-import { startJob, streamJobEvents } from '../job-stream'
+import { startJob, streamJobEvents } from '../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../progress'
 import { baseLayout, plotConfig, PALETTE, LINE, MARKER, axisTitle } from '../plot-theme'
 import { checkField, numField, readCheck, readNum, setStatus } from '../ui-helpers'

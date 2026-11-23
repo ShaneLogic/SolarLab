@@ -452,11 +452,14 @@ def wall_companions(implementation):
     return companions(implementation)
 
 
-@pytest.mark.parametrize("kind", ["legacy", "ion_free", "ionic_transient", "two_dimensional"])
+@pytest.mark.parametrize("kind", ["ion_free", "ionic_transient", "two_dimensional"])
 @pytest.mark.parametrize("method", ["ionic_base", "other_base", "constructor"])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_catalog_compositions_match_the_base_wall_oracle(catalog, wall_companions, kind, method, reverse):
     from ionic_jv_wall_fixtures import admit, compose, submissions
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        JobSubmission.model_validate({**example_submission(), "engine": "legacy"})
     oracle = json.loads((ROOT / "tests/runtime/fixtures/ionic_jv_wall_composition_baseline.json").read_text())
     assert oracle["base_commit"] == "cbec4788a0f83ae5c6c4719b1fd95c0fc037d09d"
     combined = compose(catalog, wall_companions[kind], method, reverse)

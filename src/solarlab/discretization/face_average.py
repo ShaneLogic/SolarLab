@@ -22,14 +22,20 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 __all__ = [
+    "DIELECTRIC_RULES", "LAYER_SERIES_CAPACITANCE_V2", "NODAL_HARMONIC_DIELECTRIC_V1",
     "VACUUM_PERMITTIVITY_F_M", "arithmetic_face_mean", "guarded_harmonic_face_mean",
     "harmonic_face_mean", "harmonic_mean", "series_face_capacitance",
+    "subface_series_capacitance",
 ]
 
 # Historical binary64 value of the legacy engine (CODATA 2006). It differs from
 # the SI 2019 recommended value in the 10th digit; changing it is a P-class
 # correction, not part of this behaviour-preserving migration.
 VACUUM_PERMITTIVITY_F_M = 8.854187817e-12
+
+NODAL_HARMONIC_DIELECTRIC_V1 = "nodal_harmonic_v1"
+LAYER_SERIES_CAPACITANCE_V2 = "layer_series_capacitance_v2"
+DIELECTRIC_RULES = (NODAL_HARMONIC_DIELECTRIC_V1, LAYER_SERIES_CAPACITANCE_V2)
 
 
 def harmonic_mean(a: ArrayLike, b: ArrayLike) -> NDArray[np.float64]:
@@ -83,3 +89,57 @@ def series_face_capacitance(
         float(left_distance_m) / float(eps_r_left)
         + float(right_distance_m) / float(eps_r_right)
     ))
+
+
+def subface_series_capacitance(
+    left_distance_m: ArrayLike,
+    eps_r_left: ArrayLike,
+    right_distance_m: ArrayLike,
+    eps_r_right: ArrayLike,
+) -> NDArray[np.float64]:
+    """Sub-face material-extent series capacitance [F/m^2] (P08-02a).
+
+    Each face of total spacing ``d_L + d_R > 0`` is partitioned at the true
+    material plane into nonnegative left/right material extents ``d_L >= 0``
+    and ``d_R >= 0`` with positive relative permittivities ``eps_L, eps_R``:
+
+        C_f = eps_0 / (d_L / eps_L + d_R / eps_R).
+
+    Unsplit faces (``d_L == 0`` or ``d_R == 0``) and homogeneous faces
+    (``eps_L == eps_R``) evaluate directly as ``eps_0 * eps / (d_L + d_R)``
+    so homogeneous layers agree with ``eps_0 * eps / h`` to 0-1 ULP.
+    """
+    d_left, e_left, d_right, e_right = np.broadcast_arrays(
+        np.asarray(left_distance_m, dtype=float),
+        np.asarray(eps_r_left, dtype=float),
+        np.asarray(right_distance_m, dtype=float),
+        np.asarray(eps_r_right, dtype=float),
+    )
+    if not (
+        np.all(np.isfinite(d_left))
+        and np.all(np.isfinite(e_left))
+        and np.all(np.isfinite(d_right))
+        and np.all(np.isfinite(e_right))
+    ):
+        raise ValueError("sub-face series capacitance requires finite distances and permittivities")
+    total_distance = d_left + d_right
+    if np.any(d_left < 0.0) or np.any(d_right < 0.0) or np.any(total_distance <= 0.0):
+        raise ValueError("sub-face distances must be nonnegative with positive face spacing")
+    if np.any(e_left <= 0.0) or np.any(e_right <= 0.0):
+        raise ValueError("sub-face permittivities must be positive")
+    out = np.empty(total_distance.shape, dtype=np.float64)
+    left_only = d_right == 0.0
+    right_only = (~left_only) & (d_left == 0.0)
+    same_eps = (~left_only) & (~right_only) & (e_left == e_right)
+    split = ~(left_only | right_only | same_eps)
+    if np.any(left_only):
+        out[left_only] = VACUUM_PERMITTIVITY_F_M * e_left[left_only] / d_left[left_only]
+    if np.any(right_only):
+        out[right_only] = VACUUM_PERMITTIVITY_F_M * e_right[right_only] / d_right[right_only]
+    if np.any(same_eps):
+        out[same_eps] = VACUUM_PERMITTIVITY_F_M * e_left[same_eps] / total_distance[same_eps]
+    if np.any(split):
+        out[split] = VACUUM_PERMITTIVITY_F_M / (
+            d_left[split] / e_left[split] + d_right[split] / e_right[split]
+        )
+    return out

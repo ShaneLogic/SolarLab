@@ -1,4 +1,4 @@
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { mountJVWaveformControls } from '../../jv-waveform-controls'
 import { setStatus, numField, readNum, checkField, readCheck } from '../../ui-helpers'
@@ -13,6 +13,7 @@ import type {
   SpatialProfileResult,
 } from '../../types'
 import type { Run, RunResult, ExperimentKind } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface JVPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -259,7 +260,7 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): JVPane
         streamJobEvents<AnyResult>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result
+            const { pure, receipt } = extractExecutionPhysics(result)
             const runResult: RunResult =
               kind === 'jv'
                 ? { kind: 'jv', data: pure as JVResult }
@@ -270,12 +271,33 @@ export function mountJVPane(container: HTMLElement, opts: JVPaneOptions): JVPane
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
             opts.onRunComplete(active.id, run)
             progressBar.done()
+            if (kind === 'jv') {
+              const jvData = pure as JVResult
+              const diag: string[] = []
+              if (jvData.metrics_fwd?.voc_bracketed === false || (jvData.metrics_fwd && !Number.isFinite(jvData.metrics_fwd.V_oc))) {
+                diag.push('fwd V_oc not bracketed')
+              }
+              if (!jvData.interface_charge_evidence && (jvData.metrics_rev?.voc_bracketed === false || (jvData.metrics_rev && !Number.isFinite(jvData.metrics_rev.V_oc)))) {
+                diag.push('rev V_oc not bracketed')
+              }
+              if ((jvData.failed_points?.length ?? 0) > 0) {
+                diag.push(`${jvData.failed_points!.length} failed point(s)`)
+              } else if (jvData.converged?.some(c => !c)) {
+                diag.push(`${jvData.converged.filter(c => !c).length} unconverged point(s)`)
+              }
+              if (diag.length > 0) {
+                setStatus('status-jvp', `Done · Diagnostics: ${diag.join(', ')}`, true)
+                return
+              }
+            }
             setStatus('status-jvp', 'Done')
           },
           onError: (msg) => {

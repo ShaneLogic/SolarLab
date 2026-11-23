@@ -11,8 +11,6 @@ from decimal import Decimal, localcontext
 import numpy as np
 import pytest
 
-from perovskite_sim.discretization import fe_operators as legacy
-
 from solarlab.discretization.particle_flux import sg_particle_flux
 from solarlab.discretization.stable_bernoulli import bernoulli_pair
 
@@ -22,6 +20,41 @@ SPECIAL = np.array([0.0, 5e-9, 1e-8, 2e-8, 9.99e-5, 1e-4, 1.01e-4, 1e-3, 0.1, 0.
                     10.0, 36.0, 49.9, 50.0, 50.1, 100.0, 300.0, 699.0, 700.0, 701.0, 745.0])
 ARGUMENTS = np.concatenate([SPECIAL, -SPECIAL, np.geomspace(1e-10, 740.0, 300),
                             -np.geomspace(1e-10, 740.0, 300)])
+
+
+def _naive_bernoulli(x: np.ndarray) -> np.ndarray:
+    """Reference naive element-wise Bernoulli evaluation with x>700 cutoff."""
+    arr = np.asarray(x, dtype=float)
+    out = np.empty_like(arr)
+    small = np.abs(arr) < 1e-4
+    large_pos = arr > 300.0
+    large_neg = arr < -700.0
+    mid = ~(small | large_pos | large_neg)
+    xs = arr[small]
+    out[small] = 1.0 - 0.5 * xs + (xs * xs) / 12.0 - (xs**4) / 720.0
+    out[large_pos] = 0.0
+    out[large_neg] = -arr[large_neg]
+    xm = arr[mid]
+    out[mid] = xm / np.expm1(xm)
+    return out
+
+
+def _naive_bernoulli_derivative(x: np.ndarray) -> np.ndarray:
+    arr = np.asarray(x, dtype=float)
+    out = np.empty_like(arr)
+    small = np.abs(arr) < 1e-4
+    large_pos = arr > 300.0
+    large_neg = arr < -700.0
+    mid = ~(small | large_pos | large_neg)
+    xs = arr[small]
+    out[small] = -0.5 + xs / 6.0 - (xs**3) / 180.0
+    out[large_pos] = 0.0
+    out[large_neg] = -1.0
+    xm = arr[mid]
+    em = np.exp(xm)
+    tm = np.expm1(xm)
+    out[mid] = (tm - xm * em) / (tm * tm)
+    return out
 
 
 def same_bits(a, b):
@@ -64,7 +97,7 @@ def test_small_branch_first_keeps_b_of_50_where_large_branch_subtraction_loses_i
     x = np.array([50.0, 100.0, 300.0, 700.0])
     pair = bernoulli_pair(x)
     # Differencing the large branch cannot recover the small one in binary64...
-    assert np.all(legacy.bernoulli(-x) - x == 0.0)
+    assert np.all(_naive_bernoulli(-x) - x == 0.0)
     # ...while the pair evaluates it first and keeps its normal-range value.
     for value, argument in zip(pair.forward, x):
         assert value > 0.0
@@ -92,9 +125,9 @@ def test_bernoulli_pair_parity_identities_and_direction_swap():
 
 
 def test_bernoulli_pair_differs_from_the_historical_values_only_within_n_class_bounds():
-    """N-class comparison: record the actual deviation from the legacy evaluation."""
+    """N-class comparison: record the actual deviation from the naive element-wise evaluation."""
     pair = bernoulli_pair(ARGUMENTS)
-    old_forward, old_backward = legacy.bernoulli(ARGUMENTS), legacy.bernoulli(-ARGUMENTS)
+    old_forward, old_backward = _naive_bernoulli(ARGUMENTS), _naive_bernoulli(-ARGUMENTS)
     cut = ARGUMENTS > 700.0  # historical value is exactly 0 there
     assert np.all(old_forward[cut] == 0.0) and np.all(pair.forward[cut] > 0.0)
     keep = ~cut & (np.abs(old_forward) >= TINY)
@@ -104,7 +137,7 @@ def test_bernoulli_pair_differs_from_the_historical_values_only_within_n_class_b
     ulps_b = (np.abs(pair.backward[keep_b] - old_backward[keep_b])
               / np.spacing(np.abs(old_backward[keep_b])))
     assert ulps_b.max() <= 4.0
-    old_derivative = legacy.bernoulli_derivative(ARGUMENTS)
+    old_derivative = _naive_bernoulli_derivative(ARGUMENTS)
     relative = (np.abs(pair.forward_derivative - old_derivative)
                 / np.maximum(np.abs(old_derivative), TINY))
     normal = np.abs(old_derivative) >= TINY
@@ -143,9 +176,10 @@ def test_unified_particle_flux_limits_signs_and_legacy_currents():
     xi = (phi[1:] - phi[:-1]) / vt
     electrons = sg_particle_flux(n[:-1], n[1:], -xi, D / dx).flux
     holes = sg_particle_flux(n[:-1], n[1:], xi, D / dx).flux
-    j_n, j_p = legacy.sg_fluxes_n(phi, n, dx, D, vt), legacy.sg_fluxes_p(phi, n, dx, D, vt)
-    magnitude_n = Q * D / dx * (legacy.bernoulli(xi) * n[1:] + legacy.bernoulli(-xi) * n[:-1])
-    magnitude_p = Q * D / dx * (legacy.bernoulli(xi) * n[:-1] + legacy.bernoulli(-xi) * n[1:])
+    j_n = Q * D / dx * (_naive_bernoulli(xi) * n[1:] - _naive_bernoulli(-xi) * n[:-1])
+    j_p = Q * D / dx * (_naive_bernoulli(xi) * n[:-1] - _naive_bernoulli(-xi) * n[1:])
+    magnitude_n = Q * D / dx * (_naive_bernoulli(xi) * n[1:] + _naive_bernoulli(-xi) * n[:-1])
+    magnitude_p = Q * D / dx * (_naive_bernoulli(xi) * n[:-1] + _naive_bernoulli(-xi) * n[1:])
     assert np.all(np.abs(-Q * electrons - j_n) <= 1e-14 * magnitude_n)
     assert np.all(np.abs(Q * holes - j_p) <= 1e-14 * magnitude_p)
 

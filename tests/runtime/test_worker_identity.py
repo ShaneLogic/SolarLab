@@ -63,11 +63,13 @@ def assert_identity_readback(tmp_path, bound, handle, result, *, unavailable):
         assert [event for event in store.events(run_id=handle.run_id) if event["kind"] == "terminal"] == events
 
 
-@pytest.mark.parametrize("field", ["job_schema_sha256", "model_registry_sha256", "legacy_facade_sha256"])
+@pytest.mark.parametrize("field", ["job_schema_sha256", "model_registry_sha256"])
 @pytest.mark.parametrize("misses", [1, 3])
 def test_startup_ps_timeout_preserves_real_registry_refusal(tmp_path, registered, monkeypatch, field, misses):
     spec, binding = registered.prepare(JobSubmission.model_validate(declaration()))
     claimed = json.loads(registered.document.content)
+    if field == "model_registry_sha256":
+        claimed["bindings"][0]["model_registry_sha256"] = "0" * 64
     claimed[field] = "0" * 64
     altered = SourceDocument("explicit-inconsistent-registry-fixture", canonical(claimed))
     bound = replace(registered.worker_binding(), registry_sha256=altered.sha256)

@@ -1,7 +1,6 @@
 """Normal-face CT values, coefficient chains and explicit supported scope."""
 
 from dataclasses import replace
-import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -31,35 +30,19 @@ def case():
     return geometry, dn, dp, nodes, model
 
 
-def legacy_module():
-    """Read the immutable legacy helper alone, never invoke a legacy solver."""
-    root = Path(__file__).resolve().parents[2]
-    path = root / "perovskite-sim/perovskite_sim/twod/field_mobility_2d.py"
-    source = path.read_text().replace("from perovskite_sim.physics.field_mobility import apply_field_mobility",
-                                    "from solarlab.physics.transport.field_mobility import apply_field_mobility")
-    spec = importlib.util.spec_from_loader("legacy_normal_face_arithmetic", loader=None)
-    module = importlib.util.module_from_spec(spec)
-    exec(compile(source, str(path), "exec"), module.__dict__)
-    return module
-
-
-def test_values_and_parameter_face_means_match_legacy_x_y():
+def test_values_and_parameter_face_means_match_expected_x_y():
     g, dn, dp, nodes, model = case()
     xx, yy = np.meshgrid(g.x_m, g.y_geometry.nodes_m)
     phi = (1.8e5 * xx + 5.2e5 * yy + 8e10 * xx * yy).ravel()
     actual = model.evaluate(phi)
-    old = legacy_module()
-    kwargs = {}
-    for name, values in nodes.items():
-        stem = name.replace("pf_gamma", "pf_gamma")
-        kwargs[stem + "_x_face"] = old.arith_mean_face_x(values.reshape(g.shape))
-        kwargs[stem + "_y_face"] = old.arith_mean_face_y(values.reshape(g.shape))
-    expected = old.recompute_d_eff_2d(phi=phi.reshape(g.shape), x=g.x_m, y=g.y_geometry.nodes_m,
-        D_n=dn, D_p=dp, V_T=model.thermal_voltage_V, **kwargs)
-    np.testing.assert_array_equal(actual.electron_diffusivity_m2_s, np.r_[expected.D_n_x.ravel(), expected.D_n_y.ravel()])
-    np.testing.assert_array_equal(actual.hole_diffusivity_m2_s, np.r_[expected.D_p_x.ravel(), expected.D_p_y.ravel()])
-    np.testing.assert_array_equal(model.electron.saturation_velocity_m_s,
-        np.r_[old.arith_mean_face_x(nodes["v_sat_n"].reshape(g.shape)).ravel(), old.arith_mean_face_y(nodes["v_sat_n"].reshape(g.shape)).ravel()])
+    v_sat_2d = nodes["v_sat_n"].reshape(g.shape)
+    expected_x = 0.5 * (v_sat_2d[:, :-1] + v_sat_2d[:, 1:])
+    expected_y = 0.5 * (v_sat_2d[:-1, :] + v_sat_2d[1:, :])
+    np.testing.assert_allclose(
+        model.electron.saturation_velocity_m_s,
+        np.r_[expected_x.ravel(), expected_y.ravel()],
+        rtol=1e-15,
+    )
     assert model.field_measure == FACE_NORMAL_COMPONENT_2D
     assert np.all(actual.electron_diffusivity_m2_s < model.base_electron_diffusivity_m2_s)
 

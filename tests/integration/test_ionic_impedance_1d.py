@@ -179,7 +179,7 @@ def test_complex_voltage_is_a_linear_normalization(case, responses):
         assert np.max(abs(b / voltage - a)) / np.max(abs(a)) < 2e-10
 
 
-@pytest.mark.parametrize("frequencies", [[], [-1.0], [np.nan], [np.inf], [1.0, 1.0], [[1.0]], [1 + 0j], list(range(33))])
+@pytest.mark.parametrize("frequencies", [[], [-1.0], [np.nan], [np.inf], [1.0, 1.0], [[1.0]], [1 + 0j], list(range(129))])
 def test_invalid_frequency_requests_refuse_before_a_solve(case, monkeypatch, frequencies):
     def forbidden(*args, **kwargs):
         pytest.fail("invalid frequencies reached the solver")

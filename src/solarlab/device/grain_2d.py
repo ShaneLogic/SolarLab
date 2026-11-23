@@ -19,6 +19,7 @@ from numpy.typing import NDArray
 from solarlab.contracts import frozen_array
 from solarlab.device.inputs import GrainBoundaryInput
 from solarlab.device.resolved import PreparedDevice
+from solarlab.equations.dc_1d import CapabilityError
 from solarlab.experiments.two_dimensional.inputs import JV2DInput
 from solarlab.mesh.geometry_2d import RectangularGeometry2D
 from solarlab.mesh.grid import LEFT_LAYER_WINS, node_owner
@@ -44,7 +45,7 @@ def grain_declarations(prepared: PreparedDevice, spatial: JV2DInput) -> tuple[Gr
     if not grains:
         return ()
     if spatial.lateral_bc != "neumann" or spatial.lateral_length is None:
-        raise ValueError("grain regions require explicit Neumann lateral geometry")
+        raise CapabilityError("grain regions require explicit Neumann lateral geometry")
     length = normalize_quantity(spatial.lateral_length, "m")
     layer_ids = {layer.id for layer in prepared.layers if layer.role != "substrate"}
     seen: set[str] = set()

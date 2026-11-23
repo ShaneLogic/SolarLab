@@ -5,11 +5,12 @@
  * entered as a CSV of nm values; τ_GB / GB width default to literature-typical
  * values for moderately passivated MAPbI3 (τ_GB = 1 ns, width = 10 nm).
  */
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import type { DeviceConfig, VocGrainSweepResult } from '../../types'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 export interface VocGrainSweepPaneOptions {
   getActiveDevice: () => { id: string; config: DeviceConfig } | null
@@ -103,24 +104,45 @@ export function mountVocGrainSweepPane(
         streamJobEvents<VocGrainSweepResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } =
-              result as VocGrainSweepResult & { active_physics?: string }
+            const { pure, receipt } = extractExecutionPhysics(
+              result as VocGrainSweepResult & { active_physics?: string },
+            )
             const runResult: RunResult = { kind: 'voc_grain_sweep', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
             opts.onRunComplete(active.id, run)
             progressBar.done()
+            const validVoc = pure.V_oc_V.filter(
+              (v, i) => v != null && Number.isFinite(v) && pure.voc_bracketed?.[i] !== false,
+            )
+            const invalidCount =
+              Math.max(
+                pure.grain_sizes_nm.length - validVoc.length,
+                pure.failed_points?.length ?? 0,
+              )
+            const rangeText =
+              validVoc.length > 0
+                ? `V_oc range ${(Math.min(...validVoc) * 1e3).toFixed(1)}–${(Math.max(...validVoc) * 1e3).toFixed(1)} mV`
+                : 'V_oc unavailable'
+            if (invalidCount > 0) {
+              setStatus(
+                'status-vgs',
+                `Done · ${pure.grain_sizes_nm.length} grain sizes · ${rangeText} · Diagnostics: ${invalidCount} failed/unbracketed point(s)`,
+                true,
+              )
+              return
+            }
             setStatus(
               'status-vgs',
-              `Done · ${pure.grain_sizes_nm.length} grain sizes · ` +
-                `V_oc range ${(Math.min(...pure.V_oc_V) * 1e3).toFixed(1)}–` +
-                `${(Math.max(...pure.V_oc_V) * 1e3).toFixed(1)} mV`,
+              `Done · ${pure.grain_sizes_nm.length} grain sizes · ${rangeText}`,
             )
           },
           onError: (msg) => {

@@ -1,7 +1,8 @@
-# OMC state
+# OMC / Claude local state & skills
 .omc/
 .claude/
 /.codex/
+skills-lock.json
 
 # Local research run records and literature, indexed outside production Git.
 /work/ignis/
@@ -13,8 +14,6 @@
 
 # Generated sweep outputs
 outputs/
-perovskite-sim/outputs/
-perovskite-sim/notebooks/outputs/
 
 # Transient SCAPS scratch — partner PDF/xlsx unpacking, intermediate
 # image renders; reproduced from docs/superpowers/references/* on demand.

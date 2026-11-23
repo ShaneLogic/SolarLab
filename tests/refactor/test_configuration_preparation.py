@@ -24,7 +24,7 @@ from solarlab.materials.parameters import LayerValuesInput
 from solarlab.units import QuantityError, normalize_quantity
 
 ROOT = Path(__file__).resolve().parents[2]
-CATALOG = ROOT / "perovskite-sim/perovskite_sim/data/layer_templates.yaml"
+CATALOG = ROOT / "src/solarlab/materials/data/layer_templates.yaml"
 
 
 @pytest.fixture

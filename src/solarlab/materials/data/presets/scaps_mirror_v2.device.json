@@ -1,0 +1,235 @@
+{
+  "contacts": [
+    {
+      "id": "contact_left",
+      "layer": "layer_1",
+      "side": "left"
+    },
+    {
+      "id": "contact_right",
+      "layer": "layer_3",
+      "side": "right"
+    }
+  ],
+  "electrical_grid": [],
+  "grain_boundaries": [],
+  "id": "scaps_mirror_v2",
+  "interfaces": [
+    {
+      "id": "interface_0",
+      "left": "layer_0",
+      "right": "layer_1"
+    },
+    {
+      "defect": {
+        "calibration_factor": 1.0,
+        "energy_reference": "below_conduction_band",
+        "id": "interface_defect_1",
+        "iface_state_calibration_factor": "0.02",
+        "kinetics": {
+          "sigma_n_m2": 1e-23,
+          "sigma_p_m2": 1e-23,
+          "thermal_velocity_n_m_s": 100000.0,
+          "thermal_velocity_p_m_s": 100000.0
+        },
+        "partner_metadata": {
+          "defect_id": "interface_defect_1",
+          "distribution": "single",
+          "energy_reference": "below_conduction_band",
+          "trap_depth_eV": 0.6
+        },
+        "total_density_m2": 1e+16,
+        "trap_depth_eV": 0.6
+      },
+      "id": "interface_1",
+      "left": "layer_1",
+      "right": "layer_2"
+    },
+    {
+      "defect": {
+        "calibration_factor": 1.0,
+        "energy_reference": "below_conduction_band",
+        "id": "interface_defect_2",
+        "iface_state_calibration_factor": "0.10",
+        "kinetics": {
+          "sigma_n_m2": 1e-23,
+          "sigma_p_m2": 1e-23,
+          "thermal_velocity_n_m_s": 100000.0,
+          "thermal_velocity_p_m_s": 100000.0
+        },
+        "partner_metadata": {
+          "E_char_eV": 0.1,
+          "N_peak_m3": 564000000000000.0,
+          "defect_id": "interface_defect_2",
+          "distribution": "gaussian",
+          "energy_reference": "below_conduction_band",
+          "trap_depth_eV": 0.6
+        },
+        "total_density_m2": 1e+16,
+        "trap_depth_eV": 0.6
+      },
+      "id": "interface_2",
+      "left": "layer_2",
+      "right": "layer_3"
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer_0",
+      "name": "glass",
+      "parameterization": "scaps",
+      "parameters": {
+        "Eg": 9.0,
+        "N_A": 0.0,
+        "N_D": 0.0,
+        "Nc300": 1e+25,
+        "Nv300": 1e+25,
+        "chi": 1.0,
+        "eps_r": 2.25,
+        "incoherent": true,
+        "mu_n": 0.0,
+        "mu_p": 0.0,
+        "optical_material": "glass",
+        "v_th": 100000.0
+      },
+      "role": "substrate",
+      "thickness": 0.001
+    },
+    {
+      "id": "layer_1",
+      "name": "SCAPS_HTL",
+      "parameterization": "scaps",
+      "parameters": {
+        "Eg": 3.25,
+        "N_A": 1e+24,
+        "N_D": 0.0,
+        "Nc300": 2.5e+26,
+        "Nv300": 2.5e+26,
+        "chi": 2.4,
+        "eps_r": 11.75,
+        "mu_n": 1e-07,
+        "mu_p": 1e-07,
+        "optical_material": "spiro_OMeTAD",
+        "v_th": 100000.0
+      },
+      "role": "HTL",
+      "thickness": 2e-08
+    },
+    {
+      "bulk_defects": [
+        {
+          "charge_transition": "unresolved",
+          "degeneracy": 1.0,
+          "distribution": {
+            "kind": "single_level",
+            "normalization": "integrated_total",
+            "total_density_m3": 1e+18
+          },
+          "energy_level": {
+            "reference": "below_conduction_band",
+            "value_eV": 0.1
+          },
+          "id": "bulk_0",
+          "kinetics": {
+            "sigma_n_m2": 1e-19,
+            "sigma_p_m2": 1e-19,
+            "thermal_velocity_n_m_s": 100000.0,
+            "thermal_velocity_p_m_s": 100000.0
+          },
+          "name": "Perovskite-CB",
+          "neutral_reference": "unresolved"
+        },
+        {
+          "charge_transition": "unresolved",
+          "degeneracy": 1.0,
+          "distribution": {
+            "kind": "single_level",
+            "normalization": "integrated_total",
+            "total_density_m3": 1e+18
+          },
+          "energy_level": {
+            "reference": "above_valence_band",
+            "value_eV": 0.1
+          },
+          "id": "bulk_1",
+          "kinetics": {
+            "sigma_n_m2": 1e-19,
+            "sigma_p_m2": 1e-19,
+            "thermal_velocity_n_m_s": 100000.0,
+            "thermal_velocity_p_m_s": 100000.0
+          },
+          "name": "Perovskite-VB",
+          "neutral_reference": "unresolved"
+        }
+      ],
+      "defect_model": "effective_lifetime",
+      "defect_schema_version": "solarlab-explicit-bulk-defects-v1",
+      "id": "layer_2",
+      "name": "SCAPS_PVK",
+      "parameterization": "scaps",
+      "parameters": {
+        "B_rad": 1e-18,
+        "C_n": 2.3e-41,
+        "C_p": 2.3e-41,
+        "Eg": 1.53,
+        "N_A": 0.0,
+        "N_D": 1e+20,
+        "Nc300": 1e+25,
+        "Nv300": 1e+25,
+        "chi": 3.94,
+        "eps_r": 31.0,
+        "mu_n": 0.002,
+        "mu_p": 0.002,
+        "optical_material": "MAPbI3",
+        "v_th": 100000.0
+      },
+      "role": "absorber",
+      "scaps_defect_metadata": [
+        {
+          "defect_id": "bulk_0",
+          "distribution": "single",
+          "energy_reference": "below_conduction_band",
+          "trap_depth_eV": 0.1
+        },
+        {
+          "defect_id": "bulk_1",
+          "distribution": "single",
+          "energy_reference": "above_valence_band",
+          "trap_depth_eV": 0.1
+        }
+      ],
+      "thickness": 8e-07
+    },
+    {
+      "id": "layer_3",
+      "name": "SCAPS_ETL",
+      "parameterization": "scaps",
+      "parameters": {
+        "Eg": 1.9,
+        "N_A": 0.0,
+        "N_D": 1e+24,
+        "Nc300": 8e+25,
+        "Nv300": 8e+25,
+        "chi": 4.1,
+        "eps_r": 4.2,
+        "mu_n": 1e-06,
+        "mu_p": 1e-09,
+        "optical_material": "TiO2",
+        "v_th": 100000.0
+      },
+      "role": "ETL",
+      "thickness": 2.5e-08
+    }
+  ],
+  "schema_version": "solarlab.device-preparation.v1",
+  "settings": {
+    "Phi": "2.5E+21",
+    "V_bi": "1.30",
+    "contact_phi_B_eV": "0.42",
+    "dos_band_potentials": true,
+    "flat_band_metal_contacts": true,
+    "het_recomb_despike": "0.53",
+    "mode": "fast"
+  },
+  "source_format": "scaps"
+}

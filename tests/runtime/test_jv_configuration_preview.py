@@ -8,13 +8,14 @@ from fastapi.testclient import TestClient
 import pytest
 
 from solarlab.config.device_import import import_standard_device
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
+from solarlab.device.defaults import DefaultCatalog
 from solarlab.experiments.jv.inputs import JVExperimentInput
 from solarlab.experiments.jv.preparation import prepare_jv_experiment
+from solarlab.materials.packaged import load_packaged_default_catalog
 from solarlab.materials.source import SourceDocument
 from solarlab_server.app import create_app
 from solarlab_server.configuration import ConfigurationPreviewContext
-from test_configuration_preview import DEFAULT_PATHS, LEGACY, ROOT, case, wire_input, words
+from test_configuration_preview import ROOT, case, wire_input, words
 from test_configuration_preview import resources as resources, writer as writer, forbid_legacy_model_imports as forbid_legacy_model_imports
 from test_spatial_configuration_preview import headers
 from test_event_service import _HTTPServer
@@ -22,11 +23,7 @@ from test_event_service import _HTTPServer
 
 @pytest.fixture(scope="module")
 def catalog():
-    backend = SourceDocument("backend/main.py", (ROOT / "perovskite-sim/backend/main.py").read_bytes())
-    return read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS),
-        experiment_sources=(backend, SourceDocument("solver/tolerances.py", (LEGACY / "solver/tolerances.py").read_bytes())),
-        jv_sources=(backend, *(SourceDocument(name, (LEGACY / name).read_bytes()) for name in
-            ("experiments/jv_sweep.py", "experiments/waveform_jv.py", "experiments/dark_jv.py", "experiments/protocol.py"))))
+    return load_packaged_default_catalog("full")
 
 
 def payload(catalog, **fields):
@@ -87,9 +84,12 @@ def test_context_schema_branch_and_typed_field_failures(catalog, resources, writ
             detail = result.json()["detail"]
             assert detail["status"] == "unresolved" and detail["can_execute"] is False
             assert ["experiment", field] in [row["loc"] for row in detail["field_errors"]]
-    old = read_legacy_default_catalog(tuple(SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS),
-        experiment_sources=(SourceDocument("backend/main.py", (ROOT / "perovskite-sim/backend/main.py").read_bytes()),
-                            SourceDocument("solver/tolerances.py", (LEGACY / "solver/tolerances.py").read_bytes())))
+    spatial_only_mapping = deepcopy(catalog.to_mapping())
+    spatial_only_mapping["experiment_defaults"] = {
+        k: v for k, v in spatial_only_mapping["experiment_defaults"].items()
+        if k in {"jv_2d", "jv_2d_componentwise_atol", "voc_grain_sweep"}
+    }
+    old = DefaultCatalog.from_mapping(spatial_only_mapping)
     with TestClient(create_app(writer.root, configuration_preview=ConfigurationPreviewContext(old, resources))) as http:
         response = http.post("/configuration-preview/experiment", json=data, headers=headers())
         assert response.status_code == 503 and response.json()["detail"]["code"] == "configuration_experiment_context_missing"

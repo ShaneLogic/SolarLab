@@ -39,6 +39,16 @@ def blas1():
         yield
 
 
+def research_bdf(adapter, *args, **kwargs):
+    """An explicit research BDF call of an adapter, on the original equations (the LEGACY opt-out).
+
+    The production entry points run only the frozen profile on allowlisted
+    scopes (solarlab.equations.time_method); these tests exercise the adapters.
+    """
+    with equation_implementation(LEGACY):
+        return adapter(*args, **kwargs)
+
+
 @pytest.fixture(scope="module")
 def electronic():
     device = compile_device_1d(load_device(), intervals_per_layer=12)
@@ -80,9 +90,10 @@ def test_electronic_fixed_step_BDF1_matches_real_BE_trajectory(electronic):
     device, initial, admission = electronic
     times = np.linspace(0, 4e-7, 5)
     protocol = TransientProtocol(times, np.zeros(5), 1 + .01 * (times / times[-1])**2)
-    old = solve_transient(device, initial, protocol, options=controls(), initial_options=admission)
-    new = solve_transient(device, initial, protocol, options=controls(), initial_options=admission,
-        method="bdf", bdf_options=BDFOptions(1e-7, adaptive=False, max_order=1))
+    old = solve_transient(device, initial, protocol, options=controls(), initial_options=admission,
+                          method="backward_euler")
+    new = research_bdf(solve_electronic_bdf, device, initial, protocol, options=controls(), initial_options=admission,
+                       bdf_options=BDFOptions(1e-7, adaptive=False, max_order=1))
     assert old.completed and new.completed, (new.termination, new.error)
     for state, point in zip(old.states, new.accepted_coordinates):
         np.testing.assert_array_equal(state.u, point)
@@ -97,9 +108,9 @@ def test_single_ion_fixed_step_BDF1_matches_real_BE_trajectory(ionic):
     device, initial = ionic
     times = np.linspace(0, 1, 5)
     protocol = TransientProtocol(times, .002 + .002 * times, np.zeros(5))
-    old = solve_ionic_transient(device, initial, protocol, options=ionic_controls())
-    new = solve_ionic_transient(device, initial, protocol, options=ionic_controls(), method="bdf",
-        bdf_options=BDFOptions(.25, adaptive=False, max_order=1))
+    old = solve_ionic_transient(device, initial, protocol, options=ionic_controls(), method="backward_euler")
+    new = research_bdf(solve_ionic_bdf, device, initial, protocol, options=ionic_controls(),
+                       bdf_options=BDFOptions(.25, adaptive=False, max_order=1))
     assert old.completed and new.completed, (new.termination, new.error)
     for state, point in zip(old.states, new.accepted_coordinates):
         np.testing.assert_array_equal(state.u, point)
@@ -154,8 +165,8 @@ def test_real_electronic_voltage_jump_preserves_inventory_and_restarts(electroni
     drive = BDFDrive(np.array([0, 2e-7, 4e-7]), np.array([[0, 1], [0, 1], [.002, 1]]),
                      np.array([[0, 1], [.002, 1], [.002, 1]]))
     protocol = TransientProtocol([0, 2e-7, 4e-7], [0, .002, .002], [1, 1, 1])
-    result = solve_transient(device, initial, protocol, options=controls(), initial_options=admission,
-        method="bdf", bdf_options=BDFOptions(1e-7, adaptive=False), bdf_drive=drive)
+    result = research_bdf(solve_electronic_bdf, device, initial, protocol, options=controls(),
+                          initial_options=admission, bdf_options=BDFOptions(1e-7, adaptive=False), drive=drive)
     assert result.completed, (result.termination, result.error)
     assert result.restarts and result.restarts[0].accepted
     assert result.restarts[0].assessment.accounting["relative_inventory_change"] < 1e-11
@@ -165,9 +176,10 @@ def test_real_electronic_voltage_jump_preserves_inventory_and_restarts(electroni
 def test_selection_and_unsupported_population_refusals_are_explicit(electronic):
     device, initial, admission = electronic
     protocol = TransientProtocol([0, 1e-7], [0, 0], [1, 1])
-    with pytest.raises(ValueError, match="explicit BDFOptions"):
+    # An unlisted scope is refused at the production entry point, never run as backward Euler.
+    with pytest.raises(ValueError, match="BDF is not selectable for scope"):
         solve_transient(device, initial, protocol, options=controls(), initial_options=admission, method="bdf")
-    with pytest.raises(ValueError, match="unknown"):
+    with pytest.raises(ValueError, match="unknown time method"):
         solve_transient(device, initial, protocol, options=controls(), initial_options=admission, method="bogus")
 
 
@@ -183,20 +195,21 @@ def _numerical_bdf_bytes(result):
 
 @pytest.mark.parametrize("family", ["electronic", "single-ion"])
 def test_public_assembled_BDF2_history_is_bitwise_and_uses_only_its_selected_equations(electronic, ionic, family):
+    # These custom BDFOptions are a research call of the adapters: the production entry points run only the
+    # frozen profile on allowlisted scopes, and test_time_method_selection checks that route in both modes.
     if family == "electronic":
         device, initial, admission = electronic
         request = TransientProtocol([0., 1e-7, 2e-7, 4e-7], [0.] * 4, [1.] * 4)
 
         def run():
-            return solve_transient(device, initial, request, options=controls(), initial_options=admission,
-                method="bdf", bdf_options=BDFOptions(1e-7))
+            return solve_electronic_bdf(device, initial, request, options=controls(), initial_options=admission,
+                bdf_options=BDFOptions(1e-7))
     else:
         device, initial = ionic
         request = TransientProtocol([0., .25, .5, 1.], [.002] * 4, [0.] * 4)
 
         def run():
-            return solve_ionic_transient(device, initial, request, options=ionic_controls(), method="bdf",
-                bdf_options=BDFOptions(.25))
+            return solve_ionic_bdf(device, initial, request, options=ionic_controls(), bdf_options=BDFOptions(.25))
     results = []
     for implementation in (LEGACY, ASSEMBLED):
         with equation_implementation(implementation), counted() as observed:
@@ -213,8 +226,8 @@ def test_public_BDF_does_not_fall_back_after_an_assembled_only_word_change(elect
     request = TransientProtocol([0., 1e-7, 2e-7], [0.] * 3, [1., 1.001, 1.004])
 
     def run():
-        return solve_transient(device, initial, request, options=controls(), initial_options=admission,
-            method="bdf", bdf_options=BDFOptions(1e-7, adaptive=False, max_order=1))
+        return solve_electronic_bdf(device, initial, request, options=controls(), initial_options=admission,
+            bdf_options=BDFOptions(1e-7, adaptive=False, max_order=1))
     with equation_implementation(LEGACY):
         reference = run()
     with equation_implementation(ASSEMBLED), counted() as observed, one_ulp_residual() as mutations:

@@ -12,13 +12,12 @@ from fastapi.testclient import TestClient
 import pytest
 
 from solarlab.config.device_import import import_standard_device
-from solarlab.config.legacy_defaults import read_legacy_default_catalog
 from solarlab.config.resolve_device import resolve_device, resolve_tandem
 from solarlab.config.scaps_input import import_scaps_device
 from solarlab.config.tandem_input import import_tandem
 from solarlab.device.inputs import DeviceInput, NamedMaterialInput, TandemInput
 from solarlab.materials.full_parameters import FullParameterInput
-from solarlab.materials.resources import ResourceLibrary, ResourceTable
+from solarlab.materials.packaged import load_packaged_default_catalog, load_packaged_resource_library
 from solarlab.materials.source import SourceDocument
 from solarlab.io.run_store import RunStore
 from solarlab_server.app import create_app
@@ -28,12 +27,7 @@ from test_event_service import _HTTPServer
 pytestmark = pytest.mark.frontend
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "perovskite-sim/perovskite_sim"
-CONFIGS = ROOT / "perovskite-sim/tests/fixtures/configs"
-DEFAULT_PATHS = ("models/parameters.py", "models/device.py", "models/defects.py",
-                 "physics/statistics.py", "physics/band_gap_narrowing.py",
-                 "scaps_compat/loader.py", "constants.py", "twod/microstructure.py",
-                 "models/tandem_config.py")
+CONFIGS = ROOT / "tests/fixtures/configs"
 
 
 @pytest.fixture(autouse=True)
@@ -49,15 +43,12 @@ def forbid_legacy_model_imports(monkeypatch):
 
 @pytest.fixture(scope="module")
 def catalog():
-    return read_legacy_default_catalog(tuple(
-        SourceDocument(name, (LEGACY / name).read_bytes()) for name in DEFAULT_PATHS))
+    return load_packaged_default_catalog("device_only")
 
 
 @pytest.fixture(scope="module")
 def resources():
-    return ResourceLibrary(tuple(ResourceTable(path.stem, "nk", SourceDocument(
-        str(path.relative_to(ROOT)), path.read_bytes()))
-        for path in sorted((LEGACY / "data/nk").glob("*.csv"))))
+    return load_packaged_resource_library(source_id_prefix="src/solarlab/materials/data")
 
 
 def case(name, catalog):
@@ -66,7 +57,7 @@ def case(name, catalog):
         refs = {name: SourceDocument(name, (CONFIGS / name).read_bytes()) for name in
                 ("nip_wideGap_FACs_1p77.yaml", "nip_SnPb_1p22.yaml")}
         return import_tandem(source, id="lin2019", references=refs, defaults=catalog), (source, *refs.values())
-    path = ROOT / "perovskite-sim/configs/scaps_mirror_v2.yaml" if name == "scaps" else CONFIGS / "nip_MAPbI3.yaml"
+    path = ROOT / "src/solarlab/materials/data/presets/scaps_mirror_v2.yaml" if name == "scaps" else CONFIGS / "nip_MAPbI3.yaml"
     source = SourceDocument(str(path.relative_to(ROOT)), path.read_bytes())
     importer = import_scaps_device if name == "scaps" else import_standard_device
     return importer(source, id=name, defaults=catalog), (source,)

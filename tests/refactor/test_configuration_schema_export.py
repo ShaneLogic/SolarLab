@@ -23,7 +23,7 @@ from solarlab.materials.parameter_schema import parameter_schema
 from solarlab.units import UNIT_SCHEMA_VERSION, supported_units
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURES = ROOT / "perovskite-sim/tests/fixtures/configs"
+FIXTURES = ROOT / "tests/fixtures/configs"
 
 
 def check_local_references(document):

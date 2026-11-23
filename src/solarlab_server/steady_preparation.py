@@ -39,6 +39,8 @@ class SteadyJobInput(BaseModel):
     intervals_per_layer: int = Field(ge=2, le=256)
     generation_scale: float = Field(ge=0)
     incident_power_W_m2: float | None = Field(gt=0)
+    expected_prepared_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    expected_source_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
     def check_protocol(self) -> SteadyJobInput:
@@ -103,7 +105,14 @@ class SteadyPreparationContext:
 
 def prepare_steady_input(input: SteadyJobInput, context: SteadyPreparationContext) -> SteadyJVJob:
     """Prepare the existing cold worker; all trusted records stay server-owned."""
-    return prepare_steady_jv_job(context.device(input.device_id), input.protocol(),
+    prepared = context.device(input.device_id)
+    if (input.expected_prepared_sha256 is not None
+            and prepared.content_sha256 != input.expected_prepared_sha256):
+        raise ValueError("registered device prepared_sha256 differs from expected_prepared_sha256")
+    if input.expected_source_sha256 is not None:
+        if not prepared.sources or prepared.sources[0].sha256 != input.expected_source_sha256:
+            raise ValueError("registered device source sha256 differs from expected_source_sha256")
+    return prepare_steady_jv_job(prepared, input.protocol(),
         implementation=context.implementation, current_repository_head=context.current_repository_head,
         engine=ExecutionEngine("solarlab"))
 

@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import ast
-import hashlib
-import importlib
 from importlib import resources
-import inspect
 import json
 import os
 from pathlib import Path
@@ -159,80 +156,6 @@ def test_module_aliases_cannot_bypass_the_public_symbol_boundary(source):
 ])
 def test_explicit_public_alias_access_is_supported(source):
     assert public_import_violations(source, policy()["public_imports"]) == []
-
-
-def test_registered_legacy_boundaries_have_real_consumers_and_explicit_exits():
-    value = json.loads(
-        (ROOT / "reproducibility/RefactorTransitionBoundariesV1.json").read_text()
-    )
-    assert value["schema"] == "solarlab.refactor-transition-boundaries.v1"
-    legacy = value["legacy_package"]
-    assert (ROOT / legacy["source_root"]).is_dir()
-    assert not (ROOT / legacy["excluded_alternative"]).exists()
-    assert legacy["source_copies"] == 1
-    facade = value["execution_facade"]
-    assert facade["owner"] == "WS4"
-    assert facade["module"] == "solarlab_server.legacy_engine"
-    assert facade["status"] == "implemented_W03"
-    module = importlib.import_module(facade["module"])
-    assert (ROOT / facade["path"]).is_file()
-    assert facade["symbol"] == "prepare_legacy_job"
-    assert facade["symbol"] in module.__all__
-    assert tuple(inspect.signature(getattr(module, facade["symbol"])).parameters) == (
-        "invocation", "inputs", "execution", "engine", "manifest", "expected_sha256",
-    )
-    assert facade["submission"]["symbol"] == "LegacyJob.submit"
-    assert "LegacyJob" in module.__all__ and callable(module.LegacyJob.submit)
-    registration = facade["worker"]
-    assert registration["factory"] in module.__all__
-    binding = getattr(module, registration["factory"])()
-    assert (binding.id, binding.module, binding.symbol) == (
-        registration["id"], facade["module"], registration["symbol"],
-    )
-    assert binding.id == "legacy" and binding.symbol == "_run_legacy"
-    assert tuple(inspect.signature(getattr(module, binding.symbol)).parameters) == ("request", "worker")
-    assert binding.source_sha256 == hashlib.sha256(Path(inspect.getfile(module)).read_bytes()).hexdigest()
-    assert registration["registry"]["document"] == {
-        "drivers": ["ion_hysteresis", "scaps_steady_state", "scaps_transient"],
-        "engine": "legacy", "fallback": "forbidden",
-    }
-    for name, digest in (("registry", binding.registry_sha256), ("request_schema", binding.schema_sha256)):
-        record = registration[name]
-        raw = json.dumps(record["document"], sort_keys=True, separators=(",", ":")).encode()
-        assert record["sha256"] == hashlib.sha256(raw).hexdigest() == digest
-    planning = facade["historical_planning"]
-    assert planning["status"] == "planned_for_M1_not_implemented_by_WS2"
-    assert planning["symbol"] == "run" and planning["source_commit"]
-    assert set(facade["exit_tasks"]) == {"P06-06", "P09-03"}
-    for adapter in value["data_adapters"]:
-        assert (ROOT / adapter["path"]).is_file()
-        module = importlib.import_module(adapter["module"])
-        assert adapter["symbol"] in module.__all__
-        assert callable(getattr(module, adapter["symbol"]))
-        assert adapter["exit_tasks"]
-    for group in value["consumer_groups"]:
-        if group.get("historical") is True or group.get("status") == "historical":
-            continue
-        assert group["owner"] and group["exit_tasks"]
-        assert all((ROOT / path).is_file() for path in group["paths"])
-    # Registration is deliberately not an execution or deletion certificate.
-    assert value["consumer_inventory"]["discovery_record"] == "discovery_evidence"
-
-
-def test_registered_legacy_submission_passes_the_same_request_and_manifest():
-    from unittest.mock import Mock
-
-    value = json.loads((ROOT / "reproducibility/RefactorTransitionBoundariesV1.json").read_text())
-    facade = value["execution_facade"]
-    module = importlib.import_module(facade["module"])
-    request, manifest, limits, handle = (object() for _ in range(4))
-    supervisor = Mock(spec=["submit"])
-    supervisor.submit.return_value = handle
-    job = module.LegacyJob(request, manifest)
-    assert job.submit(supervisor, "registered-run", limits) is handle
-    supervisor.submit.assert_called_once_with(
-        "registered-run", facade["worker"]["id"], request, limits, execution=manifest,
-    )
 
 
 def create_package(root: Path, name: str) -> Path:

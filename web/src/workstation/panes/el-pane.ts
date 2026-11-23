@@ -1,9 +1,10 @@
-import { startJob, streamJobEvents } from '../../job-stream'
+import { startJob, streamJobEvents } from '../../v2-job-client'
 import { createProgressBar, type ProgressBarHandle } from '../../progress'
 import { setStatus, numField, readNum } from '../../ui-helpers'
 import { hasTMMOptics } from '../../device-utils'
 import type { DeviceConfig, ELResult } from '../../types'
 import type { Run, RunResult } from '../types'
+import { extractExecutionPhysics } from '../execution-physics'
 
 const NON_TMM_MSG =
   'TMM optical data required. Select a preset with wavelength-resolved n,k data.'
@@ -78,13 +79,15 @@ export function mountELPane(container: HTMLElement, opts: ELPaneOptions): void {
         streamJobEvents<ELResult & { active_physics?: string }>(jobId, {
           onProgress: (ev) => progressBar.update(ev),
           onResult: (result) => {
-            const { active_physics, ...pure } = result as ELResult & { active_physics?: string }
+            const { pure, receipt } = extractExecutionPhysics(result as ELResult & { active_physics?: string })
             const runResult: RunResult = { kind: 'el', data: pure }
             const run: Run = {
               id: randomRunId(),
               timestamp: Date.now(),
               result: runResult,
-              activePhysics: active_physics ?? 'unknown',
+              activePhysics: receipt.summary,
+              executionPhysics: receipt,
+              scientificQualification: receipt.scientificQualification,
               durationMs: performance.now() - t0,
               deviceSnapshot: snapshot,
             }
