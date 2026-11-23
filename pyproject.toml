@@ -97,6 +97,16 @@ ignore_missing_imports = true
 check_untyped_defs = true
 disallow_untyped_defs = true
 
+# numpy==2.3.5 (locked for Python <3.12) types 1D np.interp as float64 and
+# np.max as unparameterized; numpy==2.5.3 (Python >=3.12) types both cleanly.
+[[tool.mypy.overrides]]
+module = ["solarlab.device.compile_1d"]
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = ["solarlab.experiments.degradation"]
+disable_error_code = ["var-annotated"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
