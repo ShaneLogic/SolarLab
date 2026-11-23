@@ -15,6 +15,7 @@ from solarlab.physics.chemistry import (
     BoundedSpeciesMap,
     IodineKineticsParameters,
     PositiveSpeciesMap,
+    SoftplusSpeciesMap,
     StoichiometricNetwork,
     equilibrium_iodine_populations_m3,
     evaluate_iodine_kinetics,
@@ -263,7 +264,7 @@ def test_positive_and_bounded_species_maps_overflow_free_and_cancellation_safe()
     np.testing.assert_allclose(recovered, np.maximum(targets, 1.0), rtol=1e-14)
 
     # Cancellation-free secant at tiny representable step matches exact tangent * du
-    raw_step = 1.0e-11 * np.maximum(np.abs(u_ext), 1.0e-9)
+    raw_step = 1.0e-12 * np.maximum(np.abs(u_ext), 1.0e-9)
     u_next = u_ext + raw_step
     actual_du = u_next - u_ext
     secant = pmap.secant_increment_m3(u_next, u_ext)
@@ -287,6 +288,24 @@ def test_positive_and_bounded_species_maps_overflow_free_and_cancellation_safe()
         bmap.secant_increment_m3(u_b2, u_b),
         bmap.density_m3(u_b2) - dens_b,
         rtol=1e-13,
+    )
+
+    # Smooth log-linear Softplus map round-trip and cancellation-free secant
+    spmap = SoftplusSpeciesMap(scale_m3=np.full(5, 1.0e20), vacuum_floor_m3=1.0)
+    u_sp = np.array([-60.0, -5.0, 0.0, 8.0, 1.0e5], dtype=np.float64)
+    dens_sp, tan_sp = spmap.density_and_tangent_m3(u_sp)
+    assert np.all(np.isfinite(dens_sp)) and np.all(dens_sp > 0.0)
+    assert np.all(np.isfinite(tan_sp)) and np.all(tan_sp > 0.0)
+    sp_targets = np.array([0.0, 1.0, 1.0e14, 1.0e20, 1.0e25], dtype=np.float64)
+    sp_coords = spmap.coordinate_from_density(sp_targets)
+    np.testing.assert_allclose(
+        spmap.density_m3(sp_coords), np.maximum(sp_targets, 1.0), rtol=1e-13
+    )
+    u_sp_next = u_sp + 1.0e-12 * np.maximum(np.abs(u_sp), 1.0)
+    np.testing.assert_allclose(
+        spmap.secant_increment_m3(u_sp_next, u_sp),
+        tan_sp * (u_sp_next - u_sp),
+        rtol=1e-9,
     )
 
 

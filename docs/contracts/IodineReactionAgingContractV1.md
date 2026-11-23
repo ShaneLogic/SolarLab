@@ -95,9 +95,17 @@ For diffusion-controlled reactions with capture radius $R_{AB} > 0$, rate consta
 
 ## 4. Coordinate Regularization and Multi-Species Transport
 
-### 4.1 Dimensionless Fischer–Burmeister Positive Map
+### 4.1 Smooth Log-Linear Softplus and Fischer–Burmeister Positive Maps
 
-In `full_stack_permeable` stacks (e.g., `HBL / Perovskite / EBL`), blocking layers start at zero initial iodine density (`Initial I- = 0`). To avoid the singular zero storage tangent of pure logarithmic coordinates while strictly guaranteeing $c_j > 0$ without `exp` overflow, dilute species use the smooth dimensionless Fischer–Burmeister map with scale $c_{\mathrm{scale},j} > 0$ and regularization ratio $\eta_j \in (0, 1]$:
+In `full_stack_permeable` stacks (e.g., `HBL / Perovskite / EBL`), blocking layers start at zero initial iodine density (`Initial I- = 0`) while reactions span over 20 orders of magnitude between dark trace radicals ($c_0, c_2 \sim 1\;\mathrm{m}^{-3}$) and concentrated mobile iodide ($c_- \sim 10^{25}\;\mathrm{m}^{-3}$). Compiled 1D devices use `SoftplusSpeciesMap` ($c_j(u) = c_{\mathrm{scale},j}\ln(1 + e^u) > 0$), which transitions smoothly from exponential log-density coordinates ($c \approx c_{\mathrm{scale}} e^u$ for $u \ll 0$) to linear coordinates ($c \approx c_{\mathrm{scale}} u$ for $u \gg 0$ without `exp` overflow), maintaining global curvature radius $\lvert c'(u)/c''(u)\rvert = 1 + e^u > 1$ everywhere and a subtraction-free BDF storage secant:
+
+$$
+\frac{\mathrm{d}c_j}{\mathrm{d}u} = c_{\mathrm{scale},j}\,\sigma(u) > 0,
+\qquad
+c_j(u_2) - c_j(u_1) = c_{\mathrm{scale},j}\,\ln\Bigl(1 + \sigma(u_1)\bigl(e^{u_2 - u_1} - 1\bigr)\Bigr).
+$$
+
+`solarlab.physics.chemistry` also provides the algebraic dimensionless Fischer–Burmeister map `PositiveSpeciesMap` with scale $c_{\mathrm{scale},j} > 0$ and regularization ratio $\eta_j \in (0, 1]$:
 
 $$
 r(u) = \mathrm{hypot}(u, 2\eta_j),
@@ -108,18 +116,10 @@ r(u) = \mathrm{hypot}(u, 2\eta_j),
 \dfrac{2\eta_j^2}{r(u) - u}, & u < 0,
 \end{cases}
 \qquad
-c_j(u) = c_{\mathrm{scale},j}\,\psi(u) > 0.
+c_j(u) = c_{\mathrm{scale},j}\,\psi(u) > 0,
 $$
 
-Its tangent and cancellation-free BDF storage secant are strictly positive and subtraction-free:
-
-$$
-\frac{\mathrm{d}c_j}{\mathrm{d}u} = c_{\mathrm{scale},j}\,\frac{\psi(u)}{r(u)} > 0,
-\qquad
-c_j(u_2) - c_j(u_1) = c_{\mathrm{scale},j}\,(u_2 - u_1)\,\frac{\psi(u_1) + \psi(u_2)}{r(u_1) + r(u_2)}.
-$$
-
-When finite-site steric exclusion is declared for $\mathrm{I}^-$ (`iodide_site_limit_m3`), $c_-$ switches to the bounded logistic map $c_- \in (0, c_{\mathrm{lim}})$ and uses `solarlab.physics.ions` steric Scharfetter–Gummel fluxes.
+with strictly positive tangent $\mathrm{d}c_j/\mathrm{d}u = c_{\mathrm{scale},j}\psi(u)/r(u)$ and cancellation-free secant $c_j(u_2) - c_j(u_1) = c_{\mathrm{scale},j}(u_2 - u_1)[\psi(u_1)+\psi(u_2)]/[r(u_1)+r(u_2)]$. When finite-site steric exclusion is declared for $\mathrm{I}^-$ (`iodide_site_limit_m3`), $c_-$ switches to `BoundedSpeciesMap` with $c_- \in (0, c_{\mathrm{lim}})$ and uses `solarlab.physics.ions` steric Scharfetter–Gummel fluxes.
 
 ### 4.2 Exponential-Fitted Face Fluxes and Heterointerface Partitioning
 
@@ -147,5 +147,6 @@ where $B(\xi) = \xi / (e^\xi - 1)$ is the stabilized Bernoulli function. For $z_
      - `"hole_oxidation_to_I0"`: surface reaction $\mathrm{I}^- + h^+ \to \mathrm{I}^0$ with rate $J_{\mathrm{ct}} = k_{\mathrm{ct}} c_- p$ removing equal $\mathrm{I}^-$ and $h^+$ fluxes while injecting $+J_{\mathrm{ct}}$ into $\mathrm{I}^0$ (zero net charge creation, zero iodine atom loss);
      - `"immobilized_product_sheet"`: surface reaction $\mathrm{I}^- + h^+ \to \mathrm{I}_{\mathrm{surf}}^0(\text{fixed})$ removing equal $\mathrm{I}^-$ and $h^+$ fluxes (zero net charge error) and accumulating trapped surface iodine inventory in the step ledger.
    Non-conserving bare $\mathrm{I}^-$ sink boundaries are prohibited.
-3. **Mandatory Step Accounting Invariants**:
-   Every transient step tracks in-device elemental iodine $M_{\mathrm{I}}(t) = \sum_i w_i (c_{-,i} + c_{0,i} + 2c_{2,i})$ plus cumulative escaped/immobilized boundary iodine $M_{\mathrm{I,bound}}(t)$, enforcing relative conservation drift $\lvert M_{\mathrm{I}}(t) + M_{\mathrm{I,bound}}(t) - M_{\mathrm{I}}(0) \rvert / M_{\mathrm{I}}(0) \le 10^{-12}$.
+3. **Mandatory Step Accounting and Frozen-Probe Invariants**:
+   - Every transient step tracks in-device elemental iodine $M_{\mathrm{I}}(t) = \sum_i w_i (c_{-,i} + c_{0,i} + 2c_{2,i})$ plus BDF1/2-consistent cumulative escaped/immobilized boundary iodine $M_{\mathrm{I,bound}}(t)$, enforcing a per-step relative conservation gate $\lvert \Delta M_{\mathrm{res}} \rvert / M_{\mathrm{I}}(0) \le 10^{-9}$ (`step_iodine_conservation`) and auditing cumulative trajectory drift.
+   - Non-destructive frozen-chemistry electronic `J-V` probes and `chem_mode="frozen"` small-signal AC impedance lock $(c_-, c_0, c_2)$ bit-for-bit (`0-ULP` chemical coordinate invariance) and suppress redox charge transfer into immobile $\mathrm{I}^-$ so Kirchhoff electronic current continuity $\nabla\cdot(J_n + J_p + i\omega D) = 0$ holds identically across all interior faces.

@@ -2,9 +2,9 @@
 
 Provides:
 1. :class:`PositiveSpeciesMap` -- overflow-free dimensionless Fischer-Burmeister
-   coordinate map ``u -> c(u) > 0`` with exact subtraction-free tangent and BDF
-   storage secant, resolving the singular-mass breakdown when chemical species
-   invade initially empty (``c = 0``) transport/blocking layers.
+   coordinate map ``c(u) = scale * psi(u; eta) > 0`` with exact subtraction-free
+   tangent and BDF storage secant, preserving ``O(1)`` coordinates and nonsingular
+   linear diffusion slopes when invading initially empty blocking layers.
 2. :class:`BoundedSpeciesMap` -- smooth finite-site logistic map ``c in (0, c_lim)``
    for optional steric exclusion on mobile iodide ``I^-``.
 3. :func:`species_sg_face_flux` -- unified Scharfetter-Gummel face flux for
@@ -30,6 +30,7 @@ __all__ = [
     "BoundedSpeciesMap",
     "IODINE_TRANSPORT_SCHEMA",
     "PositiveSpeciesMap",
+    "SoftplusSpeciesMap",
     "SpeciesCoordinateMap",
     "SpeciesFaceFluxEvaluation",
     "harmonic_face_diffusivity_m2_s",
@@ -59,10 +60,10 @@ def _psi_and_radius(u: np.ndarray, eta: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 @dataclass(frozen=True, slots=True)
 class PositiveSpeciesMap:
-    """Dimensionless Fischer-Burmeister positive map ``c(u) = scale * psi(u) > 0``."""
+    """Dimensionless Fischer-Burmeister positive map ``c(u) = scale * psi(u; eta)``."""
 
     scale_m3: Vector
-    eta: Vector
+    eta: Vector | ArrayLike = 1.0e-6
     vacuum_floor_m3: float = 1.0
 
     def __post_init__(self) -> None:
@@ -87,6 +88,7 @@ class PositiveSpeciesMap:
 
     @property
     def identity(self) -> str:
+        eta_arr = np.ascontiguousarray(self.eta, dtype=np.float64)
         digest = sha256(
             json.dumps(
                 [IODINE_TRANSPORT_SCHEMA, "positive_fb_v1", self.vacuum_floor_m3],
@@ -94,18 +96,21 @@ class PositiveSpeciesMap:
             ).encode()
         )
         digest.update(np.ascontiguousarray(self.scale_m3, dtype=np.float64).tobytes())
-        digest.update(np.ascontiguousarray(self.eta, dtype=np.float64).tobytes())
+        digest.update(eta_arr.tobytes())
         return digest.hexdigest()
 
     def density_and_tangent_m3(self, u: ArrayLike) -> tuple[Vector, Vector]:
         coord = np.asarray(u, dtype=np.float64)
         if coord.shape != (self.size,) or not np.all(np.isfinite(coord)):
             raise ContractError("coordinate_must_be_finite_vector")
-        psi, radius = _psi_and_radius(coord, self.eta)
+        eta_arr = np.asarray(self.eta, dtype=np.float64)
+        psi, radius = _psi_and_radius(coord, eta_arr)
         density = self.scale_m3 * psi
         tangent = self.scale_m3 * (psi / radius)
         if not (np.all(np.isfinite(density)) and np.all(np.isfinite(tangent))):
             raise ContractError("nonfinite_positive_species_map_evaluation")
+        if np.any(density <= 0.0) or np.any(tangent <= 0.0):
+            raise FloatingPointError("positive_species_map_underflow")
         return frozen_array(density), frozen_array(tangent)
 
     def density_m3(self, u: ArrayLike) -> Vector:
@@ -119,9 +124,10 @@ class PositiveSpeciesMap:
             raw = np.full(self.size, float(raw), dtype=np.float64)
         if raw.shape != (self.size,) or not np.all(np.isfinite(raw)) or np.any(raw < 0.0):
             raise ContractError("density_m3_must_be_finite_nonnegative_vector")
-        eff = np.maximum(raw, self.vacuum_floor_m3)
+        eta_arr = np.asarray(self.eta, dtype=np.float64)
+        eff = np.where(raw > 0.0, raw, self.vacuum_floor_m3)
         psi = eff / self.scale_m3
-        coord = psi - (self.eta * self.eta) / psi
+        coord = psi - (eta_arr * eta_arr) / psi
         return frozen_array(coord)
 
     def secant_increment_m3(self, u_new: ArrayLike, u_old: ArrayLike) -> Vector:
@@ -134,8 +140,9 @@ class PositiveSpeciesMap:
             or not (np.all(np.isfinite(u2)) and np.all(np.isfinite(u1)))
         ):
             raise ContractError("secant_coordinates_must_be_finite_vectors")
-        psi1, r1 = _psi_and_radius(u1, self.eta)
-        psi2, r2 = _psi_and_radius(u2, self.eta)
+        eta_arr = np.asarray(self.eta, dtype=np.float64)
+        psi1, r1 = _psi_and_radius(u1, eta_arr)
+        psi2, r2 = _psi_and_radius(u2, eta_arr)
         delta = self.scale_m3 * (u2 - u1) * ((psi1 + psi2) / (r1 + r2))
         return frozen_array(delta)
 
@@ -232,29 +239,120 @@ class BoundedSpeciesMap:
         ):
             raise ContractError("secant_coordinates_must_be_finite_vectors")
         du = u2 - u1
-        half = 0.5 * du
-        # sigmoid(z2) - sigmoid(z1) = 2 * sinh(du/2) / [2 cosh(du/2) + exp(-(z1+z2)/2)...]
-        # Equivalently: theta1 * (1 - theta2) * expm1(du) when du <= 0, and
-        #               theta2 * (1 - theta1) * (-expm1(-du)) when du > 0!
         theta1, om1 = self._sigmoid(u1 + self.logit_reference)
         theta2, om2 = self._sigmoid(u2 + self.logit_reference)
-        abs_du = np.abs(du)
-        # Avoid expm1 overflow for huge |du| by using bounded sinh/cosh identity
-        # when |du| > 40, and exact product * expm1(-|du|) for all |du|!
-        # Notice expm1(-|du|) is STRICTLY in (-1, 0] for ALL |du| >= 0 -- NEVER OVERFLOWS!
-        neg_expm1 = -np.expm1(-abs_du)  # = 1 - exp(-|du|) in [0, 1)
-        # Identity check:
-        # theta2 - theta1 = sign(du) * theta_hi * (1 - theta_lo) * (1 - exp(-|du|))?
-        # Wait: let z2 = z1 + a (a >= 0).
-        # theta2 * (1 - theta1) * (1 - e^-a)
-        #   = [e^z2 / (1 + e^z2)] * [1 / (1 + e^z1)] * (1 - e^-(z2 - z1))
-        #   = (e^z2 - e^z1) / [(1 + e^z2)(1 + e^z1)] == theta2 - theta1 IDENTICALLY!!
-        pos_step = half >= 0.0
-        factor = np.where(pos_step, theta2 * om1, -theta1 * om2)
+        neg_expm1 = -np.expm1(-np.abs(du))
+        factor = np.where(du >= 0.0, theta2 * om1, -theta1 * om2)
         return frozen_array(self.site_limit_m3 * factor * neg_expm1)
 
 
-SpeciesCoordinateMap = PositiveSpeciesMap | BoundedSpeciesMap
+@dataclass(frozen=True, slots=True)
+class SoftplusSpeciesMap:
+    """Smooth log-linear map ``c(u) = scale * ln(1 + exp(u))`` on ``(-inf, +inf)``.
+
+    Behaves exponentially (``scale * exp(u)``) in trace regimes ``u << 0`` and
+    linearly (``scale * u``) in concentrated regimes ``u >> 0``, maintaining
+    smoothness radius ``|c'/c''| = 1 + exp(u) > 1`` everywhere with zero kinks
+    and zero positive overflow.
+    """
+
+    scale_m3: Vector
+    vacuum_floor_m3: float = 1.0
+
+    def __post_init__(self) -> None:
+        raw = np.atleast_1d(np.asarray(self.scale_m3, dtype=np.float64))
+        if raw.ndim != 1 or raw.size < 1:
+            raise ContractError("scale_m3_must_be_nonempty_1d_vector")
+        scale = _positive_vector(self.scale_m3, int(raw.size), "scale_m3")
+        floor = float(self.vacuum_floor_m3)
+        if not math.isfinite(floor) or floor <= 0.0:
+            raise ContractError("vacuum_floor_m3_must_be_strictly_positive")
+        object.__setattr__(self, "scale_m3", scale)
+        object.__setattr__(self, "vacuum_floor_m3", floor)
+
+    @property
+    def size(self) -> int:
+        return int(self.scale_m3.size)
+
+    @property
+    def identity(self) -> str:
+        digest = sha256(
+            json.dumps(
+                [IODINE_TRANSPORT_SCHEMA, "softplus_v1", self.vacuum_floor_m3],
+                separators=(",", ":"),
+            ).encode()
+        )
+        digest.update(np.ascontiguousarray(self.scale_m3, dtype=np.float64).tobytes())
+        return digest.hexdigest()
+
+    @staticmethod
+    def _softplus_and_sigmoid(u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        pos = u >= 0.0
+        exp_neg = np.exp(np.where(pos, -u, u))
+        sp = np.where(pos, u + np.log1p(exp_neg), np.log1p(exp_neg))
+        sig = np.where(pos, 1.0 / (1.0 + exp_neg), exp_neg / (1.0 + exp_neg))
+        return sp, sig
+
+    def density_and_tangent_m3(self, u: ArrayLike) -> tuple[Vector, Vector]:
+        coord = np.asarray(u, dtype=np.float64)
+        if coord.shape != (self.size,) or not np.all(np.isfinite(coord)):
+            raise ContractError("coordinate_must_be_finite_vector")
+        sp, sig = self._softplus_and_sigmoid(coord)
+        density = self.scale_m3 * sp
+        tangent = self.scale_m3 * sig
+        if not (np.all(np.isfinite(density)) and np.all(np.isfinite(tangent))):
+            raise ContractError("nonfinite_softplus_species_map_evaluation")
+        if np.any(density <= 0.0) or np.any(tangent <= 0.0):
+            raise FloatingPointError("softplus_species_map_underflow")
+        return frozen_array(density), frozen_array(tangent)
+
+    def density_m3(self, u: ArrayLike) -> Vector:
+        density, _ = self.density_and_tangent_m3(u)
+        return density
+
+    def coordinate_from_density(self, density_m3: ArrayLike) -> Vector:
+        raw = np.asarray(density_m3, dtype=np.float64)
+        if raw.ndim == 0:
+            raw = np.full(self.size, float(raw), dtype=np.float64)
+        if raw.shape != (self.size,) or not np.all(np.isfinite(raw)) or np.any(raw < 0.0):
+            raise ContractError("density_m3_must_be_finite_nonnegative_vector")
+        eff = np.where(raw > 0.0, raw, self.vacuum_floor_m3)
+        y = eff / self.scale_m3
+        large = y > 1.0
+        safe_small = np.where(large, 1.0, y)
+        safe_large = np.where(large, y, 1.0)
+        coord = np.where(
+            large,
+            safe_large + np.log(-np.expm1(-safe_large)),
+            np.log(np.expm1(safe_small)),
+        )
+        return frozen_array(coord)
+
+    def secant_increment_m3(self, u_new: ArrayLike, u_old: ArrayLike) -> Vector:
+        """Subtraction-free ``c(u_new) - c(u_old)`` accurate across all regimes."""
+        u2 = np.asarray(u_new, dtype=np.float64)
+        u1 = np.asarray(u_old, dtype=np.float64)
+        if (
+            u2.shape != (self.size,)
+            or u1.shape != (self.size,)
+            or not (np.all(np.isfinite(u2)) and np.all(np.isfinite(u1)))
+        ):
+            raise ContractError("secant_coordinates_must_be_finite_vectors")
+        du = u2 - u1
+        close = np.abs(du) <= 0.5
+        sp1, sig1 = self._softplus_and_sigmoid(u1)
+        sp2, _ = self._softplus_and_sigmoid(u2)
+        safe_du = np.where(close, du, 0.0)
+        near_inc = np.log1p(sig1 * np.expm1(safe_du))
+        both_pos = (u1 > 0.0) & (u2 > 0.0)
+        far_pos_inc = du + np.log1p(np.exp(-np.maximum(u2, 0.0))) - np.log1p(
+            np.exp(-np.maximum(u1, 0.0))
+        )
+        far_inc = np.where(both_pos, far_pos_inc, sp2 - sp1)
+        return frozen_array(self.scale_m3 * np.where(close, near_inc, far_inc))
+
+
+SpeciesCoordinateMap = PositiveSpeciesMap | SoftplusSpeciesMap | BoundedSpeciesMap
 
 
 def harmonic_face_diffusivity_m2_s(
