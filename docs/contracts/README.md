@@ -48,7 +48,7 @@ For cross-cutting solver architecture and extension rules, see [../DevelopmentGu
 | Specification | Scope |
 |:--------------|:------|
 | [ExperimentProtocol.md](ExperimentProtocol.md) | Canonical 1D sweep, preconditioning, and measurement protocol semantics |
-| [FrozenIonSnapshotContract.md](FrozenIonSnapshotContract.md) | Zero-diffusivity electronic snapshot $J\text{–}V$ probes during ionic aging |
+| [FrozenIonSnapshotContract.md](FrozenIonSnapshotContract.md) | Zero-diffusivity electronic snapshot $J\text{-}V$ probes during ionic aging |
 | [TpvOpenCircuitContract.md](TpvOpenCircuitContract.md) | Floating-port Maxwell total-current open-circuit integration and TPV decay identifiability |
 | [IonSweepFigureReference.md](IonSweepFigureReference.md) | Dense mobile-ion waveform reference protocol (`calado2016_ion_sweep`) |
 

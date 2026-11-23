@@ -141,24 +141,24 @@ All characterisation workflows compile from the same validated device declaratio
 
 | Domain | Experiment / Capability | Primary Module | Output & Physical Checks |
 |:-------|:------------------------|:---------------|:-------------------------|
-| **1D Steady & Sweeps** | Illuminated $J\text{–}V$ & direct $V_{\mathrm{oc}}$ | `solarlab.experiments.jv` | $V_{\mathrm{oc}}, J_{\mathrm{sc}}, \mathrm{FF}, \mathrm{PCE}$, interior/contact currents, exact $V_{\mathrm{oc}}$ sign bracket |
-| | Dark diode $J\text{–}V$ | `solarlab.experiments.dark_jv` | Auto-windowed $\ln J\text{–}V$ ideality factor $n_{\mathrm{id}}$ and $J_0$ |
+| **1D Steady & Sweeps** | Illuminated $J\text{-}V$ & direct $V_{\mathrm{oc}}$ | `solarlab.experiments.jv` | $V_{\mathrm{oc}}, J_{\mathrm{sc}}, \mathrm{FF}, \mathrm{PCE}$, interior/contact currents, exact $V_{\mathrm{oc}}$ sign bracket |
+| | Dark diode $J\text{-}V$ | `solarlab.experiments.dark_jv` | Auto-windowed $\ln J\text{-}V$ ideality factor $n_{\mathrm{id}}$ and $J_0$ |
 | | Parameter sweeps | `solarlab.sweeps` | Cold-compiled multi-parameter studies with persisted `RunStore` attempts |
-| **1D Dynamic & Open-Circuit** | Waveform / Hysteresis $J\text{–}V$ | `solarlab.experiments.waveform_jv` | Continuous preconditioning + forward/reverse mobile-ion loops, $\mathrm{HI}_{\mathrm{norm}}$, current decomposition |
-| | Suns-$V_{\mathrm{oc}}$ & $V_{\mathrm{oc}}(T)$ | `solarlab.experiments.suns_voc`, `voc_t` | Series-resistance-free pseudo-$J\text{–}V$, pseudo-$\mathrm{FF}$, activation-energy intercept |
+| **1D Dynamic & Open-Circuit** | Waveform / Hysteresis $J\text{-}V$ | `solarlab.experiments.waveform_jv` | Continuous preconditioning + forward/reverse mobile-ion loops, $\mathrm{HI}_{\mathrm{norm}}$, current decomposition |
+| | $\text{Suns-}V_{\mathrm{oc}}$ & $V_{\mathrm{oc}}(T)$ | `solarlab.experiments.suns_voc`, `voc_t` | Series-resistance-free $\text{pseudo-}J\text{-}V$, $\text{pseudo-FF}$, activation-energy intercept |
 | | Transient Photovoltage (TPV) | `solarlab.experiments.tpv` | Floating-port Maxwell $J_{\mathrm{cond}} + \partial_t D = 0$ pulse + paired unpulsed drift subtraction |
-| | Frozen-ion degradation | `solarlab.experiments.degradation` | Long-time ionic evolution with zero-diffusivity electronic snapshot $J\text{–}V$ probes |
+| | Frozen-ion degradation | `solarlab.experiments.degradation` | Long-time ionic evolution with zero-diffusivity electronic snapshot $J\text{-}V$ probes |
 | **1D Small-Signal AC** | Impedance spectroscopy $Z(\omega)$ | `solarlab.experiments.impedance`, `ionic_impedance` | Exact sparse complex solve $(G + i\omega C)\delta u = b$, Nyquist/Bode, coupled ion & dynamic-defect tangents |
-| | Mott–Schottky ($C\text{–}V$ / $C\text{–}f$) | `solarlab.experiments.mott_schottky` | Depletion $1/C^2$ extraction of $V_{\mathrm{bi}}$ and $N_{\mathrm{eff}}$ |
+| | Mott–Schottky ($C\text{-}V$ / $C\text{-}f$) | `solarlab.experiments.mott_schottky` | Depletion $1/C^2$ extraction of $V_{\mathrm{bi}}$ and $N_{\mathrm{eff}}$ |
 | **Spectral & Multi-Junction** | Monochromatic EQE & EL | `solarlab.experiments.eqe`, `el_spectrum` | Coherent TMM or spectral Beer–Lambert $\mathrm{EQE}(\lambda)$, AM1.5G $J_{\mathrm{sc}}$, reciprocity EL |
-| | 2T Monolithic Tandem | `solarlab.experiments.tandem_jv` | Joint 4-region coherent TMM photon budget + series current-matched sub-cell $J\text{–}V$ |
-| **2D & Screening** | 2D $J\text{–}V$ & $V_{\mathrm{oc}}(L_g)$ grain sweep | `solarlab.experiments.two_dimensional` | Exact control-volume grain-boundary SRH overlap, frozen-ion DC or coupled 2D mobile-ion BE |
+| | 2T Monolithic Tandem | `solarlab.experiments.tandem_jv` | Joint 4-region coherent TMM photon budget + series current-matched sub-cell $J\text{-}V$ |
+| **2D & Screening** | 2D $J\text{-}V$ & $V_{\mathrm{oc}}(L_g)$ grain sweep | `solarlab.experiments.two_dimensional` | Exact control-volume grain-boundary SRH overlap, frozen-ion DC or coupled 2D mobile-ion BE |
 | | SolarScale material screening | `solarlab.experiments.solarscale`, `evaluation_report` | Candidate ingestion, band-alignment gates, sweep manifests, and publication-gated report packs |
 
 **Web Workstation Layout (`web/`):**
 - **Left Rail (`Devices / Results`)** — Switch between active device configurations and stored `RunStore` attempts for multi-curve overlay.
 - **Center Pane (`Stack & Parameter Editor`)** — Interactive layer builder, grouped parameter editors (*Geometry, Transport, Recombination & Defects, Ions & Optics, Contacts*), live schema preview, and lossless YAML import/export.
-- **Right Pane (`Experiment Runner & Dockable Plots`)** — Protocol controls, live SSE progress/cancellation, and GoldenLayout Plotly views ($J\text{–}V$, Nyquist/Bode, spatial $\varphi, E, n, p, P$ profiles, and 2D heatmaps).
+- **Right Pane (`Experiment Runner & Dockable Plots`)** — Protocol controls, live SSE progress/cancellation, and GoldenLayout Plotly views ($J\text{-}V$, Nyquist/Bode, spatial $\varphi, E, n, p, P$ profiles, and 2D heatmaps).
 
 ---
 
@@ -169,7 +169,7 @@ All characterisation workflows compile from the same validated device declaratio
 </p>
 
 ### 1. Electrostatics & Contact Potentials
-On 1D ($x \in [0, L]$) or 2D ($(y, x)$) control volumes, electrostatic potential $\varphi$ satisfies Gauss's law with exact sub-face series dielectric capacitance $C_f = \varepsilon_0 / (d_{f,L}/\varepsilon_L + d_{f,R}/\varepsilon_R)$:
+On 1D $x \in [0, L]$ or 2D $(y, x)$ control volumes, electrostatic potential $\varphi$ satisfies Gauss's law with exact sub-face series dielectric capacitance $C_f = \varepsilon_0 / (d_{f,L}/\varepsilon_L + d_{f,R}/\varepsilon_R)$:
 
 $$
 -\nabla \cdot \bigl(\varepsilon_0 \varepsilon_r \nabla \varphi\bigr)
@@ -192,10 +192,10 @@ $$
 R = \frac{np - n_i^2}{\tau_p(n + n_1) + \tau_n(p + p_1)} + k_{\mathrm{rad}}(np - n_i^2) + (C_n n + C_p p)(np - n_i^2).
 $$
 
-Across abrupt heterojunctions ($\Delta E_c, \Delta E_v \neq 0$), two-sided trace models enforce per-side DOS activities $(n_L/N_{C,L}, n_R/N_{C,R})$, reciprocal Richardson constants $\tilde{A}^* = \min(A^*_L, A^*_R)$, and two-sided single-level or 7-level Gaussian quadrature interface SRH without spurious thermal-equilibrium currents.
+Across abrupt heterojunctions ($\Delta E_c, \Delta E_v \neq 0$), two-sided trace models enforce per-side DOS activities $(n_L/N_{C,L}, n_R/N_{C,R})$, reciprocal Richardson constants $\tilde{A}^{\ast} = \min(A_L^{\ast}, A_R^{\ast})$, and two-sided single-level or 7-level Gaussian quadrature interface SRH without spurious thermal-equilibrium currents.
 
 ### 3. Finite-Site Mobile-Ion Migration
-Confined single-domain or multi-domain mobile ions obey blocking boundary conditions ($\mathbf{F}_\alpha \cdot \mathbf{n} = 0$) and steric Poisson–Nernst–Planck fluxes (supporting single positive ions, independent dual ions, or shared-vacancy $\theta = (P_+ + P_-)/P_{\mathrm{lim}}$ populations):
+Confined single-domain or multi-domain mobile ions obey normal-blocking boundary conditions ($F_{\alpha,n} = 0$) and steric Poisson–Nernst–Planck fluxes (supporting single positive ions, independent dual ions, or shared-vacancy $\theta = (P^{+} + P^{-})/P_{\mathrm{lim}}$ populations):
 
 $$
 F_P = -D_{\mathrm{ion}}\left[\frac{1}{1 - \theta}\frac{\partial P}{\partial x} + \frac{P}{V_t}\frac{\partial \varphi}{\partial x}\right]
@@ -227,7 +227,7 @@ SolarLab separates **engineering verification**, **external solver alignment**, 
 
 Evaluated across all **262** single- and two-parameter sweeps (`scaps_cbo`, `scaps_nt_cbo`, `scaps_nt_et`, bulk/interface $N_t$ & $E_t$, donor doping) using the verbatim partner SCAPS 3.3.10 baseline (`scaps_pvk_xy` + [ScapsAm15g1Sun.spe](reproducibility/ScapsAm15g1Sun.spe), driven by [scaps_native_pvk_xy.py](scripts/benchmarks/scaps_native_pvk_xy.py)) with **zero empirical calibration factors** (`het_recomb_despike = 0`, no work-function offsets, no interface-state attenuation, 7-level Gaussian `PVK/ETL` quadrature, and recalculated flat-band contacts):
 - **Convergence & Gate Closure:** `262 / 262` cases converged (`0` solver failures); **`221 / 248` (`89.1%`)** numeric reference points pass **all four** strict pointwise contract gates simultaneously ($V_{\mathrm{oc}}$: `236/248` [`95.2%`], $J_{\mathrm{sc}}$: `239/248` [`96.4%`], $\mathrm{FF}$: `221/248` [`89.1%`], $\mathrm{PCE}$: `235/248` [`94.8%`]), achieving `100%` pass across 11 of the 14 groups (including the full 56-case 2D `scaps_nt_et` grid).
-- **Pointwise Accuracy:** Median $|\Delta V_{\mathrm{oc}}| = 0.60\text{ mV}$ (`P90 = 1.01 mV`, `96.0%` $\le 5\text{ mV}$), median $|\Delta J_{\mathrm{sc}}| = 0.0088\text{ mA cm}^{-2}$, median $|\Delta\mathrm{FF}| = 0.031\%$, and median $|\Delta\mathrm{PCE}| = 0.009\%$.
+- **Pointwise Accuracy:** Median $\lvert\Delta V_{\mathrm{oc}}\rvert = 0.60\text{ mV}$ (`P90 = 1.01 mV`, `96.0%` $\le 5\text{ mV}$), median $\lvert\Delta J_{\mathrm{sc}}\rvert = 0.0088\text{ mA cm}^{-2}$, median $\lvert\Delta\mathrm{FF}\rvert$ of `0.031%`, and median $\lvert\Delta\mathrm{PCE}\rvert$ of `0.009%`.
 - **Boundary Regime Localization:** The remaining 27 tolerance-exceeding points localize to steep positive conduction-band spikes ($\Delta E_c \ge +0.30\text{ eV}$ in `scaps_cbo` / `scaps_nt_cbo`, plus high-doping $N_{D,\mathrm{PVK}} = 10^{18}\text{ cm}^{-3}$), where finite-difference mesh placement across the sub-nanometre heterointerface barrier governs S-curve knee sensitivity.
 
 ### 2. 45-Case Dynamic Mobile-Ion Hysteresis Benchmark
@@ -238,8 +238,8 @@ Evaluated across all **262** single- and two-parameter sweeps (`scaps_cbo`, `sca
 
 Evaluated across the **45-case** 7-stage preconditioning + forward/reverse scan matrix spanning 6 decades of ion diffusivity, mobile-ion density, and scan rate:
 - **Completion & Conservation:** `45 / 45` cases completed (`0` stalls), with maximum relative ionic inventory drift $\le 1.80 \times 10^{-13}$.
-- **Hysteresis Index Parity:** Median $|\Delta\mathrm{HI}_{\mathrm{norm}}| = 5.64 \times 10^{-4}$, with `43 / 45` (**`95.6%`**) within $5 \times 10^{-3}$.
-- **Four-Axis Decoupled Refinement Closure:** Phase 0 operator/conservation gates, time-step axis ($\le 6.3 \times 10^{-8}\text{ W m}^{-2}$), solver-tolerance axis ($\le 4.6 \times 10^{-8}\text{ W m}^{-2}$), and weak-peak $\mathrm{HI}_{\mathrm{normalized}}$ (`2.73e-4 <= 3.33e-4` at 241 nodes) are verified; unnormalized ratio $\mathrm{HI}_P$ at sub-nanometre Debye screening ($L_D \approx 0.54\text{ nm}$ on fixed `tanh` grids) and decoupled 100 s `R1-L2/L3` (`RS-G7`) remain explicitly open research gates.
+- **Hysteresis Index Parity:** Median $\lvert\Delta\mathrm{HI}_{\mathrm{norm}}\rvert = 5.64 \times 10^{-4}$, with `43 / 45` (**`95.6%`**) within $5 \times 10^{-3}$.
+- **Four-Axis Decoupled Refinement Closure:** Phase 0 operator/conservation gates, time-step axis ($\le 6.3 \times 10^{-8}\text{ W m}^{-2}$), solver-tolerance axis ($\le 4.6 \times 10^{-8}\text{ W m}^{-2}$), and weak-peak $\mathrm{HI_{normalized}}$ (`2.73e-4 <= 3.33e-4` at 241 nodes) are verified; unnormalized ratio $\mathrm{HI}_P$ at sub-nanometre Debye screening ($L_D \approx 0.54\text{ nm}$ on fixed `tanh` grids) and decoupled 100 s `R1-L2/L3` (`RS-G7`) remain explicitly open research gates.
 
 ---
 
@@ -250,8 +250,8 @@ Evaluated across the **45-case** 7-stage preconditioning + forward/reverse scan 
 | Preset ID | Stack Topology | Mobile Ions | Optics | Primary Role |
 |:----------|:---------------|:-----------:|:------:|:-------------|
 | `classical_pin` | HTL / Absorber / ETL | No | Beer–Lambert | Default CLI & 1D/2D steady-state baseline |
-| `scaps_pvk_xy` | SAM / Perovskite / $\mathrm{C_{60}}$ | No | TMM / Spectral BL | Native zero-fit SCAPS-1D benchmark baseline (`PVK-xy.scaps`) |
-| `scaps_mirror_v2` | Glass / Spiro-OMeTAD / $\mathrm{MAPbI_3}$ / $\mathrm{TiO_2}$ | No | TMM / Spectral BL | Historical PDF-table SCAPS contract stack |
+| `scaps_pvk_xy` | SAM / Perovskite / $\mathrm{C}_{60}$ | No | TMM / Spectral BL | Native zero-fit SCAPS-1D benchmark baseline (`PVK-xy.scaps`) |
+| `scaps_mirror_v2` | Glass / Spiro-OMeTAD / $\mathrm{MAPbI}_3$ / $\mathrm{TiO}_2$ | No | TMM / Spectral BL | Historical PDF-table SCAPS contract stack |
 | `calado2016_ion_sweep` | HTL / Perovskite / ETL | Yes | Uniform / BL | Workstation dynamic ion-hysteresis waveform preset |
 | `calado2016_fig1f` | Calado 2016 SI Table 1 stack | Yes | Beer–Lambert | Literature scan-rate hysteresis comparison preset |
 
@@ -264,7 +264,7 @@ An additional **52** YAML device and 2D microstructure test fixtures reside unde
 .venv/bin/python scripts/test_all.py
 
 # Static lint, strict typing, package boundary contracts, and schema sync
-.venv/bin/ruff check --no-cache src scripts/test_all.py scripts/generate_configuration_schema.py scripts/ci tests/ci
+.venv/bin/ruff check --no-cache src scripts tests
 .venv/bin/mypy --cache-dir /dev/null src/solarlab src/solarlab_server
 .venv/bin/lint-imports --no-cache
 .venv/bin/python scripts/generate_configuration_schema.py --check

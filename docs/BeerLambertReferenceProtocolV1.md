@@ -14,8 +14,8 @@ node-aligned fixed generation resources:
 
 1. **`beer_lambert` (Monochromatic Scalar Control-Volume Beer–Lambert)**:
    - Model ID: `beer_lambert_monochromatic_v1` (`BeerLambertBinding`).
-   - Uses per-layer scalar `alpha` [$\text{m}^{-1}$] and device-level scalar
-     photon flux `Phi` [$\text{m}^{-2}\,\text{s}^{-1}$] on electrical control
+   - Uses per-layer scalar `alpha` ($\mathrm{m}^{-1}$) and device-level scalar
+     photon flux `Phi` ($\mathrm{m}^{-2}\ \mathrm{s}^{-1}$) on electrical control
      volumes.
    - Applicable to prescribed monochromatic illumination and analytical
      verification benchmarks.
@@ -26,28 +26,15 @@ node-aligned fixed generation resources:
    - Uses the same tabulated `k(lambda)` (or constant-index `alpha`), metre
      wavelength quadrature, front-prefix optical-only substrate offset, and
      `SpectralPhotonFlux` (e.g. ASTM G-173-03 AM1.5G) as spectral TMM, with
-     per-layer attenuation
-
-     $$
-     \alpha_\ell(\lambda) = \frac{4\pi\,k_\ell(\lambda)}{\lambda}
-     $$
-
+     per-layer attenuation $\alpha_\ell(\lambda) = 4\pi k_\ell(\lambda) / \lambda$
      and cancellation-free control-volume cell absorptance
-
-     $$
-     A_{\mathrm{cell}}(\lambda) = e^{-\tau_j(\lambda)}\bigl(-\mathrm{expm1}(-\Delta\tau_j(\lambda))\bigr).
-     $$
-
+     $A_{\mathrm{cell}}(\lambda) = e^{-\tau_j(\lambda)}\bigl(-\mathrm{expm1}(-\Delta\tau_j(\lambda))\bigr)$.
    - Zero front/internal Fresnel reflection ($R(\lambda) = 0$), zero coherent
      standing-wave interference, zero dropped multipass fraction, and no
      TMM-derived photon-recycling reabsorption.
    - Per-wavelength and trapezoid-integrated photon accounting close to machine
      precision on arbitrary uniform, stretched (`tanh`), or two-sided trace
-     meshes:
-
-     $$
-     \text{transmitted} + \sum_{\ell}\text{absorbed}_\ell = \text{incident}.
-     $$
+     meshes ($\text{transmitted} + \sum_{\ell}\text{absorbed}_\ell = \text{incident}$).
    - Optical-only front prefix layers (`role: substrate`, `electrical=False`,
      including `incoherent=True` front glass) attenuate the spectrum entering
      the electrical stack (`parasitic_absorbed_m2_s`) without creating
@@ -57,10 +44,10 @@ node-aligned fixed generation resources:
      reflection) and thick/textured stacks without thin-film Fabry–Pérot cavity
      effects. On `scaps_mirror_v2.yaml` (`glass` 1 mm + `spiro_OMeTAD` 20 nm +
      `MAPbI3` 800 nm + `TiO2` 25 nm, AM1.5G 300–1000 nm), single-pass spectral
-     Beer–Lambert absorbs $q\int G\,\mathrm{d}x \approx 260.14\ \text{A}\,\text{m}^{-2}$
-     versus $\approx 235.06\ \text{A}\,\text{m}^{-2}$ for coherent-glass TMM
+     Beer–Lambert absorbs $q\int G\ \mathrm{d}x \approx 260.14\ \text{A}\ \text{m}^{-2}$
+     versus $\approx 235.06\ \text{A}\ \text{m}^{-2}$ for coherent-glass TMM
      (legacy SCAPS loader effective `incoherent=False`) and
-     $\approx 232.52\ \text{A}\,\text{m}^{-2}$ for front-incoherent-glass TMM
+     $\approx 232.52\ \text{A}\ \text{m}^{-2}$ for front-incoherent-glass TMM
      (declared `incoherent=True`), where air/glass and internal Fresnel
      reflections reject ~5-10% of incident photons. Conversely, on stacks with a reflective rear contact or thin
      absorber where back-reflection doubles path length, TMM can exceed
@@ -95,7 +82,7 @@ node-aligned fixed generation resources:
 In historical `archive/wip-beer-lambert` (`658baa84`), switching
 `scaps_mirror_v2.yaml` (`N=60` electrical intervals, 200 wavelengths over
 300–1000 nm) to `beer_lambert_spectral` steepened front-of-absorber ultraviolet/blue
-generation ($q\int G\,\mathrm{d}x \approx 260.14\ \text{A}\,\text{m}^{-2}$).
+generation ($q\int G\ \mathrm{d}x \approx 260.14\ \text{A}\ \text{m}^{-2}$).
 Under the legacy density-variable (`[n, p]` linear concentration) Method-of-Lines
 Radau transient (`test_interface_flux_balance.py`), hole concentration at the
 absorber front (`node 20` of `N=60`, immediately right of the `HTL/PVK`
@@ -112,7 +99,7 @@ On `solarlab`'s refactored 1D kernel:
   $S_{\mathrm{old}}\mathrm{expm1}(\log(c_{\mathrm{new}}/c_{\mathrm{old}}))/\Delta t$,
   closing cell-wise and global particle and Maxwell total-current balances on
   the `scaps_mirror_v2` `N=60` spectral Beer–Lambert stack across DC steady
-  state, forward-bias $J\text{--}V$ operating points, and transient illumination
+  state, forward-bias $J\text{-}V$ operating points, and transient illumination
   and voltage steps (`tests/integration/test_spectral_beer_lambert_stress.py`).
 
 ---

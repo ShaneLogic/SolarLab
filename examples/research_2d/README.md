@@ -12,9 +12,9 @@ For installation, single-thread BLAS environment variables, and the shared `RunS
 |:-------|:-------------------------|
 | [dc_assembly.py](dc_assembly.py) | Exports 2D $(13 \times 5)$ coordinates, residuals, sparse Jacobian, lateral/vertical fluxes, and 1D uniform-column reduction checks without solving |
 | [steady.py](steady.py) | Solves dark and illuminated 2 mV operating points across all $195$ coupled 2D unknowns from a cold 1D continuation seed |
-| [jv.py](jv.py) | Runs a 51-point illuminated 2D steady $J\text{–}V$ sweep ($0 \to 1.25\text{ V}$) with explicit prefix/tail `continue` support |
+| [jv.py](jv.py) | Runs a 51-point illuminated 2D steady $J\text{-}V$ sweep ($0 \to 1.25\text{ V}$) with explicit prefix/tail `continue` support |
 | [grains.py](grains.py) | Neutral vertical grain-boundary SRH recombination blended by exact lateral control-volume overlap fraction |
-| [grain_jv.py](grain_jv.py) | Complete 51-point illuminated 2D $J\text{–}V$ sweep on the grain-boundary stack + optional baseline comparison |
+| [grain_jv.py](grain_jv.py) | Complete 51-point illuminated 2D $J\text{-}V$ sweep on the grain-boundary stack + optional baseline comparison |
 | [contacts.py](contacts.py) | Four-channel 2D carrier contact algebra (blocking, fixed Dirichlet, and finite-rate Robin exchange) + bounded Newton solve |
 | [field_transport.py](field_transport.py) | Normal-face 2D Caughey–Thomas velocity saturation ($\beta = 2$) arithmetic checks and dark 2 mV steady solve |
 | [optical_generation.py](optical_generation.py) | 2D half-endpoint control-volume coherent spectral optical source construction and photon-budget check |
@@ -25,7 +25,7 @@ For installation, single-thread BLAS environment variables, and the shared `RunS
 
 ## Representative Command Recipes
 
-### 1. Inspect 2D Assembly, Solve Steady Operating Points & Run 2D $J\text{–}V$
+### 1. Inspect 2D Assembly, Solve Steady Operating Points & Run 2D $J\text{-}V$
 
 ```sh
 # 1) Export and verify 2D residuals, sparse Jacobian, and 1D uniform reduction
