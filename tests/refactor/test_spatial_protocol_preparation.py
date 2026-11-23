@@ -1,4 +1,5 @@
 """Data-only 2D preparation against source defaults and protocol declarations."""
+# ruff: noqa: F811
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 import hashlib

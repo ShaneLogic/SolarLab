@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from threadpoolctl import threadpool_limits
@@ -143,15 +144,28 @@ def test_cli_check_install_steady_jv_and_server_launcher(
     assert err_payload["error_type"] == "CapabilityError"
 
     # Standalone server_main fallback (--check-only) when solarlab_server.cli is absent
-    monkeypatch.setattr(
-        "solarlab.cli.importlib.util.find_spec",
-        lambda name: None if name == "solarlab_server.cli" else object(),
-    )
-    store_dir = tmp_path / "run-store"
-    assert server_main(["--store-dir", str(store_dir), "--check-only"]) == 0
-    srv_payload = json.loads(capsys.readouterr().out)
-    assert srv_payload["schema"] == "solarlab.server-check.v1"
-    assert (store_dir / "store.sqlite3").is_file()
+    has_fastapi = importlib.util.find_spec("fastapi") is not None
+    with monkeypatch.context() as mp:
+        mp.setattr(
+            "solarlab.cli.importlib.util.find_spec",
+            lambda name: None if name == "solarlab_server.cli" else object(),
+        )
+        if not has_fastapi:
+            fake_app_mod = ModuleType("solarlab_server.app")
+            fake_app_mod.create_app = (  # type: ignore[attr-defined]
+                lambda root, configuration_preview=None: SimpleNamespace(routes=[1, 2])
+            )
+            fake_cfg_mod = ModuleType("solarlab_server.configuration")
+            fake_cfg_mod.ConfigurationPreviewContext = (  # type: ignore[attr-defined]
+                lambda **kw: SimpleNamespace(**kw)
+            )
+            mp.setitem(sys.modules, "solarlab_server.app", fake_app_mod)
+            mp.setitem(sys.modules, "solarlab_server.configuration", fake_cfg_mod)
+        store_dir = tmp_path / "run-store"
+        assert server_main(["--store-dir", str(store_dir), "--check-only"]) == 0
+        srv_payload = json.loads(capsys.readouterr().out)
+        assert srv_payload["schema"] == "solarlab.server-check.v1"
+        assert (store_dir / "store.sqlite3").is_file()
 
     # Delegation when solarlab_server.cli:main is present
     fake_cli = ModuleType("solarlab_server.cli")

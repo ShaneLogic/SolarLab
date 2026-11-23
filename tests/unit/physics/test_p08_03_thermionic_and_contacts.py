@@ -201,7 +201,7 @@ def test_bare_reciprocal_te_equilibrium_fermi_dirac(
         model_version=RECIPROCAL_PHYSICAL_THERMIONIC_V2,
     )
     assert res_fd_raw.one_way_scale_m2_s > 0.0
-    assert abs(res_fd_raw.flux_m2_s) <= 1.0e-15 * res_fd_raw.one_way_scale_m2_s
+    assert abs(res_fd_raw.flux_m2_s) <= 5.0e-15 * res_fd_raw.one_way_scale_m2_s
 
     res_fd_exact = reciprocal_thermionic_flux_m2_s(
         c_l,

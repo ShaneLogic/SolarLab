@@ -100,7 +100,8 @@ def _carrier_rates(base, arrays, n, p, jn, jp, widths, q, polarity, illuminated)
 def qualify_point(base, point, arrays, packet, charge):
     """Enclose the represented mobile state under its fixed semidiscrete law."""
     exact, interval = base.exact, base._Interval.of
-    a = lambda name: list(map(exact, arrays["material."+name]))
+    def a(name):
+        return list(map(exact, arrays["material." + name]))
     n, p, ions = [list(map(exact, point[key])) for key in ("n_m3", "p_m3", "positive_ions_m3")]
     count = len(n)
     if count < 2 or len(p) != count or len(ions) != count or list(map(exact, point["state"])) != n+p+ions:
@@ -205,7 +206,8 @@ def qualify_point(base, point, arrays, packet, charge):
     saved_flux_charge_rate = [polarity*exact(point["J_ion_A_m2"][0])/ion_widths[0]]
     saved_flux_charge_rate += [polarity*(saved_charge_flux[i+1]-saved_charge_flux[i])/widths[i] for i in range(count-2)]
     saved_flux_charge_rate += [-polarity*exact(point["J_ion_A_m2"][-1])/ion_widths[-1]]
-    max_error = lambda values,bounds: base.upper_float(max(base.error_upper(v,b) for v,b in zip(values,bounds,strict=True)))
+    def max_error(values, bounds):
+        return base.upper_float(max(base.error_upper(v, b) for v, b in zip(values, bounds, strict=True)))
     return {"phase":point["phase_id"],"time_s":point["time_s"],"event_side":point["event_side"],
         "voltage_V":point["voltage_V"],"voltage_rate_V_s":point["voltage_rate_V_s"],
         "reference_input_meaning":"exact saved binary states/materials;original encoded widths and diffusion-only steric law",

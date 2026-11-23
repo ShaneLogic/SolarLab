@@ -1,4 +1,5 @@
 """Trusted experiment preview over the existing service, including loopback HTTP."""
+# ruff: noqa: F811
 import builtins
 from copy import deepcopy
 import json
@@ -80,7 +81,8 @@ def test_missing_trusted_defaults_schema_mismatch_and_precise_errors(catalog, re
                           headers={**headers(), "X-Solarlab-Configuration-Schema": "0" * 64})
         assert stale.status_code == 409 and stale.json()["detail"]["code"] == "configuration_schema_mismatch"
         for field, value in (("Nx", 0), ("lateral_length", "1 ns"), ("atol", None)):
-            bad = deepcopy(data); bad["experiment"][field] = value
+            bad = deepcopy(data)
+            bad["experiment"][field] = value
             response = http.post("/configuration-preview/experiment", json=bad, headers=headers())
             assert response.status_code == 422
             detail = response.json()["detail"]
@@ -104,7 +106,8 @@ def test_bounded_real_loopback_with_actual_preparation_and_grain_defaults(catalo
         result = json.loads(raw)
         assert_prepared(result, data, context)
         assert result["resolved"]["experiment"]["controls"]["Ny_per_layer"] == 10
-        bad = deepcopy(data); bad["experiment"]["grain_sizes_nm"] = [0]
+        bad = deepcopy(data)
+        bad["experiment"]["grain_sizes_nm"] = [0]
         with pytest.raises(HTTPError) as error:
             urlopen(Request(endpoint, data=json.dumps(bad).encode(), headers=headers(), method="POST"), timeout=10)
         assert error.value.code == 422

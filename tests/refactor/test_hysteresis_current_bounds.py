@@ -85,12 +85,14 @@ class TestConditionalPhysicalBounds(unittest.TestCase):
         bounds = cb.sg_sensitivity_bounds(*args,n_radius=nr,p_radius=pr)[0]
         with localcontext() as context:
             context.prec=160
-            d=lambda x:Decimal(x.numerator)/Decimal(x.denominator)
+            def d(x):
+                return Decimal(x.numerator) / Decimal(x.denominator)
             for sp,sn,sh in ((-1,-1,1),(1,1,-1),(1,-1,1),(-1,1,-1)):
                 ph=[phi[0]+sp*phi_error[0],phi[1]-sp*phi_error[1]]
                 nn=[n[0]+sn*nr[0],n[1]-sn*nr[1]]
                 pp=[p[0]+sh*pr[0],p[1]-sh*pr[1]]
-                xi=d(ph[1]-ph[0]);b=xi/(xi.exp()-1)
+                xi=d(ph[1]-ph[0])
+                b=xi/(xi.exp()-1)
                 current_n=2*(b*(d(nn[0])-d(nn[1]))+xi*d(nn[0]))
                 current_p=3*(b*(d(pp[1])-d(pp[0]))+xi*d(pp[1]))
                 self.assertLessEqual(abs(current_n-Decimal(-2)),Decimal(bounds['electron']['box_current_change_upper_A_m2']))

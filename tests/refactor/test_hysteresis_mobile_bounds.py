@@ -97,14 +97,16 @@ class BoundsTests(unittest.TestCase):
         for ions,limits,diffusion,expected in cases:
             with self.subTest(ions=ions):
                 flux,_,_ = mobile.mobile_flux_bounds(base,[0,0],ions,[1],[diffusion],limits,1,Fraction.from_float(.999999))
-                self.assertLessEqual(flux[0].lo,Decimal(expected));self.assertGreaterEqual(flux[0].hi,Decimal(expected))
+                self.assertLessEqual(flux[0].lo,Decimal(expected))
+                self.assertGreaterEqual(flux[0].hi,Decimal(expected))
                 self.assertEqual(flux[0].lo,flux[0].hi)
 
     def test_vacancy_log_sign_with_closed_flux(self):
         flux,_,_ = mobile.mobile_flux_bounds(base,[0,0],[1,2],[1],[1],[4,4],1,Fraction.from_float(.999999))
         with localcontext(Context(prec=160)):
             oracle = -4*Decimal("1.5").ln()
-            self.assertLessEqual(flux[0].lo,oracle);self.assertGreaterEqual(flux[0].hi,oracle)
+            self.assertLessEqual(flux[0].lo,oracle)
+            self.assertGreaterEqual(flux[0].hi,oracle)
 
     def test_nonuniform_point_and_both_current_signs(self):
         results = []
@@ -119,7 +121,8 @@ class BoundsTests(unittest.TestCase):
             self.assertEqual(len(result["rho_rate_reference_C_m3_s"]),4)
             for face in result["faces"]:
                 lo,hi = map(Decimal,face["Jtotal_reference_A_m2"])
-                self.assertLessEqual(lo,current);self.assertGreaterEqual(hi,current)
+                self.assertLessEqual(lo,current)
+                self.assertGreaterEqual(hi,current)
                 self.assertEqual(face["pointwise_axis_screen"],"within")
             results.append(float(current))
         self.assertEqual(results[0],-results[1])
@@ -139,14 +142,22 @@ class BoundsTests(unittest.TestCase):
 
     def test_unsupported_branch_and_changed_width(self):
         p,a,k,_ = manufactured()
-        bad = copy.deepcopy(k);bad["ion_transport"]["steric_diffusion_only"] = False
-        with self.assertRaises(base.UnsupportedPoint):mobile.qualify_point(base,p,a,bad,1)
-        bad = copy.deepcopy(k);bad["ion_transport"]["effective_shared_site"] = True
-        with self.assertRaises(base.UnsupportedPoint):mobile.qualify_point(base,p,a,bad,1)
-        bad = copy.deepcopy(a);bad["material.poisson_factor.h_cell"][0] = 1.
-        with self.assertRaises(base.UnsupportedPoint):mobile.qualify_point(base,p,bad,k,1)
-        bad = copy.deepcopy(p);bad["junction_polarity"] = True
-        with self.assertRaises(base.UnsupportedPoint):mobile.qualify_point(base,bad,a,k,1)
+        bad = copy.deepcopy(k)
+        bad["ion_transport"]["steric_diffusion_only"] = False
+        with self.assertRaises(base.UnsupportedPoint):
+            mobile.qualify_point(base,p,a,bad,1)
+        bad = copy.deepcopy(k)
+        bad["ion_transport"]["effective_shared_site"] = True
+        with self.assertRaises(base.UnsupportedPoint):
+            mobile.qualify_point(base,p,a,bad,1)
+        bad = copy.deepcopy(a)
+        bad["material.poisson_factor.h_cell"][0] = 1.
+        with self.assertRaises(base.UnsupportedPoint):
+            mobile.qualify_point(base,p,bad,k,1)
+        bad = copy.deepcopy(p)
+        bad["junction_polarity"] = True
+        with self.assertRaises(base.UnsupportedPoint):
+            mobile.qualify_point(base,bad,a,k,1)
 
     def test_invalid_ion_domain(self):
         for ions,limits in (([-1,1],[10,10]),([1,2],[0,10])):

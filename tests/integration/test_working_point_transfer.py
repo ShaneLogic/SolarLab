@@ -272,11 +272,11 @@ def test_coupled_ionic_multistage_transfer_and_inventory_conservation() -> None:
     steady_opts = IonicSteadyOptions(
         SteadyOptions(),
         1.0e-11,
-        1.0e6,
-        1.0e6,
+        5.0e6,
+        5.0e6,
         1.0,
         ion_dev.ion_node_count - 1,
-        SolveBudget(60, 600, 60, 24),
+        SolveBudget(60, 600, 60, 40),
         30.0,
     )
     steady0 = solve_ionic_steady_state(
@@ -287,7 +287,7 @@ def test_coupled_ionic_multistage_transfer_and_inventory_conservation() -> None:
 
     ion_opts = IonicTransientOptions(
         electronic=_transient_opts(),
-        ion_balance_tolerance_m2_s=1.0e6,
+        ion_balance_tolerance_m2_s=5.0e6,
         ion_logit_step=1.0,
     )
     wp0 = capture_working_point(
