@@ -259,9 +259,15 @@ def bitton_tessler_2023_table_s1_chemistry(
     perovskite_ka_cm3_s: float = 1.0e-11,
     left_escape_m_s: float = 0.0,
     right_escape_m_s: float = 0.0,
+    left_boundary: IodineBoundaryDeclaration | None = None,
+    right_boundary: IodineBoundaryDeclaration | None = None,
     initialize_equilibrium_split: bool = True,
 ) -> IodineChemistryDeclaration:
     """Return Bitton & Tessler (2023) SI Table S1 iodine parameters."""
+    unreactive = float(perovskite_ka_cm3_s) == 0.0
+    eff_rate_mode: IodineRateParameterization = (
+        "explicit_rates" if unreactive else rate_mode
+    )
     pvk = IodineLayerSpec.from_cgs(
         absorber_layer_id,
         D_minus_cm2_s=1.0e-8,
@@ -269,12 +275,12 @@ def bitton_tessler_2023_table_s1_chemistry(
         D_mol_cm2_s=1.0e-9,
         initial_iodide_cm3=1.0e18,
         compensating_donor_cm3=1.0e18,
-        rate_mode=rate_mode,
-        k_a_cm3_s=perovskite_ka_cm3_s,
-        k_b_s_1=3.0e5,
-        k_c_cm3_s=5.0e-7,
-        k_d_cm3_s=5.0e-15,
-        k_e_cm3_s=1.3e-8,
+        rate_mode=eff_rate_mode,
+        k_a_cm3_s=0.0 if unreactive else perovskite_ka_cm3_s,
+        k_b_s_1=0.0 if unreactive else 3.0e5,
+        k_c_cm3_s=0.0 if unreactive else 5.0e-7,
+        k_d_cm3_s=0.0 if unreactive else 5.0e-15,
+        k_e_cm3_s=0.0 if unreactive else 1.3e-8,
         capture_radius_nm=0.2,
         K_diss_cm3=1.0e8,
         n_e_star_cm3=1.0e8,
@@ -289,12 +295,12 @@ def bitton_tessler_2023_table_s1_chemistry(
             D_mol_cm2_s=1.0e-13,
             initial_iodide_cm3=0.0,
             compensating_donor_cm3=0.0,
-            rate_mode=rate_mode,
-            k_a_cm3_s=6.5e-13,
-            k_b_s_1=6.0e3,
-            k_c_cm3_s=2.5e-11,
-            k_d_cm3_s=5.0e-19,
-            k_e_cm3_s=1.3e-10,
+            rate_mode=eff_rate_mode,
+            k_a_cm3_s=0.0 if unreactive else 6.5e-13,
+            k_b_s_1=0.0 if unreactive else 6.0e3,
+            k_c_cm3_s=0.0 if unreactive else 2.5e-11,
+            k_d_cm3_s=0.0 if unreactive else 5.0e-19,
+            k_e_cm3_s=0.0 if unreactive else 1.3e-10,
             capture_radius_nm=0.2,
             K_diss_cm3=1.0e8,
             n_e_star_cm3=1.0e6,
@@ -306,27 +312,35 @@ def bitton_tessler_2023_table_s1_chemistry(
             D_mol_cm2_s=1.0e-13,
             initial_iodide_cm3=0.0,
             compensating_donor_cm3=0.0,
-            rate_mode=rate_mode,
-            k_a_cm3_s=6.5e-13,
-            k_b_s_1=6.0e-12,
-            k_c_cm3_s=2.5e-11,
-            k_d_cm3_s=5.0e-19,
-            k_e_cm3_s=1.3e-10,
+            rate_mode=eff_rate_mode,
+            k_a_cm3_s=0.0 if unreactive else 6.5e-13,
+            k_b_s_1=0.0 if unreactive else 6.0e-12,
+            k_c_cm3_s=0.0 if unreactive else 2.5e-11,
+            k_d_cm3_s=0.0 if unreactive else 5.0e-19,
+            k_e_cm3_s=0.0 if unreactive else 1.3e-10,
             capture_radius_nm=0.2,
             K_diss_cm3=1.0e8,
             n_e_star_cm3=1.0e6,
         )
         layers = (hbl, pvk, ebl)
+    lb = (
+        IodineBoundaryDeclaration(mol_escape_velocity_m_s=left_escape_m_s)
+        if left_boundary is None
+        else left_boundary
+    )
+    rb = (
+        IodineBoundaryDeclaration(mol_escape_velocity_m_s=right_escape_m_s)
+        if right_boundary is None
+        else right_boundary
+    )
     return IodineChemistryDeclaration(
         layers=layers,
         domain_mode=domain_mode,
         thermodynamic_mode=thermodynamic_mode,
         reaction_e_order=reaction_e_order,
-        left_boundary=IodineBoundaryDeclaration(mol_escape_velocity_m_s=left_escape_m_s),
-        right_boundary=IodineBoundaryDeclaration(
-            mol_escape_velocity_m_s=right_escape_m_s
-        ),
-        initialize_equilibrium_split=initialize_equilibrium_split,
+        left_boundary=lb,
+        right_boundary=rb,
+        initialize_equilibrium_split=initialize_equilibrium_split and not unreactive,
     )
 
 

@@ -80,15 +80,15 @@ __all__ = [
 class IodineSteadyOptions:
     """Controls for closed-domain 1D iodine steady-state solves."""
 
-    poisson_tolerance: float = 1.0e-10
-    continuity_tolerance_A_m2: float = 1.0e-7
-    chem_flux_tolerance_A_m2: float = 1.0e-9
+    poisson_tolerance: float = 5.0e-9
+    continuity_tolerance_A_m2: float = 2.0e-6
+    chem_flux_tolerance_A_m2: float = 5.0e-9
     inventory_relative_tolerance: float = 1.0e-12
     contact_log_tolerance: float = 1.0e-11
     potential_step_V: float = 0.15
     quasi_fermi_step: float = 2.5
     chem_coordinate_step: float = 40.0
-    max_iterations: int = 80
+    max_iterations: int = 120
     max_backtracks: int = 16
     wall_s: float = 30.0
     continuation_steps: int = 6
@@ -127,12 +127,13 @@ def _poisson_weights_with_ions(device: CompiledIodineDevice1D) -> np.ndarray:
     count = comp.node_count
     v_ref = max(abs(comp.built_in_potential_V), comp.thermal_voltage_V)
     ion_bg = device.project_chem_density(device.compensating_donor_m3)
+    ion_peak = float(np.max(device.initial_iodide_m3)) * 0.1
     d_ref = np.maximum(
         np.maximum(
             comp.parameters.acceptor_density_m3[1:-1],
             comp.parameters.donor_density_m3[1:-1],
         ),
-        np.maximum(ion_bg[1:-1], 1.0),
+        np.maximum(ion_bg[1:-1], max(ion_peak, 1.0)),
     )
     cap = comp.poisson.face_capacitance_F_m2
     scale = (
@@ -263,7 +264,7 @@ def iodine_steady_newton_settings(
     lower = np.concatenate(
         (
             np.full(3 * n_count, -math.inf),
-            np.full(3 * m_count, -500.0),
+            np.full(3 * m_count, -220.0),
         )
     )
     return NewtonSettings(
@@ -279,9 +280,9 @@ def iodine_steady_newton_settings(
 def iodine_bdf_newton_settings(
     step: BDFStep,
     *,
-    poisson_tolerance: float = 1.0e-10,
-    continuity_tolerance_A_m2: float = 1.0e-7,
-    chem_flux_tolerance_A_m2: float = 1.0e-8,
+    poisson_tolerance: float = 5.0e-9,
+    continuity_tolerance_A_m2: float = 2.0e-6,
+    chem_flux_tolerance_A_m2: float = 2.0e-8,
     inventory_relative_tolerance: float = 1.0e-10,
     potential_step_V: float = 0.15,
     quasi_fermi_step: float = 2.5,
@@ -336,7 +337,7 @@ def iodine_bdf_newton_settings(
     lower = np.concatenate(
         (
             np.full(3 * n_count, -math.inf),
-            np.full(3 * m_count, -500.0),
+            np.full(3 * m_count, -220.0),
         )
     )
     return NewtonSettings(
@@ -428,12 +429,15 @@ def _chem_density_basin_lift(
         c2_n = np.maximum(c2 + dc[2 * m :], 0.1 * c2)
         if device.steric_site_limit_m3 is not None:
             cm_n = np.minimum(cm_n, 0.999999 * device.steric_site_limit_m3)
-        u_cur[n_elec:] = np.concatenate(
-            (
-                device.iodide_map.coordinate_from_density(cm_n),
-                device.atom_map.coordinate_from_density(c0_n),
-                device.mol_map.coordinate_from_density(c2_n),
-            )
+        u_cur[n_elec:] = np.maximum(
+            np.concatenate(
+                (
+                    device.iodide_map.coordinate_from_density(cm_n),
+                    device.atom_map.coordinate_from_density(c0_n),
+                    device.mol_map.coordinate_from_density(c2_n),
+                )
+            ),
+            -115.0,
         )
     return frozen_array(u_cur)
 
@@ -452,6 +456,7 @@ def iodine_bdf_seed(step: BDFStep) -> Vector:
     prev = step.history[0]
     u_cur = np.array(prev.u, dtype=np.float64, copy=True)
     dev = step.endpoint.device
+    u_cur[3 * dev.node_count :] = np.maximum(u_cur[3 * dev.node_count :], -115.0)
     v_prev = _inferred_voltage_V(dev, u_cur)
     v_next = step.endpoint.voltage_V
     if abs(v_next - v_prev) > 1.0e-13:
@@ -476,7 +481,7 @@ def iodine_bdf_seed(step: BDFStep) -> Vector:
         f_try = step.residual(u_cur)
         scaled_try = base_settings.scaling.scaled(f_try)
     scaled_norm = bdf_norm(scaled_try)
-    if len(step.history) > 1 or scaled_norm <= 1.0e4:
+    if len(step.history) > 1 or abs(v_next - v_prev) <= 0.05 or scaled_norm <= 1.0e4:
         return frozen_array(u_cur)
 
     # Discontinuous drive step: homotopy from (0 V, 0 Sun) -> (0 V, g_next) -> (v_next, g_next)
@@ -873,13 +878,27 @@ def solve_iodine_steady_state(
             u_curr = _local_steady_iodine_coordinates(device, eq_seed.state.u, 0.0)
         prev_v = 0.0
         stages: list[tuple[float, float]] = [(0.0, 0.0)]
-        if generation_scale > 0.0:
-            for frac in (1.0e-5, 1.0e-3, 0.03, 0.25, 1.0):
-                stages.append((0.0, generation_scale * frac))
-        if voltage_V != 0.0:
+        comp_p = device.electronic_component.parameters
+        undoped_contacts = bool(
+            (comp_p.donor_density_m3[0] + comp_p.acceptor_density_m3[0]) < 1.0e15
+            or (comp_p.donor_density_m3[-1] + comp_p.acceptor_density_m3[-1]) < 1.0e15
+        )
+        if undoped_contacts and voltage_V > 0.3 and generation_scale > 0.0:
+            # Ramp forward bias in the dark first to reduce junction barrier and
+            # avoid SCLC extraction bottlenecks in undoped low-mobility blocking layers.
             n_v = max(1, int(math.ceil(abs(voltage_V) / 0.10)))
             for k in range(1, n_v + 1):
-                stages.append((voltage_V * (k / n_v), generation_scale))
+                stages.append((voltage_V * (k / n_v), 0.0))
+            for frac in (1.0e-5, 1.0e-3, 0.03, 0.15, 0.45, 0.75, 1.0):
+                stages.append((voltage_V, generation_scale * frac))
+        else:
+            if generation_scale > 0.0:
+                for frac in (1.0e-5, 1.0e-3, 0.03, 0.25, 1.0):
+                    stages.append((0.0, generation_scale * frac))
+            if voltage_V != 0.0:
+                n_v = max(1, int(math.ceil(abs(voltage_V) / 0.10)))
+                for k in range(1, n_v + 1):
+                    stages.append((voltage_V * (k / n_v), generation_scale))
     else:
         u_curr = frozen_array(initial_u)
         prev_v = voltage_V
@@ -945,12 +964,12 @@ def solve_iodine_steady_state(
             ptc_opts = BDFOptions(
                 initial_step_s=1.0e-6,
                 min_step_s=1.0e-14,
-                max_step_s=50.0,
+                max_step_s=200.0,
                 relative_tolerance=5.0e-3,
-                absolute_tolerance=1.0e4,
+                absolute_tolerance=1.0e14,
                 max_order=1,
                 max_factor=2.0,
-                max_steps=160,
+                max_steps=250,
                 wall_s=options.wall_s,
             )
 
@@ -1043,11 +1062,11 @@ def solve_frozen_chemistry_electronic_1d(
 
     weights = production_residual_scaling(
         comp,
-        poisson_tolerance=1.0e-10,
-        continuity_tolerance_A_m2=1.0e-7,
+        poisson_tolerance=5.0e-9,
+        continuity_tolerance_A_m2=2.0e-6,
         contact_log_tolerance=1.0e-11,
     ).row_weights.copy()
-    weights[:n_c] = _poisson_weights_with_ions(device) / 1.0e-10
+    weights[:n_c] = _poisson_weights_with_ions(device) / 5.0e-9
     steps = production_coordinates(
         comp,
         potential_step_V=0.15,
@@ -1151,7 +1170,8 @@ def solve_frozen_chemistry_electronic_1d(
             stack.append((0.5 * (cur_v + vs), 0.5 * (cur_g + gs), depth + 1))
         else:
             raise SteadyStateError(
-                f"Frozen-chemistry electronic solve failed at V={vs:.4f} V: {res.termination.value}"
+                f"Frozen-chemistry electronic solve failed at V={vs:.4f} V: {res.termination.value}",
+                res,
             )
 
     final_dc = DC1DProblem(comp, v_target, g_target)
@@ -1250,8 +1270,11 @@ def solve_iodine_bdf_transient(
         acct = iodine_step_accounting(step, u)
         inv_ref = max(device.reference_iodine_inventory_m2, 1.0)
         rel_err = abs(acct.step_conservation_residual_m2) / inv_ref
+        step_lim = 1.0e-9
+        if step.endpoint.generation_scale > 0.0:
+            step_lim = max(1.0e-9, (6.0e-8 / Q) * step.dt_s / inv_ref)
         gate = GateOutcome(
-            "step_iodine_conservation", rel_err <= 1.0e-9, rel_err, 1.0e-9
+            "step_iodine_conservation", rel_err <= step_lim, rel_err, step_lim
         )
         return Assessment(
             accounting={

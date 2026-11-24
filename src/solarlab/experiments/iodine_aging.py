@@ -289,24 +289,6 @@ def measure_frozen_chemistry_jv(
     )
 
 
-def _instantaneous_output_current_A_m2(
-    problem: AssembledIodine1DProblem,
-    u: Vector,
-    u_prev: Vector,
-    dt_s: float,
-) -> float:
-    """Evaluate total Maxwell output current ``-polarity * mean(J_cond + dD/dt)``."""
-    comp = problem.device.electronic_component
-    n_c = problem.device.node_count
-    j_cond = problem.face_conduction_current_A_m2(u)
-    cap = comp.poisson.face_capacitance_F_m2
-    dd_dt = -cap * (np.diff(u[:n_c]) - np.diff(u_prev[:n_c])) / max(dt_s, 1.0e-30)
-    j_tot = j_cond + dd_dt
-    dx = np.diff(comp.nodes_m)
-    j_mean = float(math.fsum((dx * j_tot).tolist()) / math.fsum(dx.tolist()))
-    return float(-comp.voltage_polarity * j_mean)
-
-
 def measure_dynamic_jv_scan(
     device: CompiledIodineDevice1D,
     state: IodineState1D,
@@ -328,6 +310,7 @@ def measure_dynamic_jv_scan(
     v_max = float(v_sorted[-1])
     span_v = v_max - v_min
     leg_dur_s = span_v / rate
+    min_dv_s = float(np.min(np.diff(v_sorted))) / rate
 
     binding = iodine_system(device, constrained_steady=False)
     # Pre-position electronics cleanly at v_max without altering chemical inventory
@@ -340,82 +323,73 @@ def measure_dynamic_jv_scan(
         binding=binding,
     )
 
-    rev_v_desc = v_sorted[::-1]
-    rev_times = (v_max - rev_v_desc) / rate
-    fwd_times = (v_sorted - v_min) / rate
     base_opts = _default_aging_bdf_options() if bdf_options is None else bdf_options
     scan_opts = replace(
         base_opts,
         initial_step_s=min(base_opts.initial_step_s, max(leg_dur_s * 1.0e-3, 1.0e-9)),
-        max_step_s=min(base_opts.max_step_s, max(leg_dur_s / 25.0, 1.0e-6)),
+        max_step_s=min(
+            base_opts.max_step_s, min_dv_s, max(leg_dur_s / 40.0, 1.0e-6)
+        ),
     )
 
-    rev_bdf, _ = solve_iodine_bdf_transient(
+    rev_bdf, rev_ledger = solve_iodine_bdf_transient(
         device,
         u_start_rev,
         (0.0, leg_dur_s),
         voltage_fn=lambda t: v_max - rate * t,
         generation_fn=lambda _t: generation_scale,
         options=scan_opts,
-        output_times_s=rev_times,
     )
-    if not rev_bdf.completed:
+    if not rev_bdf.completed or not rev_ledger:
         raise IodineAgingError(
             f"Dynamic reverse J-V scan failed: {rev_bdf.termination}"
         )
 
     u_turn = rev_bdf.accepted_coordinates[-1]
-    fwd_bdf, _ = solve_iodine_bdf_transient(
+    fwd_bdf, fwd_ledger = solve_iodine_bdf_transient(
         device,
         u_turn,
         (0.0, leg_dur_s),
         voltage_fn=lambda t: v_min + rate * t,
         generation_fn=lambda _t: generation_scale,
         options=scan_opts,
-        output_times_s=fwd_times,
     )
-    if not fwd_bdf.completed:
+    if not fwd_bdf.completed or not fwd_ledger:
         raise IodineAgingError(
             f"Dynamic forward J-V scan failed: {fwd_bdf.termination}"
         )
 
-    # Read output current at each sample point (stored in ascending v_sorted order)
-    rev_j_desc = np.empty(v_sorted.size, dtype=np.float64)
-    for k, samp in enumerate(rev_bdf.samples):
-        v_k = float(rev_v_desc[k])
-        prob_k = AssembledIodine1DProblem(
-            device=device,
-            voltage_V=v_k,
-            generation_scale=generation_scale,
-            binding=binding,
-        )
-        if k == 0:
-            j_mean = prob_k.steady_current_density_A_m2(samp.u)
-            rev_j_desc[k] = float(-device.electronic_component.voltage_polarity * j_mean)
-        else:
-            dt_k = max(samp.time_s - rev_bdf.samples[k - 1].time_s, 1.0e-12)
-            rev_j_desc[k] = _instantaneous_output_current_A_m2(
-                prob_k, samp.u, rev_bdf.samples[k - 1].u, dt_k
-            )
-    rev_j_asc = rev_j_desc[::-1]
+    pol = device.electronic_component.voltage_polarity
+    # Reverse leg trajectory ordered in ascending voltage (end of leg = v_min -> start = v_max)
+    prob_vmax = AssembledIodine1DProblem(
+        device=device,
+        voltage_V=v_max,
+        generation_scale=generation_scale,
+        binding=binding,
+    )
+    j0_rev = float(-pol * prob_vmax.steady_current_density_A_m2(rev_bdf.initial_u))
+    t_rev_traj = np.array([0.0] + [s.end_s for s in rev_ledger], dtype=np.float64)
+    v_rev_desc = v_max - rate * t_rev_traj
+    j_rev_desc = np.array(
+        [j0_rev] + [float(-pol * s.terminal_current_A_m2) for s in rev_ledger],
+        dtype=np.float64,
+    )
+    rev_j_asc = np.interp(v_sorted, v_rev_desc[::-1], j_rev_desc[::-1])
 
-    fwd_j_asc = np.empty(v_sorted.size, dtype=np.float64)
-    for k, samp in enumerate(fwd_bdf.samples):
-        v_k = float(v_sorted[k])
-        prob_k = AssembledIodine1DProblem(
-            device=device,
-            voltage_V=v_k,
-            generation_scale=generation_scale,
-            binding=binding,
-        )
-        if k == 0:
-            j_mean = prob_k.steady_current_density_A_m2(samp.u)
-            fwd_j_asc[k] = float(-device.electronic_component.voltage_polarity * j_mean)
-        else:
-            dt_k = max(samp.time_s - fwd_bdf.samples[k - 1].time_s, 1.0e-12)
-            fwd_j_asc[k] = _instantaneous_output_current_A_m2(
-                prob_k, samp.u, fwd_bdf.samples[k - 1].u, dt_k
-            )
+    prob_vmin = AssembledIodine1DProblem(
+        device=device,
+        voltage_V=v_min,
+        generation_scale=generation_scale,
+        binding=binding,
+    )
+    j0_fwd = float(-pol * prob_vmin.steady_current_density_A_m2(fwd_bdf.initial_u))
+    t_fwd_traj = np.array([0.0] + [s.end_s for s in fwd_ledger], dtype=np.float64)
+    v_fwd_asc = v_min + rate * t_fwd_traj
+    j_fwd_asc = np.array(
+        [j0_fwd] + [float(-pol * s.terminal_current_A_m2) for s in fwd_ledger],
+        dtype=np.float64,
+    )
+    fwd_j_asc = np.interp(v_sorted, v_fwd_asc, j_fwd_asc)
 
     rev_metrics = steady_jv_metrics(
         v_sorted, rev_j_asc, incident_power_W_m2=incident_power_W_m2
