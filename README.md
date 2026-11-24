@@ -67,12 +67,12 @@ SolarLab/
 │   └── solarlab_research/      Research companion CLIs (solarlab-cbo-scan, solarlab-r1-short-window, r1-verify-sources)
 ├── web/                        Vite + TypeScript + Plotly + GoldenLayout workstation frontend
 ├── examples/
-│   ├── research_1d/            23 runnable 1D steady, AC, transient, mobile-ion, optical, and HTTP/process workflows
+│   ├── research_1d/            24 runnable 1D steady, AC, transient, mobile-ion, iodine-aging, optical, and HTTP workflows
 │   └── research_2d/            10 runnable 2D steady, J-V, grain-boundary, contact, field-mobility, and optical workflows
 ├── docs/
 │   ├── DevelopmentGuide.md     Extension workflow, unified assembly rules, and branch governance
 │   ├── RetiredModelsV1.md      Retired legacy entrypoints, falsified closures, and historical anchors
-│   ├── contracts/              34 active physical model, defect, optical, and 2D protocol specifications
+│   ├── contracts/              35 active physical model, defect, optical, aging, and 2D protocol specifications
 │   └── figures/                Pure-Arial 300 DPI architecture, physics, solver, and validation figures
 ├── reproducibility/            Frozen SCAPS, hysteresis, analytic, and performance contracts
 ├── scripts/                    Root CI runner (test_all.py), schema generator, figure builder, and benchmarks
@@ -81,7 +81,7 @@ SolarLab/
 
 **Directory Guides:**
 - Developer workflow & model extension contract: [docs/DevelopmentGuide.md](docs/DevelopmentGuide.md)
-- Physical & numerical model contracts (`34` specs): [docs/contracts/README.md](docs/contracts/README.md)
+- Physical & numerical model contracts (`35` specs): [docs/contracts/README.md](docs/contracts/README.md)
 - Frozen benchmark & reference contracts: [reproducibility/README.md](reproducibility/README.md)
 - Runnable 1D & 2D research workflows: [examples/research_1d/README.md](examples/research_1d/README.md) · [examples/research_2d/README.md](examples/research_2d/README.md)
 
@@ -111,6 +111,11 @@ npm --prefix web run build
 ```bash
 # 1D ion-free steady-state J-V sweep on the packaged classical_pin preset
 .venv/bin/solarlab steady-jv --output outputs/steady_jv.json
+
+# Coupled 1D iodine chemistry steady state, AC redox capacitance, and multi-stage aging
+.venv/bin/solarlab iodine-presets
+.venv/bin/solarlab iodine-steady --preset bitton_tessler_2023_blocking --output outputs/iodine_steady.json
+.venv/bin/solarlab iodine-aging --preset bitton_tessler_2023_self_healing --output outputs/iodine_aging.json
 
 # Research companion CLI entrypoints
 .venv/bin/solarlab-cbo-scan --help
@@ -148,6 +153,7 @@ All characterisation workflows compile from the same validated device declaratio
 | | $\text{Suns-}V_{\mathrm{oc}}$ & $V_{\mathrm{oc}}(T)$ | `solarlab.experiments.suns_voc`, `voc_t` | Series-resistance-free $\text{pseudo-}J\text{-}V$, $\text{pseudo-FF}$, activation-energy intercept |
 | | Transient Photovoltage (TPV) | `solarlab.experiments.tpv` | Floating-port Maxwell $J_{\mathrm{cond}} + \partial_t D = 0$ pulse + paired unpulsed drift subtraction |
 | | Frozen-ion degradation | `solarlab.experiments.degradation` | Long-time ionic evolution with zero-diffusivity electronic snapshot $J\text{-}V$ probes |
+| | Iodine chemistry & aging | `solarlab.experiments.iodine_aging`, `iodine_declarative` | Coupled 5-reaction $\mathrm{I}^- / \mathrm{I}^0 / \mathrm{I}_2$ BDF aging, volatile $\mathrm{I}_2$ outgassing, $\mathrm{Ag}$ corrosion, and AC redox capacitance |
 | **1D Small-Signal AC** | Impedance spectroscopy $Z(\omega)$ | `solarlab.experiments.impedance`, `ionic_impedance` | Exact sparse complex solve $(G + i\omega C)\delta u = b$, Nyquist/Bode, coupled ion & dynamic-defect tangents |
 | | Mott–Schottky ($C\text{-}V$ / $C\text{-}f$) | `solarlab.experiments.mott_schottky` | Depletion $1/C^2$ extraction of $V_{\mathrm{bi}}$ and $N_{\mathrm{eff}}$ |
 | **Spectral & Multi-Junction** | Monochromatic EQE & EL | `solarlab.experiments.eqe`, `el_spectrum` | Coherent TMM or spectral Beer–Lambert $\mathrm{EQE}(\lambda)$, AM1.5G $J_{\mathrm{sc}}$, reciprocity EL |
@@ -255,7 +261,7 @@ Evaluated across the **45-case** 7-stage preconditioning + forward/reverse scan 
 | `calado2016_ion_sweep` | HTL / Perovskite / ETL | Yes | Uniform / BL | Workstation dynamic ion-hysteresis waveform preset |
 | `calado2016_fig1f` | Calado 2016 SI Table 1 stack | Yes | Beer–Lambert | Literature scan-rate hysteresis comparison preset |
 
-An additional **52** YAML device and 2D microstructure test fixtures reside under `tests/fixtures/configs/` (isolated from API serving).
+An additional **5** declarative iodine reaction–diffusion–aging presets (`bitton_tessler_2023_{blocking,permeable,outgassing,ag_corrosion,self_healing}`) reside under `src/solarlab/materials/data/iodine_presets/` (served at `/iodine/presets` and `?view=iodine-aging`), alongside **52** YAML device and 2D microstructure test fixtures under `tests/fixtures/configs/` (isolated from API serving).
 
 ### Running the Full Verification Suite
 
@@ -283,6 +289,7 @@ npm --prefix web run build
 3. **Calado, P. et al.** (2016) — *Evidence for ion migration in hybrid perovskite solar cells with minimal hysteresis*. Nat. Commun., 7, 13831.
 4. **Courtier, N. E. et al.** (2019) — *IonMonger: a free and fast planar perovskite solar cell simulator with coupled ion vacancy and charge carrier dynamics*. J. Comput. Electron., 18, 1435–1449.
 5. **Burgelman, M., Nollet, P. & Degrave, S.** (2000) — *Modelling polycrystalline semiconductor solar cells* (SCAPS-1D). Thin Solid Films, 361–362, 527–532.
+6. **Bitton, S. & Tessler, N.** (2023) — *Perovskite ionics – elucidating degradation mechanisms in perovskite solar cells via device modelling and iodine chemistry*. Energy Environ. Sci., 16(6), 2621–2628.
 
 <div align="center">
 

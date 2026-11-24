@@ -135,18 +135,21 @@ where $B(\xi) = \xi / (e^\xi - 1)$ is the stabilized Bernoulli function. For $z_
 
 ---
 
-## 5. Domain Topologies, Boundary Closures, and Accounting Gates
+## 5. Domain Topologies, Open-Loss Closures, and Accounting Gates
 
 1. **Domain Topologies (`domain_mode`)**:
    - `"absorber_blocking"`: Chemical `NodeSet("chem")` is embedded on the absorber layer; neutral and charged iodine species have zero flux into transport layers.
    - `"full_stack_permeable"`: Chemical `NodeSet("chem")` spans the full electrical stack (`HBL / Perovskite / EBL`) with piecewise layer diffusivities, reaction rates, and optional partition factors.
-2. **Outer Boundary Closures**:
-   - **Volatile $\mathrm{I}_2$ surface escape**: Outward boundary flux $J_{\mathrm{loss},2} = k_{\mathrm{loss}} c_2 \ge 0$ ($\mathrm{m}^{-2}\;\mathrm{s}^{-1}$) on `"left"` and/or `"right"` ports. Closed steady-state inventory constraints are admitted only when $k_{\mathrm{loss,left}} = k_{\mathrm{loss,right}} = 0$; open-boundary escape requires transient integration.
+2. **Volumetric Outgassing and Outer Boundary Closures**:
+   - **Volumetric layer $\mathrm{I}_2$ outgassing (`volumetric_mol_escape_s_1`)**: Online cell-wise volatile sink $-k_{\mathrm{outgas}}(x)\;c_2(x, t)$ ($\mathrm{m}^{-3}\;\mathrm{s}^{-1}$, contributing $2 k_{\mathrm{outgas}} c_2$ iodine atoms per unit volume and time) assembled via `IodineVolumetricEscapeTerm` with analytical diagonal Jacobian and shared-heterointerface node protection (suppressing artificial escape on interior `PVK/BL` shared nodes when adjacent layers are sealed). When `volumetric_mol_escape_s_1 == 0` across all layers, the term is omitted so closed-system identities and residuals remain `0-ULP` unchanged.
+   - **Volatile $\mathrm{I}_2$ surface escape (`mol_escape_velocity_m_s`)**: Outward boundary flux $J_{\mathrm{loss},2} = k_{\mathrm{loss}} c_2 \ge 0$ ($\mathrm{m}^{-2}\;\mathrm{s}^{-1}$) on `"left"` and/or `"right"` ports. Closed steady-state inventory constraints are admitted only when `has_open_iodine_loss` is `False`; open-loss configurations evolve via transient integration.
    - **Charge-conserving contact reaction (`contact_reaction_mode`)**:
      - `"none"` (blocking to $\mathrm{I}^-$ and $\mathrm{I}^0$);
      - `"hole_oxidation_to_I0"`: surface reaction $\mathrm{I}^- + h^+ \to \mathrm{I}^0$ with rate $J_{\mathrm{ct}} = k_{\mathrm{ct}} c_- p$ removing equal $\mathrm{I}^-$ and $h^+$ fluxes while injecting $+J_{\mathrm{ct}}$ into $\mathrm{I}^0$ (zero net charge creation, zero iodine atom loss);
-     - `"immobilized_product_sheet"`: surface reaction $\mathrm{I}^- + h^+ \to \mathrm{I}_{\mathrm{surf}}^0(\text{fixed})$ removing equal $\mathrm{I}^-$ and $h^+$ fluxes (zero net charge error) and accumulating trapped surface iodine inventory in the step ledger.
-   Non-conserving bare $\mathrm{I}^-$ sink boundaries are prohibited.
-3. **Mandatory Step Accounting and Frozen-Probe Invariants**:
-   - Every transient step tracks in-device elemental iodine $M_{\mathrm{I}}(t) = \sum_i w_i (c_{-,i} + c_{0,i} + 2c_{2,i})$ plus BDF1/2-consistent cumulative escaped/immobilized boundary iodine $M_{\mathrm{I,bound}}(t)$, enforcing a per-step relative conservation gate $\lvert \Delta M_{\mathrm{res}} \rvert / M_{\mathrm{I}}(0) \le 10^{-9}$ (`step_iodine_conservation`) and auditing cumulative trajectory drift.
+     - `"immobilized_product_sheet"`: surface reaction $\mathrm{I}^- + h^+ \to \mathrm{I}_{\mathrm{surf}}^0(\text{fixed})$ removing equal $\mathrm{I}^-$ and $h^+$ fluxes (zero net charge error) and accumulating trapped surface iodine inventory in the step ledger;
+     - `"metal_faradaic_corrosion"`: Faradaic metal electrode corrosion $\mathrm{M} + \mathrm{I}^- \to \mathrm{MI}(s) + e^-_{\mathrm{metal}}$ with surface velocity $v_{\mathrm{corr}} \ge 0$ (`contact_corrosion_velocity_m_s`, $\mathrm{m}\;\mathrm{s}^{-1}$) and outward flux $J_{\mathrm{corr}} = v_{\mathrm{corr}} c_-$, transferring electrons directly into the external metal contact reservoir while recording immobilized $\mathrm{MI}(s)$ atoms in the step ledger.
+   Non-conserving bare $\mathrm{I}^-$ sink boundaries without charge/inventory accounting are prohibited.
+3. **Mandatory Step Accounting, Conservation Polish, and Frozen-Probe Invariants**:
+   - Every transient step tracks in-device elemental iodine $M_{\mathrm{I}}(t) = \sum_i w_i (c_{-,i} + c_{0,i} + 2c_{2,i})$ plus BDF1/BDF2-consistent cumulative escaped/immobilized iodine $M_{\mathrm{I,loss}}(t)$, enforcing a per-step relative conservation gate $\lvert \Delta M_{\mathrm{res}} \rvert / M_{\mathrm{I}}(0) \le 10^{-9}$ (`step_iodine_conservation`) and auditing cumulative trajectory drift. For open-loss long-horizon BDF steps (`has_open_iodine_loss`), post-Newton conservation polish eliminates floating-point cancellation noise in fast monomer $(R_a, R_b, R_c)$ cycling while preserving full analytical Jacobian coupling.
    - Non-destructive frozen-chemistry electronic `J-V` probes and `chem_mode="frozen"` small-signal AC impedance lock $(c_-, c_0, c_2)$ bit-for-bit (`0-ULP` chemical coordinate invariance) and suppress redox charge transfer into immobile $\mathrm{I}^-$ so Kirchhoff electronic current continuity $\nabla\cdot(J_n + J_p + i\omega D) = 0$ holds identically across all interior faces.
+   - Declarative YAML/JSON presets and user decks validate against `solarlab.iodine-deck.v1` (`solarlab.experiments.iodine_declarative`) without mutating SolarLab's frozen 20-DTO frontend configuration schema.

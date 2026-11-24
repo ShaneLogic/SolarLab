@@ -45,6 +45,7 @@ All 1D workflows below enforce the same runtime invariants:
 | **5. Physics Extensions** | [neutral_defects.py](neutral_defects.py) | Explicit neutral single-level bulk SRH defects (including `--unequal-dos` $N_C \neq N_V$ binding) |
 | | [field_transport.py](field_transport.py) | Smooth Caughey–Thomas electric-field velocity saturation ($\beta > 1$) in DC assembly |
 | | [optical_generation.py](optical_generation.py) | Explicit wavelength photon flux + $(n, k)$ coherent TMM control-volume generation & photon budget |
+| | [bitton_tessler_2023_benchmark.py](bitton_tessler_2023_benchmark.py) | Coupled 5-reaction $\mathrm{I}^- / \mathrm{I}^0 / \mathrm{I}_2$ steady, $10^4\text{ h}$ outgassing, $\mathrm{Ag}$ corrosion, self-healing, and AC redox capacitance benchmark |
 | **6. Process & HTTP Workers** | [process_sweep.py](process_sweep.py), [process_transient.py](process_transient.py), [process_ionic_jv.py](process_ionic_jv.py), [process_ionic_transient.py](process_ionic_transient.py) | Out-of-process `ProcessSupervisor` execution binding committed Git source digests (`--build-source-commit`) |
 | | [service.py](service.py), [transient_service.py](transient_service.py), [ionic_jv_service.py](ionic_jv_service.py), [ionic_transient_service.py](ionic_transient_service.py) | Minimal FastAPI `/experiments` + `/jobs` + reconnectable SSE services for dedicated workstation views |
 
