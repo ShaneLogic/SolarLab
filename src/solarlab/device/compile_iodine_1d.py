@@ -97,6 +97,7 @@ class IodineLayerSpec:
     partition_atom: float = 1.0
     partition_mol: float = 1.0
     iodide_site_limit_m3: float | None = None
+    volumetric_mol_escape_s_1: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.layer_id:
@@ -121,6 +122,7 @@ class IodineLayerSpec:
             "k_e_3body_m6_s",
             "capture_radius_m",
             "n_e_star_m3",
+            "volumetric_mol_escape_s_1",
         ):
             val = float(getattr(self, name))
             if not math.isfinite(val) or val < 0.0:
@@ -174,6 +176,7 @@ class IodineLayerSpec:
         partition_atom: float = 1.0,
         partition_mol: float = 1.0,
         iodide_site_limit_cm3: float | None = None,
+        volumetric_mol_escape_s_1: float = 0.0,
     ) -> IodineLayerSpec:
         """Construct SI layer specification directly from literature CGS units."""
         return cls(
@@ -207,6 +210,7 @@ class IodineLayerSpec:
                 if iodide_site_limit_cm3 is None
                 else iodide_site_limit_cm3 * 1.0e6
             ),
+            volumetric_mol_escape_s_1=volumetric_mol_escape_s_1,
         )
 
 
@@ -217,6 +221,7 @@ class IodineBoundaryDeclaration:
     mol_escape_velocity_m_s: float = 0.0
     contact_reaction_mode: ContactReactionMode = "none"
     contact_oxidation_rate_m4_s: float = 0.0
+    contact_corrosion_velocity_m_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +264,9 @@ def bitton_tessler_2023_table_s1_chemistry(
     perovskite_ka_cm3_s: float = 1.0e-11,
     left_escape_m_s: float = 0.0,
     right_escape_m_s: float = 0.0,
+    hbl_volumetric_mol_escape_s_1: float = 0.0,
+    perovskite_volumetric_mol_escape_s_1: float = 0.0,
+    ebl_volumetric_mol_escape_s_1: float = 0.0,
     left_boundary: IodineBoundaryDeclaration | None = None,
     right_boundary: IodineBoundaryDeclaration | None = None,
     initialize_equilibrium_split: bool = True,
@@ -284,6 +292,7 @@ def bitton_tessler_2023_table_s1_chemistry(
         capture_radius_nm=0.2,
         K_diss_cm3=1.0e8,
         n_e_star_cm3=1.0e8,
+        volumetric_mol_escape_s_1=perovskite_volumetric_mol_escape_s_1,
     )
     if domain_mode == "absorber_blocking":
         layers: tuple[IodineLayerSpec, ...] = (pvk,)
@@ -304,6 +313,7 @@ def bitton_tessler_2023_table_s1_chemistry(
             capture_radius_nm=0.2,
             K_diss_cm3=1.0e8,
             n_e_star_cm3=1.0e6,
+            volumetric_mol_escape_s_1=hbl_volumetric_mol_escape_s_1,
         )
         ebl = IodineLayerSpec.from_cgs(
             ebl_layer_id,
@@ -321,6 +331,7 @@ def bitton_tessler_2023_table_s1_chemistry(
             capture_radius_nm=0.2,
             K_diss_cm3=1.0e8,
             n_e_star_cm3=1.0e6,
+            volumetric_mol_escape_s_1=ebl_volumetric_mol_escape_s_1,
         )
         layers = (hbl, pvk, ebl)
     lb = (
@@ -498,6 +509,7 @@ def compile_iodine_device_1d(
     k_e3 = np.zeros(m_count, dtype=np.float64)
     k_diss = np.zeros(m_count, dtype=np.float64)
     n_star = np.zeros(m_count, dtype=np.float64)
+    vol_esc = np.zeros(m_count, dtype=np.float64)
     w_accum = np.zeros(m_count, dtype=np.float64)
 
     d_minus_faces = np.zeros(m_faces, dtype=np.float64)
@@ -576,6 +588,7 @@ def compile_iodine_device_1d(
         k_e3[sl] += sub_w * spec.k_e_3body_m6_s
         k_diss[sl] += sub_w * spec.K_diss_m3
         n_star[sl] += sub_w * spec.n_e_star_m3
+        vol_esc[sl] += sub_w * spec.volumetric_mol_escape_s_1
         if site_limit is not None:
             assert spec.iodide_site_limit_m3 is not None
             site_limit[sl] += sub_w * spec.iodide_site_limit_m3
@@ -621,6 +634,16 @@ def compile_iodine_device_1d(
     k_e3 *= inv_w
     k_diss *= inv_w
     n_star *= inv_w
+    vol_esc *= inv_w
+    for span_i in range(len(active_spans) - 1):
+        shared_c = active_spans[span_i][2]
+        sp_l = spec_by_id[active_spans[span_i][0]]
+        sp_r = spec_by_id[active_spans[span_i + 1][0]]
+        if (
+            sp_l.volumetric_mol_escape_s_1 == 0.0
+            or sp_r.volumetric_mol_escape_s_1 == 0.0
+        ):
+            vol_esc[shared_c] = 0.0
     if site_limit is not None:
         site_limit *= inv_w
 
@@ -715,6 +738,7 @@ def compile_iodine_device_1d(
         mol_escape_velocity_m_s=chemistry.left_boundary.mol_escape_velocity_m_s,
         contact_reaction_mode=chemistry.left_boundary.contact_reaction_mode,
         contact_oxidation_rate_m4_s=chemistry.left_boundary.contact_oxidation_rate_m4_s,
+        contact_corrosion_velocity_m_s=chemistry.left_boundary.contact_corrosion_velocity_m_s,
         p1_iodine_m3=p1_left,
         reversible_contact=reversible_ct
         and chemistry.left_boundary.contact_reaction_mode == "hole_oxidation_to_I0",
@@ -727,10 +751,19 @@ def compile_iodine_device_1d(
         mol_escape_velocity_m_s=chemistry.right_boundary.mol_escape_velocity_m_s,
         contact_reaction_mode=chemistry.right_boundary.contact_reaction_mode,
         contact_oxidation_rate_m4_s=chemistry.right_boundary.contact_oxidation_rate_m4_s,
+        contact_corrosion_velocity_m_s=chemistry.right_boundary.contact_corrosion_velocity_m_s,
         p1_iodine_m3=p1_right,
         reversible_contact=reversible_ct
         and chemistry.right_boundary.contact_reaction_mode == "hole_oxidation_to_I0",
     )
+    for bport in (left_port, right_port):
+        if (
+            bport.contact_reaction_mode == "metal_faradaic_corrosion"
+            and bport.elec_node not in (0, n_count - 1)
+        ):
+            raise CapabilityError(
+                "metal_faradaic_corrosion requires an external electrode boundary"
+            )
 
     manifest = {
         "schema": IODINE_COMPILER_SCHEMA,
@@ -754,6 +787,16 @@ def compile_iodine_device_1d(
         },
         "scientific_qualification": False,
     }
+    if left_port.contact_corrosion_velocity_m_s > 0.0:
+        manifest["left_boundary"]["corrosion_velocity"] = (
+            left_port.contact_corrosion_velocity_m_s
+        )
+    if right_port.contact_corrosion_velocity_m_s > 0.0:
+        manifest["right_boundary"]["corrosion_velocity"] = (
+            right_port.contact_corrosion_velocity_m_s
+        )
+    if np.any(vol_esc > 0.0):
+        manifest["volumetric_mol_escape_s_1"] = vol_esc.tolist()
     manifest_json = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(manifest_json.encode()).hexdigest()
 
@@ -785,4 +828,5 @@ def compile_iodine_device_1d(
         binding_manifest_json=manifest_json,
         steric_site_limit_m3=None if site_limit is None else frozen_array(site_limit),
         steric_diffusion_only=chemistry.steric_diffusion_only,
+        volumetric_mol_escape_s_1=frozen_array(vol_esc),
     )

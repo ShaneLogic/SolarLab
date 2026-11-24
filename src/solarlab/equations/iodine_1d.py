@@ -41,6 +41,7 @@ ContactReactionMode = Literal[
     "none",
     "hole_oxidation_to_I0",
     "immobilized_product_sheet",
+    "metal_faradaic_corrosion",
 ]
 
 _DOMAIN_MODES: frozenset[str] = frozenset(get_args(IodineDomainMode))
@@ -58,6 +59,7 @@ class IodineBoundaryPortSpec:
     mol_escape_velocity_m_s: float = 0.0
     contact_reaction_mode: ContactReactionMode = "none"
     contact_oxidation_rate_m4_s: float = 0.0
+    contact_corrosion_velocity_m_s: float = 0.0
     p1_iodine_m3: float = 0.0
     reversible_contact: bool = False
 
@@ -71,15 +73,16 @@ class IodineBoundaryPortSpec:
         for label, val in (
             ("mol_escape_velocity_m_s", self.mol_escape_velocity_m_s),
             ("contact_oxidation_rate_m4_s", self.contact_oxidation_rate_m4_s),
+            ("contact_corrosion_velocity_m_s", self.contact_corrosion_velocity_m_s),
             ("p1_iodine_m3", self.p1_iodine_m3),
         ):
             fval = float(val)
             if not math.isfinite(fval) or fval < 0.0:
                 raise ContractError(f"{label}_must_be_finite_nonnegative")
             object.__setattr__(self, label, fval)
-        if (
-            self.contact_reaction_mode == "none"
-            and self.contact_oxidation_rate_m4_s > 0.0
+        if self.contact_reaction_mode == "none" and (
+            self.contact_oxidation_rate_m4_s > 0.0
+            or self.contact_corrosion_velocity_m_s > 0.0
         ):
             raise ContractError(
                 "positive_contact_oxidation_rate_requires_conserving_reaction_mode"
@@ -88,9 +91,16 @@ class IodineBoundaryPortSpec:
     @property
     def removes_device_iodine(self) -> bool:
         """True if this boundary allows net iodine loss from mobile inventory."""
-        return self.mol_escape_velocity_m_s > 0.0 or (
-            self.contact_reaction_mode == "immobilized_product_sheet"
-            and self.contact_oxidation_rate_m4_s > 0.0
+        return (
+            self.mol_escape_velocity_m_s > 0.0
+            or (
+                self.contact_reaction_mode == "immobilized_product_sheet"
+                and self.contact_oxidation_rate_m4_s > 0.0
+            )
+            or (
+                self.contact_reaction_mode == "metal_faradaic_corrosion"
+                and self.contact_corrosion_velocity_m_s > 0.0
+            )
         )
 
 
@@ -170,6 +180,7 @@ class CompiledIodineDevice1D:
     binding_manifest_json: str
     steric_site_limit_m3: Vector | None = None
     steric_diffusion_only: bool = True
+    volumetric_mol_escape_s_1: Vector | None = None
     capabilities: tuple[str, ...] = field(
         default=(
             "classical_1d_electronic_component",
@@ -232,6 +243,21 @@ class CompiledIodineDevice1D:
             if slim.shape != (m_count,) or np.any(slim <= 0.0):
                 raise ContractError("steric_site_limit_m3_must_be_positive_chem_vector")
             object.__setattr__(self, "steric_site_limit_m3", slim)
+
+        vol_esc = (
+            frozen_array(np.zeros(m_count, dtype=np.float64))
+            if self.volumetric_mol_escape_s_1 is None
+            else frozen_array(self.volumetric_mol_escape_s_1)
+        )
+        if (
+            vol_esc.shape != (m_count,)
+            or not np.all(np.isfinite(vol_esc))
+            or np.any(vol_esc < 0.0)
+        ):
+            raise ContractError(
+                "volumetric_mol_escape_s_1_must_be_finite_nonnegative_chem_vector"
+            )
+        object.__setattr__(self, "volumetric_mol_escape_s_1", vol_esc)
 
         if (
             self.iodide_map.size != m_count
@@ -312,15 +338,17 @@ class CompiledIodineDevice1D:
 
     @property
     def has_open_iodine_loss(self) -> bool:
+        assert self.volumetric_mol_escape_s_1 is not None
         return (
             self.left_boundary.removes_device_iodine
             or self.right_boundary.removes_device_iodine
+            or bool(np.any(self.volumetric_mol_escape_s_1 > 0.0))
         )
 
     @property
     def is_unreactive_limit(self) -> bool:
         k = self.kinetics
-        assert k.k_e_3body_m6_s is not None
+        assert k.k_e_3body_m6_s is not None and self.volumetric_mol_escape_s_1 is not None
         bulk_zero = bool(
             np.all(k.k_a_m3_s == 0.0)
             and np.all(k.k_b_s_1 == 0.0)
@@ -328,10 +356,13 @@ class CompiledIodineDevice1D:
             and np.all(k.k_d_m3_s == 0.0)
             and np.all(k.k_e_m3_s == 0.0)
             and np.all(k.k_e_3body_m6_s == 0.0)
+            and np.all(self.volumetric_mol_escape_s_1 == 0.0)
         )
         contact_zero = (
             self.left_boundary.contact_oxidation_rate_m4_s == 0.0
             and self.right_boundary.contact_oxidation_rate_m4_s == 0.0
+            and self.left_boundary.contact_corrosion_velocity_m_s == 0.0
+            and self.right_boundary.contact_corrosion_velocity_m_s == 0.0
         )
         return bulk_zero and contact_zero
 

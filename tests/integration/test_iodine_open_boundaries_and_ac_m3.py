@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from solarlab.contracts import ContractError
+from solarlab.equations.assembly.iodine_1d import AssembledIodine1DProblem
 from solarlab.equations.dc_1d import CapabilityError
 from solarlab.device.compile_iodine_1d import (
     IodineBoundaryDeclaration,
@@ -304,3 +305,156 @@ def test_iodine_small_signal_ac_impedance_limits_and_dc_slope_consistency() -> N
         inv_p["iodide"] + inv_p["iodine_atom"] + 2.0 * inv_p["iodine_molecule"]
     )
     assert abs(delta_elem) / device.reference_iodine_inventory_m2 <= 1.0e-8
+
+
+def test_volumetric_mol_escape_jacobian_steady_refusal_and_live_depletion() -> None:
+    prepared = _bitton_tessler_prepared_device()
+    chem_closed = bitton_tessler_2023_table_s1_chemistry(
+        domain_mode="full_stack_permeable",
+        perovskite_ka_cm3_s=5.0e-11,
+    )
+    chem_vol = bitton_tessler_2023_table_s1_chemistry(
+        domain_mode="full_stack_permeable",
+        perovskite_ka_cm3_s=5.0e-11,
+        ebl_volumetric_mol_escape_s_1=50.0,
+    )
+    dev_closed = compile_iodine_device_1d(
+        prepared, chem_closed, intervals_per_layer=(5, 14, 5)
+    )
+    dev_vol = compile_iodine_device_1d(
+        prepared, chem_vol, intervals_per_layer=(5, 14, 5)
+    )
+    assert dev_vol.has_open_iodine_loss
+    assert dev_vol.sha256 != dev_closed.sha256
+    assert dev_vol.volumetric_mol_escape_s_1 is not None
+    # Shared PVK/EBL heterointerface node must remain sealed (0.0) when PVK is sealed
+    assert dev_vol.volumetric_mol_escape_s_1[19] == 0.0
+    assert np.all(dev_vol.volumetric_mol_escape_s_1[20:] == pytest.approx(50.0))
+
+    with pytest.raises(CapabilityError):
+        solve_iodine_steady_state(dev_vol, voltage_V=0.0, generation_scale=0.0)
+
+    ss_c = solve_iodine_steady_state(dev_closed, voltage_V=0.9, generation_scale=1.0)
+    assert ss_c.converged and ss_c.state is not None
+
+    # Verify analytical Jacobian of volumetric escape against central finite differences
+    prob_c = AssembledIodine1DProblem(dev_closed, voltage_V=0.9, generation_scale=1.0)
+    prob_v = AssembledIodine1DProblem(dev_vol, voltage_V=0.9, generation_scale=1.0)
+    u_test = np.array(ss_c.state.u, dtype=np.float64, copy=True)
+    dj_ana = (prob_v.jacobian(u_test) - prob_c.jacobian(u_test)).toarray()
+    mol_sl = dev_vol.chem_slices["iodine_molecule"]
+    eps = 1.0e-4
+    for col in range(mol_sl.start, mol_sl.stop):
+        up = u_test.copy()
+        um = u_test.copy()
+        up[col] += eps
+        um[col] -= eps
+        df_p = prob_v.residual(up) - prob_c.residual(up)
+        df_m = prob_v.residual(um) - prob_c.residual(um)
+        fd_col = (df_p - df_m) / (2.0 * eps)
+        np.testing.assert_allclose(
+            dj_ana[mol_sl, col], fd_col[mol_sl], rtol=1.0e-6, atol=1.0e-1
+        )
+        assert np.all(dj_ana[: mol_sl.start, col] == 0.0)
+
+    # Verify live BDF volumetric outgassing conserves elemental iodine at every step
+    res_v, led_v = solve_iodine_bdf_transient(
+        dev_vol,
+        ss_c.state.u,
+        (0.0, 1.0e4),
+        voltage_fn=lambda _t: 0.9,
+        generation_fn=lambda _t: 1.0,
+        options=BDFOptions(
+            initial_step_s=1.0e-2,
+            max_step_s=2.0e3,
+            relative_tolerance=1.0e-2,
+            absolute_tolerance=1.0e15,
+            max_order=1,
+            max_steps=200,
+        ),
+    )
+    assert res_v.completed and len(led_v) > 0
+    inv_0 = ss_c.state.total_iodine_inventory_m2
+    cum_esc = 0.0
+    for acc in led_v:
+        cum_esc += acc.step_escaped_iodine_atoms_m2
+        assert abs((acc.in_device_iodine_m2 + cum_esc) - inv_0) / inv_0 <= 1.0e-9
+    assert cum_esc > 0.0
+
+
+def test_metal_faradaic_corrosion_jacobian_capability_and_conservation() -> None:
+    prepared = _bitton_tessler_prepared_device()
+    # Reject metal_faradaic_corrosion on interior heterointerface (absorber_blocking)
+    bad_chem = bitton_tessler_2023_table_s1_chemistry(
+        domain_mode="absorber_blocking",
+        perovskite_ka_cm3_s=1.0e-11,
+        left_boundary=IodineBoundaryDeclaration(
+            contact_reaction_mode="metal_faradaic_corrosion",
+            contact_corrosion_velocity_m_s=1.0e-6,
+        ),
+    )
+    with pytest.raises(CapabilityError):
+        compile_iodine_device_1d(prepared, bad_chem, intervals_per_layer=(5, 14, 5))
+
+    chem_closed = bitton_tessler_2023_table_s1_chemistry(
+        domain_mode="full_stack_permeable",
+        perovskite_ka_cm3_s=1.0e-11,
+    )
+    chem_ag = bitton_tessler_2023_table_s1_chemistry(
+        domain_mode="full_stack_permeable",
+        perovskite_ka_cm3_s=1.0e-11,
+        left_boundary=IodineBoundaryDeclaration(
+            contact_reaction_mode="metal_faradaic_corrosion",
+            contact_corrosion_velocity_m_s=1.0e-6,
+        ),
+    )
+    dev_closed = compile_iodine_device_1d(
+        prepared, chem_closed, intervals_per_layer=(5, 14, 5)
+    )
+    dev_ag = compile_iodine_device_1d(
+        prepared, chem_ag, intervals_per_layer=(5, 14, 5)
+    )
+    assert dev_ag.has_open_iodine_loss
+    with pytest.raises(CapabilityError):
+        solve_iodine_steady_state(dev_ag, voltage_V=0.0, generation_scale=0.0)
+
+    ss_c = solve_iodine_steady_state(dev_closed, voltage_V=0.9, generation_scale=1.0)
+    assert ss_c.converged and ss_c.state is not None
+
+    # Analytical vs central FD Jacobian on cathode iodide node
+    prob_c = AssembledIodine1DProblem(dev_closed, voltage_V=0.9, generation_scale=1.0)
+    prob_ag = AssembledIodine1DProblem(dev_ag, voltage_V=0.9, generation_scale=1.0)
+    u_test = np.array(ss_c.state.u, dtype=np.float64, copy=True)
+    col0 = dev_ag.chem_slices["iodide"].start
+    eps = 1.0e-6
+    up, um = u_test.copy(), u_test.copy()
+    up[col0] += eps
+    um[col0] -= eps
+    df_p = prob_ag.residual(up) - prob_c.residual(up)
+    df_m = prob_ag.residual(um) - prob_c.residual(um)
+    fd_col = (df_p - df_m) / (2.0 * eps)
+    dj_ana = (prob_ag.jacobian(u_test) - prob_c.jacobian(u_test)).toarray()[:, col0]
+    np.testing.assert_allclose(dj_ana, fd_col, rtol=1.0e-8, atol=1.0e-8)
+
+    res_ag, led_ag = solve_iodine_bdf_transient(
+        dev_ag,
+        ss_c.state.u,
+        (0.0, 10.0),
+        voltage_fn=lambda _t: 0.9,
+        generation_fn=lambda _t: 1.0,
+        options=BDFOptions(
+            initial_step_s=1.0e-2,
+            max_step_s=1.0,
+            relative_tolerance=1.0e-2,
+            absolute_tolerance=1.0e15,
+            max_order=1,
+            max_steps=100,
+        ),
+    )
+    assert res_ag.completed and len(led_ag) > 0
+    inv_0 = ss_c.state.total_iodine_inventory_m2
+    cum_immob = 0.0
+    for acc in led_ag:
+        cum_immob += acc.step_immobilized_iodine_atoms_m2
+        assert abs((acc.in_device_iodine_m2 + cum_immob) - inv_0) / inv_0 <= 1.0e-9
+    assert cum_immob > 0.0

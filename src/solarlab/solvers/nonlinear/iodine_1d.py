@@ -312,16 +312,27 @@ def iodine_bdf_newton_settings(
                 weights[offset + node] = 1.0e11
 
     inv_ref = max(device.reference_iodine_inventory_m2, 1.0)
-    # Balance rate scaling: under illumination, cap at steady chem_flux_tolerance_A_m2
-    # to avoid photo-reaction ULP stagnation; in darkness, tighten flux cap so large
-    # recovery steps always satisfy per-step 1e-9 iodine conservation.
+    # Per-species diagonal flux scaling aligned with merit = 0.5 * ||scaled||_2^2:
+    # monomer rows stay >=20x above PVK fast-redox ULP (~1.6e-12 A/m^2), while trace I_2
+    # enforces 1e-13 A/m^2 (~75x above I_2 ULP) so outgassing equilibrates at every step.
     if step.endpoint.generation_scale > 0.0:
         w_flux = m_count * Q / chem_flux_tolerance_A_m2
         w_step = (m_count * dt_s) / (inventory_relative_tolerance * inv_ref)
+        weights[3 * n_count :] = min(w_flux, max(w_step, 1.0e-20))
+        assert device.volumetric_mol_escape_s_1 is not None
+        vol_mask = device.volumetric_mol_escape_s_1 > 0.0
+        if np.any(vol_mask):
+            w_vol = min(
+                3.0 * m_count * Q / min(chem_flux_tolerance_A_m2, 5.0e-13),
+                max(w_step * 4.0e3, 1.0e-20),
+            )
+            weights[3 * n_count + 2 * m_count :][vol_mask] = np.maximum(
+                weights[3 * n_count + 2 * m_count :][vol_mask], w_vol
+            )
     else:
         w_flux = 3.0 * m_count * Q / 1.0e-12
         w_step = (6.0 * m_count * dt_s) / (inventory_relative_tolerance * inv_ref)
-    weights[3 * n_count :] = min(w_flux, max(w_step, 1.0e-20))
+        weights[3 * n_count :] = min(w_flux, max(w_step, 1.0e-20))
 
     iodide_step = (
         10.0 if device.steric_site_limit_m3 is not None else chem_coordinate_step
@@ -404,6 +415,8 @@ def _chem_density_basin_lift(
     device: CompiledIodineDevice1D,
     u: Vector,
     voltage_V: float,
+    *,
+    freeze_iodide: bool = False,
 ) -> Vector:
     """Linear-density chemical seed eliminating trace-species Softplus stagnation."""
     n_elec = 3 * device.node_count
@@ -417,14 +430,22 @@ def _chem_density_basin_lift(
             f_chem = problem.residual(u_cur)[n_elec:]
             if float(np.max(np.abs(f_chem))) * Q < 1.0e-8:
                 break
-            inv_tan = 1.0 / np.concatenate((mm, m0, m2))
-            j_chem = problem.jacobian(u_cur)[n_elec:, n_elec:] @ diags(inv_tan)
-            dc = factorize(j_chem.tocsc()).solve(-f_chem)
+            if freeze_iodide:
+                inv_tan_n = 1.0 / np.concatenate((m0, m2))
+                j_neut = problem.jacobian(u_cur)[n_elec + m :, n_elec + m :] @ diags(
+                    inv_tan_n
+                )
+                dc_neut = factorize(j_neut.tocsc()).solve(-f_chem[m:])
+                dc = np.concatenate((np.zeros(m, dtype=np.float64), dc_neut))
+            else:
+                inv_tan = 1.0 / np.concatenate((mm, m0, m2))
+                j_chem = problem.jacobian(u_cur)[n_elec:, n_elec:] @ diags(inv_tan)
+                dc = factorize(j_chem.tocsc()).solve(-f_chem)
         except Exception:
             break
         if not np.all(np.isfinite(dc)):
             break
-        cm_n = np.maximum(cm + dc[:m], 0.1 * cm)
+        cm_n = cm if freeze_iodide else np.maximum(cm + dc[:m], 0.1 * cm)
         c0_n = np.maximum(c0 + dc[m : 2 * m], 0.1 * c0)
         c2_n = np.maximum(c2 + dc[2 * m :], 0.1 * c2)
         if device.steric_site_limit_m3 is not None:
@@ -471,15 +492,77 @@ def iodine_bdf_seed(step: BDFStep) -> Vector:
     f_try = step.residual(u_cur)
     scaled_try = base_settings.scaling.scaled(f_try)
     if float(np.max(np.abs(scaled_try[3 * dev.node_count :]))) > 10.0:
+        p_comp = dev.electronic_component.parameters
+        undoped_bl = (
+            max(float(p_comp.donor_density_m3[0]), float(p_comp.acceptor_density_m3[0]))
+            < 1.0e22
+            and max(
+                float(p_comp.donor_density_m3[-1]),
+                float(p_comp.acceptor_density_m3[-1]),
+            )
+            < 1.0e22
+        )
         u_cur = np.array(
             _chem_density_basin_lift(
-                CallableProblem(step.residual, step.jacobian), dev, u_cur, v_next
+                CallableProblem(step.residual, step.jacobian),
+                dev,
+                u_cur,
+                v_next,
+                freeze_iodide=undoped_bl and abs(v_next - v_prev) <= 1.0e-12,
             ),
             dtype=np.float64,
             copy=True,
         )
         f_try = step.residual(u_cur)
         scaled_try = base_settings.scaling.scaled(f_try)
+
+    # Full-Jacobian elemental conservation polish when long BDF steps accumulate
+    # open outgassing / contact oxidation below the per-row monomer ULP flux cap.
+    if dev.has_open_iodine_loss and bdf_norm(scaled_try) <= 10.0:
+        m_c = dev.chem_node_count
+        n_e = 3 * dev.node_count
+        inv_ref = max(dev.reference_iodine_inventory_m2, 1.0)
+        tot_imb = abs(
+            math.fsum(
+                (
+                    f_try[n_e : n_e + m_c]
+                    + f_try[n_e + m_c : n_e + 2 * m_c]
+                    + 2.0 * f_try[n_e + 2 * m_c :]
+                ).tolist()
+            )
+        )
+        if tot_imb * step.dt_s > 5.0e-11 * inv_ref:
+            for _ in range(6):
+                try:
+                    du_p = factorize(step.jacobian(u_cur).tocsc()).solve(-f_try)
+                except Exception:
+                    break
+                if not np.all(np.isfinite(du_p)):
+                    break
+                alpha_p = base_settings.step_control.step_fraction(u_cur, du_p)
+                u_next = u_cur + alpha_p * du_p
+                if not base_settings.step_control.feasible(u_next):
+                    break
+                try:
+                    f_next = step.residual(u_next)
+                except Exception:
+                    break
+                if not np.all(np.isfinite(f_next)):
+                    break
+                u_cur = u_next
+                f_try = f_next
+                tot_imb = abs(
+                    math.fsum(
+                        (
+                            f_try[n_e : n_e + m_c]
+                            + f_try[n_e + m_c : n_e + 2 * m_c]
+                            + 2.0 * f_try[n_e + 2 * m_c :]
+                        ).tolist()
+                    )
+                )
+                if tot_imb * step.dt_s <= 1.0e-11 * inv_ref:
+                    break
+            scaled_try = base_settings.scaling.scaled(f_try)
     scaled_norm = bdf_norm(scaled_try)
     if len(step.history) > 1 or abs(v_next - v_prev) <= 0.05 or scaled_norm <= 1.0e4:
         return frozen_array(u_cur)
@@ -596,12 +679,20 @@ def iodine_step_accounting(step: BDFStep, u: Vector) -> IodineStepAccounting:
 
     brates = endpoint.boundary_rates_m2_s(u)
     esc_atoms_rate = 2.0 * (
-        brates["mol_escape_left_m2_s"] + brates["mol_escape_right_m2_s"]
+        brates["mol_escape_left_m2_s"]
+        + brates["mol_escape_right_m2_s"]
+        + brates["volumetric_mol_escape_m2_s"]
     )
     immob_rate = 0.0
-    if device.left_boundary.contact_reaction_mode == "immobilized_product_sheet":
+    if device.left_boundary.contact_reaction_mode in (
+        "immobilized_product_sheet",
+        "metal_faradaic_corrosion",
+    ):
         immob_rate += brates["contact_oxidation_left_m2_s"]
-    if device.right_boundary.contact_reaction_mode == "immobilized_product_sheet":
+    if device.right_boundary.contact_reaction_mode in (
+        "immobilized_product_sheet",
+        "metal_faradaic_corrosion",
+    ):
         immob_rate += brates["contact_oxidation_right_m2_s"]
 
     # Discrete BDF balance: dM_I/dt + esc_atoms_rate + immob_rate == 0
@@ -698,9 +789,14 @@ def _local_steady_iodine_coordinates(
         ke_eff = kin.k_e_3body_m6_s if reversible else np.zeros_like(n)
         ke_fwd = kin.k_e_3body_m6_s * (n * n)
 
+    assert device.volumetric_mol_escape_s_1 is not None
     alpha_e = (n1 * n1) / k_diss if reversible else np.zeros_like(n)
     num_2 = kin.k_d_m3_s * (r0 * r0) + ke_eff * alpha_e
-    den_2 = (kin.k_d_m3_s * k_diss if reversible else 0.0) + ke_fwd
+    den_2 = (
+        (kin.k_d_m3_s * k_diss if reversible else 0.0)
+        + ke_fwd
+        + device.volumetric_mol_escape_s_1
+    )
     q2 = np.where(den_2 > 0.0, num_2 / np.maximum(den_2, 1.0e-30), 0.0)
 
     c_tot = (

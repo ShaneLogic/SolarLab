@@ -637,15 +637,19 @@ def run_full_benchmark(
 
     # =========================================================================
     # SUITE 4: Fig. 5a, Fig. 5a Inset, Fig. 5b + Closed vs Open Self-Healing
+    # 100% pure online PDE time evolution (volumetric EBL outgassing & empty-BL breakthrough)
     # =========================================================================
+    warm_perm: dict[float, NDArray[np.float64]] = {}
+
     def _run_outgassing_curve(
+        tag_name: str,
         prep_obj: PreparedDevice,
         ka: float,
         horizon_s: float = 3.6e7,
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         if ka == 0.0:
             t_z = np.linspace(0.0, horizon_s, 50)
-            return t_z, np.zeros_like(t_z), np.zeros_like(t_z)
+            return t_z, np.zeros_like(t_z)
         dev_closed = compile_bt_device(
             prep_obj,
             bitton_tessler_2023_table_s1_chemistry(
@@ -656,67 +660,83 @@ def run_full_benchmark(
             ),
             intervals=(16, 40, 16),
         )
-        ss_c = solve_iodine_steady_state(dev_closed, voltage_V=0.9, generation_scale=1.0)
-        assert ss_c.converged and ss_c.state is not None
+        st_c = _prestress_0p9V_1sun(
+            dev_closed, initial_u=warm_perm.get(ka) if "5b" in tag_name else None
+        )
+        if "5a" in tag_name:
+            warm_perm[ka] = st_c.u
         chem_o = bitton_tessler_2023_table_s1_chemistry(
             domain_mode="full_stack_permeable",
             rate_mode="explicit_rates",
             thermodynamic_mode="wegscheider_detailed_balance",
             perovskite_ka_cm3_s=ka,
-            left_escape_m_s=0.0,
-            right_escape_m_s=1.0e-6,
+            ebl_volumetric_mol_escape_s_1=250.0,
         )
         dev_o = compile_bt_device(prep_obj, chem_o, intervals=(16, 40, 16))
         bdf_o, led_o = solve_iodine_bdf_transient(
             dev_o,
-            ss_c.state.u,
+            st_c.u,
             (0.0, horizon_s),
             voltage_fn=lambda _t: 0.9,
             generation_fn=lambda _t: 1.0,
             options=BDFOptions(
-                initial_step_s=1.0e-3,
-                max_step_s=1.5e6,
+                initial_step_s=1.0e-2,
+                max_step_s=1.2e6,
                 relative_tolerance=1.0e-2,
                 absolute_tolerance=1.0e16,
                 max_order=1,
                 max_steps=600,
+                wall_s=30.0,
             ),
         )
         assert bdf_o.completed
         t_arr = np.array([0.0] + [s.end_s for s in led_o], dtype=np.float64)
-        # 1D contact escape loss:
-        esc_cum_cm3 = (
+        vol_esc_cm3 = (
             np.cumsum([0.0] + [s.step_escaped_iodine_atoms_m2 for s in led_o])
             / 500.0e-9
         ) * 1.0e-6
-        # Total volatile bubbling loss (when all interior EBL-formed I_2 leaves without reaction e,
-        # matching Bitton & Tessler p. 2625: "leaving as volatile species so reaction (e) does not occur";
-        # strictly > 550 nm excludes the shared PVK/EBL interface node where PVK electrons rapidly reduce I_2):
-        ebl_mask = dev_o.chem_geometry.nodes_m > 550.5e-9
-        w_ebl = dev_o.chem_geometry.cell_measures_m[ebl_mask]
-        kd_ebl = dev_o.kinetics.k_d_m3_s[ebl_mask]
-        bubbling_rate_cm3_s: list[float] = []
-        for u_step in bdf_o.accepted_coordinates:
-            st_k = dev_o.state(u_step, voltage_V=0.9)
-            c0_ebl = st_k.iodine_atom_density_m3[ebl_mask]
-            # 2 iodine atoms lost per I_2 molecule formed in EBL
-            r_atoms_m2_s = float(np.sum(w_ebl * 2.0 * kd_ebl * (c0_ebl * c0_ebl)))
-            bubbling_rate_cm3_s.append((r_atoms_m2_s / 500.0e-9) * 1.0e-6)
-        dt_arr = np.diff(t_arr)
-        rates_mid = 0.5 * (
-            np.array(bubbling_rate_cm3_s[:-1]) + np.array(bubbling_rate_cm3_s[1:])
-        )
-        bubbling_cum_cm3 = np.concatenate(([0.0], np.cumsum(rates_mid * dt_arr)))
-        return t_arr, bubbling_cum_cm3, esc_cum_cm3
+        return t_arr, vol_esc_cm3
 
-    t_5a_0, bub_5a_0, _ = _run_outgassing_curve(prep_mu3, 0.0)
-    t_5a_1, bub_5a_1, esc_5a_1 = _run_outgassing_curve(prep_mu3, 1.0e-11)
-    t_5a_5, bub_5a_5, esc_5a_5 = _run_outgassing_curve(prep_mu3, 5.0e-11)
+    t_5a_0, bub_5a_0 = _run_outgassing_curve("5a_0", prep_mu3, 0.0)
+    t_5a_1, bub_5a_1 = _run_outgassing_curve("5a_1", prep_mu3, 1.0e-11)
+    t_5a_5, bub_5a_5 = _run_outgassing_curve("5a_5", prep_mu3, 5.0e-11)
 
-    t_5b_1, bub_5b_1, _ = _run_outgassing_curve(prep_mu4, 1.0e-11)
-    t_5b_5, bub_5b_5, _ = _run_outgassing_curve(prep_mu4, 5.0e-11)
+    t_5b_1, bub_5b_1 = _run_outgassing_curve("5b_1", prep_mu4, 1.0e-11)
+    t_5b_5, bub_5b_5 = _run_outgassing_curve("5b_5", prep_mu4, 5.0e-11)
 
-    # Reactive electrode curve (Fig. 5a black line + 0..40s Fickian breakthrough inset)
+    # Pure-PDE 1D outer-surface I_2 escape with active bulk reduction (e) over 10 h
+    dev_surf = compile_bt_device(
+        prep_mu3,
+        bitton_tessler_2023_table_s1_chemistry(
+            domain_mode="full_stack_permeable",
+            perovskite_ka_cm3_s=5.0e-11,
+            right_escape_m_s=1.0e-5,
+        ),
+        intervals=(16, 40, 16),
+    )
+    bdf_sf, led_sf = solve_iodine_bdf_transient(
+        dev_surf,
+        warm_perm[5.0e-11],
+        (0.0, 3.6e4),
+        voltage_fn=lambda _t: 0.9,
+        generation_fn=lambda _t: 1.0,
+        options=BDFOptions(
+            initial_step_s=1.0e-2,
+            max_step_s=600.0,
+            relative_tolerance=1.0e-2,
+            absolute_tolerance=1.0e16,
+            max_order=1,
+            max_steps=400,
+        ),
+    )
+    assert bdf_sf.completed
+    t_surf = np.array([0.0] + [s.end_s for s in led_sf], dtype=np.float64)
+    esc_5a_5 = (
+        np.cumsum([0.0] + [s.step_escaped_iodine_atoms_m2 for s in led_sf]) / 500.0e-9
+    ) * 1.0e-6
+
+    # Pure-PDE Reactive Electrode A: HBL Ag cathode Faradaic corrosion (0 -> 120 s)
+    # Single continuous PDE trajectory serving BOTH Fig. 5a and its 0-40 s inset!
     dev_elec_closed = compile_bt_device(
         prep_mu3,
         bitton_tessler_2023_table_s1_chemistry(
@@ -727,59 +747,149 @@ def run_full_benchmark(
         ),
         intervals=(16, 40, 16),
     )
-    ss_elec_c = solve_iodine_steady_state(
-        dev_elec_closed, voltage_V=0.9, generation_scale=1.0
+    st_elec_c = dev_elec_closed.state(warm_perm[1.0e-11], voltage_V=0.9)
+    dev_ag = compile_bt_device(
+        prep_mu3,
+        bitton_tessler_2023_table_s1_chemistry(
+            domain_mode="full_stack_permeable",
+            perovskite_ka_cm3_s=1.0e-11,
+            left_boundary=IodineBoundaryDeclaration(
+                contact_reaction_mode="metal_faradaic_corrosion",
+                contact_corrosion_velocity_m_s=1.0e-6,
+            ),
+        ),
+        intervals=(16, 40, 16),
     )
-    assert ss_elec_c.converged and ss_elec_c.state is not None
-    rb_react = IodineBoundaryDeclaration(
-        contact_reaction_mode="immobilized_product_sheet",
-        contact_oxidation_rate_m4_s=5.0e-25,
+    hbl_mask = dev_ag.chem_geometry.nodes_m < 49.5e-9
+    cm_ag = st_elec_c.iodide_density_m3.copy()
+    cm_ag[hbl_mask] = 1.0e18
+    c0_ag = st_elec_c.iodine_atom_density_m3.copy()
+    c0_ag[hbl_mask] = 1.0e12
+    c2_ag = st_elec_c.iodine_molecule_density_m3.copy()
+    c2_ag[hbl_mask] = 1.0e8
+    u_ag_seed = np.concatenate(
+        (
+            st_elec_c.u[: 3 * dev_ag.node_count],
+            dev_ag.iodide_map.coordinate_from_density(cm_ag),
+            dev_ag.atom_map.coordinate_from_density(c0_ag),
+            dev_ag.mol_map.coordinate_from_density(c2_ag),
+        )
     )
-    chem_elec = bitton_tessler_2023_table_s1_chemistry(
-        domain_mode="full_stack_permeable",
-        rate_mode="explicit_rates",
-        thermodynamic_mode="wegscheider_detailed_balance",
-        perovskite_ka_cm3_s=1.0e-11,
-        right_boundary=rb_react,
+    u0_ag, _ = solve_frozen_chemistry_electronic_1d(
+        dev_ag, u_ag_seed, voltage_V=0.9, generation_scale=1.0, prev_voltage_V=0.9
     )
-    dev_elec = compile_bt_device(prep_mu3, chem_elec, intervals=(16, 40, 16))
-    bdf_elec, led_elec = solve_iodine_bdf_transient(
-        dev_elec,
-        ss_elec_c.state.u,
-        (0.0, 3.6e4),
+    bdf_ag1, led_ag1 = solve_iodine_bdf_transient(
+        dev_ag,
+        u0_ag,
+        (0.0, 50.0),
         voltage_fn=lambda _t: 0.9,
         generation_fn=lambda _t: 1.0,
         options=BDFOptions(
             initial_step_s=1.0e-3,
-            max_step_s=900.0,
-            relative_tolerance=1.0e-2,
+            max_step_s=0.5,
+            relative_tolerance=1.5e-2,
             absolute_tolerance=1.0e16,
             max_order=1,
             max_steps=400,
+            wall_s=30.0,
         ),
     )
-    assert bdf_elec.completed
-    t_elec = np.array([0.0] + [s.end_s for s in led_elec], dtype=np.float64)
+    assert bdf_ag1.completed
+    bdf_ag2, led_ag2 = solve_iodine_bdf_transient(
+        dev_ag,
+        bdf_ag1.accepted_coordinates[-1],
+        (50.0, 120.0),
+        voltage_fn=lambda _t: 0.9,
+        generation_fn=lambda _t: 1.0,
+        options=BDFOptions(
+            initial_step_s=0.5,
+            max_step_s=2.0,
+            relative_tolerance=1.5e-2,
+            absolute_tolerance=2.0e16,
+            max_order=1,
+            max_steps=200,
+            wall_s=30.0,
+        ),
+    )
+    assert bdf_ag2.completed
+    led_ag = list(led_ag1) + list(led_ag2)
+    t_elec = np.array([0.0] + [s.end_s for s in led_ag], dtype=np.float64)
     loss_elec_cm3 = (
-        np.cumsum([0.0] + [s.step_immobilized_iodine_atoms_m2 for s in led_elec])
+        np.cumsum([0.0] + [s.step_immobilized_iodine_atoms_m2 for s in led_ag])
         / 500.0e-9
     ) * 1.0e-6
-    # Exact Crank membrane breakthrough onset (0-40 s) across 50 nm EBL (D_- = 10^-12 cm^2/s)
-    # anchored to the initial BDF-computed diffusion-limited sink rate j_sink_cm3_s:
-    idx_1h = int(np.searchsorted(t_elec, 3600.0))
-    idx_1h = min(max(idx_1h, 1), len(t_elec) - 1)
-    j_sink_cm3_s = float(loss_elec_cm3[idx_1h] / t_elec[idx_1h])
-    t_40 = np.linspace(0.0, 40.0, 161)
-    tau_ebl_s = (50.0e-9) ** 2 / (6.0 * 1.0e-16)  # L^2 / (6 D_-) = 4.167 s
-    series_40 = np.zeros_like(t_40)
-    for m_idx in range(1, 30):
-        series_40 += ((-1.0) ** m_idx / (m_idx * m_idx)) * np.exp(
-            -(m_idx * m_idx * (np.pi**2) * 1.0e-16 * t_40) / ((50.0e-9) ** 2)
-        )
-    loss_40_cm3 = np.maximum(
-        0.0,
-        j_sink_cm3_s * (t_40 - tau_ebl_s - (12.0 * tau_ebl_s / (np.pi**2)) * series_40),
+
+    # Pure-PDE Reactive Electrode B: EBL anode hole-mediated oxidation (0 -> 10 h)
+    dev_anode = compile_bt_device(
+        prep_mu3,
+        bitton_tessler_2023_table_s1_chemistry(
+            domain_mode="full_stack_permeable",
+            perovskite_ka_cm3_s=1.0e-11,
+            right_boundary=IodineBoundaryDeclaration(
+                contact_reaction_mode="immobilized_product_sheet",
+                contact_oxidation_rate_m4_s=5.0e-25,
+            ),
+        ),
+        intervals=(16, 40, 16),
     )
+    ebl_mask_an = dev_anode.chem_geometry.nodes_m > 550.5e-9
+    cm_an = st_elec_c.iodide_density_m3.copy()
+    cm_an[ebl_mask_an] = 1.0e18
+    c0_an = st_elec_c.iodine_atom_density_m3.copy()
+    c0_an[ebl_mask_an] = 1.0e12
+    c2_an = st_elec_c.iodine_molecule_density_m3.copy()
+    c2_an[ebl_mask_an] = 1.0e8
+    u_an_seed = np.concatenate(
+        (
+            st_elec_c.u[: 3 * dev_anode.node_count],
+            dev_anode.iodide_map.coordinate_from_density(cm_an),
+            dev_anode.atom_map.coordinate_from_density(c0_an),
+            dev_anode.mol_map.coordinate_from_density(c2_an),
+        )
+    )
+    u0_an, _ = solve_frozen_chemistry_electronic_1d(
+        dev_anode, u_an_seed, voltage_V=0.9, generation_scale=1.0, prev_voltage_V=0.9
+    )
+    bdf_an1, led_an1 = solve_iodine_bdf_transient(
+        dev_anode,
+        u0_an,
+        (0.0, 50.0),
+        voltage_fn=lambda _t: 0.9,
+        generation_fn=lambda _t: 1.0,
+        options=BDFOptions(
+            initial_step_s=1.0e-3,
+            max_step_s=0.5,
+            relative_tolerance=1.5e-2,
+            absolute_tolerance=1.0e16,
+            max_order=1,
+            max_steps=400,
+            wall_s=30.0,
+        ),
+    )
+    assert bdf_an1.completed
+    bdf_an2, led_an2 = solve_iodine_bdf_transient(
+        dev_anode,
+        bdf_an1.accepted_coordinates[-1],
+        (50.0, 3.6e4),
+        voltage_fn=lambda _t: 0.9,
+        generation_fn=lambda _t: 1.0,
+        options=BDFOptions(
+            initial_step_s=0.5,
+            max_step_s=600.0,
+            relative_tolerance=1.5e-2,
+            absolute_tolerance=1.0e16,
+            max_order=1,
+            max_steps=400,
+            wall_s=30.0,
+        ),
+    )
+    assert bdf_an2.completed
+    led_anode = list(led_an1) + list(led_an2)
+    t_anode = np.array([0.0] + [s.end_s for s in led_anode], dtype=np.float64)
+    loss_anode_cm3 = (
+        np.cumsum([0.0] + [s.step_immobilized_iodine_atoms_m2 for s in led_anode])
+        / 500.0e-9
+    ) * 1.0e-6
 
     # Closed self-healing vs open outgassing stress-recovery protocol (matched k_a = 5e-11)
     heal_proto = IodineAgingProtocol(
@@ -879,12 +989,12 @@ def run_full_benchmark(
         bbox_transform=ax.transAxes,
         borderpad=0.0,
     )
-    ins5.plot(t_40, loss_40_cm3, color="#0f172a", lw=1.6)
-    ins5.axvline(tau_ebl_s, color="#dc2626", ls=":", lw=1.0)
+    ins5.plot(t_elec, loss_elec_cm3, color="#0f172a", lw=1.6)
     ins5.set_xlim(0.0, 40.0)
+    ins5.set_ylim(0.0, 1.02e16)
     ins5.set_xlabel("Time (s)", fontsize=7.0)
     ins5.set_ylabel(r"Loss ($\mathrm{cm}^{-3}$)", fontsize=7.0)
-    ins5.set_title("Electrode Reaction (0-40 s)", fontsize=7.2)
+    ins5.set_title("HBL Breakthrough (0-40 s)", fontsize=7.2)
     ins5.tick_params(labelsize=6.5)
     ins5.grid(True, alpha=0.25)
 
@@ -905,7 +1015,7 @@ def run_full_benchmark(
         label=r"$k_a = 5\times 10^{-11}\;\mathrm{cm^3 s^{-1}}$",
     )
     ax.set_xlim(0.0, 3.6e7)
-    ax.set_ylim(0.0, max(float(bub_5b_5[-1]) * 1.12, 1.0e16))
+    ax.set_ylim(0.0, max(float(bub_5b_5[-1]) * 1.15, 1.0e16))
     ax.set_xlabel("Time (s)")
     ax.set_ylabel(r"Iodide Loss ($\mathrm{cm}^{-3}$)")
     ax.set_title(r"(b) Fig. 5b: Resistive BLs ($\mu_{\mathrm{BL}} = 10^{-4}$, Accelerated Loss)", fontweight="bold")
@@ -915,28 +1025,28 @@ def run_full_benchmark(
     ax.legend(loc="lower right", frameon=True)
     ax.grid(True, alpha=0.25)
 
-    # Panel (c): Reactive Electrode vs 1D Top-Edge Escape Comparison (0 - 10 h)
+    # Panel (c): Reactive Anode Oxidation vs 1D Surface Escape Comparison (0 - 10 h)
     ax = axes4[1, 0]
     ax.plot(
-        t_elec / 3600.0,
-        loss_elec_cm3,
+        t_anode / 3600.0,
+        loss_anode_cm3,
         color="#0f172a",
         lw=2.1,
-        label=r"Reactive electrode sink ($k_a = 10^{-11}$)",
+        label=r"Reactive anode oxidation ($k_a = 10^{-11}$)",
     )
     ax.plot(
-        t_5a_5 / 3600.0,
+        t_surf / 3600.0,
         esc_5a_5,
         color="#0284c7",
         ls="--",
         lw=1.7,
-        label=r"1D top-edge $\mathrm{I}_2$ escape with reaction $e$ ($k_a = 5\times 10^{-11}$)",
+        label=r"1D surface $\mathrm{I}_2$ escape with reaction $e$ ($k_a = 5\times 10^{-11}$)",
     )
     ax.set_xlim(0.0, 10.0)
-    ax.set_ylim(0.0, float(loss_elec_cm3[-1]) * 1.12)
+    ax.set_ylim(0.0, float(loss_anode_cm3[-1]) * 1.12)
     ax.set_xlabel("Time (h)")
     ax.set_ylabel(r"Cumulative Iodide Loss ($\mathrm{cm}^{-3}$)")
-    ax.set_title("(c) Reactive Electrode Failure (10 h Window)", fontweight="bold")
+    ax.set_title("(c) Reactive Anode vs. Surface Escape (10 h Window)", fontweight="bold")
     ax.legend(loc="upper left", frameon=True, fontsize=7.6)
     ax.grid(True, alpha=0.25)
 
@@ -1240,14 +1350,14 @@ def run_full_benchmark(
             ),
         },
         "fig_5_10000h_loss_cm3": {
-            "mu_1e_3_ka_1e_11_bubbling": float(bub_5a_1[-1]),
-            "mu_1e_3_ka_5e_11_bubbling": float(bub_5a_5[-1]),
-            "mu_1e_3_ka_1e_11_1d_top_escape": float(esc_5a_1[-1]),
-            "mu_1e_3_ka_5e_11_1d_top_escape": float(esc_5a_5[-1]),
-            "mu_1e_4_ka_1e_11_bubbling": float(bub_5b_1[-1]),
-            "mu_1e_4_ka_5e_11_bubbling": float(bub_5b_5[-1]),
-            "electrode_reaction_1h_loss_cm3": float(j_sink_cm3_s * 3600.0),
-            "electrode_reaction_10h_loss_cm3": float(loss_elec_cm3[-1]),
+            "mu_1e_3_ka_1e_11_volumetric_outgas": float(bub_5a_1[-1]),
+            "mu_1e_3_ka_5e_11_volumetric_outgas": float(bub_5a_5[-1]),
+            "mu_1e_3_ka_5e_11_10h_surface_escape": float(esc_5a_5[-1]),
+            "mu_1e_4_ka_1e_11_volumetric_outgas": float(bub_5b_1[-1]),
+            "mu_1e_4_ka_5e_11_volumetric_outgas": float(bub_5b_5[-1]),
+            "ag_cathode_40s_loss_cm3": float(np.interp(40.0, t_elec, loss_elec_cm3)),
+            "ag_cathode_120s_loss_cm3": float(loss_elec_cm3[-1]),
+            "anode_oxidation_10h_loss_cm3": float(loss_anode_cm3[-1]),
         },
         "figures": {
             fp.name: hashlib.sha256(fp.read_bytes()).hexdigest() for fp in figure_paths

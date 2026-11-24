@@ -107,6 +107,7 @@ __all__ = [
     "IodineSpeciesStorageTerm",
     "IodineSystem",
     "IodineTransportTerm",
+    "IodineVolumetricEscapeTerm",
     "SingleSpeciesInventoryTerm",
     "TotalIodineInventoryTerm",
     "iodine_system",
@@ -570,15 +571,49 @@ class IodineMoleculeEscapePortTerm:
         }
 
 
+@dataclass(frozen=True)
+class IodineVolumetricEscapeTerm:
+    """First-order volumetric ``I_2`` outgassing sink ``-k_outgas(x) * c_2``."""
+
+    device: CompiledIodineDevice1D
+    id: str = "chem.volumetric_escape"
+    kind: str = CELL_SOURCE
+    support: str = CHEM_NODES
+    equations: tuple[str, ...] = (IODINE_MOLECULE,)
+    dependencies: tuple[str, ...] = (IODINE_MOLECULE,)
+    unit: Unit = SOURCE_UNIT
+    port: str | None = None
+
+    @property
+    def identity(self) -> str:
+        return _identity(self.id, self.device.identity)
+
+    def evaluate(
+        self, state: EvaluationState, *, derivatives: bool
+    ) -> Mapping[str, TermValue]:
+        k_vol = self.device.volumetric_mol_escape_s_1
+        assert k_vol is not None
+        sink = -k_vol * state.field(IODINE_MOLECULE)
+        if not derivatives:
+            return {IODINE_MOLECULE: LocalValue(sink)}
+        m2 = state.field("mass:iodine_molecule")
+        return {
+            IODINE_MOLECULE: LocalValue(sink, {IODINE_MOLECULE: -k_vol * m2})
+        }
+
+
 def _contact_oxidation_rate_and_partials(
     device: CompiledIodineDevice1D,
     spec: IodineBoundaryPortSpec,
     state: EvaluationState,
 ) -> tuple[float, float, float, float]:
     """Return ``(J_ct, dJ/dp, dJ/dc_-, dJ/dc_0)`` at ``spec``."""
+    cm_val = float(state.field(IODIDE)[spec.chem_node])
+    if spec.contact_reaction_mode == "metal_faradaic_corrosion":
+        v_corr = spec.contact_corrosion_velocity_m_s
+        return v_corr * cm_val, 0.0, v_corr, 0.0
     k_ct = spec.contact_oxidation_rate_m4_s
     p_val = float(state.field("hole_density_m3")[spec.elec_node])
-    cm_val = float(state.field(IODIDE)[spec.chem_node])
     c0_val = float(state.field(IODINE_ATOM)[spec.chem_node])
     if spec.reversible_contact:
         rate = k_ct * (cm_val * p_val - spec.p1_iodine_m3 * c0_val)
@@ -958,11 +993,19 @@ def _build_layout_and_terms(
             terms.append(CarrierReservoirs(comp, block, tuple(fixed)))
     terms.extend(exchanges.values())
 
-    # Boundary escape and charge-conserving contact oxidation ports
+    # Volumetric outgassing and boundary escape / contact oxidation ports
+    assert device.volumetric_mol_escape_s_1 is not None
+    if np.any(device.volumetric_mol_escape_s_1 > 0.0):
+        terms.append(IodineVolumetricEscapeTerm(device))
     for bspec in (device.left_boundary, device.right_boundary):
         if bspec.mol_escape_velocity_m_s > 0.0:
             terms.append(IodineMoleculeEscapePortTerm(device, bspec))
         if (
+            bspec.contact_reaction_mode == "metal_faradaic_corrosion"
+            and bspec.contact_corrosion_velocity_m_s > 0.0
+        ):
+            terms.append(IodineContactReactionPortTerm(device, bspec, IODIDE))
+        elif (
             bspec.contact_reaction_mode != "none"
             and bspec.contact_oxidation_rate_m4_s > 0.0
         ):
@@ -1182,21 +1225,39 @@ class AssembledIodine1DProblem:
         right_b = self.device.right_boundary
         esc_left = left_b.mol_escape_velocity_m_s * float(c2[left_b.chem_node])
         esc_right = right_b.mol_escape_velocity_m_s * float(c2[right_b.chem_node])
+        k_vol = self.device.volumetric_mol_escape_s_1
+        assert k_vol is not None
+        esc_vol = (
+            float(
+                math.fsum(
+                    (self.device.chem_geometry.cell_measures_m * k_vol * c2).tolist()
+                )
+            )
+            if np.any(k_vol > 0.0)
+            else 0.0
+        )
         ct_left = (
             _contact_oxidation_rate_and_partials(self.device, left_b, ev_state)[0]
             if left_b.contact_reaction_mode != "none"
-            and left_b.contact_oxidation_rate_m4_s > 0.0
+            and (
+                left_b.contact_oxidation_rate_m4_s > 0.0
+                or left_b.contact_corrosion_velocity_m_s > 0.0
+            )
             else 0.0
         )
         ct_right = (
             _contact_oxidation_rate_and_partials(self.device, right_b, ev_state)[0]
             if right_b.contact_reaction_mode != "none"
-            and right_b.contact_oxidation_rate_m4_s > 0.0
+            and (
+                right_b.contact_oxidation_rate_m4_s > 0.0
+                or right_b.contact_corrosion_velocity_m_s > 0.0
+            )
             else 0.0
         )
         return {
             "mol_escape_left_m2_s": esc_left,
             "mol_escape_right_m2_s": esc_right,
+            "volumetric_mol_escape_m2_s": esc_vol,
             "contact_oxidation_left_m2_s": ct_left,
             "contact_oxidation_right_m2_s": ct_right,
         }
