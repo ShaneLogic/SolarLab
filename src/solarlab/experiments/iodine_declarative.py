@@ -64,7 +64,6 @@ from solarlab.materials.iodine_presets import (
     load_packaged_iodine_preset_mapping,
     load_packaged_iodine_preset_source,
 )
-from solarlab.materials.packaged import _StrictYamlMappingLoader
 from solarlab.materials.source import SourceDocument
 from solarlab.physics.chemistry import IodineThermodynamicMode, ReactionEOrder
 from solarlab.solvers.linear.iodine_impedance import (
@@ -501,7 +500,7 @@ def load_iodine_deck(
     src_doc = SourceDocument(path.name, raw)
     text = raw.decode("utf-8")
     if path.suffix.lower() in {".yaml", ".yml"}:
-        parsed = yaml.load(text, Loader=_StrictYamlMappingLoader)
+        parsed = yaml.safe_load(text)
     else:
         parsed = json.loads(text)
     if not isinstance(parsed, dict):

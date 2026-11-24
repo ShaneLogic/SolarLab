@@ -1,32 +1,18 @@
-"""Bounded HTTP routes for 1D iodine chemistry steady, impedance, and aging runs."""
+"""Bounded HTTP routes for 1D iodine chemistry steady, impedance, and aging runs.
+
+Keeps module import completely free of ``scipy``, ``solarlab.equations``,
+``solarlab.solvers``, and ``solarlab.experiments`` so historical ``RunStore``
+readback and registered job supervisors never load numerical solver modules at
+application startup.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from starlette.concurrency import run_in_threadpool
-
-from solarlab.contracts import ContractError
-from solarlab.equations.dc_1d import CapabilityError
-from solarlab.experiments.iodine_aging import IodineAgingError
-from solarlab.experiments.iodine_declarative import (
-    IodineDeckInput,
-    IodineOverridesInput,
-    apply_iodine_deck_overrides,
-    execute_iodine_aging_deck,
-    execute_iodine_impedance_deck,
-    execute_iodine_steady_deck,
-    export_iodine_deck_schema,
-    load_iodine_deck,
-)
-from solarlab.materials.iodine_presets import (
-    PACKAGED_IODINE_PRESET_NAMES,
-    list_packaged_iodine_preset_summaries,
-)
-from solarlab.solvers.nonlinear.steady_1d import SteadyStateError
-from solarlab.materials.source import SourceDocument
 
 router = APIRouter(prefix="/iodine", tags=["iodine"])
 
@@ -42,8 +28,8 @@ class IodineHttpRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     preset: str | None = None
-    deck: IodineDeckInput | None = None
-    overrides: IodineOverridesInput | None = None
+    deck: dict[str, Any] | None = None
+    overrides: dict[str, Any] | None = None
     persist_to_store: bool = False
     run_id: str | None = Field(
         default=None,
@@ -52,6 +38,8 @@ class IodineHttpRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_target(self) -> IodineHttpRunRequest:
+        from solarlab.materials.iodine_presets import PACKAGED_IODINE_PRESET_NAMES
+
         if (self.preset is None) == (self.deck is None):
             raise ValueError("specify exactly one of 'preset' or 'deck'")
         if self.preset is not None and self.preset not in PACKAGED_IODINE_PRESET_NAMES:
@@ -62,15 +50,25 @@ class IodineHttpRunRequest(BaseModel):
         return self
 
 
-def _resolve_bounded_http_deck(
-    body: IodineHttpRunRequest,
-) -> tuple[IodineDeckInput, SourceDocument]:
+def _resolve_bounded_http_deck(body: IodineHttpRunRequest) -> tuple[Any, Any]:
+    from solarlab.experiments.iodine_declarative import (
+        IodineDeckInput,
+        IodineOverridesInput,
+        apply_iodine_deck_overrides,
+        load_iodine_deck,
+    )
+
     if body.preset is not None:
         base_deck, src = load_iodine_deck(body.preset)
     else:
         assert body.deck is not None
-        base_deck, src = load_iodine_deck(body.deck.model_dump(mode="python"))
-    effective = apply_iodine_deck_overrides(base_deck, body.overrides)
+        base_deck, src = load_iodine_deck(body.deck)
+    parsed_overrides = (
+        None
+        if body.overrides is None
+        else IodineOverridesInput.model_validate(body.overrides)
+    )
+    effective = apply_iodine_deck_overrides(base_deck, parsed_overrides)
 
     intervals = effective.electronic_stack.intervals_per_layer
     if isinstance(intervals, int):
@@ -101,6 +99,8 @@ def _resolve_bounded_http_deck(
 
 @router.get("/presets")
 def get_iodine_presets() -> dict[str, Any]:
+    from solarlab.materials.iodine_presets import list_packaged_iodine_preset_summaries
+
     return {
         "schema": "solarlab.iodine-presets.v1",
         "presets": list_packaged_iodine_preset_summaries(),
@@ -111,11 +111,18 @@ def get_iodine_presets() -> dict[str, Any]:
 
 @router.get("/schema")
 def get_iodine_schema() -> dict[str, Any]:
+    from solarlab.experiments.iodine_declarative import export_iodine_deck_schema
+
     return export_iodine_deck_schema()
 
 
 @router.post("/steady")
 async def post_iodine_steady(body: IodineHttpRunRequest) -> dict[str, Any]:
+    from solarlab.contracts import ContractError
+    from solarlab.equations.dc_1d import CapabilityError
+    from solarlab.experiments.iodine_declarative import execute_iodine_steady_deck
+    from solarlab.solvers.nonlinear.steady_1d import SteadyStateError
+
     try:
         deck, src = _resolve_bounded_http_deck(body)
         return await run_in_threadpool(execute_iodine_steady_deck, deck, source=src)
@@ -123,6 +130,7 @@ async def post_iodine_steady(body: IodineHttpRunRequest) -> dict[str, Any]:
         CapabilityError,
         ContractError,
         SteadyStateError,
+        ValidationError,
         ValueError,
     ) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -130,6 +138,11 @@ async def post_iodine_steady(body: IodineHttpRunRequest) -> dict[str, Any]:
 
 @router.post("/impedance")
 async def post_iodine_impedance(body: IodineHttpRunRequest) -> dict[str, Any]:
+    from solarlab.contracts import ContractError
+    from solarlab.equations.dc_1d import CapabilityError
+    from solarlab.experiments.iodine_declarative import execute_iodine_impedance_deck
+    from solarlab.solvers.nonlinear.steady_1d import SteadyStateError
+
     try:
         deck, src = _resolve_bounded_http_deck(body)
         return await run_in_threadpool(execute_iodine_impedance_deck, deck, source=src)
@@ -137,6 +150,7 @@ async def post_iodine_impedance(body: IodineHttpRunRequest) -> dict[str, Any]:
         CapabilityError,
         ContractError,
         SteadyStateError,
+        ValidationError,
         ValueError,
     ) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -147,6 +161,12 @@ async def post_iodine_aging(
     request: Request,
     body: IodineHttpRunRequest,
 ) -> dict[str, Any]:
+    from solarlab.contracts import ContractError
+    from solarlab.equations.dc_1d import CapabilityError
+    from solarlab.experiments.iodine_aging import IodineAgingError
+    from solarlab.experiments.iodine_declarative import execute_iodine_aging_deck
+    from solarlab.solvers.nonlinear.steady_1d import SteadyStateError
+
     store_dir = None
     if body.persist_to_store:
         job_service = request.app.state.job_service
@@ -171,6 +191,7 @@ async def post_iodine_aging(
         ContractError,
         IodineAgingError,
         SteadyStateError,
+        ValidationError,
         ValueError,
     ) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

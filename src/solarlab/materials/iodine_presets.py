@@ -12,7 +12,6 @@ from typing import Any
 
 import yaml
 
-from solarlab.materials.packaged import _StrictYamlMappingLoader
 from solarlab.materials.source import SourceDocument
 
 __all__ = [
@@ -31,6 +30,27 @@ PACKAGED_IODINE_PRESET_NAMES: tuple[str, ...] = (
     "bitton_tessler_2023_outgassing",
     "bitton_tessler_2023_ag_corrosion",
     "bitton_tessler_2023_self_healing",
+)
+
+
+class _UniqueKeyYamlLoader(yaml.SafeLoader):
+    """YAML SafeLoader rejecting duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyYamlLoader, node: yaml.MappingNode
+) -> dict[str, Any]:
+    mapping: dict[str, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if not isinstance(key, str) or key in mapping:
+            raise ValueError("packaged iodine YAML mapping keys must be unique strings")
+        mapping[key] = loader.construct_object(value_node, deep=True)
+    return mapping
+
+
+_UniqueKeyYamlLoader.add_constructor(
+    "tag:yaml.org,2002:map", _construct_unique_mapping
 )
 
 
@@ -67,7 +87,7 @@ def load_packaged_iodine_preset_source(name: str) -> SourceDocument:
 def load_packaged_iodine_preset_mapping(name: str) -> dict[str, Any]:
     """Parse and return a packaged iodine preset YAML document as a dict."""
     raw = load_packaged_iodine_preset_bytes(name)
-    doc = yaml.load(raw.decode("utf-8"), Loader=_StrictYamlMappingLoader)
+    doc = yaml.load(raw.decode("utf-8"), Loader=_UniqueKeyYamlLoader)
     if not isinstance(doc, dict):
         raise ValueError(f"packaged iodine preset {name!r} must decode to a mapping")
     return doc
