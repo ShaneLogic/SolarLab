@@ -140,7 +140,7 @@ def _poisson_weights_with_ions(device: CompiledIodineDevice1D) -> np.ndarray:
         Q * d_ref * comp.poisson.interior_widths_m
         + (cap[:-1] + cap[1:]) * v_ref
     )
-    weights = np.full(count, 1.0 / v_ref, dtype=np.float64)
+    weights: NDArray[np.float64] = np.full(count, 1.0 / v_ref, dtype=np.float64)
     weights[1:-1] = 1.0 / scale
     return weights
 
@@ -518,7 +518,7 @@ def iodine_bdf_seed(step: BDFStep) -> Vector:
 
     # Full-Jacobian elemental conservation polish when long BDF steps accumulate
     # open outgassing / contact oxidation below the per-row monomer ULP flux cap.
-    if dev.has_open_iodine_loss and bdf_norm(scaled_try) <= 10.0:
+    if dev.has_open_iodine_loss and step.dt_s >= 1.0 and bdf_norm(scaled_try) <= 1.2:
         m_c = dev.chem_node_count
         n_e = 3 * dev.node_count
         inv_ref = max(dev.reference_iodine_inventory_m2, 1.0)
@@ -532,7 +532,7 @@ def iodine_bdf_seed(step: BDFStep) -> Vector:
             )
         )
         if tot_imb * step.dt_s > 5.0e-11 * inv_ref:
-            for _ in range(6):
+            for _ in range(2):
                 try:
                     du_p = factorize(step.jacobian(u_cur).tocsc()).solve(-f_try)
                 except Exception:
@@ -1367,7 +1367,10 @@ def solve_iodine_bdf_transient(
         inv_ref = max(device.reference_iodine_inventory_m2, 1.0)
         rel_err = abs(acct.step_conservation_residual_m2) / inv_ref
         step_lim = 1.0e-9
-        if step.endpoint.generation_scale > 0.0:
+        if (
+            isinstance(step.endpoint, AssembledIodine1DProblem)
+            and step.endpoint.generation_scale > 0.0
+        ):
             step_lim = max(1.0e-9, (6.0e-8 / Q) * step.dt_s / inv_ref)
         gate = GateOutcome(
             "step_iodine_conservation", rel_err <= step_lim, rel_err, step_lim

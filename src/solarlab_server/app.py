@@ -30,6 +30,7 @@ from solarlab.io.run_store import RunStore, StateConflict
 from solarlab_server.configuration import ConfigurationPreviewContext
 from solarlab_server.job_service import JobService
 from solarlab_server.routes.configs import router as configuration_router
+from solarlab_server.routes.iodine import router as iodine_router
 from solarlab_server.routes.jobs import router as jobs_router
 from solarlab_server.routes.materials import router as materials_router
 from solarlab_server.routes.schema import router as schema_router
@@ -129,6 +130,7 @@ def create_app(
     app.include_router(configuration_router)
     app.include_router(materials_router)
     app.include_router(jobs_router)
+    app.include_router(iodine_router)
 
     @app.exception_handler(KeyError)
     async def not_found(request: Request, error: KeyError) -> JSONResponse:

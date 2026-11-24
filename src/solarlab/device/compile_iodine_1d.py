@@ -399,6 +399,7 @@ def compile_iodine_device_1d(
     dielectric_rule: str | None = None,
     geometry_name: str | None = None,
     band_step_mode: str = LEGACY_SUMMED_POTENTIAL_V1,
+    allow_legacy_benchmark_deck: bool = False,
 ) -> CompiledIodineDevice1D:
     """Compile a PreparedDevice and IodineChemistryDeclaration into a 1D system."""
     if not isinstance(prepared, PreparedDevice):
@@ -414,6 +415,7 @@ def compile_iodine_device_1d(
     layer_ids = tuple(layer.id for layer in elec_layers)
     spec_by_id = {spec.layer_id: spec for spec in chemistry.layers}
 
+    domain_layer_ids: tuple[str, ...]
     if chemistry.domain_mode == "absorber_blocking":
         if len(chemistry.layers) != 1:
             raise CapabilityError(
@@ -455,6 +457,7 @@ def compile_iodine_device_1d(
         dielectric_rule=dielectric_rule,
         geometry_name=geometry_name,
         band_step_mode=band_step_mode,
+        allow_legacy_benchmark_deck=allow_legacy_benchmark_deck,
     )
 
     temp_K = component.parameters.temperature_K
@@ -497,27 +500,27 @@ def compile_iodine_device_1d(
 
     # Accumulate cell-measure-weighted quantities per layer so shared interface
     # nodes conserve exact layer sheet inventories and reaction integrals!
-    comp_donor = np.zeros(m_count, dtype=np.float64)
-    init_cm = np.zeros(m_count, dtype=np.float64)
-    init_c0 = np.zeros(m_count, dtype=np.float64)
-    init_c2 = np.zeros(m_count, dtype=np.float64)
-    k_a = np.zeros(m_count, dtype=np.float64)
-    k_b = np.zeros(m_count, dtype=np.float64)
-    k_c = np.zeros(m_count, dtype=np.float64)
-    k_d = np.zeros(m_count, dtype=np.float64)
-    k_e = np.zeros(m_count, dtype=np.float64)
-    k_e3 = np.zeros(m_count, dtype=np.float64)
-    k_diss = np.zeros(m_count, dtype=np.float64)
-    n_star = np.zeros(m_count, dtype=np.float64)
-    vol_esc = np.zeros(m_count, dtype=np.float64)
-    w_accum = np.zeros(m_count, dtype=np.float64)
+    comp_donor: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    init_cm: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    init_c0: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    init_c2: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    k_a: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    k_b: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    k_c: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    k_d: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    k_e: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    k_e3: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    k_diss: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    n_star: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    vol_esc: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
+    w_accum: NDArray[np.float64] = np.zeros(m_count, dtype=np.float64)
 
-    d_minus_faces = np.zeros(m_faces, dtype=np.float64)
-    d_atom_faces = np.zeros(m_faces, dtype=np.float64)
-    d_mol_faces = np.zeros(m_faces, dtype=np.float64)
-    part_minus_nodes = np.ones(m_count, dtype=np.float64)
-    part_atom_nodes = np.ones(m_count, dtype=np.float64)
-    part_mol_nodes = np.ones(m_count, dtype=np.float64)
+    d_minus_faces: NDArray[np.float64] = np.zeros(m_faces, dtype=np.float64)
+    d_atom_faces: NDArray[np.float64] = np.zeros(m_faces, dtype=np.float64)
+    d_mol_faces: NDArray[np.float64] = np.zeros(m_faces, dtype=np.float64)
+    part_minus_nodes: NDArray[np.float64] = np.ones(m_count, dtype=np.float64)
+    part_atom_nodes: NDArray[np.float64] = np.ones(m_count, dtype=np.float64)
+    part_mol_nodes: NDArray[np.float64] = np.ones(m_count, dtype=np.float64)
 
     has_steric = any(spec.iodide_site_limit_m3 is not None for spec in chemistry.layers)
     if has_steric and not all(
@@ -526,7 +529,9 @@ def compile_iodine_device_1d(
         raise CapabilityError(
             "iodide_site_limit_m3 must be set on all active layers or none"
         )
-    site_limit = np.zeros(m_count, dtype=np.float64) if has_steric else None
+    site_limit: NDArray[np.float64] | None = (
+        np.zeros(m_count, dtype=np.float64) if has_steric else None
+    )
 
     d_elec_chem = component.parameters.electron_diffusivity_m2_s[chem_indices]
     d_hole_chem = component.parameters.hole_diffusivity_m2_s[chem_indices]
@@ -719,8 +724,13 @@ def compile_iodine_device_1d(
             tot_i, n_eq, kinetics
         )
 
+    scale_ref = (
+        init_cm + init_c0 + 2.0 * init_c2
+        if chemistry.initialize_equilibrium_split
+        else init_cm
+    )
     iodide_map, atom_map, mol_map = _default_positive_maps(
-        m_count, np.asarray(init_cm, dtype=np.float64), site_limit
+        m_count, np.asarray(scale_ref, dtype=np.float64), site_limit
     )
 
     reversible_ct = chemistry.thermodynamic_mode == "wegscheider_detailed_balance"
