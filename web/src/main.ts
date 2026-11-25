@@ -6,7 +6,20 @@ const app = document.querySelector<HTMLDivElement>('#app')!
 async function mount() {
   const query = new URL(location.href).searchParams
   const serviceBase = new URL(resolveV2ServiceEndpoint())
-  if (query.get('view') === 'steady-2d') {
+  if (query.get('view') === 'iodine-aging') {
+    const { mountIodineAgingPanel } = await import('./panels/iodine-aging')
+    app.innerHTML = `<header class="workstation-header"><div><h1>SolarLab</h1><p>1D iodine chemistry &amp; aging</p></div>
+      <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>
+      <a class="btn btn-ghost" href="?view=steady-2d">2D steady</a>
+      <a class="btn btn-ghost" href="?view=ionic-transient">Ionic transient</a>
+      <a class="btn btn-ghost" href="?view=ionic-jv">Ionic J–V</a>
+      <a class="btn btn-ghost" href="?">Workstation</a></header><main id="iodine-aging"></main>`
+    const host = app.querySelector<HTMLElement>('#iodine-aging')!
+    host.style.cssText = 'max-width:1300px;margin:auto;padding:20px;overflow:auto;max-height:calc(100vh - 90px)'
+    const panel = mountIodineAgingPanel(host, serviceBase)
+    window.addEventListener('pagehide', () => panel.dispose(), { once: true })
+    await panel.ready
+  } else if (query.get('view') === 'steady-2d') {
     const { mountSteady2DPanel } = await import('./panels/steady-2d')
     app.innerHTML = `<header class="workstation-header"><div><h1>SolarLab</h1><p>2D steady research</p></div>
       <a class="btn btn-ghost" href="?view=steady-jv">Steady J–V</a>

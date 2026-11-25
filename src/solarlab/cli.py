@@ -179,6 +179,173 @@ def _cmd_steady_jv(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_or_print_json(payload: dict[str, Any], output: Path | None) -> int:
+    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(encoded + "\n", encoding="utf-8")
+    else:
+        print(encoded)
+    return 0
+
+
+def _cli_error_exit(exc: Exception) -> int:
+    err_payload = {
+        "schema": "solarlab.cli.error.v1",
+        "error_type": type(exc).__name__,
+        "message": str(exc),
+    }
+    print(json.dumps(err_payload, sort_keys=True), file=sys.stderr)
+    return 1
+
+
+def _cmd_iodine_presets(args: argparse.Namespace) -> int:
+    from solarlab.experiments.iodine_declarative import export_iodine_deck_schema
+    from solarlab.materials.iodine_presets import list_packaged_iodine_preset_summaries
+
+    if args.schema:
+        return _write_or_print_json(export_iodine_deck_schema(), args.output)
+    summaries = [
+        {k: v for k, v in item.items() if k != "deck"}
+        for item in list_packaged_iodine_preset_summaries()
+    ]
+    return _write_or_print_json(
+        {
+            "schema": "solarlab.cli.iodine-presets.v1",
+            "presets": summaries,
+            "scientific_qualification": False,
+        },
+        args.output,
+    )
+
+
+def _cmd_iodine_steady(args: argparse.Namespace) -> int:
+    from pydantic import ValidationError
+
+    from solarlab.contracts import ContractError
+    from solarlab.equations.dc_1d import CapabilityError
+    from solarlab.experiments.iodine_declarative import (
+        IodineOverridesInput,
+        apply_iodine_deck_overrides,
+        execute_iodine_steady_deck,
+        load_iodine_deck,
+    )
+    from solarlab.solvers.nonlinear.steady_1d import SteadyStateError
+
+    try:
+        target: str | Path = args.config if args.config is not None else args.preset
+        deck, src = load_iodine_deck(target)
+        overrides = IodineOverridesInput(
+            intervals_per_layer=args.intervals_per_layer,
+            k_a_cm3_s=args.k_a,
+            mu_bl_cm2_V_s=args.mu_bl,
+            ebl_partition=args.ebl_partition,
+            voltage_V=args.voltage,
+            generation_scale=args.generation_scale,
+            compute_frozen_jv=(False if args.no_frozen_jv else None),
+        )
+        effective = apply_iodine_deck_overrides(deck, overrides)
+        payload = execute_iodine_steady_deck(effective, source=src)
+    except (
+        CapabilityError,
+        ContractError,
+        FileNotFoundError,
+        KeyError,
+        SteadyStateError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        return _cli_error_exit(exc)
+    return _write_or_print_json(payload, args.output)
+
+
+def _cmd_iodine_impedance(args: argparse.Namespace) -> int:
+    from pydantic import ValidationError
+
+    from solarlab.contracts import ContractError
+    from solarlab.equations.dc_1d import CapabilityError
+    from solarlab.experiments.iodine_declarative import (
+        IodineOverridesInput,
+        apply_iodine_deck_overrides,
+        execute_iodine_impedance_deck,
+        load_iodine_deck,
+    )
+    from solarlab.solvers.nonlinear.steady_1d import SteadyStateError
+
+    try:
+        target: str | Path = args.config if args.config is not None else args.preset
+        deck, src = load_iodine_deck(target)
+        overrides = IodineOverridesInput(
+            intervals_per_layer=args.intervals_per_layer,
+            k_a_cm3_s=args.k_a,
+            voltage_V=args.voltage,
+            generation_scale=args.generation_scale,
+            f_min_Hz=args.f_min,
+            f_max_Hz=args.f_max,
+            n_frequencies=args.n_frequencies,
+            chem_mode=args.chem_mode,
+        )
+        effective = apply_iodine_deck_overrides(deck, overrides)
+        payload = execute_iodine_impedance_deck(effective, source=src)
+    except (
+        CapabilityError,
+        ContractError,
+        FileNotFoundError,
+        KeyError,
+        SteadyStateError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        return _cli_error_exit(exc)
+    return _write_or_print_json(payload, args.output)
+
+
+def _cmd_iodine_aging(args: argparse.Namespace) -> int:
+    from pydantic import ValidationError
+
+    from solarlab.contracts import ContractError
+    from solarlab.equations.dc_1d import CapabilityError
+    from solarlab.experiments.iodine_aging import IodineAgingError
+    from solarlab.experiments.iodine_declarative import (
+        IodineOverridesInput,
+        apply_iodine_deck_overrides,
+        execute_iodine_aging_deck,
+        load_iodine_deck,
+    )
+    from solarlab.solvers.nonlinear.steady_1d import SteadyStateError
+
+    try:
+        target: str | Path = args.config if args.config is not None else args.preset
+        deck, src = load_iodine_deck(target)
+        overrides = IodineOverridesInput(
+            intervals_per_layer=args.intervals_per_layer,
+            k_a_cm3_s=args.k_a,
+            volumetric_escape_s_1=args.volumetric_escape,
+            contact_corrosion_m_s=args.contact_corrosion,
+            probe_mode=args.probe_mode,
+        )
+        effective = apply_iodine_deck_overrides(deck, overrides)
+        payload = execute_iodine_aging_deck(
+            effective,
+            source=src,
+            store_dir=args.store_dir,
+            bundle_dir=args.bundle_dir,
+            run_id=args.run_id,
+        )
+    except (
+        CapabilityError,
+        ContractError,
+        FileNotFoundError,
+        IodineAgingError,
+        KeyError,
+        SteadyStateError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        return _cli_error_exit(exc)
+    return _write_or_print_json(payload, args.output)
+
+
 def _delegate_research(module_name: str, extra_args: list[str]) -> int:
     module = importlib.import_module(module_name)
     entry = getattr(module, "main")
@@ -238,6 +405,86 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_cbo.add_argument("research_args", nargs=argparse.REMAINDER)
 
+    from solarlab.materials.iodine_presets import PACKAGED_IODINE_PRESET_NAMES
+
+    p_ipresets = subparsers.add_parser(
+        "iodine-presets",
+        help="List packaged 1D iodine chemistry/aging presets or export the deck JSON Schema.",
+    )
+    p_ipresets.add_argument(
+        "--schema",
+        action="store_true",
+        help="Export the solarlab.iodine-deck.v1 JSON Schema instead of listing presets.",
+    )
+    p_ipresets.add_argument("--output", type=Path, default=None)
+
+    p_isteady = subparsers.add_parser(
+        "iodine-steady",
+        help="Run coupled 1D iodine reaction-diffusion steady state and optional frozen J-V.",
+    )
+    p_isteady.add_argument(
+        "--preset",
+        choices=PACKAGED_IODINE_PRESET_NAMES,
+        default="bitton_tessler_2023_blocking",
+    )
+    p_isteady.add_argument("--config", type=Path, default=None)
+    p_isteady.add_argument("--voltage", type=float, default=None)
+    p_isteady.add_argument("--generation-scale", type=float, default=None)
+    p_isteady.add_argument("--k-a", type=float, default=None, help="Override absorber k_a [cm^3/s].")
+    p_isteady.add_argument("--mu-bl", type=float, default=None, help="Override BL mobility [cm^2/(V s)].")
+    p_isteady.add_argument("--ebl-partition", type=float, default=None)
+    p_isteady.add_argument("--intervals-per-layer", type=int, default=None)
+    p_isteady.add_argument("--no-frozen-jv", action="store_true")
+    p_isteady.add_argument("--output", type=Path, default=None)
+
+    p_iimp = subparsers.add_parser(
+        "iodine-impedance",
+        help="Run 1D small-signal AC impedance and redox capacitance sweep on an iodine deck.",
+    )
+    p_iimp.add_argument(
+        "--preset",
+        choices=PACKAGED_IODINE_PRESET_NAMES,
+        default="bitton_tessler_2023_blocking",
+    )
+    p_iimp.add_argument("--config", type=Path, default=None)
+    p_iimp.add_argument("--voltage", type=float, default=None)
+    p_iimp.add_argument("--generation-scale", type=float, default=None)
+    p_iimp.add_argument("--f-min", type=float, default=None)
+    p_iimp.add_argument("--f-max", type=float, default=None)
+    p_iimp.add_argument("--n-frequencies", type=int, default=None)
+    p_iimp.add_argument(
+        "--chem-mode",
+        choices=("mobile", "frozen", "both"),
+        default=None,
+    )
+    p_iimp.add_argument("--k-a", type=float, default=None)
+    p_iimp.add_argument("--intervals-per-layer", type=int, default=None)
+    p_iimp.add_argument("--output", type=Path, default=None)
+
+    p_iaging = subparsers.add_parser(
+        "iodine-aging",
+        help="Run a multi-stage 1D iodine stress/recovery aging protocol.",
+    )
+    p_iaging.add_argument(
+        "--preset",
+        choices=PACKAGED_IODINE_PRESET_NAMES,
+        default="bitton_tessler_2023_self_healing",
+    )
+    p_iaging.add_argument("--config", type=Path, default=None)
+    p_iaging.add_argument("--k-a", type=float, default=None)
+    p_iaging.add_argument("--volumetric-escape", type=float, default=None)
+    p_iaging.add_argument("--contact-corrosion", type=float, default=None)
+    p_iaging.add_argument(
+        "--probe-mode",
+        choices=("none", "frozen_chemistry_jv", "dynamic_jv_scan", "both"),
+        default=None,
+    )
+    p_iaging.add_argument("--intervals-per-layer", type=int, default=None)
+    p_iaging.add_argument("--store-dir", type=Path, default=None)
+    p_iaging.add_argument("--bundle-dir", type=Path, default=None)
+    p_iaging.add_argument("--run-id", type=str, default=None)
+    p_iaging.add_argument("--output", type=Path, default=None)
+
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command is None:
         parser.print_help()
@@ -246,6 +493,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_check_install(args)
     if args.command == "steady-jv":
         return _cmd_steady_jv(args)
+    if args.command == "iodine-presets":
+        return _cmd_iodine_presets(args)
+    if args.command == "iodine-steady":
+        return _cmd_iodine_steady(args)
+    if args.command == "iodine-impedance":
+        return _cmd_iodine_impedance(args)
+    if args.command == "iodine-aging":
+        return _cmd_iodine_aging(args)
     if args.command == "cbo-scan":
         forwarded = list(args.research_args)
         if forwarded and forwarded[0] == "--":

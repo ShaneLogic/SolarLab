@@ -1,6 +1,6 @@
 # SolarLab Physics & Protocol Contracts
 
-This directory contains the **34 normative physical model, constitutive closure, schema, and execution-protocol specifications** enforced by `src/solarlab/` and verified by `tests/unit/`, `tests/integration/`, and `tests/refactor/`.
+This directory contains the **35 normative physical model, constitutive closure, schema, and execution-protocol specifications** enforced by `src/solarlab/` and verified by `tests/unit/`, `tests/integration/`, and `tests/refactor/`.
 
 For cross-cutting solver architecture and extension rules, see [../DevelopmentGuide.md](../DevelopmentGuide.md) and [../PhysicsCorrectionsScopeV1.md](../PhysicsCorrectionsScopeV1.md).
 
@@ -49,6 +49,7 @@ For cross-cutting solver architecture and extension rules, see [../DevelopmentGu
 |:--------------|:------|
 | [ExperimentProtocol.md](ExperimentProtocol.md) | Canonical 1D sweep, preconditioning, and measurement protocol semantics |
 | [FrozenIonSnapshotContract.md](FrozenIonSnapshotContract.md) | Zero-diffusivity electronic snapshot $J\text{-}V$ probes during ionic aging |
+| [IodineReactionAgingContractV1.md](IodineReactionAgingContractV1.md) | Coupled $\mathrm{I}^- / \mathrm{I}^0 / \mathrm{I}_2$ 5-reaction aging, volumetric outgassing, Faradaic contact corrosion, and AC redox capacitance |
 | [TpvOpenCircuitContract.md](TpvOpenCircuitContract.md) | Floating-port Maxwell total-current open-circuit integration and TPV decay identifiability |
 | [IonSweepFigureReference.md](IonSweepFigureReference.md) | Dense mobile-ion waveform reference protocol (`calado2016_ion_sweep`) |
 
